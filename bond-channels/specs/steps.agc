@@ -1,6 +1,7 @@
 ## The steps of the features: the frames of `src/protocol.agc`, written and read as text. Nothing here opens a socket.
 
 import BDD from "std/bdd"
+import Cable from "cable_steps"
 import Protocol from "../src/protocol"
 
 IDENTIFIER = "identifier"
@@ -127,7 +128,7 @@ def confirmation_of_read(ctx: BDD.Context, _args: List[String]) -> BDD.Context
 end
 
 def main() -> Void
-  BDD.run([
+  frames = [
     BDD.step("the identifier:", &given_identifier),
     BDD.step("the text payload:", &given_text_payload),
     BDD.step("the object payload:", &given_object_payload),
@@ -143,5 +144,7 @@ def main() -> Void
     BDD.step("the server reads:", &server_reads),
     BDD.step("the server ignores it because {string}", &server_ignores),
     BDD.step("the confirmation of that subscribe is:", &confirmation_of_read),
-  ])
+  ]
+
+  BDD.run(frames.concat(Cable.steps()))
 end
