@@ -16,8 +16,8 @@ ANSWER_MS = 15_000
 RECEIVE_MS = 5_000
 # The most frames that a scenario skips between two that it waits for (a fast ping may fill the gap).
 SKIPPED_FRAMES = 400
-STATS_TRIES = 60
-STATS_WAIT_MS = 50
+STATS_TRIES = 300
+STATS_WAIT_MS = 10
 SOCKET_HEADER = "Sec-WebSocket-Protocol"
 
 struct Order

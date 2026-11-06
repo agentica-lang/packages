@@ -9,9 +9,9 @@ Feature: The cable
   Scenario: A client is welcomed, subscribes, and hears the broadcasts of its room only, from HTTP or from a client
     Given the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                  |
-      | Cookie | user=ana               |
-      | Origin | http://127.0.0.1:PORT  |
+      | header                 | value                                        |
+      | Cookie                 | user=ana                                     |
+      | Origin                 | http://127.0.0.1:PORT                        |
       | Sec-WebSocket-Protocol | actioncable-v1-json, actioncable-unsupported |
     Then the handshake of "ana" is answered 101
     And client "ana" receives:
@@ -19,8 +19,8 @@ Feature: The cable
       {"type":"welcome"}
       """
     When client "ben" connects with:
-      | header | value    |
-      | Cookie | user=ben |
+      | header                 | value               |
+      | Cookie                 | user=ben            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ana" subscribes to the room "1"
     And client "ben" subscribes to the room "2"
@@ -41,8 +41,8 @@ Feature: The cable
   Scenario: The frames that `subscribed` transmits come before the confirmation
     Given the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                                        |
-      | Cookie | user=ana                                     |
+      | header                 | value               |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ana" sends:
       """
@@ -64,8 +64,8 @@ Feature: The cable
   Scenario: A subscription can be rejected
     Given the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                                        |
-      | Cookie | user=ana                                     |
+      | header                 | value               |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ana" sends:
       """
@@ -76,7 +76,7 @@ Feature: The cable
   Scenario: A connection that `connect` refuses is told so, and not welcomed
     Given the cable server listens on a free port
     When client "eve" connects with:
-      | header | value                                        |
+      | header                 | value               |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     Then the handshake of "eve" is answered 101
     And client "eve" receives:
@@ -88,9 +88,9 @@ Feature: The cable
   Scenario Outline: A handshake from <case> is answered <status>
     Given the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                                        |
-      | Cookie | user=ana                                     |
-      | Origin | <origin>                                     |
+      | header                 | value               |
+      | Cookie                 | user=ana            |
+      | Origin                 | <origin>            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     Then the handshake of "ana" is answered <status>
 
@@ -102,16 +102,16 @@ Feature: The cable
   Scenario: A client that does not offer actioncable-v1-json is closed with 1002
     Given the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                  |
-      | Cookie | user=ana               |
-      | Sec-WebSocket-Protocol | chat   |
+      | header                 | value    |
+      | Cookie                 | user=ana |
+      | Sec-WebSocket-Protocol | chat     |
     Then client "ana" is closed by the server with the code 1002
 
   Scenario: What Action Cable only logs gets no reply, and the connection stays open
     Given the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                                        |
-      | Cookie | user=ana                                     |
+      | header                 | value               |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ana" subscribes to the room "1"
     And client "ana" subscribes to the room "1"
@@ -145,8 +145,8 @@ Feature: The cable
   Scenario: A blank action is the action receive
     Given the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                                        |
-      | Cookie | user=ana                                     |
+      | header                 | value               |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ana" subscribes to the room "1"
     And client "ana" sends:
@@ -158,12 +158,12 @@ Feature: The cable
   Scenario: After an unsubscribe nothing is streamed, and `unsubscribed` has run
     Given the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                                        |
-      | Cookie | user=ana                                     |
+      | header                 | value               |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "watch" connects with:
-      | header | value                                        |
-      | Cookie | user=watch                                   |
+      | header                 | value               |
+      | Cookie                 | user=watch          |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "watch" sends:
       """
@@ -182,12 +182,12 @@ Feature: The cable
   Scenario Outline: `unsubscribed` runs when a connection ends (<how>)
     Given the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                                        |
-      | Cookie | user=ana                                     |
+      | header                 | value               |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "watch" connects with:
-      | header | value                                        |
-      | Cookie | user=watch                                   |
+      | header                 | value               |
+      | Cookie                 | user=watch          |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "watch" sends:
       """
@@ -206,14 +206,15 @@ Feature: The cable
 
   Scenario: A client that cannot keep up is dropped by the hub, and `unsubscribed` still runs
     Given the environment variable "INBOX" is "2"
+    And the environment variable "SLOW_MS" is "500"
     And the cable server listens on a free port
     When client "slow" connects with:
-      | header | value                                        |
-      | Cookie | user=slow                                    |
+      | header                 | value               |
+      | Cookie                 | user=slow           |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "watch" connects with:
-      | header | value                                        |
-      | Cookie | user=watch                                   |
+      | header                 | value               |
+      | Cookie                 | user=watch          |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "watch" sends:
       """
@@ -248,12 +249,12 @@ Feature: The cable
   Scenario: The stats follow the connections and subscriptions
     Given the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                                        |
-      | Cookie | user=ana                                     |
+      | header                 | value               |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ben" connects with:
-      | header | value                                        |
-      | Cookie | user=ben                                     |
+      | header                 | value               |
+      | Cookie                 | user=ben            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ana" subscribes to the room "1"
     And client "ana" subscribes to the room "2"
@@ -270,23 +271,23 @@ Feature: The cable
 
   Scenario: A quiet client stays connected past idle_ms, because the hub pings the WebSocket
     Given the environment variable "BEAT_MS" is "100"
-    And the environment variable "IDLE_MS" is "1500"
+    And the environment variable "IDLE_MS" is "600"
     And the cable server listens on a free port
     When client "quiet" connects with:
-      | header | value                                        |
-      | Cookie | user=quiet                                   |
+      | header                 | value               |
+      | Cookie                 | user=quiet          |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "quiet" subscribes to the room "1"
     Then client "quiet" eventually receives a frame containing "{\"type\":\"ping\",\"message\":"
-    When 2000 milliseconds pass
+    When 1000 milliseconds pass
     And client "quiet" performs "refresh" in the room "1"
     Then client "quiet" eventually receives a frame containing "\"message\":{\"action\":\"refresh\"}"
 
   Scenario: A subscription whose `subscribed` fails is rejected and forgotten
     Given the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                                        |
-      | Cookie | user=ana                                     |
+      | header                 | value               |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ana" sends:
       """
@@ -301,8 +302,8 @@ Feature: The cable
   Scenario: A hub that is stopped tells its connections to reconnect, and refuses new ones
     Given the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                                        |
-      | Cookie | user=ana                                     |
+      | header                 | value               |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ana" sends:
       """
@@ -313,8 +314,8 @@ Feature: The cable
     Then client "ana" eventually receives a frame containing "{\"type\":\"disconnect\",\"reason\":null,\"reconnect\":true}"
     And client "ana" is closed by the server with the code 1001
     When client "late" connects with:
-      | header | value                                        |
-      | Cookie | user=late                                    |
+      | header                 | value               |
+      | Cookie                 | user=late           |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     Then client "late" receives:
       """
@@ -330,15 +331,15 @@ Feature: The cable
     Given the cable server listens on a free port
     When client "ana" connects with:
       | header                 | value               |
-      | Cookie                 | user=ana           |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ana2" connects with:
       | header                 | value               |
-      | Cookie                 | user=ana           |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ben" connects with:
       | header                 | value               |
-      | Cookie                 | user=ben           |
+      | Cookie                 | user=ben            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ana" subscribes to the room "1"
     And client "ana2" subscribes to the room "1"
@@ -377,7 +378,7 @@ Feature: The cable
     Given the cable server listens on a free port
     When client "ana" connects with:
       | header                 | value               |
-      | Cookie                 | user=ana           |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     Then client "ana" receives:
       """
@@ -395,11 +396,11 @@ Feature: The cable
     And the cable server listens on a free port
     When client "slow" connects with:
       | header                 | value               |
-      | Cookie                 | user=slow          |
+      | Cookie                 | user=slow           |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "watch" connects with:
       | header                 | value               |
-      | Cookie                 | user=watch         |
+      | Cookie                 | user=watch          |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "watch" sends:
       """
@@ -443,8 +444,8 @@ Feature: The cable
     Given the environment variable "MAX_MESSAGE_BYTES" is "1000"
     And the cable server listens on a free port
     When client "ana" connects with:
-      | header | value                                        |
-      | Cookie | user=ana                                     |
+      | header                 | value               |
+      | Cookie                 | user=ana            |
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "ana" sends a text of 2000 bytes
     Then client "ana" is closed by the server with the code 1009
