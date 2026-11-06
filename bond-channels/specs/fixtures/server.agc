@@ -8,7 +8,7 @@
 ## any way, is announced as an object on the topic `left`, which `WatchChannel` streams. `GreetChannel` transmits a
 ## greeting when it is subscribed, `RefusedChannel` is rejected and `FailingChannel` answers `subscribed` with an
 ## `error`. `GET /say?topic=T&text=X` broadcasts a Turbo Stream from an HTTP handler, `GET /stats` answers
-## `Channels.stats`, `GET /stop` stops the hub and `GET /signed?name=N` answers the signed stream name of N.
+## `Channels.stats`, `GET /disconnect?user=U&reconnect=BOOL` is `Channels.disconnect`, `GET /stop` stops the hub and `GET /signed?name=N` answers the signed stream name of N.
 ## `Turbo::StreamsChannel` is `Channels.turbo_streams` with a key of this program, and refuses the names that start
 ## with `secret:`.
 
@@ -156,6 +156,13 @@ def signed(key: Bytes, conn: Bond.Conn) -> Result[Bond.Conn]
   return ok(Bond.text(conn, 200, Channels.signed_stream_name(key, name)))
 end
 
+def disconnect(hub: Channels.Hub, conn: Bond.Conn) -> Result[Bond.Conn]
+  user = try Bond.query(conn, "user")
+  again = try Bond.query(conn, "reconnect")
+  try Channels.disconnect(hub, user, again == "true")
+  return ok(Bond.text(conn, 200, "disconnected"))
+end
+
 def stop(hub: Channels.Hub, conn: Bond.Conn) -> Result[Bond.Conn]
   try Channels.stop_hub(hub)
   return ok(Bond.text(conn, 200, "stopped"))
@@ -170,6 +177,7 @@ def main() -> Void
   say_it = serving() do |conn| say(hub, conn) end
   count_it = serving() do |conn| counts(hub, conn) end
   stop_it = serving() do |conn| stop(hub, conn) end
+  disconnect_it = serving() do |conn| disconnect(hub, conn) end
   key = Channels.stream_key("the secret of the specs").unwrap!
   sign_it = serving() do |conn| signed(key, conn) end
   app = (
@@ -177,6 +185,7 @@ def main() -> Void
     |> Bond.get("/say", say_it)
     |> Bond.get("/stats", count_it)
     |> Bond.get("/stop", stop_it)
+    |> Bond.get("/disconnect", disconnect_it)
     |> Bond.get("/signed", sign_it)
   )
 

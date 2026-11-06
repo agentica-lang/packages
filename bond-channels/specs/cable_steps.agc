@@ -51,6 +51,7 @@ export def steps() -> List[BDD.Step]
     BDD.step("the app broadcasts {string} to {string}", &broadcasts),
     BDD.step("the app cannot broadcast {string} to {string}", &cannot_broadcast),
     BDD.step("the app stops the hub", &stops_hub),
+    BDD.step("the app disconnects {string} with reconnect {string}", &disconnects),
     BDD.step("{int} milliseconds pass", &waits),
     BDD.step("the stats become:", &stats_become),
   ]
@@ -240,6 +241,12 @@ def cannot_broadcast(ctx: BDD.Context, args: List[String]) -> BDD.Context
   url = "http://127.0.0.1:#{port_of(ctx)}/say?topic=#{args[1]}&text=#{args[0]}"
   answer = HTTP.get_response(url).unwrap!
   return BDD.assert(ctx, answer.status == 500, "the broadcast was answered #{answer.status}, expected 500")
+end
+
+def disconnects(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  url = "http://127.0.0.1:#{port_of(ctx)}/disconnect?user=#{args[0]}&reconnect=#{args[1]}"
+  answer = HTTP.get_response(url).unwrap!
+  return BDD.assert(ctx, answer.status == 200, "the disconnect was answered #{answer.status}")
 end
 
 def stops_hub(ctx: BDD.Context, _args: List[String]) -> BDD.Context

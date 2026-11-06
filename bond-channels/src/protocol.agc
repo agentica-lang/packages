@@ -9,6 +9,7 @@ export MAX_IDENTIFIER_BYTES = 4096
 
 RECEIVE = "receive"
 UNAUTHORIZED = "unauthorized"
+REMOTE = "remote"
 # The characters of Ruby's `[[:space:]]`, which `String#blank?` of Rails tests; `strip` knows only the ASCII ones.
 SPACE_CODES = Set.new([9, 10, 11, 12, 13, 32, 133, 160, 5760, 8232, 8233, 8239, 8287, 12288])
 EN_SPACES = 8192..8202
@@ -75,6 +76,12 @@ end
 ## The frame of a server that drops a connection: the client may reconnect.
 export def disconnect_reconnect() -> String
   return JSON.encode(Disconnect(type: "disconnect", reason: none, reconnect: true))
+end
+
+## The frame of a server that ends the connections of a person on purpose (`Channels.disconnect`, the
+## `remote_connections.disconnect` of Rails): the client reconnects only when `reconnect` is true.
+export def disconnect_remote(reconnect: Bool) -> String
+  return JSON.encode(Disconnect(type: "disconnect", reason: some(REMOTE), reconnect: reconnect))
 end
 
 ## `{"identifier":ID,"type":"confirm_subscription"}`.
