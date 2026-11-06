@@ -41,7 +41,40 @@ Feature: Turbo stream names
       | case                         | signed                                                                                     |
       | is not signed                | room:1                                                                                     |
       | was signed with another key  | InJvb21zIg==--60a2ff565fb2226042c779b5711156db1d1cc48f89e6f59c94e4bf1da3f0945c             |
-      | is empty                     |                                                                                            |
+      | is blank                     |                                                                                            |
+
+  Scenario: A subscription is rejected when the stream name is missing
+    Given the cable server listens on a free port
+    When client "ana" connects with:
+      | header | value                                        |
+      | Cookie | user=ana                                     |
+      | Sec-WebSocket-Protocol | actioncable-v1-json |
+    And client "ana" sends:
+      """
+      {"command":"subscribe","identifier":"{\"channel\":\"Turbo::StreamsChannel\"}"}
+      """
+    Then client "ana" eventually receives a frame containing "reject_subscription"
+
+  Scenario: A subscription is rejected when the stream name is not a string
+    Given the cable server listens on a free port
+    When client "ana" connects with:
+      | header | value                                        |
+      | Cookie | user=ana                                     |
+      | Sec-WebSocket-Protocol | actioncable-v1-json |
+    And client "ana" sends:
+      """
+      {"command":"subscribe","identifier":"{\"channel\":\"Turbo::StreamsChannel\",\"signed_stream_name\":5}"}
+      """
+    Then client "ana" eventually receives a frame containing "reject_subscription"
+
+  Scenario: A validly signed empty name is rejected
+    Given the cable server listens on a free port
+    When client "ana" connects with:
+      | header | value                                        |
+      | Cookie | user=ana                                     |
+      | Sec-WebSocket-Protocol | actioncable-v1-json |
+    And client "ana" subscribes to the Turbo stream ""
+    Then client "ana" eventually receives a frame containing "reject_subscription"
 
   Scenario: A signed name that the app does not allow is rejected, and streams nothing
     Given the cable server listens on a free port
