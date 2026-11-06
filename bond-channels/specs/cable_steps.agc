@@ -38,6 +38,8 @@ export def steps() -> List[BDD.Step]
     BDD.step("client {string} sends:", &sends),
     BDD.step("client {string} sends a text of {int} bytes", &sends_bytes),
     BDD.step("client {string} subscribes to the room {string}", &subscribes),
+    BDD.step("client {string} subscribes to the Turbo stream {string}", &subscribes_to_turbo),
+    BDD.step("client {string} subscribes to the Turbo stream with the signed name {string}", &subscribes_signed),
     BDD.step("client {string} performs {string} in the room {string}", &performs),
     BDD.step("client {string} says {string} in the room {string}", &says),
     BDD.step("client {string} receives:", &receives),
@@ -137,6 +139,23 @@ end
 def subscribes(ctx: BDD.Context, args: List[String]) -> BDD.Context
   command = JSON.from({"command": JSON.from("subscribe"), "identifier": JSON.from(room_identifier(args[1]))})
   return send_command(ctx, args[0], command)
+end
+
+# The page of the app would carry the signed name: here the server signs it, as `GET /signed` of the fixture.
+def subscribes_to_turbo(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  answer = HTTP.get_response("http://127.0.0.1:#{port_of(ctx)}/signed?name=#{args[1]}").unwrap!
+  return subscribe_to_signed(ctx, args[0], answer.body.decode("utf-8").unwrap!)
+end
+
+def subscribes_signed(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  return subscribe_to_signed(ctx, args[0], args[1])
+end
+
+# The identifier that `<turbo-cable-stream-source>` makes for the Rails client.
+def subscribe_to_signed(ctx: BDD.Context, id: String, signed: String) -> BDD.Context
+  identifier = JSON.encode({"channel": "Turbo::StreamsChannel", "signed_stream_name": signed})
+  command = JSON.from({"command": JSON.from("subscribe"), "identifier": JSON.from(identifier)})
+  return send_command(ctx, id, command)
 end
 
 def message_command(room: String, data: Json) -> Json

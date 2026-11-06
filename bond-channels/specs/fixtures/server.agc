@@ -8,7 +8,9 @@
 ## any way, is announced as an object on the topic `left`, which `WatchChannel` streams. `GreetChannel` transmits a
 ## greeting when it is subscribed, `RefusedChannel` is rejected and `FailingChannel` answers `subscribed` with an
 ## `error`. `GET /say?topic=T&text=X` broadcasts a Turbo Stream from an HTTP handler, `GET /stats` answers
-## `Channels.stats` and `GET /stop` stops the hub.
+## `Channels.stats`, `GET /stop` stops the hub and `GET /signed?name=N` answers the signed stream name of N.
+## `Turbo::StreamsChannel` is `Channels.turbo_streams` with a key of this program, and refuses the names that start
+## with `secret:`.
 
 import Bond from "pkg/bond/bond"
 import Channels from "../../channels"
@@ -113,7 +115,11 @@ def acting(
   return f
 end
 
-def handlers(hub: Channels.Hub) -> Map[String, Channels.Handler]
+def readable?(session: Channels.Session, name: String) -> Bool
+  return not name.start_with?("secret:")
+end
+
+def handlers(hub: Channels.Hub, key: Bytes) -> Map[String, Channels.Handler]
   left = leaving() do |session, params| room_left(hub, session, params) end
   acted = acting() do |session, params, action, data| room_acted(hub, session, params, action, data) end
   return {
@@ -122,6 +128,7 @@ def handlers(hub: Channels.Hub) -> Map[String, Channels.Handler]
     "GreetChannel": Channels.handler(&greet_subscribed),
     "RefusedChannel": Channels.handler(&refused_subscribed),
     "FailingChannel": Channels.handler(&failing_subscribed),
+    "Turbo::StreamsChannel": Channels.turbo_streams(key, &readable?),
   }
 end
 
@@ -144,6 +151,11 @@ def counts(hub: Channels.Hub, conn: Bond.Conn) -> Result[Bond.Conn]
   return ok(Bond.json(conn, 200, JSON.from(body)))
 end
 
+def signed(key: Bytes, conn: Bond.Conn) -> Result[Bond.Conn]
+  name = try Bond.query(conn, "name")
+  return ok(Bond.text(conn, 200, Channels.signed_stream_name(key, name)))
+end
+
 def stop(hub: Channels.Hub, conn: Bond.Conn) -> Result[Bond.Conn]
   try Channels.stop_hub(hub)
   return ok(Bond.text(conn, 200, "stopped"))
@@ -158,16 +170,19 @@ def main() -> Void
   say_it = serving() do |conn| say(hub, conn) end
   count_it = serving() do |conn| counts(hub, conn) end
   stop_it = serving() do |conn| stop(hub, conn) end
+  key = Channels.stream_key("the secret of the specs").unwrap!
+  sign_it = serving() do |conn| signed(key, conn) end
   app = (
     Bond.app()
     |> Bond.get("/say", say_it)
     |> Bond.get("/stats", count_it)
     |> Bond.get("/stop", stop_it)
+    |> Bond.get("/signed", sign_it)
   )
 
   options = Channels.MountOptions(
     connect: &connect,
-    handlers: handlers(hub),
+    handlers: handlers(hub, key),
     inbox: setting("INBOX", 256),
     idle_ms: setting("IDLE_MS", DEFAULT_IDLE_MS),
     max_message_bytes: setting("MAX_MESSAGE_BYTES", 65_536),

@@ -4,6 +4,7 @@
 import BDD from "std/bdd"
 import Cable from "cable_steps"
 import Protocol from "../src/protocol"
+import Turbo from "turbo_steps"
 
 IDENTIFIER = "identifier"
 PAYLOAD = "payload"
@@ -147,5 +148,5 @@ def main() -> Void
     BDD.step("the confirmation of that subscribe is:", &confirmation_of_read),
   ]
 
-  BDD.run(frames.concat(Cable.steps()))
+  BDD.run(frames.concat(Cable.steps()).concat(Turbo.steps()))
 end

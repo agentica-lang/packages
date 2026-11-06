@@ -23,6 +23,8 @@ import HTTP from "std/http"
 import Connection from "src/connection"
 import Hubs from "src/hub"
 import Protocol from "src/protocol"
+import Signing from "src/signing"
+import Turbo from "src/turbo"
 import Types from "src/types"
 
 export Types.Handler
@@ -48,6 +50,31 @@ end
 ## A handler of a channel that has no `unsubscribed` and takes no actions; replace those with `handler.with(...)`.
 export def handler(subscribed: Fn[Types.Session, Json, Result[Types.Subscription]]) -> Types.Handler
   return Types.Handler(subscribed: subscribed, unsubscribed: &nothing_to_leave, perform: &no_actions)
+end
+
+## The key that signs and verifies the stream names of the pages (`signed_stream_name`), from the secret of the app (a
+## Rails secret too: a name that Rails signed with it verifies). Make it once at start-up; an empty secret is an
+## `error`.
+export def stream_key(secret_key_base: String) -> Result[Bytes]
+  return Signing.stream_key(secret_key_base)
+end
+
+## The stream name that a page puts in `<turbo-cable-stream-source channel="..." signed-stream-name="...">`. `name` is
+## the parts of the stream joined with `:`, as `Turbo::StreamsChannel.broadcast_*_to` joins them.
+export def signed_stream_name(key: Bytes, name: String) -> String
+  return Signing.signed_stream_name(key, name)
+end
+
+## The name in `signed` if `key` signed it, `none` for anything else (a bad signature or a message that is not a name).
+export def verified_stream_name(key: Bytes, signed: String) -> Optional[String]
+  return Signing.verified_stream_name(key, signed)
+end
+
+## A handler for `<turbo-cable-stream-source>`: it verifies the `signed_stream_name` of the client and streams from the
+## name in it, or rejects the subscription when it does not verify or `authorize(session, name)` is false. Register it
+## under the channel names that the page uses (`Turbo::StreamsChannel`, or one of your own).
+export def turbo_streams(key: Bytes, authorize: Fn[Types.Session, String, Bool]) -> Types.Handler
+  return handler(Turbo.subscribing(key, authorize))
 end
 
 ## Sends `text` (Turbo Stream HTML) to the subscribers of `topic`, as a JSON string. A broadcast that cannot be queued

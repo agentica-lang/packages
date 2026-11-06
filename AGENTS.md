@@ -12,8 +12,11 @@ Makefile             install, check, fmt-check and test, each run in every folde
 PACKAGE/             one package: agentica.toml, agentica.lock (when it has dependencies), src/, specs/, test/
 bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub, broadcast, stats); src/protocol.agc the frames
                      (pure), src/hub.agc the hub task, src/connection.agc one connection, src/types.agc the records;
-                     specs/ has the frames and the cable features (fixtures/cable_peer.py is a raw-socket peer,
-                     it needs python3), bench/fanout.py measures memory per socket and the hub's fan-out by hand
+                     turbo_streams, stream_key and signed_stream_name are in channels.agc too: src/signing.agc the
+                     Rails-format signed names (pure), src/turbo.agc the channel; specs/ has the frames, the cable
+                     and the Turbo features (fixtures/cable_peer.py is a raw-socket peer, it needs python3;
+                     fixtures/turbo_vectors.json is what Rails signed), bench/fanout.py measures memory per socket
+                     and the hub's fan-out by hand
 ```
 
 ## Commands

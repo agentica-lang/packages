@@ -1,0 +1,114 @@
+{
+  "source": "once-campfire-rust/vectors/rails_compat.json, made by Rails (turbo-rails Turbo.signed_stream_verifier); expected 42 of the json non-string case is refused by stream_name",
+  "secret_key_base": "5335c3b1ad35b4ad170c3413bd651ef3b6ed64e257261871a6de3f978cf3868ee417a927040935fb30b0f7debdedb34a2a403e9f34b16cf594c917c2ecd4a995",
+  "key_hex": "52b780d76ae81794bede4c5422bcb016add697bf9e980d711c67c08470330b704dad5cbe0ecf89edf277151ce8f563e45b99b5c7bc9e8e2f574aecce3d27b85a",
+  "generate": [
+    {
+      "parts": [
+        "Z2lkOi8vY2FtcGZpcmUvUm9vbXM6Ok9wZW4vMQ",
+        "messages"
+      ],
+      "stream_name": "Z2lkOi8vY2FtcGZpcmUvUm9vbXM6Ok9wZW4vMQ:messages",
+      "signed": "IloybGtPaTh2WTJGdGNHWnBjbVV2VW05dmJYTTZPazl3Wlc0dk1ROm1lc3NhZ2VzIg==--6ff497f9ec2f68f7ec64a5aee2fe25bd5ca8e2647ff82db8e211aabd83382b8b"
+    },
+    {
+      "parts": [
+        "rooms"
+      ],
+      "stream_name": "rooms",
+      "signed": "InJvb21zIg==--60a2ff565fb2226042c779b5711156db1d1cc48f89e6f59c94e4bf1da3f0945c"
+    },
+    {
+      "parts": [
+        "Z2lkOi8vY2FtcGZpcmUvVXNlci8x",
+        "rooms"
+      ],
+      "stream_name": "Z2lkOi8vY2FtcGZpcmUvVXNlci8x:rooms",
+      "signed": "IloybGtPaTh2WTJGdGNHWnBjbVV2VlhObGNpOHg6cm9vbXMi--1cc07be3a8b410a4bbfe4ca0988a833987c1c5000f804159f99177c56f9515f8"
+    },
+    {
+      "parts": [
+        "Z2lkOi8vY2FtcGZpcmUvVXNlci8x"
+      ],
+      "stream_name": "Z2lkOi8vY2FtcGZpcmUvVXNlci8x",
+      "signed": "IloybGtPaTh2WTJGdGNHWnBjbVV2VlhObGNpOHgi--ed25739a1c510b640a6e203a6d0303368639e943b45294a9d8d62cc66efb1873"
+    },
+    {
+      "parts": [
+        "unicode ☃ <&>"
+      ],
+      "stream_name": "unicode ☃ <&>",
+      "signed": "InVuaWNvZGUg4piDIDwmPiI=--075667747bb80d01e60af41e6adfe78248ef12c70936b037af197a7584eda21b"
+    },
+    {
+      "parts": [
+        "a",
+        "b:c"
+      ],
+      "stream_name": "a:b:c",
+      "signed": "ImE6YjpjIg==--d65ed5bf97ca33601d27f7cc9bf1c01d7318ec8f2220584c424b7cccfbe3bc20"
+    }
+  ],
+  "verify": [
+    {
+      "case": "valid Z2lkOi8vY2FtcGZpcmUvUm9vbXM6Ok9wZW4vMQ:messages",
+      "signed": "IloybGtPaTh2WTJGdGNHWnBjbVV2VW05dmJYTTZPazl3Wlc0dk1ROm1lc3NhZ2VzIg==--6ff497f9ec2f68f7ec64a5aee2fe25bd5ca8e2647ff82db8e211aabd83382b8b",
+      "expected": "Z2lkOi8vY2FtcGZpcmUvUm9vbXM6Ok9wZW4vMQ:messages"
+    },
+    {
+      "case": "valid rooms",
+      "signed": "InJvb21zIg==--60a2ff565fb2226042c779b5711156db1d1cc48f89e6f59c94e4bf1da3f0945c",
+      "expected": "rooms"
+    },
+    {
+      "case": "valid Z2lkOi8vY2FtcGZpcmUvVXNlci8x:rooms",
+      "signed": "IloybGtPaTh2WTJGdGNHWnBjbVV2VlhObGNpOHg6cm9vbXMi--1cc07be3a8b410a4bbfe4ca0988a833987c1c5000f804159f99177c56f9515f8",
+      "expected": "Z2lkOi8vY2FtcGZpcmUvVXNlci8x:rooms"
+    },
+    {
+      "case": "valid Z2lkOi8vY2FtcGZpcmUvVXNlci8x",
+      "signed": "IloybGtPaTh2WTJGdGNHWnBjbVV2VlhObGNpOHgi--ed25739a1c510b640a6e203a6d0303368639e943b45294a9d8d62cc66efb1873",
+      "expected": "Z2lkOi8vY2FtcGZpcmUvVXNlci8x"
+    },
+    {
+      "case": "valid unicode ☃ <&>",
+      "signed": "InVuaWNvZGUg4piDIDwmPiI=--075667747bb80d01e60af41e6adfe78248ef12c70936b037af197a7584eda21b",
+      "expected": "unicode ☃ <&>"
+    },
+    {
+      "case": "valid a:b:c",
+      "signed": "ImE6YjpjIg==--d65ed5bf97ca33601d27f7cc9bf1c01d7318ec8f2220584c424b7cccfbe3bc20",
+      "expected": "a:b:c"
+    },
+    {
+      "case": "tampered digest",
+      "signed": "IloybGtPaTh2WTJGdGNHWnBjbVV2VW05dmJYTTZPazl3Wlc0dk1ROm1lc3NhZ2VzIg==--6ff497f9ec2f68f7ec64a5aee2fe25bd5ca8e2647ff82db8e211aabd83382b80",
+      "expected": null
+    },
+    {
+      "case": "tampered payload",
+      "signed": "AloybGtPaTh2WTJGdGNHWnBjbVV2VW05dmJYTTZPazl3Wlc0dk1ROm1lc3NhZ2VzIg==--6ff497f9ec2f68f7ec64a5aee2fe25bd5ca8e2647ff82db8e211aabd83382b8b",
+      "expected": null
+    },
+    {
+      "case": "signed with rotated secret",
+      "signed": "InJvb21zIg==--fb7a8f45d793f0970e5e570387bfa0b76dfab784bcbc5ad650b062d39a67ef02",
+      "expected": null
+    },
+    {
+      "case": "garbage",
+      "signed": "garbage",
+      "expected": null
+    },
+    {
+      "case": "with purpose metadata",
+      "signed": "eyJfcmFpbHMiOnsiZGF0YSI6InJvb21zIiwicHVyIjoieCJ9fQ==--0e8621b1eccb70339156afafadd4bbc3d8a7f90ba5d7d39531b241634dee9c4d",
+      "expected": null
+    },
+    {
+      "case": "json non-string",
+      "signed": "NDI=--1e2d201a41131403cad0032a4744939daac57dab9695a576ae74ddee0e9d477f",
+      "expected": 42
+    }
+  ]
+}
