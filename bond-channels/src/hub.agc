@@ -60,10 +60,11 @@ enum HubMessage
   Stop
 end
 
-## The hub is a value: its inbox, its task (that `main` awaits) and the counters that `stats` reads.
+## The hub is a value: its inbox, its task (that `main` awaits), its ticker and the counters that `stats` reads.
 export struct Hub
   inbox: Channel[HubMessage]
   task: Task[Result[Void]]
+  ticker: Task[Result[Void]]
   counters: ATS[String, Int]
   options: HubOptions
 end
@@ -116,13 +117,20 @@ export def start(options: HubOptions) -> Result[Hub]
   inbox: Channel[HubMessage] = Channel.new(HUB_INBOX)
   counters: ATS[String, Int] = ATS.new()
   task = Task.spawn_owning(&run, Launch(inbox: inbox, counters: counters))
-  _ = Task.spawn(&ticking, Ticker(inbox: inbox, counters: counters, beat_ms: options.beat_ms))
-  return ok(Hub(inbox: inbox, task: task, counters: counters, options: options))
+  ticker = Task.spawn(&ticking, Ticker(inbox: inbox, counters: counters, beat_ms: options.beat_ms))
+  return ok(Hub(inbox: inbox, task: task, ticker: ticker, counters: counters, options: options))
 end
 
-## Asks the hub to end; its task returns and later sends fail.
+## Asks the hub to end; its task returns and later sends fail. The ticker is cancelled with it, so that no task is left
+## sleeping for a beat (a program or a test that waits for its tasks does not wait for one more). A `Stop` that could
+## not be queued (the inbox stayed full) leaves the hub running, with its ticker.
 export def stop(hub: Hub) -> Result[Void]
-  return send(hub, HubMessage.Stop)
+  sent = send(hub, HubMessage.Stop)
+  if sent.ok? or gone?(hub)
+    Task.cancel(hub.ticker)
+  end
+
+  return sent
 end
 
 ## True once the hub has ended or crashed: its inbox is closed, so nothing sent to it is ever heard.
