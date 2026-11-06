@@ -10,7 +10,10 @@ README.md            the table of packages and how to install one
 Makefile             install, check, fmt-check and test, each run in every folder that has an agentica.toml
 .github/workflows/   ci.yml: the pinned Agentica release, then the four targets
 PACKAGE/             one package: agentica.toml, agentica.lock (when it has dependencies), src/, specs/, test/
-bond-channels/       Action Cable for Bond; src/protocol.agc is the frame encode and decode (pure)
+bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub, broadcast, stats); src/protocol.agc the frames
+                     (pure), src/hub.agc the hub task, src/connection.agc one connection, src/types.agc the records;
+                     specs/ has the frames and the cable features (fixtures/cable_peer.py is a raw-socket peer,
+                     it needs python3), bench/fanout.py measures memory per socket and the hub's fan-out by hand
 ```
 
 ## Commands
@@ -34,5 +37,7 @@ bond-channels/       Action Cable for Bond; src/protocol.agc is the frame encode
 - BDD first: a behavior is a Gherkin scenario in `specs/`, with steps in `specs/steps.agc`. A pure helper may have a
   unit test in `test/` (`*_test.agc`). Tests are hermetic: 127.0.0.1, port 0, no external services, and a step that makes
   something on disk removes it with `BDD.after`.
+- Each package has its own CHANGELOG.md; a user-visible change adds a line under its `## [Unreleased]`; a release renames
+  it to `## [X.Y.Z] - DATE` and tags `PACKAGE-X.Y.Z`.
 - Release: a tag `PACKAGE-X.Y.Z` on main, made by the owner. A PR never pushes a tag.
 - Code style is the one of `agentica-code-guidelines`; a comment says why, not what.

@@ -1,6 +1,9 @@
 ## The `actioncable-v1-json` frames of Action Cable, as pure functions: the frames a server writes are `String`s of
 ## compact JSON, and a text frame that a client wrote is read into a `Command`. No socket, task or hub is involved.
 
+## The only subprotocol that is served.
+export SUBPROTOCOL = "actioncable-v1-json"
+
 ## A bigger identifier is not read (Rails has no limit; this one bounds what a socket makes the server hold).
 export MAX_IDENTIFIER_BYTES = 4096
 
@@ -115,12 +118,17 @@ export def decode_command(text: String) -> Result[Command]
   end
 end
 
+## The parsed identifier of a subscription that `decode_command` accepted.
+export def identifier_params(identifier: String) -> Result[Json]
+  return parsed_object(identifier, "the identifier")
+end
+
 def decode_subscribe(identifier: String) -> Result[Command]
   if identifier.bytes.length > MAX_IDENTIFIER_BYTES
     return error("the identifier is longer than #{MAX_IDENTIFIER_BYTES} bytes")
   end
 
-  params = try parsed_object(identifier, "the identifier")
+  params = try identifier_params(identifier)
   # Rails finds no class for a missing channel and logs it, so a missing or odd one is "" and the hub logs it.
   channel = string_field(params, "channel").unwrap_or("")
   return ok(Command.Subscribe(Join(identifier: identifier, channel: channel, params: params)))
