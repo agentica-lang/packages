@@ -21,7 +21,7 @@ bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub,
 
 ## Commands
 
-- Agentica 0.24.4 on PATH (CI pins it with its sha256 in `ci.yml`; `AGENTICA=/path/agentica make ...` works too).
+- Agentica 0.25.0 on PATH (CI pins it with its sha256 in `ci.yml`; `AGENTICA=/path/agentica make ...` works too).
 - `make install` fetches `deps/` from each lock (git ignores `deps/`). `make check`, `make fmt-check`, `make test`
   run in each package folder; to work on one package, `cd` into it and run `agentica check`, `agentica fmt --check`
   and `agentica test`.
