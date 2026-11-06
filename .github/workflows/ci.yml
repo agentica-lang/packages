@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  AGENTICA_VERSION: 0.24.4
+  AGENTICA_SHA256: 2397e67f89f4ad5f939d0d1f9ff5b5f8dd89f31629d1af8c4a6732e03467cac6
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install the pinned Agentica release
+        run: |
+          archive="agentica-${AGENTICA_VERSION}-linux-x86_64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/agentica-lang/agentica/releases/download/${AGENTICA_VERSION}/$archive"
+          echo "${AGENTICA_SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/agentica-${AGENTICA_VERSION}-linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      # The locked packages of each folder, checked against the hashes of its agentica.lock.
+      - name: Install the packages
+        run: |
+          agentica --version
+          make install
+
+      - name: Check
+        run: make check
+
+      - name: Format
+        run: make fmt-check
+
+      # The features of specs/ (they listen on 127.0.0.1 only) and the tests of test/.
+      - name: Test
+        run: make test
