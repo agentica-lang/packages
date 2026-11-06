@@ -1,6 +1,7 @@
-## The steps of `cable.feature`. The server is the program of `fixtures/server.agc`; the peer is `fixtures/cable_peer.py`,
-## a raw-socket WebSocket client that a step drives with one JSON line per command (it keeps the connections open).
-## A step may halt on what is not the scenario's business (the peer does not answer): that fails the scenario.
+## The steps of `cable.feature`. The server is the program of `fixtures/server.agc`; the peer is
+## `fixtures/cable_peer.py`, a raw-socket WebSocket client that a step drives with one JSON line per command (it keeps
+## the connections open). A step may halt on what is not the scenario's business (the peer does not answer): that
+## fails the scenario.
 
 import BDD from "std/bdd"
 import HTTP from "std/http"
@@ -46,6 +47,8 @@ export def steps() -> List[BDD.Step]
     BDD.step("client {string} closes", &closes),
     BDD.step("client {string} drops the connection", &drops),
     BDD.step("the app broadcasts {string} to {string}", &broadcasts),
+    BDD.step("the app cannot broadcast {string} to {string}", &cannot_broadcast),
+    BDD.step("the app stops the hub", &stops_hub),
     BDD.step("{int} milliseconds pass", &waits),
     BDD.step("the stats become:", &stats_become),
   ]
@@ -211,6 +214,18 @@ def broadcasts(ctx: BDD.Context, args: List[String]) -> BDD.Context
   url = "http://127.0.0.1:#{port_of(ctx)}/say?topic=#{args[1]}&text=#{args[0]}"
   answer = HTTP.get_response(url).unwrap!
   return BDD.assert(ctx, answer.status == 200, "the broadcast was answered #{answer.status}")
+end
+
+# A broadcast to a hub that is gone is an `error`, which the HTTP handler turns into a 500.
+def cannot_broadcast(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  url = "http://127.0.0.1:#{port_of(ctx)}/say?topic=#{args[1]}&text=#{args[0]}"
+  answer = HTTP.get_response(url).unwrap!
+  return BDD.assert(ctx, answer.status == 500, "the broadcast was answered #{answer.status}, expected 500")
+end
+
+def stops_hub(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  answer = HTTP.get_response("http://127.0.0.1:#{port_of(ctx)}/stop").unwrap!
+  return BDD.assert(ctx, answer.status == 200, "the stop was answered #{answer.status}")
 end
 
 def waits(ctx: BDD.Context, args: List[String]) -> BDD.Context

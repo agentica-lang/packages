@@ -1,4 +1,5 @@
-## The steps of the features: the frames of `src/protocol.agc`, written and read as text. Nothing here opens a socket.
+## The program of the features: the steps of `protocol.feature` (the frames of `src/protocol.agc`, written and read as
+## text, with no socket) and, from `cable_steps.agc`, those of `cable.feature` (a server and a socket peer).
 
 import BDD from "std/bdd"
 import Cable from "cable_steps"

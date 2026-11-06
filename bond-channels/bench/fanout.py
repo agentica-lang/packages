@@ -68,7 +68,7 @@ async def main():
     arguments.add_argument("--payload", type=int, default=200)
     options = arguments.parse_args()
     here = os.path.dirname(os.path.abspath(__file__))
-    env = dict(os.environ, MAX_CONNECTIONS=str(options.sockets + 16), INBOX="4096")
+    env = dict(os.environ, MAX_CONNECTIONS=str(options.sockets + 16))
     server = subprocess.Popen(["agentica", os.path.join(here, "..", "specs", "fixtures", "server.agc")], env=env,
                               stdout=subprocess.PIPE, text=True)
     port = int(server.stdout.readline().split()[-1])
@@ -96,6 +96,10 @@ async def main():
         total = sum(counts)
         print("%d messages x %d sockets in %.2f s: %.0f messages/s, %.0f frames/s, errors %d" % (
             options.messages, options.sockets, elapsed, options.messages / elapsed, total / elapsed, len(errors)))
+        writer.write(b"GET /stats HTTP/1.1\r\nHost: x\r\n\r\n")
+        await writer.drain()
+        stats = (await reader.readuntil(b"}")).decode()
+        print("stats %s" % stats[stats.index("{"):])
         for task in tasks:
             task.cancel()
     finally:

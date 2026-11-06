@@ -12,17 +12,19 @@ MAX_SUBSCRIPTIONS = 64
 # A client that does not read for this long is cut off (the outgoing channel of std/http holds only 8 messages).
 WRITE_MS = 5_000
 PUMP_MS = 60_000
-RECEIVE_MS = 60_000
+# How often an idle loop looks at the hub: a hub that ended or crashed sends nothing more, so this is how its
+# connections find out.
+HUB_CHECK_MS = 2_000
 MAX_WEBSOCKET_PING_MS = 30_000
 # 1002: a protocol error, what a client that offers no `actioncable-v1-json` gets.
 NO_SUBPROTOCOL = 1_002
+# 1001: going away, what a client gets when the hub is gone.
+GOING_AWAY = 1_001
 
 ## What `mount` gives to every connection.
 export struct Mount
   hub: Hub.Hub
-  connect: Fn[Bond.Conn, Result[Types.Identity]]
-  handlers: Map[String, Types.Handler]
-  options: Types.Options
+  options: Types.MountOptions
 end
 
 # The task of the loop: everything it needs, besides its inbox, which it owns.
@@ -39,14 +41,14 @@ export def handler_of(mount: Mount) -> Bond.WebSocketHandler
   return wrapping() do |conn, socket| serve(mount, conn, socket) end
 end
 
-## Serves one WebSocket until it ends, then runs `unsubscribed` for every subscription it still holds.
-export def serve(mount: Mount, conn: Bond.Conn, socket: HTTP.WebSocket) -> Result[Void]
+# Serves one WebSocket until it ends, then runs `unsubscribed` for every subscription it still holds.
+def serve(mount: Mount, conn: Bond.Conn, socket: HTTP.WebSocket) -> Result[Void]
   # std/http picks the first protocol of the client that is in `protocols`; none means the client wants another one.
   if socket.protocol != Protocol.SUBPROTOCOL
     return write_close(socket, NO_SUBPROTOCOL, "#{Protocol.SUBPROTOCOL} is required")
   end
 
-  case mount.connect.call(conn)
+  case mount.options.connect.call(conn)
     ok(identity) -> return open(mount, socket, identity)
     error(reason) ->
       IO.warn("bond-channels: connection refused: #{reason}")
@@ -62,16 +64,29 @@ def write_close(socket: HTTP.WebSocket, code: Int, reason: String) -> Result[Voi
   return socket.outgoing.send(HTTP.Message.Close(code, reason), WRITE_MS)
 end
 
+# A hub that is gone (stopped or crashed) hears nothing: the client is told to reconnect and is closed, as when a
+# server restarts, instead of being welcomed into a connection that no broadcast could reach.
+def hub_gone(socket: HTTP.WebSocket) -> Result[Void]
+  try socket.outgoing.send(HTTP.Message.Text(Protocol.disconnect_reconnect()), WRITE_MS)
+  return write_close(socket, GOING_AWAY, "the hub is gone")
+end
+
 def open(mount: Mount, socket: HTTP.WebSocket, identity: Types.Identity) -> Result[Void]
   hub = mount.hub
+  if Hub.gone?(hub)
+    return hub_gone(socket)
+  end
+
   connection = Hub.next_connection(hub)
   subscriptions: ATS[String, String] = ATS.new()
   line = Line(mount: mount, socket: socket, connection: connection, identity: identity, subscriptions: subscriptions)
   inbox: Channel[Hub.Event] = Channel.new(mount.options.inbox)
   # Before any command is handled: the browser waits for it, and the loadgen subscribes right after the handshake.
   try socket.outgoing.send(HTTP.Message.Text(Protocol.welcome()), WRITE_MS)
-  registration = Hub.Registration(connection: connection, inbox: inbox, every: ping_every(mount.options, hub))
-  try hub.inbox.send(Hub.HubMessage.Register(registration), hub.options.broadcast_wait_ms)
+  if not Hub.register(hub, connection, inbox, ping_every(mount.options, hub)).ok?
+    return hub_gone(socket)
+  end
+
   Hub.count(hub, Hub.CONNECTIONS, 1)
   pump = Task.spawn() do pump(socket, inbox) end
   # The loop owns the inbox: it closes when the loop ends or crashes, so the hub sees "closed" and the pump stops.
@@ -84,8 +99,8 @@ def open(mount: Mount, socket: HTTP.WebSocket, identity: Types.Identity) -> Resu
 
   finish(line)
   Hub.count(hub, Hub.CONNECTIONS, -1)
-  # Best effort: a hub that is gone has nothing left to forget.
-  _ = hub.inbox.send(Hub.HubMessage.Disconnect(connection), hub.options.broadcast_wait_ms)
+  # It forgets every subscription of the connection at once. A hub that is gone has nothing left to forget.
+  _ = Hub.disconnect(hub, connection)
   return ok()
 end
 
@@ -97,12 +112,13 @@ end
 
 # The hub also pings the WebSocket, so that the pong of a quiet peer resets the idle clock of std/http: the Action
 # Cable ping is always something to write, so std/http would never ping by itself.
-def ping_every(options: Types.Options, hub: Hub.Hub) -> Int
+def ping_every(options: Types.MountOptions, hub: Hub.Hub) -> Int
   interval = MAX_WEBSOCKET_PING_MS
   if options.idle_ms > 0 and options.idle_ms / 3 < interval
     interval = options.idle_ms / 3
   end
 
+  # `start_hub` refuses a `beat_ms` under 1.
   every = interval / hub.options.beat_ms
   if every < 1
     return 1
@@ -111,13 +127,13 @@ def ping_every(options: Types.Options, hub: Hub.Hub) -> Int
   return every
 end
 
-# There is no `select`: this moves the messages of the client into the inbox, next to the frames of the hub.
+# There is no `select`: this moves the messages of the client into the inbox, next to the frames of the hub. It ends
+# when the inbox is closed (the loop is over) or the client is, never because the loop was slow for a moment.
 def pump(socket: HTTP.WebSocket, inbox: Channel[Hub.Event]) -> Result[Void]
   while true
     case socket.incoming.recv(PUMP_MS)
       ok(message) ->
-        sent = inbox.send(Hub.Event.Client(message), WRITE_MS)
-        if not sent.ok? or closing?(message)
+        if not deliver(inbox, Hub.Event.Client(message)) or closing?(message)
           return ok()
         end
 
@@ -132,6 +148,22 @@ def pump(socket: HTTP.WebSocket, inbox: Channel[Hub.Event]) -> Result[Void]
   return ok()
 end
 
+# A loop that is busy (a slow handler) holds the pump here, and so the client: the backlog stays in the socket, not
+# in memory. False when the inbox is closed.
+def deliver(inbox: Channel[Hub.Event], event: Hub.Event) -> Bool
+  while true
+    if inbox.send(event, WRITE_MS).ok?
+      return true
+    end
+
+    if inbox.closed?
+      return false
+    end
+  end
+
+  return false
+end
+
 def closing?(message: HTTP.Message) -> Bool
   case message
     HTTP.Message.Close(_, _) -> return true
@@ -144,7 +176,7 @@ end
 
 def loop(line: Line, inbox: Channel[Hub.Event]) -> Result[Void]
   while true
-    case inbox.recv(RECEIVE_MS)
+    case inbox.recv(HUB_CHECK_MS)
       ok(event) ->
         if not try handle(line, event)
           return ok()
@@ -154,6 +186,10 @@ def loop(line: Line, inbox: Channel[Hub.Event]) -> Result[Void]
         # The hub closes an inbox that is full; what was queued has been written by now. The browser reconnects.
         if inbox.closed? and inbox.empty?
           return write(line, HTTP.Message.Text(Protocol.disconnect_reconnect()))
+        end
+
+        if Hub.gone?(line.mount.hub)
+          return hub_gone(line.socket)
         end
     end
   end
@@ -227,7 +263,7 @@ def subscribe(line: Line, join: Protocol.Join) -> Result[Void]
     return ok()
   end
 
-  case line.mount.handlers.get(join.channel)
+  case line.mount.options.handlers.get(join.channel)
     none ->
       IO.warn("bond-channels: no channel #{join.channel}")
       return ok()
@@ -242,7 +278,7 @@ def subscribe_to(line: Line, handler: Types.Handler, join: Protocol.Join) -> Res
   case handler.subscribed.call(session(line), join.params)
     error(reason) ->
       IO.warn("bond-channels: subscribing to #{join.channel} failed: #{reason}")
-      return ok()
+      return refuse(line, handler, join)
     ok(decision) -> return decide(line, handler, join, decision)
   end
 end
@@ -250,11 +286,17 @@ end
 def decide(line: Line, handler: Types.Handler, join: Protocol.Join, decision: Types.Subscription) -> Result[Void]
   try transmit(line, join.identifier, decision.transmit)
   if decision.rejected or not attached?(line, join.identifier, decision.streams)
-    try forget(line, handler, join.identifier, join.params)
-    return write(line, HTTP.Message.Text(Protocol.reject_subscription(join.identifier)))
+    return refuse(line, handler, join)
   end
 
   return write(line, HTTP.Message.Text(Protocol.confirm_subscription(join.identifier)))
+end
+
+# The client is told, and the subscription is forgotten: the hub never heard of it (an attach that failed was not
+# queued), so only the table and `unsubscribed` need it.
+def refuse(line: Line, handler: Types.Handler, join: Protocol.Join) -> Result[Void]
+  try forget(line, handler, join.identifier, join.params)
+  return write(line, HTTP.Message.Text(Protocol.reject_subscription(join.identifier)))
 end
 
 # The hub queue is FIFO, so a broadcast sent after this one reaches the inbox after the confirmation is written. A
@@ -264,17 +306,14 @@ def attached?(line: Line, identifier: String, streams: List[String]) -> Bool
     return true
   end
 
-  hub = line.mount.hub
-  attach = Hub.Attach(connection: line.connection, identifier: identifier, topics: streams)
-  return hub.inbox.send(Hub.HubMessage.Subscribe(attach), hub.options.broadcast_wait_ms).ok?
+  return Hub.attach(line.mount.hub, line.connection, identifier, streams).ok?
 end
 
-# A subscription that was never confirmed: out of the table, `unsubscribed` runs, the hub forgets it.
+# A subscription that ends: out of the table, and `unsubscribed` runs. The hub is not told here: `leave` does it for a
+# client that unsubscribes, and `Disconnect` does it for the whole connection.
 def forget(line: Line, handler: Types.Handler, identifier: String, params: Json) -> Result[Void]
   line.subscriptions.delete(identifier)
-  hub = line.mount.hub
-  Hub.count(hub, Hub.SUBSCRIPTIONS, -1)
-  _ = hub.inbox.send(Hub.HubMessage.Unsubscribe(Hub.Detach(connection: line.connection, identifier: identifier)), 0)
+  Hub.count(line.mount.hub, Hub.SUBSCRIPTIONS, -1)
   case handler.unsubscribed.call(session(line), params)
     error(reason) -> IO.warn("bond-channels: unsubscribed failed: #{reason}")
     ok(_) -> return ok()
@@ -290,12 +329,21 @@ def unsubscribe(line: Line, identifier: String) -> Result[Void]
     return ok()
   end
 
-  return leave(line, channel.unwrap!, identifier)
+  # It waits for room in the hub inbox as `attached?` does: a lost message would leave the hub routing the broadcasts
+  # of this identifier to the connection. Nothing more can be done for a hub that does not answer: `Disconnect` settles
+  # it when the connection ends.
+  detached = Hub.detach(line.mount.hub, line.connection, identifier)
+  if not detached.ok?
+    IO.warn("bond-channels: the hub did not take the unsubscribe of #{identifier}: #{detached.message}")
+  end
+
+  return release(line, channel.unwrap!, identifier)
 end
 
-def leave(line: Line, channel: String, identifier: String) -> Result[Void]
+# `unsubscribed` for a subscription that is in the table, and out of it.
+def release(line: Line, channel: String, identifier: String) -> Result[Void]
   params = try Protocol.identifier_params(identifier)
-  case line.mount.handlers.get(channel)
+  case line.mount.options.handlers.get(channel)
     none -> return ok()
     some(handler) -> return forget(line, handler, identifier, params)
   end
@@ -309,7 +357,7 @@ def perform(line: Line, action: Protocol.Action) -> Result[Void]
   end
 
   params = try Protocol.identifier_params(action.identifier)
-  case line.mount.handlers.get(channel.unwrap!)
+  case line.mount.options.handlers.get(channel.unwrap!)
     none -> return ok()
     some(handler) ->
       case handler.perform.call(session(line), params, action.name, action.data)
@@ -322,10 +370,12 @@ def perform(line: Line, action: Protocol.Action) -> Result[Void]
 end
 
 # On every exit (a close, a drop, a crash of the loop): `unsubscribed` for each subscription, each in a task of its own
-# so that a crash of one handler does not stop the others. Presence depends on it.
+# so that a crash of one handler does not stop the others. Presence depends on it. The hub is not told per
+# subscription: `Disconnect`, which follows, removes all the keys of the connection.
 def finish(line: Line) -> Void
   for identifier in line.subscriptions.keys
-    outcome = Task.await(Task.spawn() do leave(line, line.subscriptions.get(identifier).unwrap_or(""), identifier) end)
+    channel = line.subscriptions.get(identifier).unwrap_or("")
+    outcome = Task.await(Task.spawn() do release(line, channel, identifier) end)
     if not outcome.ok?
       IO.warn("bond-channels: leaving #{identifier} failed: #{outcome.message}")
     end

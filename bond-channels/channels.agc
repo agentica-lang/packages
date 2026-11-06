@@ -1,10 +1,12 @@
 ## Action Cable for a Bond app: one WebSocket per tab at `/cable`, channels, and a pub/sub hub.
 ##
 ## ```ruby
+## import Bond from "pkg/bond/bond"
 ## import Channels from "pkg/bond-channels/channels"
 ##
-## hub = Channels.start_hub()
-## app = Channels.mount(Bond.app(), "/cable", hub, &connect, {"RoomChannel": Channels.handler(&subscribed)})
+## hub = Channels.start_hub().unwrap!
+## options = Channels.MountOptions(connect: &connect, handlers: {"RoomChannel": Channels.handler(&subscribed)})
+## app = Channels.mount(Bond.app(), "/cable", hub, options).unwrap!
 ## Channels.broadcast_text(hub, "room:1", "<turbo-stream>...</turbo-stream>")
 ## ```
 ##
@@ -12,6 +14,9 @@
 ## handshake makes the Rails client retry in a loop, so an app with a global sign-in filter exempts the path. A
 ## WebSocket holds one of the `max_connections` of the Bond server for its whole life: set it above the clients and
 ## the posters.
+##
+## When the hub ends (`stop_hub`) or crashes, its connections are told to reconnect and are closed, and a new one is
+## refused the same way.
 
 import Bond from "pkg/bond/bond"
 import HTTP from "std/http"
@@ -22,19 +27,20 @@ import Types from "src/types"
 
 export Types.Handler
 export Types.Identity
-export Types.Options
+export Types.HubOptions
+export Types.MountOptions
 export Types.Session
 export Types.Stats
 export Types.Subscription
 export Hubs.Hub
 
-## Starts the hub: its task (which `main` awaits with `Task.await(hub.task)`) and the ticker. `options.broadcast_wait_ms`
-## and `options.beat_ms` are the ones read here.
-export def start_hub(options: Types.Options = Types.Options()) -> Hubs.Hub
+## Starts the hub: its task (which `main` awaits with `Task.await(hub.task)`) and the ticker. An `error` for a
+## `beat_ms` under 1 or a negative `broadcast_wait_ms`.
+export def start_hub(options: Types.HubOptions = Types.HubOptions()) -> Result[Hubs.Hub]
   return Hubs.start(options)
 end
 
-## Ends the hub. Every broadcast after it fails with "closed".
+## Ends the hub. Every broadcast after it fails with "closed", and its connections are told to reconnect and closed.
 export def stop_hub(hub: Hubs.Hub) -> Result[Void]
   return Hubs.stop(hub)
 end
@@ -60,19 +66,14 @@ export def stats(hub: Hubs.Hub) -> Types.Stats
   return Hubs.stats(hub)
 end
 
-## Adds the cable WebSocket at `path` (`"/cable"` for the clients that expect it). `connect` gives the identity of the
-## person from the handshake (its cookies), or an `error` that is answered with an `unauthorized` disconnect.
-## `handlers` maps the channel names of the client to their functions. An origin is checked as in `Bond.websocket`.
-export def mount(
-  app: Bond.App,
-  path: String,
-  hub: Hubs.Hub,
-  connect: Fn[Bond.Conn, Result[Types.Identity]],
-  handlers: Map[String, Types.Handler],
-  allowed_origins: List[String] = [],
-  options: Types.Options = Types.Options(),
-) -> Bond.App
-  context = Connection.Mount(hub: hub, connect: connect, handlers: handlers, options: options)
+## Adds the cable WebSocket at `path` (`"/cable"` for the clients that expect it); `options.connect` and
+## `options.handlers` are described at `MountOptions`. An origin is checked as in `Bond.websocket`. An `error` for
+## options that cannot work: an `inbox` under 1, a negative `idle_ms` or `max_message_bytes` under 1, or an `idle_ms`
+## that is not more than the `beat_ms` of the hub (the WebSocket ping that keeps a quiet client could never come in
+## time).
+export def mount(app: Bond.App, path: String, hub: Hubs.Hub, options: Types.MountOptions) -> Result[Bond.App]
+  try checked(hub, options)
+  context = Connection.Mount(hub: hub, options: options)
   serving = Connection.handler_of(context)
   websocket = HTTP.WebSocketOptions(
     max_message_bytes: options.max_message_bytes,
@@ -80,7 +81,27 @@ export def mount(
     protocols: [Protocol.SUBPROTOCOL],
   )
 
-  return Bond.websocket(app, path, serving, allowed_origins, some(websocket))
+  return ok(Bond.websocket(app, path, serving, options.allowed_origins, some(websocket)))
+end
+
+def checked(hub: Hubs.Hub, options: Types.MountOptions) -> Result[Void]
+  if options.inbox < 1
+    return error("inbox must be 1 or more, it is #{options.inbox}")
+  end
+
+  if options.max_message_bytes < 1
+    return error("max_message_bytes must be 1 or more, it is #{options.max_message_bytes}")
+  end
+
+  if options.idle_ms < 0
+    return error("idle_ms must be 0 (no limit) or more, it is #{options.idle_ms}")
+  end
+
+  if options.idle_ms > 0 and options.idle_ms <= hub.options.beat_ms
+    return error("idle_ms (#{options.idle_ms}) must be more than the beat_ms of the hub (#{hub.options.beat_ms})")
+  end
+
+  return ok()
 end
 
 def nothing_to_leave(session: Types.Session, params: Json) -> Result[Void]

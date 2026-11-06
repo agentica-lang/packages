@@ -1,52 +1,56 @@
 ## The hub: one task that owns the map of topics to subscribers, so that no lock is needed whatever the number of
-## schedulers. Everything else talks to it over its inbox, in FIFO order. A connection is a `Channel[Event]`.
+## schedulers. Everything else talks to it over its inbox, in FIFO order, through the functions of this module (the
+## messages are private). A connection is a `Channel[Event]`.
 
 import HTTP from "std/http"
 import Protocol from "protocol"
-import {Options, Stats} from "types"
+import {HubOptions, Stats} from "types"
 
 export CONNECTIONS = "connections"
 export SUBSCRIPTIONS = "subscriptions"
 DROPS = "drops"
 LOST = "lost"
 NEXT_CONNECTION = "next_connection"
+# 1 while a `Beat` is queued and the hub has not taken it: the ticker sends one only when none is pending.
+BEAT_PENDING = "beat_pending"
 HUB_INBOX = 4_096
 # The hub task wakes up at least this often only to look again at its inbox.
 IDLE_MS = 60_000
 
-## What a connection task receives: a frame to write, a message of the client (from the pump), a WebSocket ping to write.
+## What a connection task receives: a frame to write, a message of the client (from the pump), a WebSocket ping to
+## write.
 export enum Event
   Frame(String)
   Client(HTTP.Message)
   Ping
 end
 
-## A connection that joins the hub; it gets a WebSocket ping every `every` beats.
-export struct Registration
+# A connection that joins the hub; it gets a WebSocket ping every `every` beats.
+struct Registration
   connection: Int
   inbox: Channel[Event]
   every: Int
 end
 
-## The topics whose broadcasts a subscription of a connection receives.
-export struct Attach
+# The topics whose broadcasts a subscription of a connection receives.
+struct Attach
   connection: Int
   identifier: String
   topics: List[String]
 end
 
-export struct Detach
+struct Detach
   connection: Int
   identifier: String
 end
 
-## `payload` is the JSON text of the payload, made once by the sender.
-export struct Cast
+# `payload` is the JSON text of the payload, made once by the sender.
+struct Cast
   topic: String
   payload: String
 end
 
-export enum HubMessage
+enum HubMessage
   Register(Registration)
   Subscribe(Attach)
   Unsubscribe(Detach)
@@ -61,7 +65,7 @@ export struct Hub
   inbox: Channel[HubMessage]
   task: Task[Result[Void]]
   counters: ATS[String, Int]
-  options: Options
+  options: HubOptions
 end
 
 type Group = Map[Int, Channel[Event]]
@@ -88,6 +92,7 @@ end
 
 struct Ticker
   inbox: Channel[HubMessage]
+  counters: ATS[String, Int]
   beat_ms: Int
 end
 
@@ -96,29 +101,65 @@ struct Launch
   counters: ATS[String, Int]
 end
 
-## Starts the hub task and its ticker. The inbox belongs to the hub task, so when the hub ends or crashes every send
-## fails at once with "closed" instead of waiting for room.
-export def start(options: Options) -> Hub
+## Starts the hub task and its ticker; an `error` for options that cannot work (`beat_ms` under 1 would divide the
+## ping interval by zero, a negative `broadcast_wait_ms` is no wait). The inbox belongs to the hub task, so when the
+## hub ends or crashes every send fails at once with "closed" instead of waiting for room.
+export def start(options: HubOptions) -> Result[Hub]
+  if options.beat_ms < 1
+    return error("beat_ms must be 1 or more, it is #{options.beat_ms}")
+  end
+
+  if options.broadcast_wait_ms < 0
+    return error("broadcast_wait_ms must be 0 or more, it is #{options.broadcast_wait_ms}")
+  end
+
   inbox: Channel[HubMessage] = Channel.new(HUB_INBOX)
   counters: ATS[String, Int] = ATS.new()
   task = Task.spawn_owning(&run, Launch(inbox: inbox, counters: counters))
-  _ = Task.spawn(&ticking, Ticker(inbox: inbox, beat_ms: options.beat_ms))
-  return Hub(inbox: inbox, task: task, counters: counters, options: options)
+  _ = Task.spawn(&ticking, Ticker(inbox: inbox, counters: counters, beat_ms: options.beat_ms))
+  return ok(Hub(inbox: inbox, task: task, counters: counters, options: options))
 end
 
 ## Asks the hub to end; its task returns and later sends fail.
 export def stop(hub: Hub) -> Result[Void]
-  return hub.inbox.send(HubMessage.Stop, hub.options.broadcast_wait_ms)
+  return send(hub, HubMessage.Stop)
+end
+
+## True once the hub has ended or crashed: its inbox is closed, so nothing sent to it is ever heard.
+export def gone?(hub: Hub) -> Bool
+  return hub.inbox.closed?
 end
 
 ## Queues a broadcast of an encoded payload; a failure is counted as lost.
 export def broadcast(hub: Hub, topic: String, payload: String) -> Result[Void]
-  sent = hub.inbox.send(HubMessage.Broadcast(Cast(topic: topic, payload: payload)), hub.options.broadcast_wait_ms)
+  sent = send(hub, HubMessage.Broadcast(Cast(topic: topic, payload: payload)))
   if not sent.ok?
     _ = hub.counters.add(LOST, 1)
   end
 
   return sent
+end
+
+## A connection joins: it gets the frames and pings sent to `inbox`, and a WebSocket ping every `every` beats.
+export def register(hub: Hub, connection: Int, inbox: Channel[Event], every: Int) -> Result[Void]
+  return send(hub, HubMessage.Register(Registration(connection: connection, inbox: inbox, every: every)))
+end
+
+## The broadcasts of `topics` reach the subscription `identifier` of the connection. Hub messages are FIFO, so a
+## broadcast queued after this call reaches the inbox of the connection after what the connection wrote before it.
+export def attach(hub: Hub, connection: Int, identifier: String, topics: List[String]) -> Result[Void]
+  return send(hub, HubMessage.Subscribe(Attach(connection: connection, identifier: identifier, topics: topics)))
+end
+
+## The subscription `identifier` of the connection hears no more broadcasts. A failure is a hub that keeps routing to
+## it until the connection ends (which `disconnect` settles).
+export def detach(hub: Hub, connection: Int, identifier: String) -> Result[Void]
+  return send(hub, HubMessage.Unsubscribe(Detach(connection: connection, identifier: identifier)))
+end
+
+## The connection ends: the hub forgets all its subscriptions at once.
+export def disconnect(hub: Hub, connection: Int) -> Result[Void]
+  return send(hub, HubMessage.Disconnect(connection))
 end
 
 ## Adds `delta` to a counter of `stats` (the connections do their own counting).
@@ -140,18 +181,34 @@ export def stats(hub: Hub) -> Stats
   )
 end
 
+# Every send of a caller waits as long as a broadcast does: a hub inbox that is full is the normal back-pressure, and
+# a message that is lost (an unsubscribe, a disconnect) leaves the hub routing to a connection that is gone.
+def send(hub: Hub, message: HubMessage) -> Result[Void]
+  return hub.inbox.send(message, hub.options.broadcast_wait_ms)
+end
+
 def counted(hub: Hub, name: String) -> Int
   return hub.counters.get(name).unwrap_or(0)
 end
 
-# A tick in the inbox keeps its place among the broadcasts, and a receive timeout would never fire while the inbox
-# stays busy: the Rails client calls a connection stale after 6 s without a ping.
+# A beat in the inbox keeps its place among the broadcasts, and a receive timeout would never fire while the inbox
+# stays busy: the Rails client calls a connection stale after 6 s without a ping. Only a closed inbox (the hub is
+# gone) ends the ticker: a send that times out on a full inbox is a busy hub, and the next beat must still come. A
+# beat that is already queued is not sent again, so a hub that was busy does not find a burst of them when it
+# catches up.
 def ticking(ticker: Ticker) -> Result[Void]
   while true
     Task.sleep(ticker.beat_ms)
-    sent = ticker.inbox.send(HubMessage.Beat, ticker.beat_ms)
-    if not sent.ok?
+    if ticker.inbox.closed?
       return ok()
+    end
+
+    if ticker.counters.get(BEAT_PENDING).unwrap_or(0) == 0
+      ticker.counters.put(BEAT_PENDING, 1)
+      sent = ticker.inbox.send(HubMessage.Beat, ticker.beat_ms)
+      if not sent.ok?
+        ticker.counters.put(BEAT_PENDING, 0)
+      end
     end
   end
 
@@ -193,7 +250,7 @@ end
 
 def step(state: State, message: HubMessage, counters: ATS[String, Int]) -> State
   case message
-    HubMessage.Register(registration) -> return register(state, registration)
+    HubMessage.Register(registration) -> return admit(state, registration)
     HubMessage.Subscribe(attach) -> return subscribe(state, attach)
     HubMessage.Unsubscribe(detach) -> return unsubscribe(state, detach.connection, detach.identifier)
     HubMessage.Disconnect(connection) -> return remove_connection(state, connection)
@@ -203,7 +260,7 @@ def step(state: State, message: HubMessage, counters: ATS[String, Int]) -> State
   end
 end
 
-def register(state: State, registration: Registration) -> State
+def admit(state: State, registration: Registration) -> State
   keys: List[Key] = []
   entry = Entry(inbox: registration.inbox, every: registration.every, keys: keys)
   return state.with(entries: state.entries.put(registration.connection, entry))
@@ -327,6 +384,7 @@ end
 
 # The Action Cable ping goes to every connection, and the WebSocket ping to those whose turn it is.
 def beat(state: State, counters: ATS[String, Int]) -> State
+  counters.put(BEAT_PENDING, 0)
   beats = state.beats + 1
   ping = Event.Frame(Protocol.ping(Time.now_ms() / 1000))
   gone: List[Int] = []

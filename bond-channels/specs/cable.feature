@@ -222,7 +222,7 @@ Feature: The cable
     And client "slow" subscribes to the room "1"
     And client "slow" eventually receives a frame containing "confirm_subscription"
     And client "slow" performs "slow" in the room "1"
-    And 200 milliseconds pass
+    And client "watch" eventually receives a frame containing "{\"started\":\"slow\"}"
     And the app broadcasts "m1" to "room:1"
     And the app broadcasts "m2" to "room:1"
     And the app broadcasts "m3" to "room:1"
@@ -278,9 +278,62 @@ Feature: The cable
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "quiet" subscribes to the room "1"
     Then client "quiet" eventually receives a frame containing "{\"type\":\"ping\",\"message\":"
-    When 3500 milliseconds pass
+    When 2000 milliseconds pass
     And client "quiet" performs "refresh" in the room "1"
     Then client "quiet" eventually receives a frame containing "\"message\":{\"action\":\"refresh\"}"
+
+  Scenario: A subscription whose `subscribed` fails is rejected and forgotten
+    Given the cable server listens on a free port
+    When client "ana" connects with:
+      | header | value                                        |
+      | Cookie | user=ana                                     |
+      | Sec-WebSocket-Protocol | actioncable-v1-json |
+    And client "ana" sends:
+      """
+      {"command":"subscribe","identifier":"{\"channel\":\"FailingChannel\"}"}
+      """
+    Then client "ana" eventually receives a frame containing "reject_subscription"
+    And the stats become:
+      """
+      {"connections":1,"subscriptions":0,"drops":0,"lost":0}
+      """
+
+  Scenario: A hub that is stopped tells its connections to reconnect, and refuses new ones
+    Given the cable server listens on a free port
+    When client "ana" connects with:
+      | header | value                                        |
+      | Cookie | user=ana                                     |
+      | Sec-WebSocket-Protocol | actioncable-v1-json |
+    And client "ana" sends:
+      """
+      {"command":"subscribe","identifier":"{\"channel\":\"WatchChannel\"}"}
+      """
+    Then client "ana" eventually receives a frame containing "confirm_subscription"
+    When the app stops the hub
+    Then client "ana" eventually receives a frame containing "{\"type\":\"disconnect\",\"reason\":null,\"reconnect\":true}"
+    And client "ana" is closed by the server with the code 1001
+    When client "late" connects with:
+      | header | value                                        |
+      | Cookie | user=late                                    |
+      | Sec-WebSocket-Protocol | actioncable-v1-json |
+    Then client "late" receives:
+      """
+      {"type":"disconnect","reason":null,"reconnect":true}
+      """
+    And client "late" is closed by the server with the code 1001
+    And the stats become:
+      """
+      {"connections":0,"subscriptions":0,"drops":0,"lost":0}
+      """
+
+  Scenario: A broadcast that the hub cannot take is an error, and counted as lost
+    Given the cable server listens on a free port
+    When the app stops the hub
+    And the app cannot broadcast "late" to "room:1"
+    Then the stats become:
+      """
+      {"connections":0,"subscriptions":0,"drops":0,"lost":1}
+      """
 
   Scenario: A client frame over max_message_bytes closes the connection with 1009
     Given the environment variable "MAX_MESSAGE_BYTES" is "1000"
