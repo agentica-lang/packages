@@ -206,6 +206,7 @@ Feature: The cable
 
   Scenario: A client that cannot keep up is dropped by the hub, and `unsubscribed` still runs
     Given the environment variable "INBOX" is "2"
+    And the environment variable "SLOW_MS" is "500"
     And the cable server listens on a free port
     When client "slow" connects with:
       | header | value                                        |
@@ -270,7 +271,7 @@ Feature: The cable
 
   Scenario: A quiet client stays connected past idle_ms, because the hub pings the WebSocket
     Given the environment variable "BEAT_MS" is "100"
-    And the environment variable "IDLE_MS" is "1500"
+    And the environment variable "IDLE_MS" is "600"
     And the cable server listens on a free port
     When client "quiet" connects with:
       | header | value                                        |
@@ -278,7 +279,7 @@ Feature: The cable
       | Sec-WebSocket-Protocol | actioncable-v1-json |
     And client "quiet" subscribes to the room "1"
     Then client "quiet" eventually receives a frame containing "{\"type\":\"ping\",\"message\":"
-    When 2000 milliseconds pass
+    When 1000 milliseconds pass
     And client "quiet" performs "refresh" in the room "1"
     Then client "quiet" eventually receives a frame containing "\"message\":{\"action\":\"refresh\"}"
 

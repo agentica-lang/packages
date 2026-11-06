@@ -1,6 +1,6 @@
 ## The program of `cable.feature`: a Bond app with the cable at `/cable` on 127.0.0.1 and a free port, which it says on
 ## its first line. The settings come from the environment (`BEAT_MS`, `IDLE_MS`, `INBOX`, `MAX_MESSAGE_BYTES`,
-## `MAX_CONNECTIONS`).
+## `MAX_CONNECTIONS`, `SLOW_MS`: how long the `slow` action holds its connection).
 ##
 ## `connect` takes the person from the cookie `user`. `RoomChannel` streams `room:ROOM` (its `room` param), and the
 ## actions of its clients are `say` (a broadcast to the room), `slow` (a handler that announces itself on `left`, then
@@ -17,7 +17,7 @@ import Channels from "../../channels"
 
 DEFAULT_BEAT_MS = 3_000
 DEFAULT_IDLE_MS = 120_000
-SLOW_MS = 1_500
+DEFAULT_SLOW_MS = 1_500
 DEFAULT_MAX_CONNECTIONS = 256
 
 struct Notice
@@ -81,7 +81,7 @@ def room_acted(
     "slow" ->
       # The announcement tells a step that this handler is running, so that it needs no fixed wait.
       try Channels.broadcast_json(hub, "left", JSON.from(Started(started: session.identity.id)))
-      Task.sleep(SLOW_MS)
+      Task.sleep(setting("SLOW_MS", DEFAULT_SLOW_MS))
       return ok([])
     "crash" -> return ok([JSON.from(1 / (action.length - 5))])
     _ -> return ok([JSON.from({"action": JSON.from(action)})])
