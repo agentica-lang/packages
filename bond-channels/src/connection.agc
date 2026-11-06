@@ -20,6 +20,7 @@ MAX_WEBSOCKET_PING_MS = 30_000
 NO_SUBPROTOCOL = 1_002
 # 1001: going away, what a client gets when the hub is gone.
 GOING_AWAY = 1_001
+TRY_LATER = 1_013
 
 ## What `mount` gives to every connection.
 export struct Mount
@@ -67,8 +68,18 @@ end
 # A hub that is gone (stopped or crashed) hears nothing: the client is told to reconnect and is closed, as when a
 # server restarts, instead of being welcomed into a connection that no broadcast could reach.
 def hub_gone(socket: HTTP.WebSocket) -> Result[Void]
+  return send_away(socket, GOING_AWAY, "the hub is gone")
+end
+
+# 1013: try again later. The hub is there but its inbox stayed full for `broadcast_wait_ms`: the client reconnects too.
+def hub_busy(socket: HTTP.WebSocket) -> Result[Void]
+  IO.warn("bond-channels: the hub inbox is full, a connection was refused")
+  return send_away(socket, TRY_LATER, "the hub is busy")
+end
+
+def send_away(socket: HTTP.WebSocket, code: Int, reason: String) -> Result[Void]
   try socket.outgoing.send(HTTP.Message.Text(Protocol.disconnect_reconnect()), WRITE_MS)
-  return write_close(socket, GOING_AWAY, "the hub is gone")
+  return write_close(socket, code, reason)
 end
 
 def open(mount: Mount, socket: HTTP.WebSocket, identity: Types.Identity) -> Result[Void]
@@ -84,7 +95,11 @@ def open(mount: Mount, socket: HTTP.WebSocket, identity: Types.Identity) -> Resu
   # Before any command is handled: the browser waits for it, and the loadgen subscribes right after the handshake.
   try socket.outgoing.send(HTTP.Message.Text(Protocol.welcome()), WRITE_MS)
   if not Hub.register(hub, connection, inbox, ping_every(mount.options, hub)).ok?
-    return hub_gone(socket)
+    if Hub.gone?(hub)
+      return hub_gone(socket)
+    end
+
+    return hub_busy(socket)
   end
 
   Hub.count(hub, Hub.CONNECTIONS, 1)

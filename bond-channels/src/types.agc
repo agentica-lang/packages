@@ -31,8 +31,9 @@ end
 ## `error` of `subscribed` also rejects the subscription).
 ##
 ## Every function runs on the loop task of its connection, the one that writes the frames of that client: a slow
-## `perform` (a database call, a lock) stalls the writes to that client, and past 5 s of stall the client is dropped.
-## Do the slow work in a task of its own and answer with a broadcast.
+## `perform` (a database call, a lock) stalls the writes to that client: its frames queue in its inbox, and the hub
+## drops the client when `MountOptions.inbox` frames are waiting. Do the slow work in a task of its own and answer with
+## a broadcast.
 export struct Handler
   subscribed: Fn[Session, Json, Result[Subscription]]
   unsubscribed: Fn[Session, Json, Result[Void]]
