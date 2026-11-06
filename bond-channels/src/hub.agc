@@ -13,6 +13,9 @@ LOST = "lost"
 NEXT_CONNECTION = "next_connection"
 # 1 while a `Beat` is queued and the hub has not taken it: the ticker sends one only when none is pending.
 BEAT_PENDING = "beat_pending"
+# `away:CONNECTION` holds 1 or 0 while `Channels.disconnect` ended that connection: the `reconnect` it asked for, for a
+# connection whose inbox was too full to take the `Away` event.
+AWAY_PREFIX = "away:"
 HUB_INBOX = 4_096
 # The hub task wakes up at least this often only to look again at its inbox.
 IDLE_MS = 60_000
@@ -184,10 +187,23 @@ export def disconnect(hub: Hub, connection: Int) -> Result[Void]
 end
 
 ## Ends every connection whose identity is `identity`: each is sent `Event.Away(reconnect)`, and the hub stops routing
-## to it at once, so a broadcast queued after this call is not delivered to it. A failure is a hub that did not take
-## the message (full for `broadcast_wait_ms`, or gone).
+## to it at once, so a broadcast queued after this call is not delivered to it. A connection whose inbox is full has it
+## closed instead, and finds the reason with `away_reason`. A connection that registers after this message was handled
+## is not ended (the hub processes its inbox in order: a `Register` queued before it is). A failure is a hub that did
+## not take the message (full for `broadcast_wait_ms`, or gone).
 export def remove(hub: Hub, identity: String, reconnect: Bool) -> Result[Void]
   return send(hub, HubMessage.Remove(Removal(identity: identity, reconnect: reconnect)))
+end
+
+## What `remove` asked of the connection: `some(reconnect)` once it did, `none` before. A connection whose inbox is
+## closed reads it, to tell a connection that was ended on purpose from one that was dropped.
+export def away_reason(hub: Hub, connection: Int) -> Optional[Bool]
+  asked = hub.counters.get(away_key(connection))
+  if not asked.ok?
+    return none
+  end
+
+  return some(asked.unwrap! == 1)
 end
 
 ## Adds `delta` to a counter of `stats` (the connections do their own counting).
@@ -213,6 +229,10 @@ end
 # a message that is lost (an unsubscribe, a disconnect) leaves the hub routing to a connection that is gone.
 def send(hub: Hub, message: HubMessage) -> Result[Void]
   return hub.inbox.send(message, hub.options.broadcast_wait_ms)
+end
+
+def away_key(connection: Int) -> String
+  return "#{AWAY_PREFIX}#{connection}"
 end
 
 def counted(hub: Hub, name: String) -> Int
@@ -281,7 +301,9 @@ def step(state: State, message: HubMessage, counters: ATS[String, Int]) -> State
     HubMessage.Register(registration) -> return admit(state, registration)
     HubMessage.Subscribe(attach) -> return subscribe(state, attach)
     HubMessage.Unsubscribe(detach) -> return unsubscribe(state, detach.connection, detach.identifier)
-    HubMessage.Disconnect(connection) -> return remove_connection(state, connection)
+    HubMessage.Disconnect(connection) ->
+      counters.delete(away_key(connection))
+      return remove_connection(state, connection)
     HubMessage.Remove(removal) -> return remove_identity(state, removal, counters)
     HubMessage.Broadcast(cast) -> return fan_out(state, cast, counters)
     HubMessage.Beat -> return beat(state, counters)
@@ -340,16 +362,27 @@ def remove_connection(state: State, connection: Int) -> State
   end
 end
 
-# The connection is told and forgotten here, not when its loop ends: the loop writes `Away` and stops, and a
-# frame queued
-# before it still goes out, but none queued after. A full inbox is a connection that is closed by `leaves?` (the client
-# is told to reconnect, and `connect` decides again whether it may).
+# The connection is told and forgotten here, not when its loop ends: the loop writes `Away` and stops, and a frame
+# queued before it still goes out, but none queued after. The reason is also left in a slot of the counters, before
+# the event is sent: a connection whose inbox is full cannot take `Away`, so the hub closes the inbox (no drop is
+# counted: nothing was too slow) and the loop, which finds it closed, reads the slot and says what was asked. The slot
+# goes with the `Disconnect` that the connection sends when it ends.
 def remove_identity(state: State, removal: Removal, counters: ATS[String, Int]) -> State
   gone: List[Int] = []
+  asked = 0
+  if removal.reconnect
+    asked = 1
+  end
+
   for connection in state.entries.keys
     entry = state.entries[connection]
     if entry.identity == removal.identity
-      _ = leaves?(counters, entry.inbox, Event.Away(removal.reconnect))
+      counters.put(away_key(connection), asked)
+      sent = entry.inbox.send(Event.Away(removal.reconnect), 0)
+      if not sent.ok? and not entry.inbox.closed?
+        entry.inbox.close
+      end
+
       gone = gone.push(connection)
     end
   end

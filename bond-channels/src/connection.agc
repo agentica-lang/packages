@@ -202,7 +202,7 @@ def loop(line: Line, inbox: Channel[Hub.Event]) -> Result[Void]
       error(_) ->
         # The hub closes an inbox that is full; what was queued has been written by now. The browser reconnects.
         if inbox.closed? and inbox.empty?
-          return write(line, HTTP.Message.Text(Protocol.disconnect_reconnect()))
+          return closed_inbox(line)
         end
 
         if Hub.gone?(line.mount.hub)
@@ -212,6 +212,17 @@ def loop(line: Line, inbox: Channel[Hub.Event]) -> Result[Void]
   end
 
   return ok()
+end
+
+# The hub closed the inbox: because it was full, or because `Channels.disconnect` found it full and left the reason in
+# the hub, which is what the client is told (a drop never has one, and is told to reconnect).
+def closed_inbox(line: Line) -> Result[Void]
+  case Hub.away_reason(line.mount.hub, line.connection)
+    some(reconnect) ->
+      try away(line, reconnect)
+      return ok()
+    none -> return write(line, HTTP.Message.Text(Protocol.disconnect_reconnect()))
+  end
 end
 
 # False when the connection is over.
@@ -228,7 +239,8 @@ def handle(line: Line, event: Hub.Event) -> Result[Bool]
   end
 end
 
-# `Channels.disconnect`: the frame that says whether to come back, then the close; the loop ends.
+# `Channels.disconnect`: the frame that says whether to come back, then the close; the loop ends. What the client sent
+# before and is still queued in the inbox ahead of `Away` runs first, as it would have.
 def away(line: Line, reconnect: Bool) -> Result[Bool]
   try write(line, HTTP.Message.Text(Protocol.disconnect_remote(reconnect)))
   try write(line, HTTP.Message.Close(NORMAL_CLOSE, "disconnected"))

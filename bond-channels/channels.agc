@@ -52,7 +52,8 @@ end
 ## `unsubscribed` for its subscriptions. Use it when a person loses a right that `connect` or `subscribed` checked once:
 ## a sign-out, a deactivation, a removal from a room. With `reconnect` false the client does not come back; with true
 ## it reconnects, and `connect` and `subscribed` decide again. A broadcast queued after the call is not delivered to
-## those connections. An `error` is a hub that did not take the request in `broadcast_wait_ms` or is gone (a gone hub
+## those connections, and what a client sent before it and is still queued runs first. A connection that registers
+## after the hub handled the call is not ended (one that registered before is, as the hub works in order). An `error` is a hub that did not take the request in `broadcast_wait_ms` or is gone (a gone hub
 ## has no connection left to end).
 export def disconnect(hub: Hubs.Hub, identity: String, reconnect: Bool) -> Result[Void]
   return Hubs.remove(hub, identity, reconnect)
