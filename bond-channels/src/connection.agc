@@ -18,6 +18,8 @@ HUB_CHECK_MS = 2_000
 MAX_WEBSOCKET_PING_MS = 30_000
 # 1002: a protocol error, what a client that offers no `actioncable-v1-json` gets.
 NO_SUBPROTOCOL = 1_002
+# 1000: a normal close, what a connection that `Channels.disconnect` ended gets.
+NORMAL_CLOSE = 1_000
 # 1001: going away, what a client gets when the hub is gone.
 GOING_AWAY = 1_001
 TRY_LATER = 1_013
@@ -94,7 +96,7 @@ def open(mount: Mount, socket: HTTP.WebSocket, identity: Types.Identity) -> Resu
   inbox: Channel[Hub.Event] = Channel.new(mount.options.inbox)
   # Before any command is handled: the browser waits for it, and the loadgen subscribes right after the handshake.
   try socket.outgoing.send(HTTP.Message.Text(Protocol.welcome()), WRITE_MS)
-  if not Hub.register(hub, connection, inbox, ping_every(mount.options, hub)).ok?
+  if not Hub.register(hub, connection, identity.id, inbox, ping_every(mount.options, hub)).ok?
     if Hub.gone?(hub)
       return hub_gone(socket)
     end
@@ -222,7 +224,15 @@ def handle(line: Line, event: Hub.Event) -> Result[Bool]
       try write(line, HTTP.Message.Ping("".bytes))
       return ok(true)
     Hub.Event.Client(message) -> return client(line, message)
+    Hub.Event.Away(reconnect) -> return away(line, reconnect)
   end
+end
+
+# `Channels.disconnect`: the frame that says whether to come back, then the close; the loop ends.
+def away(line: Line, reconnect: Bool) -> Result[Bool]
+  try write(line, HTTP.Message.Text(Protocol.disconnect_remote(reconnect)))
+  try write(line, HTTP.Message.Close(NORMAL_CLOSE, "disconnected"))
+  return ok(false)
 end
 
 def client(line: Line, message: HTTP.Message) -> Result[Bool]

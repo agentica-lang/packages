@@ -47,6 +47,17 @@ export def stop_hub(hub: Hubs.Hub) -> Result[Void]
   return Hubs.stop(hub)
 end
 
+## Ends every connection of the person whose `Identity.id` is `identity`, as `remote_connections.where(...).disconnect`
+## of Rails does: each gets `{"type":"disconnect","reason":"remote","reconnect":RECONNECT}` and is closed, running
+## `unsubscribed` for its subscriptions. Use it when a person loses a right that `connect` or `subscribed` checked once:
+## a sign-out, a deactivation, a removal from a room. With `reconnect` false the client does not come back; with true
+## it reconnects, and `connect` and `subscribed` decide again. A broadcast queued after the call is not delivered to
+## those connections. An `error` is a hub that did not take the request in `broadcast_wait_ms` or is gone (a gone hub
+## has no connection left to end).
+export def disconnect(hub: Hubs.Hub, identity: String, reconnect: Bool) -> Result[Void]
+  return Hubs.remove(hub, identity, reconnect)
+end
+
 ## A handler of a channel that has no `unsubscribed` and takes no actions; replace those with `handler.with(...)`.
 export def handler(subscribed: Fn[Types.Session, Json, Result[Types.Subscription]]) -> Types.Handler
   return Types.Handler(subscribed: subscribed, unsubscribed: &nothing_to_leave, perform: &no_actions)

@@ -326,6 +326,42 @@ Feature: The cable
       {"connections":0,"subscriptions":0,"drops":0,"lost":0}
       """
 
+  Scenario: Channels.disconnect ends every connection of one person, and only theirs, and says whether to come back
+    Given the cable server listens on a free port
+    When client "ana" connects with:
+      | header | value                                        |
+      | Cookie | user=ana                                     |
+      | Sec-WebSocket-Protocol | actioncable-v1-json |
+    And client "ana2" connects with:
+      | header | value                                        |
+      | Cookie | user=ana                                     |
+      | Sec-WebSocket-Protocol | actioncable-v1-json |
+    And client "ben" connects with:
+      | header | value                                        |
+      | Cookie | user=ben                                     |
+      | Sec-WebSocket-Protocol | actioncable-v1-json |
+    And client "ana" subscribes to the room "1"
+    And client "ben" subscribes to the room "1"
+    Then client "ana" eventually receives a frame containing "confirm_subscription"
+    And client "ben" eventually receives a frame containing "confirm_subscription"
+    When the app disconnects "ana" with reconnect "false"
+    Then client "ana" eventually receives a frame containing "{\"type\":\"disconnect\",\"reason\":\"remote\",\"reconnect\":false}"
+    And client "ana" is closed by the server with the code 1000
+    And client "ana2" eventually receives a frame containing "{\"type\":\"disconnect\",\"reason\":\"remote\",\"reconnect\":false}"
+    And client "ana2" is closed by the server with the code 1000
+    When the app broadcasts "later" to "room:1"
+    Then client "ben" receives:
+      """
+      {"identifier":"{\"channel\":\"RoomChannel\",\"room\":\"1\"}","message":"later"}
+      """
+    When the app disconnects "ben" with reconnect "true"
+    Then client "ben" eventually receives a frame containing "{\"type\":\"disconnect\",\"reason\":\"remote\",\"reconnect\":true}"
+    And client "ben" is closed by the server with the code 1000
+    And the stats become:
+      """
+      {"connections":0,"subscriptions":0,"drops":0,"lost":0}
+      """
+
   Scenario: A broadcast that the hub cannot take is an error, and counted as lost
     Given the cable server listens on a free port
     When the app stops the hub

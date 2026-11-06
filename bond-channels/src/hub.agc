@@ -18,18 +18,27 @@ HUB_INBOX = 4_096
 IDLE_MS = 60_000
 
 ## What a connection task receives: a frame to write, a message of the client (from the pump), a WebSocket ping to
-## write.
+## write, and `Away` (`reconnect`): the connection ends on purpose, with the `disconnect` frame that says whether the
+## client may come back.
 export enum Event
   Frame(String)
   Client(HTTP.Message)
   Ping
+  Away(Bool)
 end
 
 # A connection that joins the hub; it gets a WebSocket ping every `every` beats.
 struct Registration
   connection: Int
+  identity: String
   inbox: Channel[Event]
   every: Int
+end
+
+# Every connection of the person `identity` ends.
+struct Removal
+  identity: String
+  reconnect: Bool
 end
 
 # The topics whose broadcasts a subscription of a connection receives.
@@ -55,6 +64,7 @@ enum HubMessage
   Subscribe(Attach)
   Unsubscribe(Detach)
   Disconnect(Int)
+  Remove(Removal)
   Broadcast(Cast)
   Beat
   Stop
@@ -79,6 +89,7 @@ struct Key
 end
 
 struct Entry
+  identity: String
   inbox: Channel[Event]
   every: Int
   keys: List[Key]
@@ -148,9 +159,11 @@ export def broadcast(hub: Hub, topic: String, payload: String) -> Result[Void]
   return sent
 end
 
-## A connection joins: it gets the frames and pings sent to `inbox`, and a WebSocket ping every `every` beats.
-export def register(hub: Hub, connection: Int, inbox: Channel[Event], every: Int) -> Result[Void]
-  return send(hub, HubMessage.Register(Registration(connection: connection, inbox: inbox, every: every)))
+## A connection of the person `identity` (`Identity.id`) joins: it gets the frames and pings sent to `inbox`, and a
+## WebSocket ping every `every` beats.
+export def register(hub: Hub, connection: Int, identity: String, inbox: Channel[Event], every: Int) -> Result[Void]
+  registration = Registration(connection: connection, identity: identity, inbox: inbox, every: every)
+  return send(hub, HubMessage.Register(registration))
 end
 
 ## The broadcasts of `topics` reach the subscription `identifier` of the connection. Hub messages are FIFO, so a
@@ -168,6 +181,13 @@ end
 ## The connection ends: the hub forgets all its subscriptions at once.
 export def disconnect(hub: Hub, connection: Int) -> Result[Void]
   return send(hub, HubMessage.Disconnect(connection))
+end
+
+## Ends every connection whose identity is `identity`: each is sent `Event.Away(reconnect)`, and the hub stops routing
+## to it at once, so a broadcast queued after this call is not delivered to it. A failure is a hub that did not take
+## the message (full for `broadcast_wait_ms`, or gone).
+export def remove(hub: Hub, identity: String, reconnect: Bool) -> Result[Void]
+  return send(hub, HubMessage.Remove(Removal(identity: identity, reconnect: reconnect)))
 end
 
 ## Adds `delta` to a counter of `stats` (the connections do their own counting).
@@ -262,6 +282,7 @@ def step(state: State, message: HubMessage, counters: ATS[String, Int]) -> State
     HubMessage.Subscribe(attach) -> return subscribe(state, attach)
     HubMessage.Unsubscribe(detach) -> return unsubscribe(state, detach.connection, detach.identifier)
     HubMessage.Disconnect(connection) -> return remove_connection(state, connection)
+    HubMessage.Remove(removal) -> return remove_identity(state, removal, counters)
     HubMessage.Broadcast(cast) -> return fan_out(state, cast, counters)
     HubMessage.Beat -> return beat(state, counters)
     HubMessage.Stop -> return state
@@ -270,7 +291,7 @@ end
 
 def admit(state: State, registration: Registration) -> State
   keys: List[Key] = []
-  entry = Entry(inbox: registration.inbox, every: registration.every, keys: keys)
+  entry = Entry(identity: registration.identity, inbox: registration.inbox, every: registration.every, keys: keys)
   return state.with(entries: state.entries.put(registration.connection, entry))
 end
 
@@ -317,6 +338,23 @@ def remove_connection(state: State, connection: Int) -> State
 
       return state.with(entries: state.entries.delete(connection), topics: topics)
   end
+end
+
+# The connection is told and forgotten here, not when its loop ends: the loop writes `Away` and stops, and a
+# frame queued
+# before it still goes out, but none queued after. A full inbox is a connection that is closed by `leaves?` (the client
+# is told to reconnect, and `connect` decides again whether it may).
+def remove_identity(state: State, removal: Removal, counters: ATS[String, Int]) -> State
+  gone: List[Int] = []
+  for connection in state.entries.keys
+    entry = state.entries[connection]
+    if entry.identity == removal.identity
+      _ = leaves?(counters, entry.inbox, Event.Away(removal.reconnect))
+      gone = gone.push(connection)
+    end
+  end
+
+  return forget(state, gone)
 end
 
 def with_member(
