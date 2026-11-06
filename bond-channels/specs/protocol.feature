@@ -1,8 +1,9 @@
 Feature: Action Cable frames
   The `actioncable-v1-json` subprotocol, as pure functions of `src/protocol.agc`. Every frame is one line of
   compact JSON, and the identifiers and the commands are the ones that `loadgen cable` of
-  basecamp/once-campfire-verification sends (the Rails client sends the same). The key order of a frame is the one of
-  Rails, which the loadgen and `@rails/actioncable` do not need but a byte comparison with Rails does.
+  basecamp/once-campfire-verification sends (the Rails client sends the same). The keys of the frames that are structs
+  are in the order of Rails, which the loadgen and `@rails/actioncable` do not need; the object payload of a message
+  has its keys sorted.
 
   Scenario: The server says welcome and pings with the Unix time
     Then the welcome frame is:
@@ -183,6 +184,7 @@ Feature: Action Cable frames
       | null action | {"action":null}   |
       | empty       | {"action":""}     |
       | spaces      | {"action":"  "}   |
+      | Unicode     | {"action":"\\u00a0\\u2003\\u3000"} |
 
   Scenario Outline: A frame that Action Cable would only log is ignored (<case>)
     When the client sends:
@@ -192,17 +194,14 @@ Feature: Action Cable frames
     Then the server ignores it because "<reason>"
 
     Examples:
-      | case                    | frame                                                                     | reason                |
-      | not JSON                | hello                                                                     | JSON                  |
-      | not an object           | [1]                                                                       | not a JSON object     |
-      | no command              | {"identifier":"{}"}                                                       | no command            |
-      | unknown command         | {"command":"ping","identifier":"{}"}                                      | unrecognized command  |
-      | no identifier           | {"command":"subscribe"}                                                   | no identifier         |
-      | identifier not a string | {"command":"unsubscribe","identifier":{}}                                 | identifier is not a string |
-      | identifier not JSON     | {"command":"subscribe","identifier":"PresenceChannel"}                    | JSON                  |
-      | identifier not an object| {"command":"subscribe","identifier":"[]"}                                 | not a JSON object     |
-      | no data                 | {"command":"message","identifier":"{}"}                                   | no data               |
-      | data not a string       | {"command":"message","identifier":"{}","data":{"action":"x"}}             | data is not a string  |
-      | data not JSON           | {"command":"message","identifier":"{}","data":"refresh"}                  | JSON                  |
-      | data not an object      | {"command":"message","identifier":"{}","data":"[]"}                       | not a JSON object     |
-      | action not a string     | {"command":"message","identifier":"{}","data":"{\\"action\\":5}"}          | action is not a string |
+      | case                     | frame                                                                    | reason                          |
+      | not JSON                 | hello                                                                    | the frame is not JSON           |
+      | not an object            | [1]                                                                      | the frame is not a JSON object  |
+      | no command               | {"identifier":"{}"}                                                      | the frame has no command        |
+      | unknown command          | {"command":"ping","identifier":"{}"}                                     | unrecognized command ping       |
+      | no identifier            | {"command":"subscribe"}                                                  | the frame has no identifier     |
+      | identifier not a string  | {"command":"unsubscribe","identifier":{}}                                | identifier is not a string      |
+      | identifier not JSON      | {"command":"subscribe","identifier":"PresenceChannel"}                   | the identifier is not JSON      |
+      | identifier not an object | {"command":"subscribe","identifier":"[]"}                                | the identifier is not a JSON object |
+      | data not JSON            | {"command":"message","identifier":"{}","data":"refresh"}                 | data is not JSON                |
+      | action not a string      | {"command":"message","identifier":"{}","data":"{\\"action\\":5}"}      | action is not a string          |

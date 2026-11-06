@@ -6,6 +6,9 @@ export MAX_IDENTIFIER_BYTES = 4096
 
 RECEIVE = "receive"
 UNAUTHORIZED = "unauthorized"
+# The characters of Ruby's `[[:space:]]`, which `String#blank?` of Rails tests; `strip` knows only the ASCII ones.
+SPACE_CODES = Set.new([9, 10, 11, 12, 13, 32, 133, 160, 5760, 8232, 8233, 8239, 8287, 12288])
+EN_SPACES = 8192..8202
 
 # The field order of these structs is the key order of the frame, as in `Connection::Base` and `Channel::Base`
 # of Rails.
@@ -86,7 +89,8 @@ export def text_payload(text: String) -> String
   return JSON.encode(text)
 end
 
-## The JSON text of a payload that is an object (a notice), to give to `message` once per broadcast.
+## The JSON text of a payload that is an object (a notice), to give to `message` once per broadcast. A parsed object
+## comes out with its keys sorted, and one made by `JSON.object` or `JSON.from` in no fixed order.
 export def json_payload(value: Json) -> String
   return JSON.encode(value)
 end
@@ -100,11 +104,7 @@ end
 ## Reads a text frame of a client. An `error` is the reason to log: Action Cable ignores such a frame and the
 ## connection stays open.
 export def decode_command(text: String) -> Result[Command]
-  frame = try JSON.parse(text)
-  if JSON.kind(frame) != "object"
-    return error("the frame is not a JSON object")
-  end
-
+  frame = try parsed_object(text, "the frame")
   name = try string_field(frame, "command")
   identifier = try string_field(frame, "identifier")
   case name
@@ -120,11 +120,7 @@ def decode_subscribe(identifier: String) -> Result[Command]
     return error("the identifier is longer than #{MAX_IDENTIFIER_BYTES} bytes")
   end
 
-  params = try JSON.parse(identifier)
-  if JSON.kind(params) != "object"
-    return error("the identifier is not a JSON object")
-  end
-
+  params = try parsed_object(identifier, "the identifier")
   # Rails finds no class for a missing channel and logs it, so a missing or odd one is "" and the hub logs it.
   channel = string_field(params, "channel").unwrap_or("")
   return ok(Command.Subscribe(Join(identifier: identifier, channel: channel, params: params)))
@@ -133,16 +129,13 @@ end
 # `data` is a JSON string that holds the object (the client encodes it twice).
 def decode_perform(frame: Json, identifier: String) -> Result[Command]
   text = try string_field(frame, "data")
-  data = try JSON.parse(text)
-  if JSON.kind(data) != "object"
-    return error("data is not a JSON object")
-  end
-
+  data = try parsed_object(text, "data")
   name = try action_name(data)
   return ok(Command.Perform(Action(identifier: identifier, name: name, data: data)))
 end
 
-# A missing, null or blank action is `receive`, as in Rails; any other kind is refused.
+# A missing, null or blank action (Unicode spaces count as blank) is `receive`; any other kind is refused, as the Rust
+# port does. Rails is looser: `false`, `[]` and `{}` are blank to it, and `5` is the action "5".
 def action_name(data: Json) -> Result[String]
   field = JSON.get(data, "action")
   case field
@@ -156,12 +149,36 @@ def named_action(value: Json) -> Result[String]
     "null" -> return ok(RECEIVE)
     "string" ->
       name = try JSON.string(value)
-      if name.strip == ""
+      if blank?(name)
         return ok(RECEIVE)
       end
 
       return ok(name)
     _ -> return error("action is not a string")
+  end
+end
+
+def blank?(text: String) -> Bool
+  for char in text.split("")
+    code = char.code
+    if not SPACE_CODES.include?(code) and not EN_SPACES.include?(code)
+      return false
+    end
+  end
+
+  return true
+end
+
+# `what` names the text in the reason that the caller logs.
+def parsed_object(text: String, what: String) -> Result[Json]
+  case JSON.parse(text)
+    ok(value) ->
+      if JSON.kind(value) != "object"
+        return error("#{what} is not a JSON object")
+      end
+
+      return ok(value)
+    error(_) -> return error("#{what} is not JSON")
   end
 end
 

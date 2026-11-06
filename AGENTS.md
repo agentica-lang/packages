@@ -25,6 +25,8 @@ bond-channels/       Action Cable for Bond; src/protocol.agc is the frame encode
 
 - A package stands alone: it imports only the names of its own `agentica.toml` and its own files, and nothing from a
   sibling folder. Two packages that need one piece of code get it from a dependency, not by copy.
+- Each package needs at least one source file in `src/` and a spec in `specs/` (or a unit test in `test/`): `agentica
+  check` and `agentica test` fail on a folder with no `.agc` file or nothing to run, and the Makefile stops there.
 - A dependency is pinned by tag (or by commit) and keeps the local name of the apps that use it, at the same tag:
   two sources for one name in a tree is `PKG-SOURCE-CONFLICT`. A bump of Bond is a package release first, then the
   app.

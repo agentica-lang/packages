@@ -115,7 +115,7 @@ end
 
 def server_ignores(ctx: BDD.Context, args: List[String]) -> BDD.Context
   reason = remembered(ctx, IGNORED)
-  return BDD.assert(ctx, reason.include?(args[0]), "the frame was ignored for \"#{reason}\", expected \"#{args[0]}\"")
+  return BDD.assert(ctx, reason == args[0], "the frame was ignored for \"#{reason}\", expected \"#{args[0]}\"")
 end
 
 # A step that reads what the previous step wrote may halt: a crash fails the scenario, which is what a bad
