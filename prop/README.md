@@ -86,9 +86,10 @@ codec (`codec.members` lists the fields of a struct as text, and nothing for an 
 well: `T.codec` and `JSON.schema(T)` of the same type. The generator makes the JSON that the schema allows, and the
 codec decodes it, so a value is always one `T` can have.
 
-- Int is in -1000 ..= 1000, Float in -1000.0 ..= 1000.0, strings as `Prop.string()`, lists up to 3 items. A map holds
-  or leaves out each of the keys `"a"`, `"b"` and `"é 漢"`, so two cases are never the same map. Every field is made, an
-  `Optional` is `none` half of the time, and an enum picks a variant.
+- Int is in -1000 ..= 1000, Float in -1000.0 ..= 1000.0, strings as `Prop.string()`, lists up to 3 items. A map has
+  up to 3 pairs with random keys (up to 4 characters, the empty one too) when `check` draws it; `exhaustive` goes over
+  the maps that hold or leave out each of the keys `"a"`, `"b"` and `"é 漢"`, so two cases are never the same map. Every field is
+  made, an `Optional` is `none` half of the time, and an enum picks a variant.
 - A key that is missing from the JSON is never made: an `Optional` or defaulted field is always present (with `null` for
   `none`), and a `JsonField` is never `Absent`. That input is not covered by `Prop.of`; test it in a plain `test_` with
   `T.codec.decode` of a text without the key. It also keeps the cases of an exhaustive check distinct.

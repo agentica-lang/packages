@@ -4,8 +4,10 @@ import Gens from "gen"
 
 # The most items a generated list holds.
 LIST_MAX = 3
-# The keys a generated map can have: it holds each key or leaves it out, so two maps are the same only when they are
-# the same value (an exhaustive check counts each map once).
+# The longest key of a generated map.
+KEY_MAX = 4
+# The keys of the maps of an exhaustive check: a map holds each key or leaves it out, so two cases are never the same
+# map (a list of pairs would repeat the maps whose keys collide).
 KEYS = ["a", "b", "é 漢"]
 # A recursive type that cannot end (a required field of its own type) goes deeper than any real depth; stop there.
 LOWEST = -8
@@ -134,8 +136,7 @@ def object(node: Json, root: Json, path: List[String], depth: Int) -> Gens.Gen[J
     return Gens.just(record([], []))
   end
 
-  slots = KEYS.map do |_| Gens.optional(build(extra.unwrap!, root, path, depth)) end
-  return Gens.map(Gens.sequence(slots)) do |made| dictionary(made) end
+  return dictionaries(build(extra.unwrap!, root, path, depth))
 end
 
 def record(names: List[String], values: List[Json]) -> Json
@@ -147,7 +148,25 @@ def record(names: List[String], values: List[Json]) -> Json
   return JSON.object(fields)
 end
 
-def dictionary(made: List[Optional[Json]]) -> Json
+# A map of `value`s. `check` draws random keys (pairs that shrink away one by one); `exhaustive` goes over the maps of
+# the fixed KEYS, which are all different.
+def dictionaries(value: Gens.Gen[Json]) -> Gens.Gen[Json]
+  drawn = Gens.map(Gens.list(Gens.pair(Gens.string(KEY_MAX), value), LIST_MAX)) do |pairs| from_pairs(pairs) end
+  slots = KEYS.map do |_| Gens.optional(value) end
+  listed = Gens.map(Gens.sequence(slots)) do |made| from_slots(made) end
+  return Gens.Gen(make: drawn.make, count: listed.count, all: listed.all)
+end
+
+def from_pairs(pairs: List[Gens.Pair[String, Json]]) -> Json
+  fields: Map[String, Json] = {}
+  for entry in pairs
+    fields = fields.put(entry.first, entry.second)
+  end
+
+  return JSON.object(fields)
+end
+
+def from_slots(made: List[Optional[Json]]) -> Json
   fields: Map[String, Json] = {}
   for i in 0...KEYS.size
     if made.at(i).some?

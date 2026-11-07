@@ -308,3 +308,16 @@ end
 def decode_pong(text: String) -> Result[Pong]
   return Pong.codec.decode(text)
 end
+
+def only_the_fixed_keys(bag: Bag) -> Result[Void]
+  fixed = Set.new(["a", "b", "é 漢"])
+  return Prop.eq(bag.entries.keys.all? do |key| fixed.include?(key) end, true)
+end
+
+# `check` draws random keys (empty, long, "ab" beside "a"), not only the fixed ones of an exhaustive check.
+def test_random_maps_of_of_have_random_keys() -> Result[Void]
+  gen = Prop.of(Bag.codec, JSON.schema(Bag))
+  result = Prop.check(gen, Prop.Config(seed: some(15), runs: 200), &only_the_fixed_keys)
+  try Test.assert(not result.ok?, "every key was one of the three")
+  return Test.assert(result.message.start_with?("falsified after "), result.message)
+end
