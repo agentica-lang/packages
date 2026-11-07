@@ -18,7 +18,8 @@ MAX_SIZE = 1000
 CAP = 1_000_000_000
 
 ## A source of values of type T for `Prop.check` and `Prop.exhaustive`. `make` draws a shrink tree from a seed;
-## `count` and `all` are the small cases for a size: how many there are (at most 1_000_000_000: a count stops there) and the values, simplest first.
+## `count` and `all` are the small cases for a size: how many there are (a count stops at 1_000_000_000) and the
+## values, simplest first.
 export struct Gen[T]
   make: Fn[Int, Trees.Tree[T]]
   count: Fn[Int, Int]
