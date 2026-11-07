@@ -55,10 +55,11 @@ export def int_tree(n: Int, origin: Int) -> Tree[Int]
   return grow(n) do from_list(int_shrinks(n, origin), 0) end
 end
 
-## A Float in `min` ..= `max` that shrinks toward `origin` (in the range): to it, to the whole number toward it, then
-## by half the distance, a quarter, and so on. Every candidate is strictly closer to `origin`, so it never goes back.
-export def float_tree(x: Float, origin: Float, min: Float, max: Float) -> Tree[Float]
-  return grow(x) do from_list(float_shrinks(x, origin, min, max), 0) end
+## A Float that shrinks toward `origin`: to it, to the whole number toward it, then by half the distance, a quarter,
+## and so on. Every candidate is strictly closer to `origin` and between it and `x`, so it never goes back and never
+## leaves the range of `x` and `origin`.
+export def float_tree(x: Float, origin: Float) -> Tree[Float]
+  return grow(x) do from_list(float_shrinks(x, origin), 0) end
 end
 
 ## The tree of the list of values. It shrinks by dropping items (all of them, a half, one), then by shrinking one item.
@@ -110,31 +111,48 @@ def int_shrinks(n: Int, origin: Int) -> List[Tree[Int]]
   return out
 end
 
-def float_shrinks(x: Float, origin: Float, min: Float, max: Float) -> List[Tree[Float]]
+def float_shrinks(x: Float, origin: Float) -> List[Tree[Float]]
   out: List[Tree[Float]] = []
   distance = (x - origin).abs
   if distance == 0.0
     return out
   end
 
-  out = out.push(float_tree(origin, origin, min, max))
+  out = out.push(float_tree(origin, origin))
   if distance <= CLOSE
     return out
   end
 
+  # Only a whole number between the origin and x: with a fractional origin, rounding could cross it and leave
+  # the range.
   whole = toward(x, origin)
-  if (whole - origin).abs < distance and whole != origin
-    out = out.push(float_tree(whole, origin, min, max))
+  if between?(whole, x, origin) and whole != origin and whole != x
+    out = out.push(float_tree(whole, origin))
   end
 
-  # x moved toward the origin by half the distance, then a quarter, ...: the last ones are the closest to x.
+  # x moved toward the origin by half the distance, then a quarter, ...: the last ones are the closest to x. A step
+  # under half an ulp of x moves nothing, and the ones after it are smaller still.
   step = distance / 2.0
   while step > CLOSE
-    out = out.push(float_tree(toward_by(x, origin, step), origin, min, max))
+    moved = toward_by(x, origin, step)
+    if moved == x or moved == origin
+      break
+    end
+
+    out = out.push(float_tree(moved, origin))
     step = step / 2.0
   end
 
   return out
+end
+
+# Whether `y` is on the segment from `x` to `origin`.
+def between?(y: Float, x: Float, origin: Float) -> Bool
+  if x > origin
+    return y >= origin and y <= x
+  end
+
+  return y <= origin and y >= x
 end
 
 def toward_by(x: Float, origin: Float, step: Float) -> Float

@@ -18,8 +18,9 @@ def test_reverse_twice() -> Result[Void]
 end
 ```
 
-A false law fails the test with the shrunk counterexample. This one, `Prop.eq(xs.reverse, xs)`, fails with
-`falsified after 3 runs, shrunk to [0,1], seed 1234: expected [0,1], got [1,0]`.
+A false law fails the test with the shrunk counterexample. The same check with `Prop.eq(xs.reverse, xs)` as the law
+and `Prop.Config(seed: some(1234))` fails with
+`falsified after 1 run, shrunk to [0,-1], seed 1234: expected [0,-1], got [-1,0]`.
 
 ## API
 

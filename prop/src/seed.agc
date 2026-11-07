@@ -3,9 +3,8 @@
 ## a seed is masked to them, so 5 and 4294967301 are one seed.
 
 MASK = 0xFFFFFFFF
-# The multiplier of a 32-bit integer hash with good mixing. It is under 2^27, so a masked 32-bit value times it
-# is under
-# 2^59: no Int overflow.
+# The multiplier of a 32-bit integer hash with good mixing. It is under 2^27, so a masked 32-bit value times it is
+# under 2^59: no Int overflow.
 MULTIPLIER = 0x45D9F3B
 # Spreads the indexes of the parts of a seed (the golden ratio of 2^32); an index stays far under 2^30, so
 # `(index + 1) * STRIDE` is under 2^62.
@@ -28,17 +27,19 @@ end
 
 ## The seed of part `index` of the value that `seed` makes.
 export def split(seed: Int, index: Int) -> Int
-  return scramble(seed + (index + 1) * STRIDE)
+  return scramble(seed.bit_and(MASK) + (index + 1) * STRIDE)
 end
 
 ## An Int in 0 ... bound, for a `bound` of 1 up to 2^62. Without bias: a draw in the incomplete last multiple of
 ## `bound` is made again from another seed.
 export def draw(seed: Int, bound: Int) -> Int
+  # Masked first, so that the additions of the retries cannot overflow.
+  masked = seed.bit_and(MASK)
   if bound <= NARROW
-    return narrow(seed, bound, NARROW - NARROW % bound)
+    return narrow(masked, bound, NARROW - NARROW % bound)
   end
 
-  return wide(seed, bound, WIDE - WIDE % bound)
+  return wide(masked, bound, WIDE - WIDE % bound)
 end
 
 ## A Float in 0.0 up to, not including, 1.0.

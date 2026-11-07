@@ -51,7 +51,7 @@ export def float(min: Float, max: Float) -> Gen[Float]
   low = min.clamp(-FLOAT_BOUND, FLOAT_BOUND)
   high = max.clamp(-FLOAT_BOUND, FLOAT_BOUND)
   origin = 0.0.clamp(low, high)
-  return generator() do |seed| Trees.float_tree(low + Seeds.unit(seed) * (high - low), origin, low, high) end
+  return generator() do |seed| Trees.float_tree(low + Seeds.unit(seed) * (high - low), origin) end
 end
 
 ## `true` or `false`; `true` shrinks to `false`.

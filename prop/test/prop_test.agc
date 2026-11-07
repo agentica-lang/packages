@@ -18,6 +18,11 @@ def shrunk_to(result: Result[Void], counterexample: String) -> Result[Void]
   return Test.assert(result.message.include?("shrunk to #{counterexample},"), "got: #{result.message}")
 end
 
+# The value after "shrunk to " in the message of a check.
+def shrunk_float(result: Result[Void]) -> Float
+  return result.message.split("shrunk to ")[1].split(",")[0].to_f!
+end
+
 def test_a_false_law_over_lists_shrinks_to_one_item() -> Result[Void]
   result = Prop.check(Prop.list(Prop.int(0, 100)), seeded(1)) do |xs|
     must(xs.all? do |x| x <= 50 end, "an item is above 50")
@@ -73,6 +78,34 @@ def test_a_negative_float_shrinks_to_a_value_next_to_zero() -> Result[Void]
   try Test.assert(not result.message.include?("shrinking stopped"), result.message)
   try Test.assert(result.message.include?("shrunk to -"), result.message)
   return Test.assert(result.message.include?("e-"), "not next to zero: #{result.message}")
+end
+
+# A float shrinks within [min, max]: with an origin that is not a whole number, rounding must not cross it.
+def test_a_float_shrinks_inside_its_range() -> Result[Void]
+  result = Prop.check(Prop.float(0.1, 10.0), Prop.Config(seed: some(2), runs: 300)) do |x|
+    must(x == 0.1 or x >= 0.99, "inside")
+  end
+
+  try Test.assert(shrunk_float(result) > 0.1, result.message)
+  try Test.assert(shrunk_float(result) < 0.99, result.message)
+  return Test.assert(not result.message.include?("shrinking stopped"), result.message)
+end
+
+# Past 2^53 a step that is under half an ulp moves nothing: it must not be offered, or the budget goes on one value.
+def test_a_large_float_shrinks_without_spending_the_budget() -> Result[Void]
+  config = Prop.Config(seed: some(2))
+  result = Prop.check(Prop.float(0.0, 1.0e15), config) do |x| must(x < 1.0e12, "1e12 or more") end
+  try shrunk_to(result, "1000000000000.0")
+  return Test.assert(not result.message.include?("shrinking stopped"), result.message)
+end
+
+def test_a_seed_beyond_32_bits_is_masked() -> Result[Void]
+  huge = 9223372036854775807
+  gen = Prop.list(Prop.int(0, 99))
+  try Test.eq(Prop.sample(gen, huge, 5), Prop.sample(gen, 0xFFFFFFFF, 5))
+  falsified = Prop.check(Prop.int(0, 9), Prop.Config(seed: some(huge))) do |n| must(n < 5, "5 or more") end
+  try Test.assert(falsified.message.include?("seed #{huge}"), falsified.message)
+  return Prop.check(Prop.int(0, 9), Prop.Config(seed: some(-huge))) do |n| must(n < 10, "never") end
 end
 
 def test_an_optional_shrinks_to_none_and_then_through_its_value() -> Result[Void]
