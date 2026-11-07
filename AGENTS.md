@@ -17,6 +17,9 @@ bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub,
                      and the Turbo features (fixtures/cable_peer.py is a raw-socket peer, it needs python3;
                      fixtures/turbo_vectors.json is what Rails signed), bench/fanout.py measures memory per socket
                      and the hub's fan-out by hand
+prop/                property-based testing: prop.agc is the API (check, eq, assume, the generators); src/gen.agc the
+                     generators, src/tree.agc the shrink trees, src/seed.agc the seed hashing (pure), src/check.agc the
+                     runner and the shrinking; test/prop_test.agc is the unit test (the API is plain function calls)
 ```
 
 ## Commands
