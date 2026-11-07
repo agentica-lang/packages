@@ -18,7 +18,7 @@ MAX_SIZE = 1000
 CAP = 1_000_000_000
 
 ## A source of values of type T for `Prop.check` and `Prop.exhaustive`. `make` draws a shrink tree from a seed;
-## `count` and `all` are the small cases for a size: how many there are (at most CAP) and the values, simplest first.
+## `count` and `all` are the small cases for a size: how many there are (at most 1_000_000_000: a count stops there) and the values, simplest first.
 export struct Gen[T]
   make: Fn[Int, Trees.Tree[T]]
   count: Fn[Int, Int]
@@ -154,6 +154,11 @@ export def sample[T](gen: Gen[T], seed: Int, count: Int = 5) -> List[T]
   return (0...count).to_a.map do |i| gen.make(Seeds.split(seed, i)).value end
 end
 
+## Whether a count stopped growing at its cap, so it is a lower bound.
+export def capped?(count: Int) -> Bool
+  return count >= CAP
+end
+
 ## `value`, always.
 export def just[T](value: T) -> Gen[T]
   return Gen(
@@ -210,7 +215,7 @@ end
 
 # How many values lie up to `size` away from the origin, with `up` of room above it and `down` below.
 def reach(up: Int, down: Int, size: Int) -> Int
-  return 1 + size.clamp(0, up) + size.clamp(0, down)
+  return saturate(1 + saturate(size.clamp(0, up)) + saturate(size.clamp(0, down)))
 end
 
 # The distances from the origin, simplest first: 0, 1, -1, 2, -2, ...

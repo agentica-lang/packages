@@ -25,7 +25,8 @@ export def exhaustive[T](
 
   total = gen.count(size)
   if total > max_cases
-    return error("Prop.exhaustive: #{total} cases up to size #{size} is more than max_cases #{max_cases}")
+    atleast = counted(total)
+    return error("Prop.exhaustive: #{atleast} cases up to size #{size} is more than max_cases #{max_cases}")
   end
 
   skipped = 0
@@ -58,4 +59,13 @@ def smallest[T](gen: Gens.Gen[T], size: Int, law: Fn[T, Result[Void]]) -> Result
   end
 
   return error("Prop.exhaustive: the law passed on the rerun up to size #{size}, so it is not deterministic")
+end
+
+# A count that reached the cap is a lower bound, not the number of cases.
+def counted(total: Int) -> String
+  if Gens.capped?(total)
+    return "at least #{total}"
+  end
+
+  return total.to_s
 end

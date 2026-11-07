@@ -2,10 +2,11 @@
 
 import Gens from "gen"
 
-# The most items a generated list, and the most pairs a generated map, holds.
+# The most items a generated list holds.
 LIST_MAX = 3
-# A key of a generated map.
-KEY_MAX = 4
+# The keys a generated map can have: it holds each key or leaves it out, so two maps are the same only when they are
+# the same value (an exhaustive check counts each map once).
+KEYS = ["a", "b", "é 漢"]
 # A recursive type that cannot end (a required field of its own type) goes deeper than any real depth; stop there.
 LOWEST = -8
 
@@ -133,8 +134,8 @@ def object(node: Json, root: Json, path: List[String], depth: Int) -> Gens.Gen[J
     return Gens.just(record([], []))
   end
 
-  entries = Gens.pair(Gens.string(KEY_MAX), build(extra.unwrap!, root, path, depth))
-  return Gens.map(Gens.list(entries, LIST_MAX)) do |pairs| dictionary(pairs) end
+  slots = KEYS.map do |_| Gens.optional(build(extra.unwrap!, root, path, depth)) end
+  return Gens.map(Gens.sequence(slots)) do |made| dictionary(made) end
 end
 
 def record(names: List[String], values: List[Json]) -> Json
@@ -146,10 +147,12 @@ def record(names: List[String], values: List[Json]) -> Json
   return JSON.object(fields)
 end
 
-def dictionary(pairs: List[Gens.Pair[String, Json]]) -> Json
+def dictionary(made: List[Optional[Json]]) -> Json
   fields: Map[String, Json] = {}
-  for entry in pairs
-    fields = fields.put(entry.first, entry.second)
+  for i in 0...KEYS.size
+    if made.at(i).some?
+      fields = fields.put(KEYS.at(i), made.at(i).unwrap!)
+    end
   end
 
   return JSON.object(fields)

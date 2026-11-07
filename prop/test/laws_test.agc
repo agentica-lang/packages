@@ -25,6 +25,19 @@ struct Tree
   kids: List[Tree]
 end
 
+struct Bag
+  entries: Map[String, Bool]
+end
+
+struct Ping
+  pong: Optional[Pong]
+end
+
+struct Pong
+  ping: Optional[Ping]
+  n: Int
+end
+
 def seeded(seed: Int) -> Prop.Config
   return Prop.Config(seed: some(seed), runs: 200)
 end
@@ -118,6 +131,18 @@ def encode_item(item: Item) -> String
   return Item.codec.encode(item)
 end
 
+def always(_: Int) -> Result[Void]
+  return ok()
+end
+
+# `count` is how many cases `all` has, and no two of them are the same.
+def counted_and_distinct[T](gen: Prop.Gen[T], size: Int) -> Result[Void]
+  cases = gen.all(size)
+  texts = cases.map do |value| JSON.encode(value) end
+  try Test.eq(gen.count(size), cases.size)
+  return Test.eq(texts.uniq.size, texts.size)
+end
+
 def total_below_five(xs: List[Int]) -> Result[Void]
   return Prop.eq(xs.sum < 5, true)
 end
@@ -158,7 +183,7 @@ end
 def test_commutative_holds_for_the_larger_and_fails_for_minus() -> Result[Void]
   try Prop.commutative(Prop.int(-50, 50), &larger)
   result = Prop.commutative(Prop.int(-50, 50), seeded(6), &minus)
-  return shrunk_to(result, "{\"first\":0,\"second\":1}")
+  return shrunk_to(result, "{\"a\":0,\"b\":1}")
 end
 
 def test_preserves_holds_for_reverse_and_fails_for_take() -> Result[Void]
@@ -239,4 +264,47 @@ def test_exhaustive_goes_over_the_cases_of_of() -> Result[Void]
   gen = Prop.of(Point.codec, JSON.schema(Point))
   try Test.eq(Prop.cases(gen, 1), 9)
   return Prop.exhaustive(gen, 1) do |p| Prop.eq(Point.codec.decode(Point.codec.encode(p)).unwrap!, p) end
+end
+
+def test_every_case_is_counted_once_and_the_count_is_exact() -> Result[Void]
+  try counted_and_distinct(Prop.list(Prop.optional(Prop.int(0, 9))), 2)
+  try counted_and_distinct(Prop.pair(Prop.list(Prop.bool()), Prop.optional(Prop.int(0, 9))), 2)
+  try counted_and_distinct(Prop.of(Bag.codec, JSON.schema(Bag)), 2)
+  try counted_and_distinct(Prop.of(Pong.codec, JSON.schema(Pong)), 1)
+  return Test.eq(Prop.cases(Prop.of(Bag.codec, JSON.schema(Bag)), 2), 27)
+end
+
+def test_max_cases_is_inclusive() -> Result[Void]
+  gen = Prop.list(Prop.bool())
+  try Prop.exhaustive(gen, 3, 15, &always_list)
+  refused = Prop.exhaustive(gen, 3, 14, &always_list)
+  return Test.assert(refused.message.include?("15 cases up to size 3 is more than max_cases 14"), refused.message)
+end
+
+def test_a_count_stops_at_the_cap_and_never_overflows() -> Result[Void]
+  wide = Prop.int(-1_000_000_000_000_000_000, 1_000_000_000_000_000_000)
+  try Test.eq(Prop.cases(wide, 4_000_000_000), 1_000_000_000)
+  try Test.eq(Prop.cases(Prop.pair(wide, wide), 4_000_000_000), 1_000_000_000)
+  try Test.eq(Prop.cases(Prop.pair(Prop.pair(wide, wide), wide), 4_000_000_000), 1_000_000_000)
+  try Test.eq(Prop.cases(Prop.list(wide), 4_000_000_000), 1_000_000_000)
+  refused = Prop.exhaustive(wide, 4_000_000_000, &always)
+  return Test.assert(refused.message.include?("at least 1000000000 cases"), refused.message)
+end
+
+def test_of_makes_a_mutually_recursive_type() -> Result[Void]
+  gen = Prop.of(Pong.codec, JSON.schema(Pong))
+  config = Prop.Config(seed: some(14), runs: 100)
+  return Prop.roundtrip(gen, &encode_pong, config, &decode_pong)
+end
+
+def always_list(_: List[Bool]) -> Result[Void]
+  return ok()
+end
+
+def encode_pong(pong: Pong) -> String
+  return Pong.codec.encode(pong)
+end
+
+def decode_pong(text: String) -> Result[Pong]
+  return Pong.codec.decode(text)
 end

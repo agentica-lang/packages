@@ -86,10 +86,14 @@ codec (`codec.members` lists the fields of a struct as text, and nothing for an 
 well: `T.codec` and `JSON.schema(T)` of the same type. The generator makes the JSON that the schema allows, and the
 codec decodes it, so a value is always one `T` can have.
 
-- Int is in -1000 ..= 1000, Float in -1000.0 ..= 1000.0, strings as `Prop.string()`, lists up to 3 items, maps up to
-  3 pairs. Every field is made, an `Optional` is `none` half of the time, and an enum picks a variant.
+- Int is in -1000 ..= 1000, Float in -1000.0 ..= 1000.0, strings as `Prop.string()`, lists up to 3 items. A map holds
+  or leaves out each of the keys `"a"`, `"b"` and `"é 漢"`, so two cases are never the same map. Every field is made, an
+  `Optional` is `none` half of the time, and an enum picks a variant.
+- A key that is missing from the JSON is never made: an `Optional` or defaulted field is always present (with `null` for
+  `none`), and a `JsonField` is never `Absent`. That input is not covered by `Prop.of`; test it in a plain `test_` with
+  `T.codec.decode` of a text without the key. It also keeps the cases of an exhaustive check distinct.
 - Shrinking goes through the parts: an `Optional` to `none`, a list to fewer items, a variant to an earlier one, a number
-  toward 0. A field of `JsonField` is made `Null` or with a value, never `Absent`.
+  toward 0.
 - A type that holds itself (through a list, a map, an `Optional` or a variant) nests at most `depth` times; the list,
   the map, the `Optional` or the variant that ends it is chosen after that. A type that cannot end (a required field of
   its own type) halts.
@@ -110,7 +114,7 @@ whole numbers); a list has up to k items, each at size k; a string up to k chara
 `Optional` is `none` or a value at size k; a pair or a `Prop.of` struct is every combination; `one_of` and `bool` have
 all their values at every size.
 
-`max_cases` (10_000) is checked before anything runs, and a size with more cases is an `error` that says how many:
+`max_cases` (10_000) is checked before anything runs, and a size with more cases is an `error` that says how many ("at least 1000000000" when the count hit its cap):
 the cases of a list grow as the power of its items, and a test has a step budget (below). A case discarded with
 `Prop.assume` is skipped; a law that skips them all is an error. There is no seed, and no `Config`: the cases are the
 same every run.
@@ -148,6 +152,8 @@ function must do as laws, and let the tests find where it does not.
    `test_` function (it stays a test when the generator changes), then fix the code.
 3. Never weaken the law, narrow the generator, raise `discards` or lower `runs` to make a test pass. If the law is
    wrong for some inputs, say which ones with `Prop.assume` and keep that in the report.
-4. Report what was done, not what is proved: "tested with 100 cases, seed 1234, discards 0" (the seed is the one of
-   `Prop.Config(seed: some(1234))` or of the failure message; the discards are the cases `Prop.assume` dropped), or "all
-   15 cases up to size 3". Never write "proved", "verified" or "correct for all inputs".
+4. Report what was done, not what is proved: "tested with 100 cases, seed 1234, discards 0", or "all 15 cases up to size
+   3". A passing `check` returns plain `ok()` with no seed, so to report S, pin it: `Prop.Config(seed: some(1234))`
+   (the seed of a failure is in its message). D is the number of cases the law's `Prop.assume` dropped, which `check`
+   does not return either: say 0 only when the law has no `assume`. Never write "proved", "verified" or "correct for
+   all inputs".

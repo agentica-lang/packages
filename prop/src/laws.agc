@@ -5,6 +5,12 @@
 import Checks from "check"
 import Gens from "gen"
 
+# Two values for the law of an operation, named like the first two of a `Triple`.
+struct Couple[T]
+  a: T
+  b: T
+end
+
 # Three values for the laws of an operation, named so a counterexample reads `{"a":1,"b":2,"c":3}`.
 struct Triple[T]
   a: T
@@ -45,7 +51,8 @@ end
 
 ## `op(a, b)` is `op(b, a)`.
 export def commutative[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), op: Fn[T, T, T]) -> Result[Void]
-  return Checks.check(Gens.pair(gen, gen), config) do |p| orders_the_same(p, op) end
+  couples = Gens.map(Gens.pair(gen, gen)) do |p| Couple(a: p.first, b: p.second) end
+  return Checks.check(couples, config) do |c| orders_the_same(c, op) end
 end
 
 ## `measure(f(x))` is `measure(x)`: `f` keeps the size, the sum, the sortedness or whatever `measure` reads.
@@ -85,8 +92,8 @@ def groups_the_same[T](t: Triple[T], op: Fn[T, T, T]) -> Result[Void]
   return labelled("op(op(a, b), c) differs from op(a, op(b, c))", Checks.eq(left, right))
 end
 
-def orders_the_same[T](p: Gens.Pair[T, T], op: Fn[T, T, T]) -> Result[Void]
-  return labelled("op(a, b) differs from op(b, a)", Checks.eq(op.call(p.first, p.second), op.call(p.second, p.first)))
+def orders_the_same[T](c: Couple[T], op: Fn[T, T, T]) -> Result[Void]
+  return labelled("op(a, b) differs from op(b, a)", Checks.eq(op.call(c.a, c.b), op.call(c.b, c.a)))
 end
 
 def keeps[T, M](value: T, f: Fn[T, T], measure: Fn[T, M]) -> Result[Void]
