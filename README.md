@@ -10,6 +10,7 @@ cache = { git = "https://github.com/agentica-lang/packages", tag = "cache-0.1.0"
 | Package | What it is |
 |---|---|
 | `bond-channels` (in progress) | Action Cable (`actioncable-v1-json`) channels for Bond apps: one WebSocket per tab at `/cable`, channels and a pub/sub hub. The frames, the hub, the connections and the Turbo Streams signing are in (`bond-channels/channels.agc`). [#1](https://github.com/agentica-lang/packages/issues/1) has the plan |
+| `prop` (in progress) | Property-based testing: generators, shrinking and `Prop.check`, which runs a law on generated inputs and reports the smallest counterexample with its seed. [#12](https://github.com/agentica-lang/packages/issues/12) has the plan |
 | `cache` (planned) | Cache strategies (CLOCK, sampled LRU, TinyLFU) behind the `Cache` facade of `std/cache` |
 
 ## Tags
