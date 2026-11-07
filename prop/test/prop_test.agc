@@ -62,6 +62,35 @@ def test_a_true_law_passes() -> Result[Void]
   return Prop.check(gen) do |xs| Prop.eq(xs.reverse.reverse, xs) end
 end
 
+# The default 100 runs of a list of strings must fit the step budget of a test.
+def test_a_true_law_over_lists_of_strings_passes_with_the_default_config() -> Result[Void]
+  return Prop.check(Prop.list(Prop.string())) do |xs| Prop.eq(xs.reverse.reverse, xs) end
+end
+
+# Every candidate is closer to 0, so the value does not bounce between -0.5 and -1.0 until the budget ends.
+def test_a_negative_float_shrinks_to_a_value_next_to_zero() -> Result[Void]
+  result = Prop.check(Prop.float(-10.0, 10.0), seeded(3)) do |x| must(x >= 0.0, "negative") end
+  try Test.assert(not result.message.include?("shrinking stopped"), result.message)
+  try Test.assert(result.message.include?("shrunk to -"), result.message)
+  return Test.assert(result.message.include?("e-"), "not next to zero: #{result.message}")
+end
+
+def test_an_optional_shrinks_to_none_and_then_through_its_value() -> Result[Void]
+  gen = Prop.optional(Prop.int(0, 9))
+  nothing = Prop.check(gen, seeded(12)) do |_| must(false, "always") end
+  try shrunk_to(nothing, "null")
+  something = Prop.check(gen, seeded(13)) do |o| must(o.none? or o.unwrap! < 4, "4 or more") end
+  try shrunk_to(something, "4")
+  halves = Prop.sample(gen, 1, 400)
+  return Test.assert(halves.select do |o| o.none? end.size > 120, "far fewer none than some")
+end
+
+def test_the_shrinking_budget_ends_with_a_message() -> Result[Void]
+  config = Prop.Config(seed: some(21), shrinks: 5)
+  result = Prop.check(Prop.list(Prop.int(0, 1000), 60), config) do |xs| must(xs.size < 1, "not empty") end
+  return Test.assert(result.message.include?("(shrinking stopped after 5 steps)"), result.message)
+end
+
 def test_the_same_seed_makes_the_same_cases() -> Result[Void]
   gen = Prop.pair(Prop.string(), Prop.list(Prop.optional(Prop.float(-1.0, 1.0))))
   try Test.eq(Prop.sample(gen, 7, 40), Prop.sample(gen, 7, 40))

@@ -6,21 +6,30 @@ import Trees from "tree"
 
 # `Prop.assume` fails with this text, and a law that fails with exactly it is discarded, not falsified.
 DISCARD = "prop: case discarded"
-# The most laws run to shrink one counterexample: a law that is slow or a shrink that never ends still stops.
-MAX_SHRINKS = 1000
 MAX_SEED = 2147483647
 
-## How `Prop.check` runs.
+## How `Prop.check` runs: how many cases, a fixed seed (32 bits: a larger one is masked to them), how many discarded
+## cases are too many, and the most laws run to shrink one counterexample (a law that is slow, or a shrink that goes on
+## for long, still stops).
 export struct Config
   runs: Int = 100
   seed: Optional[Int] = none
   discards: Int = 1000
+  shrinks: Int = 500
 end
 
 ## The smallest counterexample found, and the message of the law for it.
 struct Shrunk[T]
   value: T
   message: String
+end
+
+## The first candidate that falsifies the law (or none), and how many laws were run to find out.
+struct Probe[T]
+  tree: Optional[Trees.Tree[T]]
+  message: String
+  used: Int
+  cut: Bool
 end
 
 ## Runs `law` on `config.runs` values of `gen` and returns `ok()`, or an `error` that names the shrunk counterexample
@@ -50,7 +59,7 @@ export def check[T](gen: Gens.Gen[T], config: Config = Config(), law: Fn[T, Resu
         return error("gave up: #{discarded} cases discarded and #{passed} of #{config.runs} passed, seed #{seed}")
       end
     else
-      found = shrink(tree, verdict.message, law)
+      found = shrink(tree, verdict.message, law, config.shrinks)
       runs = count(passed + 1, "run")
       message = "falsified after #{runs}, shrunk to #{JSON.encode(found.value)}, seed #{seed}: #{found.message}"
       return error(message)
@@ -89,32 +98,49 @@ def count(n: Int, noun: String) -> String
   return "#{n} #{noun}s"
 end
 
-# Walks down the tree: at each step takes the first child that still falsifies the law, until none does.
-def shrink[T](tree: Trees.Tree[T], message: String, law: Fn[T, Result[Void]]) -> Shrunk[T]
+# Walks down the tree: at each step takes the first candidate that still falsifies the law, until none does or `limit`
+# laws have run.
+def shrink[T](tree: Trees.Tree[T], message: String, law: Fn[T, Result[Void]], limit: Int) -> Shrunk[T]
   current = tree
   current_message = message
-  budget = MAX_SHRINKS
-  while budget > 0
-    smaller = false
-    for child in current.children()
-      budget -= 1
-      verdict = law.call(child.value)
-      if not verdict.ok? and verdict.message != DISCARD
-        current = child
-        current_message = verdict.message
-        smaller = true
-        break
-      end
+  used = 0
+  while true
+    probe = first_failure(current.shrinks(), law, limit - used, 0)
+    used += probe.used
+    case probe.tree
+      some(smaller) ->
+        current = smaller
+        current_message = probe.message
+      none ->
+        if probe.cut
+          current_message = "#{current_message} (shrinking stopped after #{used} steps)"
+        end
 
-      if budget == 0
-        break
-      end
-    end
-
-    if not smaller
-      break
+        return Shrunk(value: current.value, message: current_message)
     end
   end
 
   return Shrunk(value: current.value, message: current_message)
+end
+
+def first_failure[T](
+  candidates: Optional[Trees.Candidates[T]],
+  law: Fn[T, Result[Void]],
+  left: Int,
+  used: Int,
+) -> Probe[T]
+  case candidates
+    none -> return Probe(tree: none, message: "", used: used, cut: false)
+    some(next) ->
+      if left <= 0
+        return Probe(tree: none, message: "", used: used, cut: true)
+      end
+
+      verdict = law.call(next.first.value)
+      if not verdict.ok? and verdict.message != DISCARD
+        return Probe(tree: some(next.first), message: verdict.message, used: used + 1, cut: false)
+      end
+
+      return first_failure(next.rest(), law, left - 1, used + 1)
+  end
 end

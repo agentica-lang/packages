@@ -11,8 +11,9 @@ FLOAT_BOUND = 1.0e15
 LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 SYMBOLS = " _-.,:;!?/\\\"'()[]{}<>@#$%^&*+=|~`é漢🙂\t\n"
 ALPHABET = (LETTERS + SYMBOLS).split("")
-# One in NONE_ODDS optionals is `none`.
-NONE_ODDS = 4
+# The longest list or string; a longer one is not a test of a law, and a lazy list of candidates recurses once
+# per item.
+MAX_SIZE = 1000
 
 ## A source of values of type T for `Prop.check`.
 export struct Gen[T]
@@ -60,15 +61,15 @@ end
 
 ## A String of up to `max_size` characters from a mix of ASCII, accented, CJK and emoji ones, a tab and a newline. It
 ## shrinks to a shorter string, then toward "a".
-export def string(max_size: Int = 20) -> Gen[String]
-  letters = map(int(0, ALPHABET.size - 1)) do |i| ALPHABET.at(i) end
-  return map(list(letters, max_size)) do |chars| chars.join("") end
+export def string(max_size: Int = 10) -> Gen[String]
+  indexes = list(int(0, ALPHABET.size - 1), max_size)
+  return map(indexes) do |chosen| chosen.map do |i| ALPHABET.at(i) end.join("") end
 end
 
-## A List of up to `max_size` items of `gen`. It shrinks to a shorter list (the empty one first), then by shrinking an
-## item.
-export def list[T](gen: Gen[T], max_size: Int = 20) -> Gen[List[T]]
-  limit = max_size.clamp(0, 10000)
+## A List of up to `max_size` (at most 1000) items of `gen`. It shrinks to a shorter list (the empty one first), then
+## by shrinking an item.
+export def list[T](gen: Gen[T], max_size: Int = 10) -> Gen[List[T]]
+  limit = max_size.clamp(0, MAX_SIZE)
   return generator() do |seed|
     count = Seeds.draw(Seeds.split(seed, 0), limit + 1)
     trees = (0...count).to_a.map do |i| gen.make(Seeds.split(seed, i + 1)) end
@@ -76,11 +77,15 @@ export def list[T](gen: Gen[T], max_size: Int = 20) -> Gen[List[T]]
   end
 end
 
-## `none` (one in four) or `some` of a value of `gen`; `some` shrinks to `none` first.
+## `none` or `some` of a value of `gen`, half and half; `some` shrinks to `none` first.
 export def optional[T](gen: Gen[T]) -> Gen[Optional[T]]
   return generator() do |seed|
-    tag = Trees.int_tree(Seeds.draw(Seeds.split(seed, 0), NONE_ODDS), 0)
-    Trees.zip_trees(tag, gen.make(Seeds.split(seed, 1))) do |n, value| present(n, value) end
+    if Seeds.draw(Seeds.split(seed, 0), 2) == 0
+      absent: Trees.Tree[Optional[T]] = Trees.leaf(none)
+      return absent
+    end
+
+    Trees.some_tree(gen.make(Seeds.split(seed, 1)))
   end
 end
 
@@ -113,12 +118,4 @@ end
 
 def generator[T](make: Fn[Int, Trees.Tree[T]]) -> Gen[T]
   return Gen(make: make)
-end
-
-def present[T](tag: Int, value: T) -> Optional[T]
-  if tag == 0
-    return none
-  end
-
-  return some(value)
 end
