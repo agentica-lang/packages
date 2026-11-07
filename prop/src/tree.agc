@@ -67,6 +67,18 @@ export def list_tree[T](trees: List[Tree[T]]) -> Tree[List[T]]
   return shaped(trees, false, 0)
 end
 
+## The tree of the list of values, with as many items as `trees`: it shrinks only through the items.
+export def fixed_tree[T](trees: List[Tree[T]]) -> Tree[List[T]]
+  return grow(trees.map do |tree| tree.value end) do fixed_candidates(trees, 0) end
+end
+
+## The tree of the alternative `index` (`make(index)` builds the tree of alternative `index`): it shrinks to the
+## earlier alternatives first, as the simplest ones, then through its own shrinks.
+export def choice_tree[T](index: Int, make: Fn[Int, Tree[T]]) -> Tree[T]
+  chosen = make.call(index)
+  return grow(chosen.value) do append(earlier(make, 0, index)) do chosen.shrinks() end end
+end
+
 # The candidates that follow `first`, once asked: the one place where a lazy list is made lazy.
 def cons[T](first: Tree[T], rest: Fn[Optional[Candidates[T]]]) -> Optional[Candidates[T]]
   return some(Candidates(first: first, rest: rest))
@@ -227,4 +239,22 @@ def item_shrinks[T](trees: List[Tree[T]], start: Int, count: Int) -> Optional[Ca
   return append(map_candidates(trees[index].shrinks()) do |child| shaped(trees.set(index, child), true, index) end) do
     item_shrinks(trees, start, count + 1)
   end
+end
+
+def fixed_candidates[T](trees: List[Tree[T]], index: Int) -> Optional[Candidates[List[T]]]
+  if index >= trees.size
+    return none
+  end
+
+  return append(map_candidates(trees[index].shrinks()) do |child| fixed_tree(trees.set(index, child)) end) do
+    fixed_candidates(trees, index + 1)
+  end
+end
+
+def earlier[T](make: Fn[Int, Tree[T]], index: Int, limit: Int) -> Optional[Candidates[T]]
+  if index >= limit
+    return none
+  end
+
+  return cons(make.call(index)) do earlier(make, index + 1, limit) end
 end

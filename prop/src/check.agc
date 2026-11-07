@@ -53,7 +53,7 @@ export def check[T](gen: Gens.Gen[T], config: Config = Config(), law: Fn[T, Resu
     verdict = law.call(tree.value)
     if verdict.ok?
       passed += 1
-    elsif verdict.message == DISCARD
+    elsif discarded?(verdict)
       discarded += 1
       if discarded > config.discards
         return error("gave up: #{discarded} cases discarded and #{passed} of #{config.runs} passed, seed #{seed}")
@@ -88,6 +88,11 @@ export def eq[T](actual: T, expected: T) -> Result[Void]
   end
 
   return error("expected #{want}, got #{got}")
+end
+
+## Whether `verdict` is the result of `Prop.assume` on a case it does not cover.
+export def discarded?(verdict: Result[Void]) -> Bool
+  return not verdict.ok? and verdict.message == DISCARD
 end
 
 def count(n: Int, noun: String) -> String
@@ -137,10 +142,14 @@ def first_failure[T](
       end
 
       verdict = law.call(next.first.value)
-      if not verdict.ok? and verdict.message != DISCARD
+      if failed?(verdict)
         return Probe(tree: some(next.first), message: verdict.message, used: used + 1, cut: false)
       end
 
       return first_failure(next.rest(), law, left - 1, used + 1)
   end
+end
+
+def failed?(verdict: Result[Void]) -> Bool
+  return not verdict.ok? and not discarded?(verdict)
 end
