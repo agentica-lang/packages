@@ -1,0 +1,5 @@
+{{- /* A package's pages are in <package>/docs/ of the repository; Hugo sees them as content/<package>/. */ -}}
+{{- $parts := split .File.Path "/" -}}
+{{- if gt (len $parts) 1 }}
+<p class="source"><a href="{{ site.Params.repo }}/blob/{{ site.Params.branch }}/{{ index $parts 0 }}/docs/{{ delimit (after 1 $parts) "/" }}">Page source</a></p>
+{{- end }}

@@ -1,0 +1,12 @@
+{{- /* A link to another page is written as the file (`handlers.md`), so it works on GitHub too. A missing file fails the build. */ -}}
+{{- $url := urls.Parse .Destination -}}
+{{- $href := .Destination -}}
+{{- if and (not $url.IsAbs) (strings.HasSuffix $url.Path ".md") -}}
+  {{- with .PageInner.GetPage $url.Path -}}
+    {{- $href = .RelPermalink -}}
+    {{- with $url.Fragment }}{{ $href = printf "%s#%s" $href . }}{{ end -}}
+  {{- else -}}
+    {{- errorf "%s: no page for link %q" .PageInner.File.Path .Destination -}}
+  {{- end -}}
+{{- end -}}
+<a href="{{ $href }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text }}</a>

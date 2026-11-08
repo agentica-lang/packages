@@ -4,13 +4,15 @@ PACKAGES := $(patsubst %/agentica.toml,%,$(wildcard */agentica.toml))
 # How many test files of a package run at once.
 JOBS ?= 4
 
-.PHONY: help install check fmt-check test
+.PHONY: help install check fmt-check test site site-mounts site-serve
 
 help:
 	@echo "install    fetch the packages of each agentica.lock into deps/"
 	@echo "check      type-check every .agc file of each package"
 	@echo "fmt-check  fail when a file is not formatted (agentica fmt)"
 	@echo "test       run the features of specs/ and the tests of test/ of each package"
+	@echo "site       build the documentation site into site/public (the docs/ folder of each package)"
+	@echo "site-serve serve the site on localhost for a preview"
 
 # A package with no dependencies has no lock and nothing to fetch.
 install:
@@ -26,3 +28,30 @@ fmt-check:
 
 test:
 	@set -e; for p in $(PACKAGES); do echo "== $$p"; (cd $$p && $(AGENTICA) test --jobs $(JOBS)); done
+
+# The documentation site (Hugo): site/ has the layouts, and the pages are the docs/ folder of each package.
+HUGO ?= hugo
+# Each docs/ folder is mounted as content/PACKAGE, so a package adds its docs by having the folder.
+PACKAGE_DOCS := $(wildcard $(addsuffix /docs,$(PACKAGES)))
+HUGO_CONFIG := --source site --config hugo.toml,mounts.toml
+
+# Rewritten on every run: a new package or a removed docs/ folder shows at once.
+site-mounts:
+	@{ printf '[[module.mounts]]\n  source = "content"\n  target = "content"\n\n'; \
+	for d in $(PACKAGE_DOCS); do \
+		printf '[[module.mounts]]\n  source = "../%s"\n  target = "content/%s"\n\n' "$$d" "$${d%/docs}"; \
+	done; } > site/mounts.toml
+
+# The highlighter colors the Agentica code blocks after Hugo built the pages.
+site/highlight/node_modules: site/highlight/package.json site/highlight/package-lock.json
+	npm ci --prefix site/highlight --ignore-scripts --no-audit --no-fund
+	touch $@
+
+# --panicOnWarning: a link to a page that does not exist fails the build.
+site: site-mounts site/highlight/node_modules
+	$(HUGO) $(HUGO_CONFIG) --cleanDestinationDir --panicOnWarning $(HUGO_FLAGS)
+	node site/highlight/highlight.mjs site/public
+
+# Agentica blocks stay plain here: the highlighter runs in `make site`.
+site-serve: site-mounts
+	$(HUGO) server $(HUGO_CONFIG)

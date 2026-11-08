@@ -17,4 +17,8 @@ cache = { git = "https://github.com/agentica-lang/packages", tag = "cache-0.1.0"
 
 A tag is `PACKAGE-X.Y.Z`, where `PACKAGE` is the folder name (`cache-0.1.0`, `bond-channels-0.1.0`), so each package has its own versions. The `tag` of a dependency is that name, and `subdir` is the folder.
 
+## Docs
+
+The docs are at <https://agentica-lang.github.io/packages/>. Each package keeps its pages in its own `PACKAGE/docs/` folder (an `_index.md` at least), and `make site` builds them into one Hugo site in `site/public` (Hugo and Node are needed; `make site-serve` previews it).
+
 Rules for contributors and agents: `AGENTS.md`.

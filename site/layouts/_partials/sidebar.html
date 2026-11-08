@@ -1,0 +1,18 @@
+{{- /* The packages (the sections), and the pages of the one being read. */ -}}
+{{- $here := . -}}
+<nav class="sidebar" aria-label="Packages">
+  <ul>
+    {{- range site.Home.Sections.ByTitle }}
+    <li>
+      <a href="{{ .RelPermalink }}"{{ if eq $here . }} aria-current="page"{{ end }}>{{ .Title }}</a>
+      {{- if or (eq $here .) ($here.InSection .) }}
+      <ul>
+        {{- range .Pages.ByWeight }}
+        <li><a href="{{ .RelPermalink }}"{{ if eq $here . }} aria-current="page"{{ end }}>{{ .Title }}</a></li>
+        {{- end }}
+      </ul>
+      {{- end }}
+    </li>
+    {{- end }}
+  </ul>
+</nav>
