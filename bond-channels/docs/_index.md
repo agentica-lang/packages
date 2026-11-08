@@ -14,7 +14,7 @@ Needs Agentica 0.27.0 or later and Bond 0.10.0. The app depends on Bond itself, 
 ```toml
 [dependencies]
 bond = { git = "https://github.com/agentica-lang/bond", tag = "0.10.0" }
-bond-channels = { git = "https://github.com/agentica-lang/packages", tag = "bond-channels-0.1.0", subdir = "bond-channels" }
+bond-channels = { git = "https://github.com/agentica-lang/packages", tag = "bond-channels-0.2.0", subdir = "bond-channels" }
 ```
 
 Run `agentica install`. The releases and their notes are in the [changelog](https://github.com/agentica-lang/packages/blob/main/bond-channels/CHANGELOG.md).
