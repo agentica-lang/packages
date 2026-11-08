@@ -105,4 +105,4 @@ Everything is under `Channels`, from `import Channels from "pkg/bond-channels/ch
 | `Channels.stats(hub)` | the connections and subscriptions now, the drops and the lost broadcasts |
 | `Channels.disconnect(hub, identity, reconnect)` | ends every connection of one person |
 | `Channels.stream_key`, `signed_stream_name`, `verified_stream_name`, `turbo_streams` | [Turbo Streams](turbo.md) |
-| `Channels.Identity`, `Session`, `Subscription`, `Handler`, `HubOptions`, `MountOptions`, `Stats` | the records |
+| `Channels.Hub`, `Identity`, `Session`, `Subscription`, `Handler`, `HubOptions`, `MountOptions`, `Stats` | the records |
