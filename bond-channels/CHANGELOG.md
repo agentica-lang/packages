@@ -4,7 +4,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Needs Agentica 0.25.0 or later and Bond 0.8.0 (the Bond package is pinned by the tag 0.8.0).
+Needs Agentica 0.25.0 or later and Bond 0.9.0 (the Bond package is pinned by the tag 0.9.0).
 
 ### Added
 
@@ -17,3 +17,8 @@ Needs Agentica 0.25.0 or later and Bond 0.8.0 (the Bond package is pinned by the
 - Turbo: `Channels.stream_key`, `Channels.signed_stream_name` and `Channels.verified_stream_name` (`src/signing.agc`), the signed stream names in the format of Rails (`Turbo.signed_stream_verifier`), so a name that Rails signed verifies and the other way round, checked against vectors that Rails made. `Channels.turbo_streams(key, authorize)` is the handler of `<turbo-cable-stream-source>`: it streams from a verified, non-empty name that `authorize` allows, and rejects the rest.
 - `Channels.disconnect(hub, identity, reconnect)`: ends every connection whose `Identity.id` is `identity`, with `{"type":"disconnect","reason":"remote","reconnect":RECONNECT}` and a close 1000, as `remote_connections.where(...).disconnect` of Rails does, so a person who loses a right that `connect` or `subscribed` checked once (a sign-out, a deactivation, a removal from a room) stops hearing the streams. With `reconnect: true` the client comes back and `connect` and `subscribed` decide again. A connection whose inbox is full is told the same, not a drop.
 - `Channels.stop_hub` also ends the ticker of the hub, so a program or a test that waits for its tasks is not kept for one more beat.
+
+### Changed
+
+- Bond 0.9.0 replaces 0.8.0 as the dependency (`agentica.lock` is updated), so an app on Bond 0.9.0 no longer needs `override = true`.
+- A broadcast is faster on the hub task: it sends to each subscriber from one loop over the values of the route, with no list of keys and no lookup per subscriber, which halves the steps of the hub for a broadcast (the frame was already made once per identifier). The order does not change: a broadcast never reaches a client before the confirmation of its subscription.
