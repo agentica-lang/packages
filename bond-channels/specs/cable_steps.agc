@@ -48,7 +48,9 @@ export def steps() -> List[BDD.Step]
     BDD.step("client {string} is closed by the server with the code {int}", &closed_with),
     BDD.step("client {string} closes", &closes),
     BDD.step("client {string} drops the connection", &drops),
+    BDD.step("client {string} receives the confirmation before any broadcast", &confirmed_first),
     BDD.step("the app broadcasts {string} to {string}", &broadcasts),
+    BDD.step("the app broadcasts {string} to {string} {int} times", &broadcasts_often),
     BDD.step("the app cannot broadcast {string} to {string}", &cannot_broadcast),
     BDD.step("the app stops the hub", &stops_hub),
     BDD.step("the app disconnects {string} with reconnect {string}", &disconnects),
@@ -203,6 +205,25 @@ def eventually_receives(ctx: BDD.Context, args: List[String]) -> BDD.Context
   return BDD.assert(ctx, false, "#{args[0]} heard no frame with #{args[1]} in #{SKIPPED_FRAMES} frames")
 end
 
+# Only a frame with an identifier counts as a broadcast (a ping has none). A broadcast that the hub handles before the
+# subscription is attached is not heard at all, which is fine; one that comes after must not pass the confirmation,
+# which the connection writes before it reads its inbox again.
+def confirmed_first(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  for _skipped in 1..SKIPPED_FRAMES
+    frame = next_frame(ctx, args[0], RECEIVE_MS)
+    text = text_of(frame, "text")
+    if text.include?("confirm_subscription")
+      return BDD.assert(ctx, true, "")
+    end
+
+    if text.include?("\"identifier\"") or not has?(frame, "text")
+      return BDD.assert(ctx, false, "#{args[0]} got #{frame} before the confirmation")
+    end
+  end
+
+  return BDD.assert(ctx, false, "#{args[0]} heard no confirmation in #{SKIPPED_FRAMES} frames")
+end
+
 def receives_nothing(ctx: BDD.Context, args: List[String]) -> BDD.Context
   frame = next_frame(ctx, args[0], args[1].to_i!)
   return BDD.assert(ctx, has?(frame, "timeout"), "#{args[0]} got #{frame}, expected nothing")
@@ -234,6 +255,19 @@ def broadcasts(ctx: BDD.Context, args: List[String]) -> BDD.Context
   url = "http://127.0.0.1:#{port_of(ctx)}/say?topic=#{args[1]}&text=#{args[0]}"
   answer = HTTP.get_response(url).unwrap!
   return BDD.assert(ctx, answer.status == 200, "the broadcast was answered #{answer.status}")
+end
+
+# One after the other, each answered before the next: the first may reach the hub before the subscriptions do.
+def broadcasts_often(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  url = "http://127.0.0.1:#{port_of(ctx)}/say?topic=#{args[1]}&text=#{args[0]}"
+  for _ in 1..args[2].to_i!
+    answer = HTTP.get_response(url).unwrap!
+    if answer.status != 200
+      return BDD.assert(ctx, false, "the broadcast was answered #{answer.status}")
+    end
+  end
+
+  return BDD.assert(ctx, true, "")
 end
 
 # A broadcast to a hub that is gone is an `error`, which the HTTP handler turns into a 500.

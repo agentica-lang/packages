@@ -82,9 +82,20 @@ export struct Hub
   options: HubOptions
 end
 
-type Group = Map[Int, Channel[Event]]
+# The subscribers of one identifier on a topic. The frame of a broadcast differs from one route to the next only in
+# the identifier, so it is made once per route and shared by every member.
+struct Route
+  identifier: String
+  members: Map[Int, Member]
+end
 
-type Topic = Map[String, Group]
+# A route is read with `values`, which has no keys: the connection number is in the value.
+struct Member
+  connection: Int
+  inbox: Channel[Event]
+end
+
+type Topic = Map[String, Route]
 
 struct Key
   topic: String
@@ -98,7 +109,8 @@ struct Entry
   keys: List[Key]
 end
 
-# topics: topic -> identifier -> connection -> inbox. A broadcast encodes its frame once per identifier.
+# topics: topic -> identifier -> Route (its members: connection -> Member). A broadcast encodes its frame once per
+# identifier.
 struct State
   entries: Map[Int, Entry]
   topics: Map[String, Topic]
@@ -398,10 +410,11 @@ def with_member(
   inbox: Channel[Event],
 ) -> Map[String, Topic]
   empty_topic: Topic = {}
-  empty_group: Group = {}
-  groups = topics.get(topic, empty_topic)
-  members = groups.get(identifier, empty_group)
-  return topics.put(topic, groups.put(identifier, members.put(connection, inbox)))
+  empty_members: Map[Int, Member] = {}
+  routes = topics.get(topic, empty_topic)
+  route = routes.get(identifier, Route(identifier: identifier, members: empty_members))
+  joined = route.with(members: route.members.put(connection, Member(connection: connection, inbox: inbox)))
+  return topics.put(topic, routes.put(identifier, joined))
 end
 
 # A topic or an identifier with no member left leaves the map, so a long run does not keep every name it ever saw.
@@ -412,48 +425,52 @@ def without_member(
   connection: Int,
 ) -> Map[String, Topic]
   empty_topic: Topic = {}
-  empty_group: Group = {}
-  groups = topics.get(topic, empty_topic)
-  members = groups.get(identifier, empty_group).delete(connection)
+  empty_members: Map[Int, Member] = {}
+  routes = topics.get(topic, empty_topic)
+  route = routes.get(identifier, Route(identifier: identifier, members: empty_members))
+  members = route.members.delete(connection)
   if members.empty?
-    groups = groups.delete(identifier)
+    routes = routes.delete(identifier)
   else
-    groups = groups.put(identifier, members)
+    routes = routes.put(identifier, route.with(members: members))
   end
 
-  if groups.empty?
+  if routes.empty?
     return topics.delete(topic)
   end
 
-  return topics.put(topic, groups)
+  return topics.put(topic, routes)
 end
 
 # Sends without waiting. True when the connection must leave the hub: its inbox is closed already, or it is full
 # (a client too slow for the traffic) and is closed now, so that its task drains what is queued and says goodbye.
 def leaves?(counters: ATS[String, Int], inbox: Channel[Event], event: Event) -> Bool
-  sent = inbox.send(event, 0)
-  if sent.ok?
+  if inbox.send(event, 0).ok?
     return false
   end
 
+  cut_off(counters, inbox)
+  return true
+end
+
+# A failed send is a closed inbox (nothing to do) or a full one (a drop).
+def cut_off(counters: ATS[String, Int], inbox: Channel[Event]) -> Void
   if not inbox.closed?
     inbox.close
     _ = counters.add(DROPS, 1)
   end
-
-  return true
 end
 
 def fan_out(state: State, cast: Cast, counters: ATS[String, Int]) -> State
   empty_topic: Topic = {}
-  groups = state.topics.get(cast.topic, empty_topic)
   gone: List[Int] = []
-  for identifier in groups.keys
-    frame = Event.Frame(Protocol.message(identifier, cast.payload))
-    members = groups[identifier]
-    for connection in members.keys
-      if leaves?(counters, members[connection], frame)
-        gone = gone.push(connection)
+  for route in state.topics.get(cast.topic, empty_topic).values
+    frame = Event.Frame(Protocol.message(route.identifier, cast.payload))
+    for member in route.members.values
+      # The send is here, not in `leaves?`: this is the loop that runs once per subscriber per broadcast.
+      if not member.inbox.send(frame, 0).ok?
+        cut_off(counters, member.inbox)
+        gone = gone.push(member.connection)
       end
     end
   end
