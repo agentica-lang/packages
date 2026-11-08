@@ -38,6 +38,32 @@ Feature: The cable
       """
     And client "ben" receives nothing for 300 milliseconds
 
+  Scenario: A broadcast never reaches a client before the confirmation of its subscription, and every subscriber hears it
+    Given the cable server listens on a free port
+    When client "ana" connects with:
+      | header                 | value               |
+      | Cookie                 | user=ana            |
+      | Sec-WebSocket-Protocol | actioncable-v1-json |
+    And client "ben" connects with:
+      | header                 | value               |
+      | Cookie                 | user=ben            |
+      | Sec-WebSocket-Protocol | actioncable-v1-json |
+    And client "cat" connects with:
+      | header                 | value               |
+      | Cookie                 | user=cat            |
+      | Sec-WebSocket-Protocol | actioncable-v1-json |
+    And client "ana" subscribes to the room "1"
+    And client "ben" subscribes to the room "1"
+    And client "cat" subscribes to the room "1"
+    And the app broadcasts "hi" to "room:1" 30 times
+    Then client "ana" receives the confirmation before any broadcast
+    And client "ben" receives the confirmation before any broadcast
+    And client "cat" receives the confirmation before any broadcast
+    When the app broadcasts "last" to "room:1"
+    Then client "ana" eventually receives a frame containing "last"
+    And client "ben" eventually receives a frame containing "last"
+    And client "cat" eventually receives a frame containing "last"
+
   Scenario: The frames that `subscribed` transmits come before the confirmation
     Given the cable server listens on a free port
     When client "ana" connects with:
