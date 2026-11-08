@@ -26,7 +26,7 @@ export def stream_key(secret_key_base: String) -> Result[Bytes]
     return error("stream key: the secret is empty")
   end
 
-  return KDF.pbkdf2_hmac_sha256(secret_key_base.bytes, SALT.bytes, ITERATIONS, KEY_BYTES)
+  return OpenSSL.KDF.pbkdf2_hmac_sha256(secret_key_base.bytes, SALT.bytes, ITERATIONS, KEY_BYTES)
 end
 
 ## The signed form of `name`, for `<turbo-cable-stream-source signed-stream-name="...">`. `name` is what Rails'
@@ -37,7 +37,7 @@ end
 ## either side verifies on both.
 export def signed_stream_name(key: Bytes, name: String) -> String
   encoded = Base64.strict_encode64(JSON.encode(JSON.from(name)).bytes)
-  return "#{encoded}#{SEPARATOR}#{HMAC.sha256_hexdigest(key, encoded.bytes)}"
+  return "#{encoded}#{SEPARATOR}#{OpenSSL.HMAC.sha256_hexdigest(key, encoded.bytes)}"
 end
 
 ## The name in `signed` when it was signed with `key`; `none` for anything else (a bad signature, a bad encoding, a
@@ -52,7 +52,7 @@ export def verified_stream_name(key: Bytes, signed: String) -> Optional[String]
 
   encoded = signed.slice(0, cut)
   digest = signed.slice(cut + SEPARATOR.length, DIGEST_LENGTH)
-  if not HMAC.secure_compare(HMAC.sha256_hexdigest(key, encoded.bytes).bytes, digest.bytes)
+  if not OpenSSL.HMAC.secure_compare(OpenSSL.HMAC.sha256_hexdigest(key, encoded.bytes).bytes, digest.bytes)
     return none
   end
 

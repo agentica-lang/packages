@@ -46,11 +46,11 @@ def expected_name(row: Json) -> Optional[String]
 end
 
 def key_is_rails_key(ctx: BDD.Context, _args: List[String]) -> BDD.Context
-  expected = Digest.hexdecode(text(vectors(), "key_hex")).unwrap!
+  expected = OpenSSL.Digest.hexdecode(text(vectors(), "key_hex")).unwrap!
   return BDD.assert(
     ctx,
     key() == expected,
-    "the key is #{Digest.hexencode(key())}, expected #{Digest.hexencode(expected)}",
+    "the key is #{OpenSSL.Digest.hexencode(key())}, expected #{OpenSSL.Digest.hexencode(expected)}",
   )
 end
 
