@@ -109,7 +109,8 @@ struct Entry
   keys: List[Key]
 end
 
-# topics: topic -> identifier -> connection -> inbox. A broadcast encodes its frame once per identifier.
+# topics: topic -> identifier -> Route (its members: connection -> Member). A broadcast encodes its frame once per
+# identifier.
 struct State
   entries: Map[Int, Entry]
   topics: Map[String, Topic]

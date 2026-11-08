@@ -115,21 +115,29 @@ def main() -> Void
       try Test.eq(frames(ana), [Protocol.message("two", "1")])
       Test.eq(frames(ben), [Protocol.message("one", "1"), Protocol.message("one", "2")])
     end,
-    Test.test("a connection with a full inbox is closed and counted, and the others still hear the broadcast") do
+    Test.test("a full inbox is one drop, a closed inbox none, and the others still hear the broadcast") do
       hub = try Hubs.start(HubOptions())
       slow: Channel[Hubs.Event] = Channel.new(1)
       quick: Channel[Hubs.Event] = Channel.new(8)
+      ended: Channel[Hubs.Event] = Channel.new(8)
       try Hubs.register(hub, 1, "slow", slow, 1)
       try Hubs.register(hub, 2, "quick", quick, 1)
+      try Hubs.register(hub, 3, "ended", ended, 1)
       try Hubs.attach(hub, 1, "one", ["room"])
       try Hubs.attach(hub, 2, "one", ["room"])
+      try Hubs.attach(hub, 3, "one", ["room"])
       try slow.send(Hubs.Event.Ping, 0)
+      # Its loop is over and its `Disconnect` not yet handled: the hub finds a closed inbox, which is no drop.
+      ended.close
       try Hubs.broadcast(hub, "room", "1")
       try Hubs.broadcast(hub, "room", "2")
+      try Hubs.broadcast(hub, "room", "3")
       try finish(hub)
       try Test.assert(slow.closed?, "the inbox of the slow connection is closed")
+      # One drop, for the slow connection only; the third broadcast would count it again if the hub kept routing to it.
       try Test.eq(Hubs.stats(hub).drops, 1)
-      Test.eq(frames(quick), [Protocol.message("one", "1"), Protocol.message("one", "2")])
+      heard = ["1", "2", "3"].map do |payload| Protocol.message("one", payload) end
+      Test.eq(frames(quick), heard)
     end,
     # The `Away` event cannot be queued, so the hub closes the inbox and leaves the reason where the loop finds it. It
     # is not a drop, and the slot goes when the connection ends.

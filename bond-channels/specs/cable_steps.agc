@@ -205,8 +205,9 @@ def eventually_receives(ctx: BDD.Context, args: List[String]) -> BDD.Context
   return BDD.assert(ctx, false, "#{args[0]} heard no frame with #{args[1]} in #{SKIPPED_FRAMES} frames")
 end
 
-# A broadcast that the hub handles before the subscription is attached is not heard at all, which is fine; one that
-# comes after must not pass the confirmation, which the connection writes before it reads its inbox again.
+# Only a frame with an identifier counts as a broadcast (a ping has none). A broadcast that the hub handles before the
+# subscription is attached is not heard at all, which is fine; one that comes after must not pass the confirmation,
+# which the connection writes before it reads its inbox again.
 def confirmed_first(ctx: BDD.Context, args: List[String]) -> BDD.Context
   for _skipped in 1..SKIPPED_FRAMES
     frame = next_frame(ctx, args[0], RECEIVE_MS)
@@ -215,7 +216,7 @@ def confirmed_first(ctx: BDD.Context, args: List[String]) -> BDD.Context
       return BDD.assert(ctx, true, "")
     end
 
-    if text.include?("\"message\"") or not has?(frame, "text")
+    if text.include?("\"identifier\"") or not has?(frame, "text")
       return BDD.assert(ctx, false, "#{args[0]} got #{frame} before the confirmation")
     end
   end

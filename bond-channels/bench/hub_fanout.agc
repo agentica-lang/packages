@@ -4,8 +4,8 @@
 ##
 ## CLIENTS connections subscribe to one topic under each of IDENTIFIERS identifiers; MESSAGES broadcasts of a PAYLOAD
 ## bytes text go out. It prints the wall time of the broadcasts and the frames per second. With
-## `AGENTICA_VM_TRACE=profile` the `steps`, `gc_ms` and `collections` of the report are the cost of the hub task and the
-## process. It is run by hand: the time depends on the machine.
+## `AGENTICA_VM_TRACE=profile` the `steps`, `gc_ms` and `collections` of the report are the cost of the hub task and
+## the process. It is run by hand: the time depends on the machine.
 
 import Hubs from "../src/hub"
 import Protocol from "../src/protocol"
