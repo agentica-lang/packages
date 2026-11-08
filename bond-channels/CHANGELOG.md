@@ -4,6 +4,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Needs Agentica 0.27.0 or later and Bond 0.10.0 (the Bond package is pinned by the tag 0.10.0).
+
+### Changed
+
+- **Breaking:** needs Agentica 0.27.0 and Bond 0.10.0. The Turbo signing uses the `OpenSSL.KDF` and `OpenSSL.HMAC` builtins, which replace `KDF` and `HMAC` in 0.27.0, so the package no longer runs on Agentica 0.25.0. The signed names are the same as before.
+
 ## [0.1.0] - 2026-11-08
 
 Needs Agentica 0.25.0 or later and Bond 0.9.0 (the Bond package is pinned by the tag 0.9.0).

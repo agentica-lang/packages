@@ -1,4 +1,4 @@
-# Needs Agentica 0.25.0 or later on PATH (CI pins it). Every target runs in each folder that has an agentica.toml.
+# Needs Agentica 0.27.0 or later on PATH (CI pins it). Every target runs in each folder that has an agentica.toml.
 AGENTICA ?= agentica
 PACKAGES := $(patsubst %/agentica.toml,%,$(wildcard */agentica.toml))
 # How many test files of a package run at once.
