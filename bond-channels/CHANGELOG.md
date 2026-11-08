@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-08
+
+Needs Bond 0.10.1 (faster static files and headers). Nothing else changes.
+
 ## [0.2.0] - 2026-11-08
 
 Needs Agentica 0.27.0 or later and Bond 0.10.0 (the Bond package is pinned by the tag 0.10.0).
