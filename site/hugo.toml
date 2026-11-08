@@ -1,0 +1,24 @@
+# The packages' docs are not under site/: the Makefile writes mounts.toml (site/content and one mount per
+# <package>/docs folder) and passes it as a second config file, so a package adds its docs by having a docs/ folder.
+# The mounts are not in this file because the second file replaces a mount list instead of adding to it.
+baseURL = "https://agentica-lang.github.io/packages/"
+locale = "en"
+title = "Agentica packages"
+disableKinds = ["taxonomy", "term", "rss"]
+
+[params]
+  description = "Small packages for the Agentica language: install one with a git tag and a subdir."
+  repo = "https://github.com/agentica-lang/packages"
+  branch = "main"
+
+# CSS classes for the code blocks of other languages; Agentica blocks are colored by highlight/highlight.mjs.
+[markup.highlight]
+  noClasses = false
+
+[markup.tableOfContents]
+  startLevel = 2
+  endLevel = 2
+
+# Plain quotes and dashes, as written in the Markdown (it is also what GitHub shows).
+[markup.goldmark.extensions]
+  typographer = false

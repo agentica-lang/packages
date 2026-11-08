@@ -7,9 +7,11 @@ is in GitHub issues of `agentica-lang/packages`.
 
 ```text
 README.md            the table of packages and how to install one
-Makefile             install, check, fmt-check and test, each run in every folder that has an agentica.toml
-.github/workflows/   ci.yml: the pinned Agentica release, then the four targets
-PACKAGE/             one package: agentica.toml, agentica.lock (when it has dependencies), src/, specs/, test/
+Makefile             install, check, fmt-check and test, each run in every folder that has an agentica.toml; site
+.github/workflows/   ci.yml: the pinned Agentica release, then the four targets; pages.yml: the site (pinned Hugo)
+site/                the Hugo site: hugo.toml, layouts/, assets/css/, content/_index.md (the home), highlight/ (colors
+                     the Agentica code blocks after the build, with the grammar of the Agentica site)
+PACKAGE/             one package: agentica.toml, agentica.lock (when it has dependencies), src/, specs/, test/, docs/
 bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub, broadcast, stats); src/protocol.agc the frames
                      (pure), src/hub.agc the hub task, src/connection.agc one connection, src/types.agc the records;
                      turbo_streams, stream_key and signed_stream_name are in channels.agc too: src/signing.agc the
@@ -30,6 +32,8 @@ prop/                property-based testing: prop.agc is the API (check, eq, ass
 - `make install` fetches `deps/` from each lock (git ignores `deps/`). `make check`, `make fmt-check`, `make test`
   run in each package folder; to work on one package, `cd` into it and run `agentica check`, `agentica fmt --check`
   and `agentica test`.
+- `make site` builds the docs into `site/public` (needs Hugo and Node; CI pins Hugo 0.167.0 in `pages.yml`);
+  `make site-serve` previews them. A pull request builds the site, and a push to main deploys it to GitHub Pages.
 - To move a dependency: `agentica add NAME URL --tag TAG` in the package folder, and commit the lock.
 
 ## Rules
@@ -45,6 +49,12 @@ prop/                property-based testing: prop.agc is the API (check, eq, ass
 - BDD first: a behavior is a Gherkin scenario in `specs/`, with steps in `specs/steps.agc`. A pure helper may have a
   unit test in `test/` (`*_test.agc`). Tests are hermetic: 127.0.0.1, port 0, no external services, and a step that makes
   something on disk removes it with `BDD.after`.
+- Each package keeps its docs in its own `PACKAGE/docs/`, as Markdown with a front matter (`title`, `description`,
+  `weight` to order a page): `_index.md` is the package page (what it is, the `agentica.toml` install line with `subdir`
+  and the prefixed tag, a short example, the API), and each other `.md` is a page of it. `make site` mounts each `docs/`
+  as `/PACKAGE/`, so a new package adds its docs with that folder alone, and no file of `site/` changes. Link to a page
+  as `[text](page.md)`; a broken link fails the build. Examples in the docs must run (an `agentica` code block is
+  colored with the Agentica grammar). Site prose: one line per paragraph or list item, simple words.
 - Each package has its own CHANGELOG.md; a user-visible change adds a line under its `## [Unreleased]`; a release renames
   it to `## [X.Y.Z] - DATE` and tags `PACKAGE-X.Y.Z`.
 - Release: a tag `PACKAGE-X.Y.Z` on main, made by the owner. A PR never pushes a tag.

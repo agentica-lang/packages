@@ -1,0 +1,6 @@
+{{- /* An `agentica` block is highlighted with Hugo's Ruby lexer, which highlight/highlight.mjs replaces after the build with the Agentica grammar. */ -}}
+{{- $lang := .Type -}}
+{{- $agentica := in (slice "agentica" "agc") $lang -}}
+{{- if $agentica }}<div class="agc-code">{{ transform.Highlight .Inner "ruby" (dict) }}</div>
+{{- else }}{{ transform.Highlight .Inner $lang .Options }}
+{{- end -}}
