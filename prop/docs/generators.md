@@ -31,12 +31,16 @@ tens = Prop.map(Prop.int(1, 5)) do |n| n * 10 end
 
 `Prop.sample(gen, seed, count = 5)` returns the first values that `check` would try with that seed. It is a good way to see what a generator makes:
 
-```agentica {mode="fragment"}
-puts(Prop.sample(Prop.pair(Prop.int(0, 9), Prop.string(3)), 5, 2))
-puts(Prop.sample(Prop.optional(Prop.int(0, 3)), 1, 6))
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  puts(Prop.sample(Prop.pair(Prop.int(0, 9), Prop.string(3)), 5, 2))
+  puts(Prop.sample(Prop.optional(Prop.int(0, 3)), 1, 6))
+end
 ```
 
-```text
+```output
 [Pair(first: 6, second: "R_f"), Pair(first: 6, second: "")]
 [none, none, none, none, some(3), some(0)]
 ```

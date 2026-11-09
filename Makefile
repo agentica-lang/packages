@@ -5,7 +5,7 @@ PACKAGES := $(patsubst %/agentica.toml,%,$(wildcard */agentica.toml))
 # How many test files of a package run at once.
 JOBS ?= 4
 
-.PHONY: help install check fmt-check test doc-examples site site-mounts site-serve
+.PHONY: help install check fmt-check test doc-examples doc-examples-test site site-mounts site-serve
 
 help:
 	@echo "install    fetch the packages of each agentica.lock into deps/"
@@ -13,6 +13,7 @@ help:
 	@echo "fmt-check  fail when a file is not formatted (agentica fmt)"
 	@echo "test       run the features of specs/ and the tests of test/ of each package"
 	@echo "doc-examples run the agentica code blocks of the docs/ of each package (tools/doc_examples.agc)"
+	@echo "doc-examples-test check that tools/doc_examples.agc fails on its fixture (doc-examples runs it first)"
 	@echo "site       build the documentation site into site/public (the docs/ folder of each package)"
 	@echo "site-serve serve the site on localhost for a preview"
 
@@ -33,8 +34,17 @@ test:
 
 # The examples of each docs/ folder: a block with `def main` runs (and matches the `output` block after it), any other
 # is checked; the rules are in the header of tools/doc_examples.agc.
-doc-examples:
+doc-examples: doc-examples-test
 	$(AGENTICA) tools/doc_examples.agc $(AGENTICA) $(PACKAGES)
+
+# The fixture page has one block or fence per rule that fails, so the tool must exit 1 with exactly this summary.
+DOC_EXAMPLES_FIXTURE_SUMMARY := doc examples: 2 passed, 6 failed, 1 fragments skipped
+doc-examples-test:
+	@summary=$$($(AGENTICA) tools/doc_examples.agc $(AGENTICA) tools/fixtures/doc_examples 2>/dev/null); code=$$?; \
+	if [ $$code -ne 1 ] || [ "$$summary" != "$(DOC_EXAMPLES_FIXTURE_SUMMARY)" ]; then \
+		echo "doc-examples-test: expected exit 1 and '$(DOC_EXAMPLES_FIXTURE_SUMMARY)', got exit $$code and '$$summary'"; \
+		exit 1; \
+	fi; echo "doc-examples-test: ok"
 
 # The documentation site (Hugo): site/ has the layouts, and the pages are the docs/ folder of each package.
 HUGO ?= hugo
