@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The docs open with a runnable example, and every function has its signature and a short example.
+
 ## [0.1.0] - 2026-11-08
 
 Needs Agentica 0.25.0 or later.

@@ -33,11 +33,10 @@ struct Probe[T]
 end
 
 ## Runs `law` on `config.runs` values of `gen` and returns `ok()`, or an `error` that names the shrunk counterexample
-## and the seed: `falsified after 37 runs, shrunk to [3,0], seed 1234: expected ...`. The seed is drawn from `Random`
-## (so `agentica --seed N test` replays the run), or is `config.seed`, which replays the check alone. A case that fails
-## with `Prop.assume` is discarded; more than `config.discards` of them is an `error`, so a law cannot pass without
-## being tried. The law should fail with `Prop.eq`, `Prop.assume` or `error(...)`: a failed `Test.eq` or `Test.assert`
-## fails the test at the first case, before it is shrunk.
+## and the seed. The seed is drawn from `Random` (so `agentica --seed N test` replays the run), or is `config.seed`,
+## which replays the check alone. A case that fails with `Prop.assume` is discarded; more than `config.discards` of them
+## is an `error`, so a law cannot pass without being tried. The law should fail with `Prop.eq`, `Prop.assume` or
+## `error(...)`: a failed `Test.eq` or `Test.assert` fails the test at the first case, before it is shrunk.
 ##
 ## ```ruby
 ## Prop.check(Prop.int(0, 100)) do |n| Prop.eq(n + 0, n) end # ok()

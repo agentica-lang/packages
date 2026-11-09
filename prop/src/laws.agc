@@ -21,7 +21,11 @@ end
 ## `decode(encode(x))` is `ok(x)`. `decode` returns a `Result`, as `JSON.decode` does; an `error` falsifies the law.
 ##
 ## ```ruby
-## Prop.roundtrip(Prop.int(-1000, 1000), &show, &parse) # ok(), with show(n) = n.to_s and parse = text.to_i
+## def show(n: Int) -> String
+##   return n.to_s
+## end
+##
+## Prop.roundtrip(Prop.int(-1000, 1000), &show) do |text| text.to_i end # ok()
 ## ```
 export def roundtrip[T, E](
   gen: Gens.Gen[T],
@@ -44,7 +48,11 @@ end
 ## `fast(x)` is `slow(x)`: the fast version against a simple one that is obviously right.
 ##
 ## ```ruby
-## Prop.oracle(Prop.list(Prop.int(-9, 9)), &fast_sum, &slow_sum) # ok() when both sum the same
+## def fast_sum(xs: List[Int]) -> Int
+##   return xs.sum
+## end
+##
+## Prop.oracle(Prop.list(Prop.int(-9, 9)), &fast_sum) do |xs| xs.reduce(0) do |sum, x| sum + x end end # ok()
 ## ```
 export def oracle[A, B](
   gen: Gens.Gen[A],
@@ -78,7 +86,11 @@ end
 ## `measure(f(x))` is `measure(x)`: `f` keeps the size, the sum, the sortedness or whatever `measure` reads.
 ##
 ## ```ruby
-## Prop.preserves(Prop.list(Prop.int(-9, 9)), &reverse, &total) # ok(): a reverse keeps the sum
+## def reverse(xs: List[Int]) -> List[Int]
+##   return xs.reverse
+## end
+##
+## Prop.preserves(Prop.list(Prop.int(-9, 9)), &reverse) do |xs| xs.sum end # ok(): a reverse keeps the sum
 ## ```
 export def preserves[T, M](
   gen: Gens.Gen[T],

@@ -32,7 +32,7 @@ end
 Prop.int(min: Int, max: Int) -> Gen[Int]
 ```
 
-An Int in `min` to `max`, both included. It shrinks toward 0, or toward the bound nearest to 0. A `min` above `max` halts the test.
+An Int in `min` to `max`, both included, with both bounds clamped to -2^60 and 2^60. It shrinks toward 0, or toward the bound nearest to 0. A `min` above `max` halts the test.
 
 ```agentica
 import Prop from "pkg/prop/prop"
@@ -52,7 +52,7 @@ end
 Prop.float(min: Float, max: Float) -> Gen[Float]
 ```
 
-A Float in `min` to `max`. It shrinks toward 0.0, or toward the bound nearest to it.
+A Float in `min` to `max`, with both bounds clamped to -1e15 and 1e15. It shrinks toward 0.0, or toward the bound nearest to it.
 
 ```agentica
 import Prop from "pkg/prop/prop"
@@ -257,6 +257,31 @@ falsified after 1 run, shrunk to [41], seed 3: expected true, got false
 The shrunk list has one item, at the smallest value that still breaks the law.
 
 ## More on Prop.of
+
+The usual law for a type with a codec is the round trip: encode a value, decode the text, and get the same value back.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+struct User
+  name: String
+  age: Int
+  email: Optional[String]
+end
+
+def encode_user(user: User) -> String
+  return User.codec.encode(user)
+end
+
+def decode_user(text: String) -> Result[User]
+  return User.codec.decode(text)
+end
+
+def test_user_round_trip() -> Result[Void]
+  gen = Prop.of(User.codec, JSON.schema(User))
+  return Prop.roundtrip(gen, &encode_user, &decode_user)
+end
+```
 
 Agentica cannot read a type from a codec, so the schema is passed too. A schema of another type than the codec's halts the test with the decode error. What `Prop.of` makes:
 
