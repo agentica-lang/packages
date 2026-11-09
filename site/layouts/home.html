@@ -1,11 +1,12 @@
+{{- /* The theme's home page, with the list of the packages (the sections) under the text. */ -}}
 {{ define "main" }}
 <article class="content">
-  <h1>{{ site.Title }}</h1>
+  <div class="page-head"><h1>{{ site.Title }}</h1>{{ partial "page-actions.html" . }}</div>
   {{ .Content }}
   <h2>Packages</h2>
   <ul class="pages">
     {{- range .Sections.ByTitle }}
-    <li><a href="{{ .RelPermalink }}">{{ .Title }}</a>{{ with .Description }}<span>{{ . }}</span>{{ end }}</li>
+    <li><a href="{{ .RelPermalink }}">{{ .LinkTitle }}</a>{{ with .Description }} <span>{{ . }}</span>{{ end }}</li>
     {{- end }}
   </ul>
 </article>

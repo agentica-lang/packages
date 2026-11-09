@@ -14,9 +14,9 @@ tools/               doc_examples.agc: runs the `agentica` blocks of the docs (t
 .github/workflows/   ci.yml: the changed packages, the pinned Agentica release, then the five targets; pages.yml: the
                      site (pinned Hugo)
 .github/scripts/     changed-packages.sh: which packages a list of changed files marks (the rules are in its header)
-site/                the Hugo site: hugo.toml, layouts/, assets/css/, content/_index.md (the home), highlight/ (colors
-                     the Agentica code blocks and the signature blocks after the build, with the grammar of the
-                     Agentica site)
+site/                the Hugo site: hugo.toml, content/_index.md (the home), layouts/ (overrides: the home's list of
+                     packages, and links written as files that fail when missing); the look, the layouts and the
+                     highlighter come from themes/docs-theme (the submodule agentica-lang/docs-theme)
 PACKAGE/             one package: agentica.toml, agentica.lock (when it has dependencies), src/, specs/, test/, docs/
 bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub, broadcast, stats); src/protocol.agc the frames
                      (pure), src/hub.agc the hub task, src/connection.agc one connection, src/types.agc the records;
@@ -49,7 +49,8 @@ prop/                property-based testing: prop.agc is the API (check, eq, ass
 - `make check PACKAGES="prop native-gen"` (any target) runs only those packages. A pull request runs the packages
   whose files changed (`.github/scripts/changed-packages.sh`), a push to main runs all of them; a change of a shared
   file (Makefile, `ci.yml`, a script) marks all.
-- `make site` builds the docs into `site/public` (needs Hugo and Node; CI pins Hugo 0.167.0 in `pages.yml`);
+- `make site` builds the docs into `site/public` (needs the theme, `git submodule update --init`, Hugo, Dart Sass and
+  Node; CI pins Hugo 0.167.0 and Dart Sass 1.105.1 in `pages.yml`);
   `make site-serve` previews them. A pull request builds the site, and a push to main deploys it to GitHub Pages.
 - To move a dependency: `agentica add NAME URL --tag TAG` in the package folder, and commit the lock.
 

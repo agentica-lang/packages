@@ -26,6 +26,6 @@ A tag is `PACKAGE-X.Y.Z`, where `PACKAGE` is the folder name (`prop-0.1.0`, `bon
 
 ## Docs
 
-The docs are at <https://agentica-lang.github.io/packages/>. Each package keeps its pages in its own `PACKAGE/docs/` folder (an `_index.md` at least), and `make site` builds them into one Hugo site in `site/public` (Hugo and Node are needed; `make site-serve` previews it).
+The docs are at <https://agentica-lang.github.io/packages/>. Each package keeps its pages in its own `PACKAGE/docs/` folder (an `_index.md` at least), and `make site` builds them into one Hugo site in `site/public` (it needs the docs theme, `git submodule update --init`, plus Hugo, Dart Sass and Node; `make site-serve` previews it).
 
 Rules for contributors and agents: `AGENTS.md`.

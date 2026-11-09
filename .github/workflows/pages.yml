@@ -7,6 +7,7 @@ on:
     paths:
       - '*/docs/**'
       - 'site/**'
+      - '.gitmodules'
       - 'Makefile'
       - '.github/workflows/pages.yml'
   push:
@@ -14,6 +15,7 @@ on:
     paths:
       - '*/docs/**'
       - 'site/**'
+      - '.gitmodules'
       - 'Makefile'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
@@ -29,19 +31,23 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # The standard Hugo build is enough: the site has no Sass and no image processing.
+    # The standard Hugo build is enough: the theme's Sass runs on Dart Sass, and there is no image processing. Keep
+    # the versions equal to the CI of agentica-lang/docs-theme.
     env:
       HUGO_VERSION: 0.167.0
       HUGO_SHA256: 4d84519b9f619e6d4c3fb45a50157abeabeb724f859c60605f44c23def6e1169
+      DART_SASS_VERSION: 1.105.1
+      DART_SASS_SHA256: 9046fdd4a31a524a0020298c55d9e155d4c22363ef268e8992574335a72c6a6f
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          submodules: true
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: site/highlight/package-lock.json
+          cache-dependency-path: site/themes/docs-theme/highlight/package-lock.json
       - name: Install the pinned Hugo
         run: |
           curl -fsSL -o "$RUNNER_TEMP/hugo.tar.gz" "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_${HUGO_VERSION}_linux-amd64.tar.gz"
@@ -49,6 +55,13 @@ jobs:
           mkdir "$RUNNER_TEMP/hugo"
           tar -xzf "$RUNNER_TEMP/hugo.tar.gz" -C "$RUNNER_TEMP/hugo" hugo
           echo "$RUNNER_TEMP/hugo" >> "$GITHUB_PATH"
+      - name: Install the pinned Dart Sass
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/sass.tar.gz" "https://github.com/sass/dart-sass/releases/download/${DART_SASS_VERSION}/dart-sass-${DART_SASS_VERSION}-linux-x64.tar.gz"
+          echo "${DART_SASS_SHA256}  $RUNNER_TEMP/sass.tar.gz" | sha256sum --check
+          mkdir "$RUNNER_TEMP/dart-sass"
+          tar -xzf "$RUNNER_TEMP/sass.tar.gz" -C "$RUNNER_TEMP/dart-sass" --strip-components=1
+          echo "$RUNNER_TEMP/dart-sass" >> "$GITHUB_PATH"
       - name: Build the site
         run: |
           hugo version

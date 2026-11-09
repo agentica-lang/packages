@@ -5,7 +5,7 @@ PACKAGES := $(patsubst %/agentica.toml,%,$(wildcard */agentica.toml))
 # How many test files of a package run at once.
 JOBS ?= 4
 
-.PHONY: help install check fmt-check test doc-examples doc-examples-test site site-mounts site-serve
+.PHONY: help install check fmt-check test doc-examples doc-examples-test site site-mounts site-serve site-tools
 
 help:
 	@echo "install    fetch the packages of each agentica.lock into deps/"
@@ -53,8 +53,12 @@ doc-examples-test:
 		exit 1; \
 	fi; echo "doc-examples-test: ok"
 
-# The documentation site (Hugo): site/ has the layouts, and the pages are the docs/ folder of each package.
+# The documentation site (Hugo): the look, the layouts and the highlighter come from the docs theme, the submodule
+# site/themes/docs-theme; the pages are the docs/ folder of each package. The theme's styles need Dart Sass.
 HUGO ?= hugo
+THEME := site/themes/docs-theme
+DART_SASS ?= $(HOME)/.local/opt/dart-sass
+site site-serve: export PATH := $(DART_SASS):$(PATH)
 # Each docs/ folder is mounted as content/PACKAGE, so a package adds its docs by having the folder.
 PACKAGE_DOCS := $(wildcard $(addsuffix /docs,$(PACKAGES)))
 HUGO_CONFIG := --source site --config hugo.toml,mounts.toml
@@ -66,16 +70,22 @@ site-mounts:
 		printf '[[module.mounts]]\n  source = "../%s"\n  target = "content/%s"\n\n' "$$d" "$${d%/docs}"; \
 	done; } > site/mounts.toml
 
+# The theme and Dart Sass must be there before Hugo runs.
+site-tools:
+	@test -e $(THEME)/hugo.toml || { echo "The site needs its theme: git submodule update --init $(THEME)" >&2; exit 1; }
+	@command -v sass >/dev/null || { echo "The site needs Dart Sass, on PATH or in $(DART_SASS)" >&2; exit 1; }
+
 # The highlighter colors the Agentica code blocks after Hugo built the pages.
-site/highlight/node_modules: site/highlight/package.json site/highlight/package-lock.json
-	npm ci --prefix site/highlight --ignore-scripts --no-audit --no-fund
+$(THEME)/highlight/node_modules: $(THEME)/highlight/package.json $(THEME)/highlight/package-lock.json
+	npm ci --prefix $(THEME)/highlight --ignore-scripts --no-audit --no-fund
 	touch $@
 
-# --panicOnWarning: a link to a page that does not exist fails the build.
-site: site-mounts site/highlight/node_modules
+# --panicOnWarning: a link to a page that does not exist fails the build. No --strict: the docs do not use every
+# color class of the grammar.
+site: site-tools site-mounts $(THEME)/highlight/node_modules
 	$(HUGO) $(HUGO_CONFIG) --cleanDestinationDir --panicOnWarning $(HUGO_FLAGS)
-	node site/highlight/highlight.mjs site/public
+	node $(THEME)/highlight/highlight.mjs site/public
 
 # Agentica blocks stay plain here: the highlighter runs in `make site`.
-site-serve: site-mounts
+site-serve: site-tools site-mounts
 	$(HUGO) server $(HUGO_CONFIG)
