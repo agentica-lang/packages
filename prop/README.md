@@ -1,13 +1,14 @@
 # prop
 
 Property-based testing for Agentica: state a law, check it on many generated inputs, and get the smallest input that
-breaks it. Pure Agentica, no compiler change; it runs in `agentica test` as it is.
+breaks it. Pure Agentica, no compiler change; it runs in `agentica test` as it is. Add it in a project with an
+`agentica.toml`:
 
 ```sh
 agentica add prop https://github.com/agentica-lang/packages --tag prop-0.1.0 --subdir prop
 ```
 
-That writes this line of `agentica.toml` (and the entry of `agentica.lock`):
+That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]

@@ -9,14 +9,14 @@ It speaks the Rails protocol, so the Action Cable client of Rails and `<turbo-ca
 
 ## Install
 
-Needs Agentica 0.27.0 or later and Bond 0.10.1. The app depends on Bond itself, at the same tag as the package, because two sources for one name in a tree is `PKG-SOURCE-CONFLICT`:
+Needs Agentica 0.27.0 or later and Bond 0.10.1. The app depends on Bond itself, at the same tag as the package, because two sources for one name in a tree is `PKG-SOURCE-CONFLICT`. Add both in a project with an `agentica.toml`:
 
 ```sh
 agentica add bond https://github.com/agentica-lang/bond --tag 0.10.1
 agentica add bond-channels https://github.com/agentica-lang/packages --tag bond-channels-0.2.1 --subdir bond-channels
 ```
 
-They write these lines of `agentica.toml`, and the entries of `agentica.lock`:
+That writes these lines of `agentica.toml`, and the entries of `agentica.lock`:
 
 ```toml
 [dependencies]

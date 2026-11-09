@@ -63,9 +63,10 @@ prop/                property-based testing: prop.agc is the API (check, eq, ass
   unit test in `test/` (`*_test.agc`). Tests are hermetic: 127.0.0.1, port 0, no external services, and a step that makes
   something on disk removes it with `BDD.after`.
 - Each package keeps its docs in its own `PACKAGE/docs/`, as Markdown with a front matter (`title`, `description`,
-  `weight` to order a page): `_index.md` is the package page (what it is, the `agentica.toml` install line with `subdir`
-  and the prefixed tag, a short example, the API), and each other `.md` is a page of it. `make site` mounts each `docs/`
-  as `/PACKAGE/`, so a new package adds its docs with that folder alone, and no file of `site/` changes. Link to a page
+  `weight` to order a page): `_index.md` is the package page (what it is, the `agentica add` command with `--subdir` and
+  the prefixed tag and the `agentica.toml` line it writes, a short example, the API), and each other `.md` is a page of
+  it. `make site` mounts each `docs/` as `/PACKAGE/`, so a new package adds its docs with that folder alone, and no file
+  of `site/` changes. Link to a page
   as `[text](page.md)`; a broken link fails the build. Examples in the docs must run (an `agentica` code block is
   colored with the Agentica grammar). Site prose: one line per paragraph or list item, simple words.
 - Each package has its own CHANGELOG.md; a user-visible change adds a line under its `## [Unreleased]`; a release renames
