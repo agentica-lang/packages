@@ -24,6 +24,8 @@ extern module "shapes"
   def misread(value: Point, values: List[Int]) -> Point
   ## Builds a Label whose Point has a String `x` and reads it: the call fails at `Label.at.x`.
   def misread_nested(value: Label) -> Label
+  ## The Label of `misread_nested`, given back without reading it, for the wrapper of `echo_label` to read.
+  def bad_label(value: Label) -> Label
 end
 
 def main() -> Void
@@ -45,6 +47,11 @@ def main() -> Void
 
   if System.args() == ["misread_nested"]
     puts(misread_nested(label))
+    return
+  end
+
+  if System.args() == ["echo_label"]
+    puts(echo_label(bad_label(label)))
     return
   end
 

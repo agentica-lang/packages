@@ -91,10 +91,11 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                                | call           | path                           |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread        | Point: expected Point          |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested | Label.at.x: expected Int       |
-      | C++      | sh ../cxx.sh                      | misread_nested | Label.at.x: expected Int       |
+      | language | cc                                | call           | path                                 |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread        | Point: expected Point                |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested | Label.at.x: expected Int             |
+      | C++      | sh ../cxx.sh                      | misread_nested | Label.at.x: expected Int             |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | echo_label     | argument 1: Label.at.x: expected Int |
 
   Scenario: The header goes to stdout without --output, with names from --prefix, in lower case for functions
     Given the program argument "fixtures/errors/path.agc"
