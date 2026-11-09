@@ -4,6 +4,8 @@ The C header of an Agentica `extern module` block. Write plain C functions with 
 arguments, the codecs of your structs, enums, Lists, Maps, Optionals and Results, and the tables of the module are
 generated from the `.agc`, the one source of every signature.
 
+Needs Agentica 0.27.0 or later. Add it to `agentica.toml` and run `agentica install`:
+
 ```toml
 [dependencies]
 native-gen = { git = "https://github.com/agentica-lang/packages", tag = "native-gen-0.1.0", subdir = "native-gen" }
@@ -21,7 +23,7 @@ After, it takes C types, and a bad value fails the call with its path (`List[Flo
 an_term stats_summary(an_env *env, stats_list_Float values) { /* stats_list_Float_next(env, &values, &x) */ }
 ```
 
-Make the header, and check it in CI (Needs Agentica 0.27.0 or later):
+Make the header, and check it in CI:
 
 ```sh
 agentica deps/native-gen/cli.agc stats.agc --output native/stats_native.h
