@@ -1,12 +1,13 @@
-{{- /* A link to another page is written as the file (`handlers.md`), so it works on GitHub too. A missing file fails the build. */ -}}
-{{- $url := urls.Parse .Destination -}}
-{{- $href := .Destination -}}
-{{- if and (not $url.IsAbs) (strings.HasSuffix $url.Path ".md") -}}
-  {{- with .PageInner.GetPage $url.Path -}}
-    {{- $href = .RelPermalink -}}
-    {{- with $url.Fragment }}{{ $href = printf "%s#%s" $href . }}{{ end -}}
-  {{- else -}}
-    {{- errorf "%s: no page for link %q" .PageInner.File.Path .Destination -}}
-  {{- end -}}
+{{- /* The theme's link hook, plus one rule: a link to another page is written as the file (`handlers.md`), so it
+works on GitHub too, and a .md file with no page fails the build (the theme would link to the file on GitHub). */ -}}
+{{- $link := partial "link-target.html" (dict "from" .PageInner "dest" .Destination) -}}
+{{- if and (not $link.external) (not $link.page) (strings.HasSuffix (urls.Parse .Destination).Path ".md") -}}
+  {{- errorf "%s: no page for link %q" .PageInner.File.Path .Destination -}}
 {{- end -}}
-<a href="{{ $href }}"{{ with .Title }} title="{{ . }}"{{ end }}>{{ .Text }}</a>
+{{- $href := $link.href -}}
+{{- with $link.page }}{{ $href = printf "%s%s" .RelPermalink $link.fragment }}{{ end -}}
+{{- if eq $href "" -}}
+{{ .Text }}
+{{- else -}}
+<a href="{{ $href }}"{{ with .Title }} title="{{ . }}"{{ end }}{{ if $link.external }} rel="noopener"{{ end }}>{{ .Text }}</a>
+{{- end -}}

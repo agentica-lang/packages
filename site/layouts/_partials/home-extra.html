@@ -1,0 +1,7 @@
+{{- /* Added by the theme's home page under its text: the list of the packages (the sections). */ -}}
+<h2>Packages</h2>
+<ul class="pages">
+  {{- range .Sections.ByTitle }}
+  <li><a href="{{ .RelPermalink }}">{{ .LinkTitle }}</a>{{ with .Description }} <span>{{ . }}</span>{{ end }}</li>
+  {{- end }}
+</ul>
