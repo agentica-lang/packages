@@ -6,6 +6,7 @@
 import BDD from "std/bdd"
 import NativeGen from "../native_gen"
 import Build from "../src/build"
+import Scaffold from "../src/scaffold"
 
 # The name in the context of the header file that `--output` writes.
 WRITTEN = "written"
@@ -28,6 +29,11 @@ def main() -> Void
     BDD.step("the agentica.toml of the fresh folder is:", &manifest_step),
     BDD.step("the agentica.toml of the fresh folder has the line {string}", &manifest_line),
     BDD.step("native new {string} in the fresh folder", &new_module),
+    BDD.step("native new --lang rust {string} in the fresh folder", &new_rust_module),
+    BDD.step("native new --lang rust {string} writes the files of {string}", &same_crate_files),
+    BDD.step("the agentica.toml of the fresh folder is exactly {string}", &manifest_is),
+    BDD.step("the agentica.toml of the fresh folder has only the name {string}", &manifest_name),
+    BDD.step("the rust-version that native new --lang rust writes is the one of {string}", &same_rust_version),
     BDD.step("the agentica.toml of the fresh folder starts with:", &manifest_start),
     BDD.step("the fresh folder has no {string}", &missing),
     BDD.step("the agentica.toml of the fresh folder still has only the line {string}", &manifest_kept),
@@ -130,6 +136,57 @@ end
 def new_module(ctx: BDD.Context, args: List[String]) -> BDD.Context
   done = NativeGen.scaffold(in_folder(ctx, args[0]))
   return BDD.assert(ctx, done.ok?, "native new #{args[0]} failed: #{done.message}")
+end
+
+def new_rust_module(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  done = NativeGen.scaffold(in_folder(ctx, args[0]), true)
+  return BDD.assert(ctx, done.ok?, "native new --lang rust #{args[0]} failed: #{done.message}")
+end
+
+# The Cargo.toml and .gitignore that `new --lang rust` writes for `args[0]` are the ones of the example `args[1]`, so
+# the two keep one shape.
+def same_crate_files(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  folder = args[1]
+  if File.stat("specs/header.feature").ok?
+    folder = "specs/#{folder}"
+  end
+
+  cargo = File.read_text("#{folder}/rust/Cargo.toml").unwrap_or("")
+  ignore = File.read_text("#{folder}/rust/.gitignore").unwrap_or("")
+  kept = BDD.assert(
+    ctx,
+    cargo == Scaffold.cargo_toml(args[0]),
+    "rust/Cargo.toml differs: #{Scaffold.cargo_toml(args[0])}",
+  )
+
+  return BDD.assert(kept, ignore == Scaffold.gitignore(), "rust/.gitignore differs")
+end
+
+# The agentica.toml of the fresh folder is `args[0]`, byte for byte.
+def manifest_is(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  text = File.read_text(in_folder(ctx, "agentica.toml")).unwrap_or("")
+  return BDD.assert(ctx, text == args[0], "agentica.toml is: #{text.inspect}")
+end
+
+def manifest_name(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  text = File.read_text(in_folder(ctx, "agentica.toml")).unwrap_or("")
+  return BDD.assert(ctx, text == "name = #{args[0].inspect}\n", "agentica.toml is: #{text.inspect}")
+end
+
+# The `rust-version` line of the Cargo.toml of `new --lang rust` is the one of the Cargo.toml at `args[0]`.
+def same_rust_version(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  path = args[0]
+  if File.stat("specs/header.feature").ok?
+    path = "specs/#{path}"
+  end
+
+  crate = rust_version(File.read_text(path).unwrap_or(""))
+  made = rust_version(Scaffold.cargo_toml("demo"))
+  return BDD.assert(ctx, crate.size == 1 and crate == made, "rust-version: #{made} and #{crate}")
+end
+
+def rust_version(text: String) -> List[String]
+  return text.split("\n").select do |line: String| line.start_with?("rust-version") end
 end
 
 def manifest_start(ctx: BDD.Context, _args: List[String]) -> BDD.Context

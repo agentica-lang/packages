@@ -112,12 +112,18 @@ end
 ## A new native module at `path` (`demo`, or `pkg/demo` in the folder `pkg`): writes `NAME.agc` with an `extern
 ## module "NAME"` block, `native/NAME.c` with a body per function that fails the call until it is written, the header
 ## made from the `.agc`, and the `[native.NAME]` entry of the folder's `agentica.toml`, which it makes when there is
-## none. It writes nothing when one of those files, or the entry, is there already (`[NATIVE-GEN-EXISTS]`).
-export def scaffold(path: String) -> Result[Void]
+## none. It writes nothing when one of those files, or the entry, is there already (`[NATIVE-GEN-EXISTS]`). With
+## `rust`, it writes a Rust module instead: `NAME.agc` and the crate `rust/` at the package root, the nearest folder up
+## with an `agentica.toml` (the folder of `path` when there is none, which then gets one), and no entry.
+export def scaffold(path: String, rust: Bool = false) -> Result[Void]
   name = last_part(path)
   folder = path.slice(0, path.length - name.length)
   if folder.empty?
     folder = "./"
+  end
+
+  if rust
+    return scaffold_rust(folder, name)
   end
 
   problem = Scaffold.name_problem(name)
@@ -153,6 +159,54 @@ export def scaffold(path: String) -> Result[Void]
   return io(manifest, File.write_text(manifest, toml))
 end
 
+# The Rust module `name` in `folder`: `NAME.agc` there, and the crate `rust/` at the package root, with the Rust file
+# made from the new `.agc`. The root is the nearest folder up from `folder` with an `agentica.toml`, as for `build`;
+# with none, it is `folder`, which gets an `agentica.toml` with the name. An `agentica.toml` that is there is never
+# written. It adds no `[native.NAME]` entry: `build` adds the one of the system with the library it built. As for C,
+# it writes only new files, all made before the first write.
+def scaffold_rust(folder: String, name: String) -> Result[Void]
+  problem = Scaffold.rust_name_problem(name)
+  if !problem.empty?
+    return error("[NATIVE-GEN-PREFIX] #{name.inspect}: #{problem}; pass NAME or FOLDER/NAME, without .agc")
+  end
+
+  program = "#{folder}#{name}.agc"
+  root = (try nearest_root(program)).unwrap_or(folder)
+  crate = "#{root}rust"
+  files = [
+    program,
+    "#{crate}/Cargo.toml",
+    "#{crate}/.gitignore",
+    "#{crate}/src/lib.rs",
+    "#{crate}/src/#{name}_native.rs",
+  ]
+
+  for kept in files
+    if File.stat(kept).ok?
+      return error("[NATIVE-GEN-EXISTS] #{kept} is there already; native-gen new writes only new files")
+    end
+  end
+
+  manifest = "#{root}agentica.toml"
+  kept_manifest = File.stat(manifest).ok?
+  toml = try manifest_with(manifest, name, "")
+  text = Scaffold.rust_program(name)
+  block = try block_in(Analysis.Workspace(version: 1, buffers: {program: text}), program)
+  made = try rust_of(block, "", program)
+  texts = [text, Scaffold.cargo_toml(name), Scaffold.gitignore(), Scaffold.lib_rs(name), made]
+  try io("#{crate}/src", Dir.mkdir("#{crate}/src"))
+  try io(folder, Dir.mkdir(folder))
+  for at in 0...files.size
+    try io(files[at], File.write_text(files[at], texts[at]))
+  end
+
+  if kept_manifest
+    return ok()
+  end
+
+  return io(manifest, File.write_text(manifest, toml))
+end
+
 # `path` from the current folder when it is below it, as build prints it; otherwise `path` as it is.
 def shown(path: String) -> String
   current = "#{Path.cwd().unwrap_or("")}/"
@@ -166,17 +220,26 @@ end
 # The root of the package of the file at `path`, ending in `/`: the nearest folder up from the file that has an
 # `agentica.toml`.
 def package_root(path: String) -> Result[String]
+  case try nearest_root(path)
+    some(root) -> return ok(root)
+    none -> return error("[NATIVE-GEN-IO] #{path}: no agentica.toml in its folder or above; build needs a package")
+  end
+end
+
+# The nearest folder up from the file at `path` that has an `agentica.toml`, ending in `/`; none when no folder has
+# one. A path that does not resolve is an error.
+def nearest_root(path: String) -> Result[Optional[String]]
   file = try io(path, Path.resolve(path))
   folder = parent(file)
   while !folder.empty?
     if File.stat("#{folder}/agentica.toml").ok?
-      return ok("#{folder}/")
+      return ok(some("#{folder}/"))
     end
 
     folder = parent(folder)
   end
 
-  return error("[NATIVE-GEN-IO] #{path}: no agentica.toml in its folder or above; build needs the package root")
+  return ok(none)
 end
 
 # `path` without its last part and the separator before it ("" for a path of one part).

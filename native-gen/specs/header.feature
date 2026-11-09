@@ -423,6 +423,128 @@ Feature: The C header of an extern module block
       | Demo     |
       | demo.agc |
 
+  Scenario Outline: native new --lang rust writes the module <name> and its crate, whose Rust file is current
+    Given a fresh folder
+    And native new --lang rust "<name>" in the fresh folder
+    And the fresh folder has "rust/Cargo.toml"
+    And the fresh folder has "rust/src/lib.rs"
+    And the fresh folder has "rust/.gitignore"
+    And the fresh folder has no "native"
+    And the agentica.toml of the fresh folder has only the name "<name>"
+    And the program argument "build"
+    And the program argument "<name>.agc" in the fresh folder
+    And the program argument "--check"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+
+    Examples:
+      | name     |
+      | demo     |
+      | raise    |
+      | result   |
+      | agentica |
+
+  Scenario: native new --lang rust keeps the agentica.toml that is there as it is
+    Given a fresh folder
+    And the agentica.toml of the fresh folder is "name = 'pkg'"
+    And native new --lang rust "demo" in the fresh folder
+    Then the agentica.toml of the fresh folder is exactly "name = 'pkg'"
+    And the fresh folder has "rust/src/lib.rs"
+
+  Scenario: native new --lang rust FOLDER/NAME in a package puts the crate at the package root
+    Given a fresh folder
+    And the agentica.toml of the fresh folder has the line ""
+    And native new --lang rust "src/demo" in the fresh folder
+    And the fresh folder has "src/demo.agc"
+    And the fresh folder has "rust/src/lib.rs"
+    And the fresh folder has no "src/rust"
+    And the fresh folder has no "src/agentica.toml"
+    And the agentica.toml of the fresh folder still has only the line ""
+    And the program argument "build"
+    And the program argument "src/demo.agc" in the fresh folder
+    And the program argument "--check"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+
+  Scenario: native new --lang rust refuses a second Rust module in a package: one crate, one module
+    Given a fresh folder
+    And the agentica.toml of the fresh folder has the line ""
+    And native new --lang rust "demo" in the fresh folder
+    And the program argument "new"
+    And the program argument "--lang"
+    And the program argument "rust"
+    And the program argument "src/other" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-EXISTS]
+      """
+    And the fresh folder has no "src"
+
+  Scenario: native new --lang rust writes the Cargo.toml and .gitignore of examples/rust_math for math
+    Then native new --lang rust "math" writes the files of "../examples/rust_math"
+    And the rust-version that native new --lang rust writes is the one of "../native/agentica-native/Cargo.toml"
+
+  Scenario Outline: native new --lang rust refuses a folder with <file> already, and writes nothing
+    Given a fresh folder
+    And the file "<file>" in the fresh folder is:
+      """
+      kept
+      """
+    And the program argument "new"
+    And the program argument "--lang"
+    And the program argument "rust"
+    And the program argument "demo" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-EXISTS]
+      """
+    And the fresh folder has no "agentica.toml"
+    And the fresh folder has no "<absent>"
+
+    Examples:
+      | file                    | absent   |
+      | demo.agc                | rust     |
+      | rust/Cargo.toml         | demo.agc |
+      | rust/.gitignore         | demo.agc |
+      | rust/src/lib.rs         | demo.agc |
+      | rust/src/demo_native.rs | demo.agc |
+
+  Scenario Outline: native new --lang rust refuses the name <path>
+    Given the program argument "new"
+    And the program argument "--lang"
+    And the program argument "rust"
+    And the program argument "<path>"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-PREFIX]
+      """
+
+    Examples:
+      | path   |
+      | Demo   |
+      | fn     |
+      | test   |
+      | env_   |
+      | a__b   |
+
+  Scenario: native new --lang go is bad usage
+    Given the program argument "new"
+    And the program argument "--lang"
+    And the program argument "go"
+    And the program argument "demo"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 2 within 25000 milliseconds
+    And stderr includes:
+      """
+      --lang is c or rust
+      """
+
   Scenario: The bench of a struct of 26 fields runs
     Given a fresh package cache
     And the header of the package of "../bench/wide/wide.agc"

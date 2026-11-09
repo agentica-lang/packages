@@ -94,7 +94,8 @@ jobs:
   # file, and on main: its format and lints on stable, its tests on the MSRV of its Cargo.toml and on stable, its
   # doctests on nightly (which checks the error codes of the compile_fail ones), the tests under Miri, vm-check, a
   # module on the crate run by the pinned Agentica release, gen-check, the modules on the Rust files native-gen makes,
-  # and build-check, `cli.agc build` of a Rust module. The crate has no dependencies, so it needs no registry.
+  # build-check, `cli.agc build` of a Rust module, and new-check, the module `new --lang rust` writes. The crate has no
+  # dependencies, so it needs no registry.
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -187,3 +188,8 @@ jobs:
       - name: Run build-check on the VM
         if: env.RUST == '1'
         run: RUSTUP_TOOLCHAIN=stable ../../rust/build-check.sh
+
+      # `cli.agc new --lang rust demo` in an empty folder, then build and the program on the real VM with no edit.
+      - name: Run new-check on the VM
+        if: env.RUST == '1'
+        run: RUSTUP_TOOLCHAIN=stable ../../rust/new-check.sh

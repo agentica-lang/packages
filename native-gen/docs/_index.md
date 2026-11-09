@@ -119,7 +119,16 @@ The package builds and loads as it is: running `demo.agc` fails at the call with
 
 The name is the `[native.NAME]` of `agentica.toml`, the library of the block and the start of the C names: a lowercase letter, then lowercase letters, digits and `_`, at most 64 characters, not a device name of Windows (`con`, `nul`, `com1`, ...), and not a prefix of the C API (`an`, `ng`, `agentica`, or one that starts with `an_` or `ng_`). Pass `NAME` or `FOLDER/NAME`, without `.agc`.
 
-`new` writes only new files. It writes nothing when `demo.agc`, `native/demo.c` or the header is there, or when `agentica.toml` has `native.demo` already (`NATIVE-GEN-EXISTS`), or when `agentica.toml` with the entry added is not TOML (`NATIVE-GEN-MANIFEST`). Every text is made before the first write; only a write that fails midway (`NATIVE-GEN-IO`) leaves the files written before it.
+With `--lang rust`, `new` starts a [Rust module](#a-rust-module) instead:
+
+```sh
+agentica deps/native-gen/cli.agc new --lang rust demo
+agentica deps/native-gen/cli.agc build demo.agc
+```
+
+It writes `demo.agc` (the same block and `main`) and the crate `rust/`, laid out as the example below: `Cargo.toml`, `.gitignore` (`target/` and `Cargo.lock`), `src/lib.rs` with one method per function that returns `Err(Raise::new("not written yet"))`, and `src/demo_native.rs`, the Rust file made from the new `.agc`. The crate goes to the package root, the nearest folder up with an `agentica.toml`, as for `build`, so `new --lang rust src/demo` in a package writes `src/demo.agc` and the root's `rust/`. With no `agentica.toml` up the tree, the folder of the path gets one with `name = "demo"`; one that is there is never changed. A package has one Rust module, since its crate builds one library: a second `new --lang rust` in it is `NATIVE-GEN-EXISTS`. It adds no `[native.demo]` entry: `build` adds the one of the system, with the library it built. The name also cannot be a Rust keyword or the name of a Rust crate (`fn`, `test`, `std`, ...), end with `_` or hold `__`. After `build`, running `demo.agc` fails at the call with `add: not written yet`, as for C.
+
+`new` writes only new files. It writes nothing when `demo.agc`, `native/demo.c` or the header (for Rust, a file of `rust/` that it writes) is there, or when `agentica.toml` has `native.demo` already (`NATIVE-GEN-EXISTS`), or when `agentica.toml` with the entry added is not TOML (`NATIVE-GEN-MANIFEST`). Every text is made before the first write; only a write that fails midway (`NATIVE-GEN-IO`) leaves the files written before it.
 
 ## A Rust module
 
@@ -285,7 +294,7 @@ An error is one line on stderr, `native-gen: [CODE] message`, and the exit code 
 |---|---|
 | `NATIVE-GEN-NAME` | two names map to one C identifier (`empty?` and `empty_p`), or a variant with a payload is named after a C macro |
 | `NATIVE-GEN-BLOCK` | the file has no `extern module` block, or more than one; for `build`, its library is not a module name |
-| `NATIVE-GEN-PREFIX` | the prefix is not a C identifier, or is the C API's; give another with `--prefix`. For `new`, the name breaks the rule above, or is the C API's (`an`, `ng`, `agentica`, or starts with `an_` or `ng_`) |
+| `NATIVE-GEN-PREFIX` | the prefix is not a C identifier, or is the C API's; give another with `--prefix`. For `new`, the name breaks the rule above, or is the C API's (`an`, `ng`, `agentica`, or starts with `an_` or `ng_`); for `new --lang rust`, also a Rust keyword, the name of a Rust crate (`fn`, `test`, `std`, `agentica_native`), or a name that ends with `_` or holds `__` |
 | `NATIVE-GEN-UNKNOWN` | `std/analysis` gives a function mode or a type kind that this version does not know |
 | `NATIVE-GEN-STALE` | `--check`: the file at `--output` is not the header that the `.agc` gives; `build --check`: `rust/src/NAME_native.rs` is not the one it gives |
 | `NATIVE-GEN-EXISTS` | `new`: a file it would write is there, or `agentica.toml` has `native.NAME` already |

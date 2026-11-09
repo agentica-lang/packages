@@ -14,7 +14,7 @@ import Types from "types"
 SCALARS = {"Int": "i64", "Float": "f64", "Bool": "bool", "String": "String", "Bytes": "Vec<u8>", "Void": "()"}
 # The words a Rust name cannot be (strict and reserved keywords of the 2024 edition), and `env`, the first parameter of
 # every method. Such a name gets a trailing `_`, as in the C header.
-KEYWORDS = Set.new([
+export KEYWORDS = Set.new([
   "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "crate", "do", "dyn", "else",
   "enum", "extern", "false", "final", "fn", "for", "gen", "if", "impl", "in", "let", "loop", "macro", "match", "mod",
   "move", "mut", "override", "priv", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true",
@@ -257,7 +257,7 @@ def opening(block: Analysis.NativeBlock, source: String) -> List[String]
     "// Do not edit it: change the .agc and make it again.",
     "",
     "#[allow(unused_imports)]",
-    "use agentica_native::{#{IMPORTS.join(", ")}};",
+    "use ::agentica_native::{#{IMPORTS.join(", ")}};",
   ]
 end
 
@@ -482,7 +482,7 @@ def wrapper(function: Analysis.NativeFunction, trait: String) -> List[String]
     "    // SAFETY: the VM calls it through the table of `module`, with its own env and arguments, in the",
     "    // row's mode.",
     "    unsafe {",
-    "        agentica_native::call(env, argc, argv, #{mode_of(function)}, types(), |env, #{bound}| {",
+    "        ::agentica_native::call(env, argc, argv, #{mode_of(function)}, types(), |env, #{bound}| {",
     "            Ok(I::#{rust_name(function.name)}(#{args.join(", ")})?.encode(env))",
     "        })",
     "    }",

@@ -36,6 +36,7 @@ native-gen/          the C header of an `extern module` block: cli.agc is the co
                      rust/gen-check/ the fixtures stats, shapes, kinds and shapes2 on the Rust files native-gen makes,
                      run the same way; examples/rust_math/ the Rust module that the docs show, which
                      rust/build-check.sh builds with `cli.agc build` and runs, and compares with the docs' copies;
+                     rust/new-check.sh builds and runs the module of `new --lang rust`;
                      specs/fixtures/ are packages written on their headers (the one of stats is committed as the
                      golden, a step makes the others: kinds, shapes, lists, options, resources), the files that fail
                      (errors/) and cxx.sh, a CC that builds a module as C++; bench/wide the codecs of a struct of 26

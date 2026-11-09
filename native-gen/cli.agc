@@ -1,14 +1,15 @@
 ## The command line of native-gen: writes the C header of the `extern module` block of FILE (or with `--lang rust`
 ## its Rust file), or with `--check` fails when the file at `--output` is not the one FILE gives. `new PATH` writes a
-## new module instead: `PATH.agc`, its C file and header in `native/`, and its entry in `agentica.toml`. `build FILE`
-## builds the Rust module of FILE from the crate `rust/` at its package root, into `native/` (with `--check`, it only
-## fails when the Rust file is stale).
+## new module instead: `PATH.agc`, its C file and header in `native/`, and its entry in `agentica.toml` (with
+## `--lang rust`, `PATH.agc` and the crate `rust/`). `build FILE` builds the Rust module of FILE from the crate `rust/`
+## at its package root, into `native/` (with `--check`, it only fails when the Rust file is stale).
 ##
 ## ```sh
 ## agentica deps/native-gen/cli.agc stats.agc --output native/stats_native.h
 ## agentica deps/native-gen/cli.agc stats.agc --output native/stats_native.h --check
 ## agentica deps/native-gen/cli.agc stats.agc --lang rust --output src/stats_native.rs
 ## agentica deps/native-gen/cli.agc new demo
+## agentica deps/native-gen/cli.agc new --lang rust demo
 ## agentica deps/native-gen/cli.agc build stats.agc
 ## ```
 ##
@@ -20,6 +21,11 @@ import OP from "std/option_parser"
 import {Arg, Kind, Opt} from "std/option_parser"
 
 PROGRAM = "native-gen"
+
+struct NewOptions
+  path: String
+  lang: String
+end
 
 struct BuildOptions
   file: String
@@ -38,7 +44,8 @@ def main() -> Void
   args = System.args()
   done = ok()
   if !args.empty? and args[0] == "new"
-    done = NativeGen.scaffold(OP.run!(new_path(args.drop(1))))
+    options = OP.run!(new_options(args.drop(1)))
+    done = NativeGen.scaffold(options.path, options.lang == "rust")
   elsif !args.empty? and args[0] == "build"
     done = built(OP.run!(build_options(args.drop(1))))
   else
@@ -88,17 +95,22 @@ def parsed(args: List[String]) -> Result[Options]
   return ok(options)
 end
 
-# The PATH of `new PATH`.
-def new_path(args: List[String]) -> Result[String]
+# The PATH and --lang of `new PATH`.
+def new_options(args: List[String]) -> Result[NewOptions]
   parser = OP.new(
     "#{PROGRAM} new",
-    "Writes a new native module: PATH.agc, native/NAME.c, its header, and its entry in agentica.toml.",
+    "Writes a new native module: PATH.agc, native/NAME.c, its header and agentica.toml entry, or the crate rust/.",
     [Arg(name: "path", help: "the module, NAME or FOLDER/NAME")],
-    [],
+    [Opt(name: "lang", help: "c (the default) for a module in C, rust for one in Rust")],
   )
 
   p = try OP.parse(parser, args)
-  return ok(OP.string(p, "path"))
+  lang = OP.optional_string(p, "lang").unwrap_or("c")
+  if lang != "c" and lang != "rust"
+    return error("#{PROGRAM} new: --lang is c or rust, not #{lang.inspect}\nTry '#{PROGRAM} new --help'")
+  end
+
+  return ok(NewOptions(path: OP.string(p, "path"), lang: lang))
 end
 
 # The FILE and --check of `build FILE`.
