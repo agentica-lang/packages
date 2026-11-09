@@ -113,11 +113,15 @@ end
 ## module "NAME"` block, `native/NAME.c` with a body per function that fails the call until it is written, the header
 ## made from the `.agc`, and the `[native.NAME]` entry of the folder's `agentica.toml`, which it makes when there is
 ## none. It writes nothing when one of those files, or the entry, is there already (`[NATIVE-GEN-EXISTS]`).
-export def scaffold(path: String) -> Result[Void]
+export def scaffold(path: String, lang: String = "c") -> Result[Void]
   name = last_part(path)
   folder = path.slice(0, path.length - name.length)
   if folder.empty?
     folder = "./"
+  end
+
+  if lang == "rust"
+    return scaffold_rust(folder, name)
   end
 
   problem = Scaffold.name_problem(name)
@@ -150,6 +154,49 @@ export def scaffold(path: String) -> Result[Void]
   try io(program, File.write_text(program, text))
   try io(source, File.write_text(source, Scaffold.source(name, names)))
   try io(header_path, File.write_text(header_path, made))
+  return io(manifest, File.write_text(manifest, toml))
+end
+
+# The Rust module `name` in `folder`: `NAME.agc`, the crate `rust/` with the Rust file made from the new `.agc`, and an
+# `agentica.toml` with the name when the folder has none. It adds no `[native.NAME]` entry: `build` adds the one of
+# the system with the library it built. As for C, it writes only new files, all made before the first write.
+def scaffold_rust(folder: String, name: String) -> Result[Void]
+  problem = Scaffold.rust_name_problem(name)
+  if !problem.empty?
+    return error("[NATIVE-GEN-PREFIX] #{name.inspect}: #{problem}; pass NAME or FOLDER/NAME, without .agc")
+  end
+
+  program = "#{folder}#{name}.agc"
+  crate = "#{folder}rust"
+  files = [
+    program,
+    "#{crate}/Cargo.toml",
+    "#{crate}/.gitignore",
+    "#{crate}/src/lib.rs",
+    "#{crate}/src/#{name}_native.rs",
+  ]
+
+  for kept in files
+    if File.stat(kept).ok?
+      return error("[NATIVE-GEN-EXISTS] #{kept} is there already; native-gen new writes only new files")
+    end
+  end
+
+  manifest = "#{folder}agentica.toml"
+  toml = try manifest_with(manifest, name, "")
+  text = Scaffold.rust_program(name)
+  block = try block_in(Analysis.Workspace(version: 1, buffers: {program: text}), program)
+  made = try rust_of(block, "", program)
+  texts = [text, Scaffold.cargo_toml(name), Scaffold.gitignore(), Scaffold.lib_rs(name), made]
+  try io("#{crate}/src", Dir.mkdir("#{crate}/src"))
+  for at in 0...files.size
+    try io(files[at], File.write_text(files[at], texts[at]))
+  end
+
+  if File.read_text(manifest).unwrap_or("") == toml
+    return ok()
+  end
+
   return io(manifest, File.write_text(manifest, toml))
 end
 

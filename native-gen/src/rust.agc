@@ -14,7 +14,7 @@ import Types from "types"
 SCALARS = {"Int": "i64", "Float": "f64", "Bool": "bool", "String": "String", "Bytes": "Vec<u8>", "Void": "()"}
 # The words a Rust name cannot be (strict and reserved keywords of the 2024 edition), and `env`, the first parameter of
 # every method. Such a name gets a trailing `_`, as in the C header.
-KEYWORDS = Set.new([
+export KEYWORDS = Set.new([
   "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "crate", "do", "dyn", "else",
   "enum", "extern", "false", "final", "fn", "for", "gen", "if", "impl", "in", "let", "loop", "macro", "match", "mod",
   "move", "mut", "override", "priv", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true",
