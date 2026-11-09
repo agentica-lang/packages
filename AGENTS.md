@@ -29,10 +29,12 @@ native-gen/          the C header of an `extern module` block: cli.agc is the co
                      (`header`), src/header.agc the text of the header, src/codecs.agc the C values of the structs and
                      enums, src/collections.agc the Lists, Maps, Optionals and Results, src/types.agc the type
                      trees, src/names.agc the C names, src/scaffold.agc the files of `new`, src/rust.agc the
-                     Rust file of `--lang rust` (all pure); rust/ the crate agentica-native (safe wrappers over
-                     agentica_native.h; `cargo test` there, CI job `rust`), rust/vm-check/ a module on it that run.sh
-                     builds and runs on the real VM (needs cargo), rust/gen-check/ the fixtures stats, shapes,
-                     kinds and shapes2 on the Rust files native-gen makes, run the same way;
+                     Rust file of `--lang rust` (all pure); native/agentica-native/ the crate agentica-native
+                     (safe wrappers over agentica_native.h; `cargo test` there, CI job `rust`), in the package's
+                     native/ folder so that `agentica install` copies it into deps/ and the lock hashes it;
+                     rust/vm-check/ a module on it that run.sh builds and runs on the real VM (needs cargo),
+                     rust/gen-check/ the fixtures stats, shapes, kinds and shapes2 on the Rust files native-gen makes,
+                     run the same way;
                      specs/fixtures/ are packages written on their headers (the one of stats is committed as the
                      golden, a step makes the others: kinds, shapes, lists, options, resources), the files that fail
                      (errors/) and cxx.sh, a CC that builds a module as C++; bench/wide the codecs of a struct of 26
