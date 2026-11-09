@@ -16,11 +16,27 @@ RESERVED = Set.new([
   "void", "volatile", "wchar_t", "while", "xor", "xor_eq", "int64_t", "uint8_t", "uint32_t", "size_t", "errno",
 ])
 RESERVED_STARTS = ["an_", "ng_"]
+# The macros of the C and C++ standard headers that a CamelCase variant name can be (all capitals).
+MACROS = Set.new([
+  "NULL", "EOF", "BUFSIZ", "FILENAME_MAX", "FOPEN_MAX", "TMP_MAX", "L_tmpnam", "SEEK_SET", "SEEK_CUR", "SEEK_END",
+  "EXIT_SUCCESS", "EXIT_FAILURE", "RAND_MAX", "MB_CUR_MAX", "CHAR_BIT", "CHAR_MIN", "CHAR_MAX", "INT_MIN", "INT_MAX",
+  "UINT_MAX", "LONG_MIN", "LONG_MAX", "LLONG_MIN", "LLONG_MAX", "SIZE_MAX", "INT8_MIN", "INT8_MAX", "INT16_MIN",
+  "INT16_MAX", "INT32_MIN", "INT32_MAX", "INT64_MIN", "INT64_MAX", "UINT8_MAX", "UINT16_MAX", "UINT32_MAX",
+  "UINT64_MAX", "INFINITY", "NAN", "HUGE_VAL", "EDOM", "ERANGE", "EILSEQ", "SIGINT", "SIGTERM", "SIGABRT", "SIGSEGV",
+  "SIGFPE", "SIGILL", "CLOCKS_PER_SEC", "BOOL", "TRUE", "FALSE", "AN_EXPORT", "AN_API_MAJOR", "AN_API_MINOR",
+  "AN_SHORT", "AN_DIRTY", "AN_STRUCT", "AN_ENUM", "AN_COUNT",
+])
 
 ## A C identifier of the header and the name of the block it comes from (`summary`, `Cell.Number`).
 export struct Named
   c: String
   source: String
+end
+
+## Whether `name` is a macro of the C or C++ standard library that a variant with a payload cannot be named after: the
+## payload is a member of a union, which the macro would replace.
+export def macro?(name: String) -> Bool
+  return MACROS.include?(name)
 end
 
 ## A name of the block as a C identifier: `empty?` is `empty_p` and `save!` is `save_bang`.

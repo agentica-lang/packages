@@ -10,8 +10,9 @@ import Names from "names"
 # The table flags of the function modes and the kinds of the type rows that std/analysis gives.
 MODES = {"short": "AN_SHORT", "dirty": "AN_DIRTY"}
 KINDS = {"struct": "AN_STRUCT", "enum": "AN_ENUM"}
-# Prefixes that would put the header's names in the namespace of the C API (`an_`, `AN_`, `agentica_native_init`).
-RESERVED_PREFIXES = Set.new(["an", "agentica"])
+# Prefixes that would put the header's names in the namespace of the C API (`an_`, `AN_`, `agentica_native_init`) or
+# of the helpers of native-gen (`ng_`).
+RESERVED_PREFIXES = Set.new(["an", "ng", "agentica"])
 
 ## The C names of one header: the prefix of its functions and the same in capitals for its macros and constants.
 export struct Prefix
@@ -26,11 +27,13 @@ export def prefix(text: String) -> Result[Prefix]
   end
 
   lower = text.downcase
-  if RESERVED_PREFIXES.include?(lower) or lower.start_with?("an_")
-    return error("the prefix #{text.inspect} is in the namespace of the C API")
+  if RESERVED_PREFIXES.include?(lower) or lower.start_with?("an_") or lower.start_with?("ng_")
+    return error("the prefix #{text.inspect} is in the namespace of the C API or of native-gen")
   end
 
-  return ok(Prefix(lower: text, upper: text.upcase))
+  # Functions take the prefix in lower case and constants in capitals, so `GL` cannot make a function and a constant
+  # of one name.
+  return ok(Prefix(lower: lower, upper: text.upcase))
 end
 
 ## The header of `block`, declared in the file `source` (its name only, so the text does not depend on where it ran).
@@ -54,6 +57,12 @@ export def render(block: Analysis.NativeBlock, names: Prefix, source: String) ->
   for type in block.types
     if !KINDS.has_key?(type.kind)
       return error("[NATIVE-GEN-UNKNOWN] #{type.name} has the kind #{type.kind.inspect}")
+    end
+
+    for member in type.members
+      if type.kind == "enum" and !member.types.empty? and Names.macro?(member.name)
+        return error("[NATIVE-GEN-NAME] #{type.name}.#{member.name} is a C macro, which its payload cannot be named")
+      end
     end
   end
 
@@ -177,9 +186,10 @@ def constants(block: Analysis.NativeBlock, names: Prefix) -> List[String]
   end
 
   for type in block.types
-    members = numbered(type.members.map do |member: Analysis.NativeMember| "#{big}_#{type.name}_#{member.name}" end)
+    member_names = type.members.map do |member: Analysis.NativeMember| "#{big}_#{type.name}_#{member.name}" end
+    members = numbered(member_names)
     if type.kind == "enum"
-      tag = "typedef #{members.slice(0, members.length - 1)} #{names.lower}_#{type.name}_tag;"
+      tag = numbered_type(member_names, "#{names.lower}_#{type.name}_tag")
       lines = lines.concat(["", "/* The variants of #{type.name}, in declared order: the tag of its C value. */", tag])
     else
       lines = lines.concat(["", "/* The fields of #{type.name}, in declared order. */", members])
@@ -212,6 +222,15 @@ end
 
 # One enum of `items`, numbered from 0 in their order.
 def numbered(items: List[String]) -> String
+  return "enum { #{enum_rows(items)} };"
+end
+
+# The same enum as the type `name`.
+def numbered_type(items: List[String], name: String) -> String
+  return "typedef enum { #{enum_rows(items)} } #{name};"
+end
+
+def enum_rows(items: List[String]) -> String
   at = 0
   rows: List[String] = []
   for item in items
@@ -219,11 +238,11 @@ def numbered(items: List[String]) -> String
     at += 1
   end
 
-  return "enum { #{rows.join(", ")} };"
+  return rows.join(", ")
 end
 
 # One prototype per function, each with the `##` doc of its declaration.
-def prototypes(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Codecs) -> List[String]
+def prototypes(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Plan) -> List[String]
   lines: List[String] = []
   for function in block.functions
     typed = function.parameters.map do |param: Analysis.NativeParameter|
@@ -239,7 +258,7 @@ def prototypes(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Codecs
 end
 
 # The wrappers, the tables and the module macro, for the one .c file that defines the module.
-def implementation(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Codecs) -> List[String]
+def implementation(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Plan) -> List[String]
   big = names.upper
   lines = [
     "",
@@ -267,7 +286,7 @@ end
 
 # The function of the table: it decodes each argument that has a C type, fails the call at the first one that does
 # not decode, and calls the author's typed function.
-def wrapper(function: Analysis.NativeFunction, names: Prefix, codecs: Codecs.Codecs) -> List[String]
+def wrapper(function: Analysis.NativeFunction, names: Prefix, codecs: Codecs.Plan) -> List[String]
   c = Names.identifier(function.name)
   lines = ["static an_term #{names.lower}_native_#{c}(an_env *env, int argc, const an_term *argv) {", "  (void)argc;"]
   if function.parameters.empty?

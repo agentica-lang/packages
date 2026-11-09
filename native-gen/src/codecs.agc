@@ -22,7 +22,7 @@ SLICES = Set.new(["String", "Bytes"])
 ## The types of a block and what the C side needs of them: `lower` and `upper` the prefix of the C names, `read` the
 ## types the parameters reach (they get a `_get`), `made` those the results reach (`_make` and the constructors), and
 ## `edges` the types each one names in a field or payload, which decide what is embedded.
-export struct Codecs
+export struct Plan
   lower: String
   upper: String
   types: List[Analysis.NativeType]
@@ -32,7 +32,7 @@ export struct Codecs
 end
 
 ## The codecs of the types of `block`, whose C names start with `lower` (and `upper` in capitals).
-export def of(block: Analysis.NativeBlock, lower: String, upper: String) -> Codecs
+export def of(block: Analysis.NativeBlock, lower: String, upper: String) -> Plan
   known = Set.new(block.types.map do |type: Analysis.NativeType| type.name end)
   read: Set[String] = Set.new([])
   made: Set[String] = Set.new([])
@@ -51,12 +51,12 @@ export def of(block: Analysis.NativeBlock, lower: String, upper: String) -> Code
     edges = edges.put(type.name, named)
   end
 
-  return Codecs(lower: lower, upper: upper, types: block.types, read: read, made: made, edges: edges)
+  return Plan(lower: lower, upper: upper, types: block.types, read: read, made: made, edges: edges)
 end
 
 ## The C type of a parameter, field or payload of type `type` in `owner` ("" for a parameter): a scalar, an embedded
 ## struct or enum, or a term.
-export def c_type(codecs: Codecs, owner: String, type: String) -> String
+export def c_type(codecs: Plan, owner: String, type: String) -> String
   if SCALARS.has_key?(type)
     return SCALARS[type]
   end
@@ -70,13 +70,13 @@ end
 
 ## Whether a value of `type` in `owner` ("" for a parameter) is a C struct of the block, not a term: a struct or enum
 ## of the block that does not lead back to `owner`.
-export def embedded?(codecs: Codecs, owner: String, type: String) -> Bool
+export def embedded?(codecs: Plan, owner: String, type: String) -> Bool
   return codecs.edges.has_key?(type) and !reaches?(codecs, type, owner)
 end
 
 ## The C names the codecs declare, with the names they come from, and the fields of each struct, which must differ
 ## within it.
-export def global_names(codecs: Codecs) -> List[Names.Named]
+export def global_names(codecs: Plan) -> List[Names.Named]
   p = codecs.lower
   named: List[Names.Named] = []
   for type in codecs.types
@@ -107,7 +107,7 @@ export def global_names(codecs: Codecs) -> List[Names.Named]
 end
 
 ## The C names of the fields of each struct, each list of which must be distinct.
-export def field_names(codecs: Codecs) -> List[List[Names.Named]]
+export def field_names(codecs: Plan) -> List[List[Names.Named]]
   structs = codecs.types.select do |type: Analysis.NativeType| type.kind == "struct" end
   return structs.map do |type: Analysis.NativeType|
     type.members.map do |member: Analysis.NativeMember|
@@ -117,7 +117,7 @@ export def field_names(codecs: Codecs) -> List[List[Names.Named]]
 end
 
 ## The typedefs, in an order where each comes after the types it embeds, and the prototypes of the codecs.
-export def declarations(codecs: Codecs) -> List[String]
+export def declarations(codecs: Plan) -> List[String]
   if codecs.types.empty?
     return []
   end
@@ -126,7 +126,8 @@ export def declarations(codecs: Codecs) -> List[String]
     "",
     "/* The structs and enums as C values. A String or Bytes in them is borrowed, a term lasts for the call: keep them",
     "   in C locals. _get reads a term into OUT; false when it is not one, and then the call has failed with the path of",
-    "   the first bad part. _make and the constructors (one per variant) make a term. */",
+    "   the first bad part. A function whose signature does not reach the type reads none (\"Point: expected Point\").",
+    "   _make and the constructors (one per variant) make a term. */",
   ]
 
   for type in ordered(codecs)
@@ -137,7 +138,7 @@ export def declarations(codecs: Codecs) -> List[String]
 end
 
 ## The definitions of the codecs, for the implementation part of the header.
-export def definitions(codecs: Codecs) -> List[String]
+export def definitions(codecs: Plan) -> List[String]
   lines: List[String] = []
   if !codecs.read.empty?
     lines = lines.concat(failures())
@@ -161,7 +162,7 @@ end
 
 ## The statements of a wrapper that decode argument `at` of `type` into `local`: a scalar answers an_badarg when it
 ## does not decode, a struct or enum fails the call with the path of the bad part. Nothing for a term.
-export def decode_argument(codecs: Codecs, type: String, local: String, at: Int) -> List[String]
+export def decode_argument(codecs: Plan, type: String, local: String, at: Int) -> List[String]
   declared = "  #{c_type(codecs, "", type)} #{local};"
   if SLICES.include?(type)
     into = "&#{local}.data, &#{local}.len"
@@ -184,7 +185,7 @@ export def decode_argument(codecs: Codecs, type: String, local: String, at: Int)
 end
 
 # Whether `to` is `from` or a type that `from` names in a field or payload, at any depth.
-def reaches?(codecs: Codecs, from: String, to: String) -> Bool
+def reaches?(codecs: Plan, from: String, to: String) -> Bool
   seen: Set[String] = Set.new([])
   pending = [from]
   while !pending.empty?
@@ -204,11 +205,11 @@ def reaches?(codecs: Codecs, from: String, to: String) -> Bool
 end
 
 # The types, each after those it embeds, else in the order of the block.
-def ordered(codecs: Codecs) -> List[Analysis.NativeType]
+def ordered(codecs: Plan) -> List[Analysis.NativeType]
   done: Set[String] = Set.new([])
   out: List[Analysis.NativeType] = []
   for type in codecs.types
-    for name in after(codecs, type.name, done)
+    for name in emit_order(codecs, type.name, done)
       done = done.add(name)
       out = out.push(codecs.types.find do |t: Analysis.NativeType| t.name == name end.unwrap!)
     end
@@ -218,7 +219,7 @@ def ordered(codecs: Codecs) -> List[Analysis.NativeType]
 end
 
 # The names to emit for `name`, those it embeds first, leaving out those in `done`.
-def after(codecs: Codecs, name: String, done: Set[String]) -> List[String]
+def emit_order(codecs: Plan, name: String, done: Set[String]) -> List[String]
   if done.include?(name)
     return []
   end
@@ -227,7 +228,7 @@ def after(codecs: Codecs, name: String, done: Set[String]) -> List[String]
   emitted = done
   for inner in codecs.edges.get(name, [])
     if embedded?(codecs, name, inner)
-      for found in after(codecs, inner, emitted)
+      for found in emit_order(codecs, inner, emitted)
         emitted = emitted.add(found)
         out = out.push(found)
       end
@@ -237,7 +238,7 @@ def after(codecs: Codecs, name: String, done: Set[String]) -> List[String]
   return out.push(name)
 end
 
-def typedef(codecs: Codecs, type: Analysis.NativeType) -> List[String]
+def typedef(codecs: Plan, type: Analysis.NativeType) -> List[String]
   p = codecs.lower
   if type.kind == "struct"
     fields = type.members.map do |member: Analysis.NativeMember|
@@ -266,7 +267,7 @@ def typedef(codecs: Codecs, type: Analysis.NativeType) -> List[String]
   return lines.push("} #{p}_#{type.name};")
 end
 
-def payload_fields(codecs: Codecs, type: Analysis.NativeType, member: Analysis.NativeMember) -> List[String]
+def payload_fields(codecs: Plan, type: Analysis.NativeType, member: Analysis.NativeMember) -> List[String]
   out: List[String] = []
   at = 0
   for inner in member.types
@@ -277,7 +278,7 @@ def payload_fields(codecs: Codecs, type: Analysis.NativeType, member: Analysis.N
   return out
 end
 
-def prototypes(codecs: Codecs, type: Analysis.NativeType) -> List[String]
+def prototypes(codecs: Plan, type: Analysis.NativeType) -> List[String]
   p = codecs.lower
   name = "#{p}_#{type.name}"
   lines: List[String] = []
@@ -297,7 +298,7 @@ def prototypes(codecs: Codecs, type: Analysis.NativeType) -> List[String]
   return lines
 end
 
-def constructor_head(codecs: Codecs, type: Analysis.NativeType, member: Analysis.NativeMember) -> String
+def constructor_head(codecs: Plan, type: Analysis.NativeType, member: Analysis.NativeMember) -> String
   params = ["an_env *env"]
   at = 0
   for inner in member.types
@@ -322,20 +323,29 @@ def failures() -> List[String]
     "typedef struct {",
     "  char path[192];",
     "  size_t len;",
+    "  bool cut;",
     "  const char *expected;",
     "} ng_fail;",
     "",
     "static inline bool ng_expected(ng_fail *fail, const char *expected) {",
     "  fail->path[0] = '\\0';",
     "  fail->len = 0;",
+    "  fail->cut = false;",
     "  fail->expected = expected;",
     "  return false;",
     "}",
     "",
-    "/* Puts SEGMENT in front of the path; a path that would not fit keeps its inner part. */",
+    "/* Puts SEGMENT in front of the path. The first one that does not fit becomes \"...\" and ends the path, which",
+    "   keeps its inner part. */",
     "static inline bool ng_at(ng_fail *fail, const char *segment) {",
     "  size_t n = strlen(segment), dot = fail->len > 0 ? 1 : 0;",
-    "  if (n + dot + fail->len >= sizeof fail->path) return false;",
+    "  if (fail->cut) return false;",
+    "  if (n + dot + fail->len >= sizeof fail->path) {",
+    "    fail->cut = true;",
+    "    segment = \"...\";",
+    "    n = 3;",
+    "    if (n + dot + fail->len >= sizeof fail->path) return false;",
+    "  }",
     "  memmove(fail->path + n + dot, fail->path, fail->len + 1);",
     "  memcpy(fail->path, segment, n);",
     "  if (dot) fail->path[n] = '.';",
@@ -368,7 +378,7 @@ def failures() -> List[String]
 end
 
 # The decoder of `type` into its C value, which records where it failed in `fail`.
-def decoder(codecs: Codecs, type: Analysis.NativeType) -> List[String]
+def decoder(codecs: Plan, type: Analysis.NativeType) -> List[String]
   p = codecs.lower
   name = type.name
   head = "static bool #{p}_native_get_#{name}(an_env *env, an_term t, #{p}_#{name} *out, ng_fail *fail) {"
@@ -421,7 +431,7 @@ def decoder(codecs: Codecs, type: Analysis.NativeType) -> List[String]
 end
 
 # The statement that reads the term `x` of `type` into `target`, or fails at `segment`.
-def decode_part(codecs: Codecs, owner: String, type: String, target: String, segment: String) -> List[String]
+def decode_part(codecs: Plan, owner: String, type: String, target: String, segment: String) -> List[String]
   if SLICES.include?(type)
     into = "&#{target}.data, &#{target}.len"
     return ["  if (!#{GETTERS[type]}(env, x, #{into})) return ng_leaf(fail, \"#{type}\", \"#{segment}\");"]
@@ -439,7 +449,7 @@ def decode_part(codecs: Codecs, owner: String, type: String, target: String, seg
   return ["  #{target} = x;"]
 end
 
-def public_get(codecs: Codecs, type: Analysis.NativeType) -> List[String]
+def public_get(codecs: Plan, type: Analysis.NativeType) -> List[String]
   p = codecs.lower
   name = type.name
   return [
@@ -451,7 +461,7 @@ def public_get(codecs: Codecs, type: Analysis.NativeType) -> List[String]
 end
 
 # The maker of `type`; for an enum, through the constructor of its variant.
-def maker(codecs: Codecs, type: Analysis.NativeType) -> List[String]
+def maker(codecs: Plan, type: Analysis.NativeType) -> List[String]
   p = codecs.lower
   big = codecs.upper
   name = type.name
@@ -489,7 +499,7 @@ def maker(codecs: Codecs, type: Analysis.NativeType) -> List[String]
   return lines.concat(["  }", "  return an_raise(env, \"#{name}: the tag is not one of its variants\");", "}"])
 end
 
-def constructors(codecs: Codecs, type: Analysis.NativeType) -> List[String]
+def constructors(codecs: Plan, type: Analysis.NativeType) -> List[String]
   big = codecs.upper
   row = "#{big}_TYPE_#{type.name}"
   lines: List[String] = []
@@ -516,7 +526,7 @@ def constructors(codecs: Codecs, type: Analysis.NativeType) -> List[String]
 end
 
 # The term of the C value `source` of `type`.
-def encoded(codecs: Codecs, owner: String, type: String, source: String) -> String
+def encoded(codecs: Plan, owner: String, type: String, source: String) -> String
   if SLICES.include?(type)
     return "#{MAKERS[type]}(env, #{source}.data, #{source}.len)"
   end
