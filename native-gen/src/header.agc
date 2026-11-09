@@ -214,8 +214,9 @@ def constants(block: Analysis.NativeBlock, names: Prefix) -> List[String]
   for resource in block.resources
     note = (
       "Define it, and #{big}_#{resource.name}_FREE (a void (*)(void *state), or NULL), before #{big}_NATIVE_MODULE.\n" +
-      "A parameter of this type is its state. _new makes one, with zeroed state, and _get gives the state of a\n" +
-      "term, or NULL when it is not one."
+      "A parameter of this type is its state. _new makes one, with zeroed state. _get gives the state of a term\n" +
+      "that is an argument of this call, and NULL for any other, one made by _new in the same call included. The\n" +
+      "state is valid until the call returns: do not keep the pointer."
     )
 
     if !resource.doc.empty?
@@ -229,10 +230,11 @@ def constants(block: Analysis.NativeBlock, names: Prefix) -> List[String]
 end
 
 # The state struct of resource `name`, declared for the author to define, and its two functions: `_new` makes one, and
-# `_get` gives the state of a term, NULL when the term is not one. They only name the row, so every file of the module
+# `_get` gives the state of an argument of the call, NULL for another term. They only name the row, so every file of
+# the module
 # has them.
 def state_functions(names: Prefix, name: String) -> List[String]
-  state = "struct #{names.lower}_#{name}_state"
+  state = state_struct(names, name)
   row = "#{names.upper}_RESOURCE_#{name}"
   return [
     "#{state};",
@@ -267,18 +269,18 @@ def enum_rows(items: List[String]) -> String
   return rows.join(", ")
 end
 
+# The C type of the state of resource `name`.
+def state_struct(names: Prefix, name: String) -> String
+  return "struct #{names.lower}_#{name}_state"
+end
+
 # One prototype per function, each with the `##` doc of its declaration.
 def prototypes(block: Analysis.NativeBlock, names: Prefix, shelf: Collections.Shelf) -> List[String]
   lines: List[String] = []
   resources = resource_names(block)
   for function in block.functions
     typed = function.parameters.map do |param: Analysis.NativeParameter|
-      typed_name = "#{Collections.c_type(shelf, param.type)} #{Names.parameter(param.name)}"
-      if resources.include?(param.type)
-        typed_name = "struct #{names.lower}_#{param.type}_state *#{Names.parameter(param.name)}"
-      end
-
-      typed_name
+      parameter_text(param, names, shelf, resources)
     end
 
     params = ["an_env *env"].concat(typed)
@@ -287,6 +289,20 @@ def prototypes(block: Analysis.NativeBlock, names: Prefix, shelf: Collections.Sh
   end
 
   return lines.concat(["", "#ifdef __cplusplus", "}", "#endif", "", "#endif"])
+end
+
+# The C type and name of `param` in a prototype: the state of a resource, or what the Lists and codecs give.
+def parameter_text(
+  param: Analysis.NativeParameter,
+  names: Prefix,
+  shelf: Collections.Shelf,
+  resources: Set[String],
+) -> String
+  if resources.include?(param.type)
+    return "#{state_struct(names, param.type)} *#{Names.parameter(param.name)}"
+  end
+
+  return "#{Collections.c_type(shelf, param.type)} #{Names.parameter(param.name)}"
 end
 
 # The wrappers, the tables and the module macro, for the one .c file that defines the module.
@@ -309,8 +325,9 @@ def implementation(block: Analysis.NativeBlock, names: Prefix, shelf: Collection
   ]
 
   lines = joined([lines, Codecs.definitions(shelf.codecs, !shelf.read.empty?), Collections.definitions(shelf)])
+  resources = resource_names(block)
   for function in block.functions
-    lines = joined([lines, [""], wrapper(function, names, shelf, resource_names(block))])
+    lines = joined([lines, [""], wrapper(function, names, shelf, resources)])
   end
 
   return joined([lines, tables(block, names), ["#endif"]])
@@ -345,9 +362,8 @@ def wrapper(
     end
 
     if resources.include?(param.type)
-      state = "struct #{names.lower}_#{param.type}_state"
       decoded = [
-        "  #{state} *#{local} = #{names.lower}_#{param.type}_get(env, argv[#{at}]);",
+        "  #{state_struct(names, param.type)} *#{local} = #{names.lower}_#{param.type}_get(env, argv[#{at}]);",
         "  if (!#{local}) return an_badarg(env, #{at});",
       ]
     end
@@ -429,7 +445,7 @@ def module_macro(block: Analysis.NativeBlock, names: Prefix, functions: String, 
 
   for resource in block.resources
     name = resource.name
-    lines = lines.push("    {#{c_string(name)}, sizeof(struct #{p}_#{name}_state), #{big}_#{name}_FREE}, \\")
+    lines = lines.push("    {#{c_string(name)}, sizeof(#{state_struct(names, name)}), #{big}_#{name}_FREE}, \\")
   end
 
   resources = "#{p}_native_resources, #{block.resources.size}"
