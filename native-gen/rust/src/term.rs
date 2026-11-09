@@ -8,9 +8,12 @@
 //! List or a Map runs inside a closure, with its cursor in the frame of the walk.
 
 use core::ffi::{c_char, c_int, c_void};
+use core::fmt;
 use core::iter::FusedIterator;
 use core::marker::PhantomData;
-use core::ptr;
+use core::{mem, ptr};
+use std::any::Any;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::sys;
 
@@ -73,7 +76,20 @@ impl<'a> Args<'a> {
 }
 
 /// Runs `body` for one call of the VM and gives its result to the VM. `types` is what each row of the module's type
-/// table takes. The env and its terms are valid only inside `body`:
+/// table takes.
+///
+/// `Err(Raise)` fails the call with its message (`RUNTIME-NATIVE-ERROR`), and so does a panic, caught here with the
+/// message "panic: TEXT": nothing unwinds into the VM. The panic hook still prints its report, and what `body`
+/// borrowed may be left half changed by the panic.
+///
+/// A failure of the VM itself is another thing: when the VM finds its own state broken inside an API function
+/// (`RUNTIME-INTERNAL`, such as a Map whose key list does not match its table when a walk of it starts), it fails the
+/// task with `agc_fail`, which leaves the call by `longjmp`. The jump skips every Rust frame between the VM and that
+/// API function, `call` included. Rust defines such a jump only over frames with nothing to drop, so this one is
+/// undefined behavior; in practice no destructor runs and no panic is caught, what those frames own leaks, and a lock
+/// they hold stays held. Only a bug of the VM leads there, and the crate cannot stop it.
+///
+/// The env and its terms are valid only inside `body`:
 ///
 /// ```compile_fail,E0521
 /// # use agentica_native::*;
@@ -81,7 +97,7 @@ impl<'a> Args<'a> {
 /// unsafe {
 ///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |env, _| {
 ///         kept = Some(env.int(1));
-///         env.void()
+///         Ok(env.void())
 ///     })
 /// };
 /// ```
@@ -92,7 +108,7 @@ impl<'a> Args<'a> {
 /// unsafe {
 ///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |env, _| {
 ///         KEPT.set(Some(env.int(1)));
-///         env.void()
+///         Ok(env.void())
 ///     })
 /// };
 /// ```
@@ -104,8 +120,8 @@ impl<'a> Args<'a> {
 /// unsafe {
 ///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |outer, _| {
 ///         let one = outer.int(1);
-///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |inner, _| inner.list_of(&[one]));
-///         outer.void()
+///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |inner, _| Ok(inner.list_of(&[one])));
+///         Ok(outer.void())
 ///     })
 /// };
 /// ```
@@ -116,7 +132,7 @@ impl<'a> Args<'a> {
 ///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |env, _| {
 ///         let one = env.int(1);
 ///         std::thread::spawn(move || one.get_int());
-///         env.void()
+///         Ok(env.void())
 ///     })
 /// };
 /// ```
@@ -135,8 +151,8 @@ impl<'a> Args<'a> {
 ///         KEPT.set(one.get_int());
 ///         let n = one.get_int();
 ///         std::thread::spawn(move || n);
-///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |inner, _| inner.list_of(&[inner.int(1)]));
-///         outer.list_of(&[one])
+///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |inner, _| Ok(inner.list_of(&[inner.int(1)])));
+///         Ok(outer.list_of(&[one]))
 ///     })
 /// };
 /// ```
@@ -151,7 +167,7 @@ pub unsafe fn call(
     argv: *const sys::an_term,
     mode: Mode,
     types: &[Arity],
-    body: impl for<'a> FnOnce(Env<'a>, Args<'a>) -> Term<'a>,
+    body: impl for<'a> FnOnce(Env<'a>, Args<'a>) -> Result<Term<'a>, Raise>,
 ) -> sys::an_term {
     // The root list of a short call: in this frame, which the collector scans, for as long as `body` runs. It is never
     // ended; its items die with the call.
@@ -171,7 +187,60 @@ pub unsafe fn call(
         // SAFETY: the VM passes ARGC arguments, valid for the call.
         unsafe { core::slice::from_raw_parts(argv, argc as usize) }
     };
-    body(env, Args { env, argv }).raw
+    let message = match catch_unwind(AssertUnwindSafe(|| body(env, Args { env, argv }))) {
+        // The term is a root of this frame or a part of an argument, so it is alive until the VM takes it.
+        Ok(Ok(term)) => return term.raw,
+        Ok(Err(raise)) => raise.0,
+        Err(payload) => panic_message(payload),
+    };
+    env.raise(&message).raw
+}
+
+/// The failure of a call, which `call` gives to the VM as the message of `RUNTIME-NATIVE-ERROR`: the one way a
+/// function of a module fails. A `DecodeError` and a `String` become one with `?`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Raise(String);
+
+impl Raise {
+    pub fn new(message: impl Into<String>) -> Self {
+        Raise(message.into())
+    }
+
+    pub fn message(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Raise {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for Raise {
+    fn from(message: String) -> Self {
+        Raise(message)
+    }
+}
+
+impl From<&str> for Raise {
+    fn from(message: &str) -> Self {
+        Raise(message.to_string())
+    }
+}
+
+/// The message of a caught panic, "panic: TEXT". The payload is dropped here, where a second panic of its own drop
+/// is caught too: nothing unwinds into the VM.
+fn panic_message(payload: Box<dyn Any + Send>) -> String {
+    let text =
+        payload.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| payload.downcast_ref::<String>().cloned());
+    if let Err(again) = catch_unwind(AssertUnwindSafe(|| drop(payload))) {
+        mem::forget(again);
+    }
+    match text {
+        Some(text) => format!("panic: {text}"),
+        None => "panic".to_string(),
+    }
 }
 
 /// The table of the call.
@@ -362,19 +431,15 @@ impl<'a> Env<'a> {
         (self.made(out), if state.is_null() { None } else { Some(state) })
     }
 
-    /// Fails the call with `message` once it returns. The first failure of a call wins.
-    pub fn raise(self, message: &str) -> Term<'a> {
+    /// Fails the call with `message` once it returns. The first failure of a call wins. A module fails a call with
+    /// `Err(Raise)`; this is for `call` and the constructors of the crate.
+    pub(crate) fn raise(self, message: &str) -> Term<'a> {
         // The VM copies a NUL-terminated message: cut it at a NUL inside, which C would read as its end anyway.
         let text = message.split('\0').next().unwrap_or("");
         let mut owned = Vec::with_capacity(text.len() + 1);
         owned.extend_from_slice(text.as_bytes());
         owned.push(0);
         self.immediate(unsafe { (self.api().raise)(self.raw, owned.as_ptr() as *const c_char) })
-    }
-
-    /// Fails the call with "argument INDEX + 1 is not valid".
-    pub fn badarg(self, index: usize) -> Term<'a> {
-        self.immediate(unsafe { (self.api().badarg)(self.raw, c_int::try_from(index).unwrap_or(c_int::MAX)) })
     }
 }
 
