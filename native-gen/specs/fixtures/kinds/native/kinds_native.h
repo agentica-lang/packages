@@ -17,17 +17,17 @@ extern "C" {
 #endif
 
 /* A String or Bytes argument, borrowed for the call: copy it to keep it. String data is UTF-8 with no NUL at its
-   end. Every header of native-gen has these two, so one file can include several. */
-#ifndef AN_NATIVE_GEN_SLICES
-#define AN_NATIVE_GEN_SLICES
+   end. Every header of this version of native-gen has these two, so one file can include several. */
+#ifndef NATIVE_GEN_SLICES_1
+#define NATIVE_GEN_SLICES_1
 typedef struct {
   const char *data;
   size_t len;
-} an_str;
+} ng_str;
 typedef struct {
   const uint8_t *data;
   size_t len;
-} an_buf;
+} ng_buf;
 #endif
 
 /* The rows of the type table: the TYPE of an_struct, an_enum and their getters. */
@@ -53,14 +53,15 @@ an_term kinds_counter(an_env *env, int64_t start);
 /* The counter's value after adding `step`. */
 an_term kinds_bump_bang(an_env *env, an_term counter, int64_t step);
 
-an_term kinds_describe(an_env *env, int64_t n, double x, bool flag, an_str text, an_buf data);
+an_term kinds_describe(an_env *env, int64_t n, double x, bool flag, ng_str text, ng_buf data);
 
 /* Whether `text` is empty.
 
-   A second paragraph, and a * / that must not end the comment. */
-an_term kinds_empty_p(an_env *env, an_str text);
+   A second paragraph, with a * / that must not end the comment, a / * that must not open one, and a ? ?/ that must not
+   be a trigraph. */
+an_term kinds_empty_p(an_env *env, ng_str text);
 
-an_term kinds_keywords(an_env *env, int64_t int_, an_str env_, bool class_);
+an_term kinds_keywords(an_env *env, int64_t int_, ng_str env_, bool class_, int64_t size_t_, int64_t an_term_);
 
 an_term kinds_nothing(an_env *env);
 
@@ -73,7 +74,12 @@ an_term kinds_corner(an_env *env, an_term shape);
 }
 #endif
 
-#ifdef KINDS_NATIVE_IMPLEMENTATION
+#endif
+
+/* Outside the include guard, so a file that included the header before it defined the switch still gets this
+   part; its own guard keeps it to one copy. */
+#if defined(KINDS_NATIVE_IMPLEMENTATION) && !defined(KINDS_NATIVE_IMPLEMENTATION_DONE)
+#define KINDS_NATIVE_IMPLEMENTATION_DONE
 /* Declared with C linkage, so a module built as C++ exports it under its C name. */
 #ifdef __cplusplus
 extern "C" {
@@ -105,16 +111,16 @@ static an_term kinds_native_describe(an_env *env, int argc, const an_term *argv)
   if (!an_get_float(env, argv[1], &a1)) return an_badarg(env, 1);
   bool a2;
   if (!an_get_bool(env, argv[2], &a2)) return an_badarg(env, 2);
-  an_str a3;
+  ng_str a3;
   if (!an_get_string(env, argv[3], &a3.data, &a3.len)) return an_badarg(env, 3);
-  an_buf a4;
+  ng_buf a4;
   if (!an_get_bytes(env, argv[4], &a4.data, &a4.len)) return an_badarg(env, 4);
   return kinds_describe(env, a0, a1, a2, a3, a4);
 }
 
 static an_term kinds_native_empty_p(an_env *env, int argc, const an_term *argv) {
   (void)argc;
-  an_str a0;
+  ng_str a0;
   if (!an_get_string(env, argv[0], &a0.data, &a0.len)) return an_badarg(env, 0);
   return kinds_empty_p(env, a0);
 }
@@ -123,11 +129,15 @@ static an_term kinds_native_keywords(an_env *env, int argc, const an_term *argv)
   (void)argc;
   int64_t a0;
   if (!an_get_int(env, argv[0], &a0)) return an_badarg(env, 0);
-  an_str a1;
+  ng_str a1;
   if (!an_get_string(env, argv[1], &a1.data, &a1.len)) return an_badarg(env, 1);
   bool a2;
   if (!an_get_bool(env, argv[2], &a2)) return an_badarg(env, 2);
-  return kinds_keywords(env, a0, a1, a2);
+  int64_t a3;
+  if (!an_get_int(env, argv[3], &a3)) return an_badarg(env, 3);
+  int64_t a4;
+  if (!an_get_int(env, argv[4], &a4)) return an_badarg(env, 4);
+  return kinds_keywords(env, a0, a1, a2, a3, a4);
 }
 
 static an_term kinds_native_nothing(an_env *env, int argc, const an_term *argv) {
@@ -151,7 +161,7 @@ static const an_function kinds_native_functions[] = {
   {"bump!", "(Counter, Int) -> Int", kinds_native_bump_bang, AN_SHORT},
   {"describe", "(Int, Float, Bool, String, Bytes) -> String", kinds_native_describe, AN_SHORT},
   {"empty?", "(String) -> Bool", kinds_native_empty_p, AN_SHORT},
-  {"keywords", "(Int, String, Bool) -> String", kinds_native_keywords, AN_SHORT},
+  {"keywords", "(Int, String, Bool, Int, Int) -> String", kinds_native_keywords, AN_SHORT},
   {"nothing", "() -> Void", kinds_native_nothing, AN_SHORT},
   {"total", "(List[Int]) -> Int", kinds_native_total, AN_DIRTY},
   {"corner", "(Shape) -> Optional[Point]", kinds_native_corner, AN_SHORT},
@@ -169,6 +179,4 @@ static const an_type kinds_native_types[] = {
     {"Counter", sizeof(struct kinds_Counter_state), KINDS_Counter_FREE}, \
   }; \
   AN_MODULE_TABLES("kinds", kinds_native_functions, 8, kinds_native_types, 2, kinds_native_resources, 1, LOAD)
-#endif
-
 #endif

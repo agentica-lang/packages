@@ -8,7 +8,8 @@
 ## ```
 ##
 ## An error starts with its code in brackets: `[NATIVE-GEN-NAME] ...` when two names map to one C identifier,
-## `[NATIVE-GEN-PREFIX]`, `[NATIVE-GEN-BLOCK]`, or the code of the diagnostic when the file does not check.
+## `[NATIVE-GEN-PREFIX]`, `[NATIVE-GEN-BLOCK]`, `[NATIVE-GEN-UNKNOWN]`, or the code of the diagnostic when the file
+## does not check.
 
 import Analysis from "std/analysis"
 import CHeader from "src/header"
@@ -16,12 +17,13 @@ import CHeader from "src/header"
 ## The header of the one `extern module` block of the file at `path`. Its C names start with `prefix`, by default the
 ## last part of the block's library name up to its first `.` (`stats` for "stats" and for "native/stats.so").
 export def header(path: String, prefix: String = "") -> Result[String]
-  found = Analysis.native_modules(Analysis.open(Analysis.workspace()), path)
-  if !found.ok?
-    return error(diagnostic_text(found.message))
+  case Analysis.native_modules(Analysis.open(Analysis.workspace()), path)
+    ok(found) -> return header_of(found.blocks, path, prefix)
+    error(message) -> return error(diagnostic_text(message))
   end
+end
 
-  blocks = found.unwrap!.blocks
+def header_of(blocks: List[Analysis.NativeBlock], path: String, prefix: String) -> Result[String]
   if blocks.size != 1
     return error("[NATIVE-GEN-BLOCK] #{path} has #{blocks.size} extern module blocks; the header is made for one")
   end
@@ -32,17 +34,10 @@ export def header(path: String, prefix: String = "") -> Result[String]
     name = default_prefix(block.library)
   end
 
-  names = CHeader.prefix(name)
-  if !names.ok?
-    return error("[NATIVE-GEN-PREFIX] #{names.message}; choose one with --prefix")
+  case CHeader.prefix(name)
+    ok(names) -> return CHeader.render(block, names, last_part(path))
+    error(message) -> return error("[NATIVE-GEN-PREFIX] #{message}; choose another with --prefix")
   end
-
-  made = CHeader.render(block, names.unwrap!, last_part(path))
-  if !made.ok?
-    return error("[NATIVE-GEN-NAME] #{made.message}")
-  end
-
-  return made
 end
 
 # The first diagnostic of a file that does not check, as `[CODE] file:line:column message`.

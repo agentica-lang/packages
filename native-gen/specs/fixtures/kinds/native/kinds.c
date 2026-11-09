@@ -1,5 +1,9 @@
-/* The module of kinds.agc, on the header that native-gen makes from it. Each function answers with what it got. */
+/* The module of kinds.agc, on the header that native-gen makes from it. Each function answers with what it got. The
+   header is included first without the switch, as another file of the module would, then with it, then once more:
+   the implementation comes once, after the switch. */
+#include "kinds_native.h"
 #define KINDS_NATIVE_IMPLEMENTATION
+#include "kinds_native.h"
 #include "kinds_native.h"
 
 #include <stdio.h>
@@ -24,18 +28,19 @@ an_term kinds_bump_bang(an_env *env, an_term counter, int64_t step) {
   return an_int(env, count->value);
 }
 
-an_term kinds_describe(an_env *env, int64_t n, double x, bool flag, an_str text, an_buf data) {
+an_term kinds_describe(an_env *env, int64_t n, double x, bool flag, ng_str text, ng_buf data) {
   char line[128];
   int len = snprintf(line, sizeof line, "%lld %.1f %s %.*s (%zu bytes, last %u)", (long long)n, x,
                      flag ? "true" : "false", (int)text.len, text.data, data.len, data.len ? data.data[data.len - 1] : 0u);
   return an_string(env, line, (size_t)len);
 }
 
-an_term kinds_empty_p(an_env *env, an_str text) { return an_bool(env, text.len == 0); }
+an_term kinds_empty_p(an_env *env, ng_str text) { return an_bool(env, text.len == 0); }
 
-an_term kinds_keywords(an_env *env, int64_t int_, an_str env_, bool class_) {
+an_term kinds_keywords(an_env *env, int64_t int_, ng_str env_, bool class_, int64_t size_t_, int64_t an_term_) {
   char line[64];
-  int len = snprintf(line, sizeof line, "%lld %.*s %d", (long long)int_, (int)env_.len, env_.data, class_);
+  int len = snprintf(line, sizeof line, "%lld %.*s %d %lld %lld", (long long)int_, (int)env_.len, env_.data, class_,
+                     (long long)size_t_, (long long)an_term_);
   return an_string(env, line, (size_t)len);
 }
 

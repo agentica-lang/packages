@@ -50,7 +50,7 @@ static an_term cell(an_env *env, const char *text, size_t len) {
 
 /* The lines after the header, each a Map from the header's names to its cells; a line with another number of cells
    is an error. A comma always separates: there is no quoting. */
-an_term stats_rows(an_env *env, an_str text) {
+an_term stats_rows(an_env *env, ng_str text) {
   size_t columns = 0;
   an_term names[MAX_COLUMNS], cells[MAX_COLUMNS];
   an_list_builder b;

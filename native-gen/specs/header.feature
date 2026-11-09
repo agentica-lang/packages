@@ -47,7 +47,7 @@ Feature: The C header of an extern module block
       42
       -7 2.5 true héllo (2 bytes, last 255)
       [true, false]
-      1 e 0
+      1 e 0 2 3
       6
       [none, some(Point(x: 3, y: 4))]
 
@@ -84,8 +84,59 @@ Feature: The C header of an extern module block
       | keyword.agc    | NATIVE-GEN-NAME   |
       | two_blocks.agc | NATIVE-GEN-BLOCK  |
       | no_block.agc   | NATIVE-GEN-BLOCK  |
+      | reserved.agc   | NATIVE-GEN-NAME   |
       | path.agc       | NATIVE-GEN-PREFIX |
       | missing.agc    | QUERY-USAGE       |
+
+  Scenario Outline: The prefix <prefix> is in the namespace of the C API
+    Given the program argument "fixtures/stats/stats.agc"
+    And the program argument "--prefix"
+    And the program argument "<prefix>"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-PREFIX]
+      """
+
+    Examples:
+      | prefix   |
+      | an       |
+      | AN_stats |
+      | agentica |
+
+  Scenario: A name in a C string is escaped
+    Given the program argument "fixtures/escapes.agc"
+    And the program argument "--prefix"
+    And the program argument "odd"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout includes:
+      """
+      AN_MODULE_TABLES("tab\011here \"q\" ?\?=", odd_native_functions, 1, NULL, 0, NULL, 0, LOAD)
+      """
+
+  Scenario: --output writes the header
+    Given the header goes to a fresh folder as "stats_native.h"
+    And the program argument "fixtures/stats/stats.agc"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And the written header includes:
+      """
+      #define STATS_NATIVE_MODULE(LOAD) AN_MODULE_TABLES("stats", stats_native_functions, 2, stats_native_types, 2, NULL, 0, LOAD)
+      #endif
+      """
+
+  Scenario: A header that cannot be written fails with NATIVE-GEN-IO
+    Given the program argument "fixtures/stats/stats.agc"
+    And the program argument "--output"
+    And the program argument "fixtures/no-such-folder/stats_native.h"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-IO]
+      """
 
   Scenario: --check fails when the header is not the one the file gives
     Given the program argument "fixtures/stats/stats.agc"

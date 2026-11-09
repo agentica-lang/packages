@@ -37,7 +37,7 @@ def parsed(args: List[String]) -> Result[Options]
     "Writes the C header of the extern module block of FILE.",
     [Arg(name: "file", help: "the .agc file with the extern module block")],
     [
-      Opt(name: "prefix", help: "the start of the C names (default: the library name)"),
+      Opt(name: "prefix", help: "the start of the C names (default: the library name up to its first .)"),
       Opt(name: "output", short: "o", help: "the header file to write (default: stdout)"),
       Opt(name: "check", kind: Kind.Flag, help: "write nothing; fail when the --output file is not the header"),
     ],

@@ -21,9 +21,10 @@ extern module "kinds"
   def describe(n: Int, x: Float, flag: Bool, text: String, data: Bytes) -> String
   ## Whether `text` is empty.
   ##
-  ## A second paragraph, and a */ that must not end the comment.
+  ## A second paragraph, with a */ that must not end the comment, a /* that must not open one, and a ??/ that must not
+  ## be a trigraph.
   def empty?(text: String) -> Bool
-  def keywords(int: Int, env: String, class: Bool) -> String
+  def keywords(int: Int, env: String, class: Bool, size_t: Int, an_term: Int) -> String
   def nothing() -> Void
   compute def total(values: List[Int]) -> Int
   ## The center of a circle; none for a dot.
@@ -35,7 +36,7 @@ def main() -> Void
   puts(bump!(c, 2))
   puts(describe(-7, 2.5, true, "héllo", Bytes.from_list([0, 255]).unwrap!))
   puts([empty?(""), empty?("x")])
-  puts(keywords(1, "e", false))
+  puts(keywords(1, "e", false, 2, 3))
   nothing()
   puts(total([1, 2, 3]))
   puts([corner(Shape.Dot), corner(Shape.Circle(Point(x: 3, y: 4), 1.5))])

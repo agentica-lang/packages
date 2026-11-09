@@ -61,33 +61,34 @@ an_term stats_summary(an_env *env, an_term values) {
   return an_some(env, an_struct(env, STATS_TYPE_Summary, fields));
 }
 
-an_term stats_rows(an_env *env, an_str text) { /* text.data, text.len */ }
+an_term stats_rows(an_env *env, ng_str text) { /* text.data, text.len */ }
 
 STATS_NATIVE_MODULE(NULL)
 ```
 
-A function you did not write is a link error, not a failure when the module loads. Other `.c` files of the module include the header without the define and get the prototypes and constants only.
+A function you did not write is a link error, not a failure when the module loads. Other `.c` files of the module include the header without the define and get the prototypes and constants only; the implementation part has its own guard, so the one file may include the header before the define too.
 
 ## The header
 
-- The prefix of the C names is the library name of the block up to its first `.` (`stats`), or `--prefix NAME`. Macros and constants use it in capitals.
-- One prototype per function, `an_term PREFIX_name(an_env *env, ...)`, with the `##` doc above it. `Int` is `int64_t`, `Float` `double`, `Bool` `bool`, `String` `an_str` and `Bytes` `an_buf` (`data` and `len`, borrowed for the call: copy them to keep them). Other types (`List`, `Map`, `Optional`, `Result`, structs, enums, resources) are an `an_term`, which the getters of `agentica_native.h` read. The result is always an `an_term`.
+- The prefix of the C names is the library name of the block up to its first `.` (`stats`), or `--prefix NAME`. Macros and constants use it in capitals. `an`, `agentica` and a prefix that starts with `an_` belong to the C API and are refused.
+- One prototype per function, `an_term PREFIX_name(an_env *env, ...)`, with the `##` doc above it. `Int` is `int64_t`, `Float` `double`, `Bool` `bool`, `String` `ng_str` and `Bytes` `ng_buf` (`data` and `len`, borrowed for the call: copy them to keep them). Other types (`List`, `Map`, `Optional`, `Result`, structs, enums, resources) are an `an_term`, which the getters of `agentica_native.h` read. The result is always an `an_term`.
 - Each wrapper checks the arguments in order and answers `an_badarg(env, i)` for the first one that does not decode.
 - `def` is `AN_SHORT` and `compute def` is `AN_DIRTY`.
 - `PREFIX_TYPE_Name` is the row of a struct or enum, the `TYPE` of `an_struct` and `an_enum`; `PREFIX_Name_member` is a field or variant, in declared order. `PREFIX_RESOURCE_Name` is the row of a resource.
-- A resource needs `struct PREFIX_Name_state` and `PREFIX_Name_FREE` (a `void (*)(void *state)`, or `NULL`), both defined before `PREFIX_NATIVE_MODULE`.
-- Names: `empty?` is `PREFIX_empty_p` and `save!` is `PREFIX_save_bang`. A parameter that is a C or C++ keyword, or `env`, gets a trailing `_` (`int_`). The header compiles as C11 and as C++.
+- A resource needs `struct PREFIX_Name_state` and `PREFIX_Name_FREE` (a `void (*)(void *state)`, or `NULL`), both defined before `PREFIX_NATIVE_MODULE`. C11 has no empty struct: a resource with no state still needs one member.
+- Names: `empty?` is `PREFIX_empty_p` and `save!` is `PREFIX_save_bang`. A parameter that is a C or C++ keyword, `env`, a type or macro a prototype may use (`int64_t`, `size_t`, `uint8_t`, `uint32_t`, `errno`), or that starts with `an_` or `ng_`, gets a trailing `_` (`int_`). The header compiles as C11 and as C++.
 - The header starts with a check of the version of `agentica_native.h`: it stops the build when the API is older than the block needs.
 
 ## Errors
 
-An error is one line on stderr, `native-gen: [CODE] message`, and the exit code is 1 (2 for bad usage):
+An error is one line on stderr, `native-gen: [CODE] message`, and the exit code is 1. Bad usage prints the usage error and a `Try 'native-gen --help'` line, and the exit code is 2.
 
 | Code | When |
 |---|---|
 | `NATIVE-GEN-NAME` | two names map to one C identifier (`empty?` and `empty_p`) |
 | `NATIVE-GEN-BLOCK` | the file has no `extern module` block, or more than one |
-| `NATIVE-GEN-PREFIX` | the prefix is not a C identifier; give one with `--prefix` |
+| `NATIVE-GEN-PREFIX` | the prefix is not a C identifier, or is the C API's; give another with `--prefix` |
+| `NATIVE-GEN-UNKNOWN` | `std/analysis` gives a function mode or a type kind that this version does not know |
 | `NATIVE-GEN-STALE` | `--check`: the file at `--output` is not the header that the `.agc` gives |
 | `NATIVE-GEN-IO` | the header cannot be read or written |
 | any other | the code of the diagnostic when the `.agc` does not check |

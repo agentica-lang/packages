@@ -17,17 +17,17 @@ extern "C" {
 #endif
 
 /* A String or Bytes argument, borrowed for the call: copy it to keep it. String data is UTF-8 with no NUL at its
-   end. Every header of native-gen has these two, so one file can include several. */
-#ifndef AN_NATIVE_GEN_SLICES
-#define AN_NATIVE_GEN_SLICES
+   end. Every header of this version of native-gen has these two, so one file can include several. */
+#ifndef NATIVE_GEN_SLICES_1
+#define NATIVE_GEN_SLICES_1
 typedef struct {
   const char *data;
   size_t len;
-} an_str;
+} ng_str;
 typedef struct {
   const uint8_t *data;
   size_t len;
-} an_buf;
+} ng_buf;
 #endif
 
 /* The rows of the type table: the TYPE of an_struct, an_enum and their getters. */
@@ -43,13 +43,18 @@ enum { STATS_Cell_Empty = 0, STATS_Cell_Number = 1, STATS_Cell_Text = 2 };
 an_term stats_summary(an_env *env, an_term values);
 
 /* The lines of a CSV text after its header, as maps from the header's names to typed cells. */
-an_term stats_rows(an_env *env, an_str text);
+an_term stats_rows(an_env *env, ng_str text);
 
 #ifdef __cplusplus
 }
 #endif
 
-#ifdef STATS_NATIVE_IMPLEMENTATION
+#endif
+
+/* Outside the include guard, so a file that included the header before it defined the switch still gets this
+   part; its own guard keeps it to one copy. */
+#if defined(STATS_NATIVE_IMPLEMENTATION) && !defined(STATS_NATIVE_IMPLEMENTATION_DONE)
+#define STATS_NATIVE_IMPLEMENTATION_DONE
 /* Declared with C linkage, so a module built as C++ exports it under its C name. */
 #ifdef __cplusplus
 extern "C" {
@@ -66,7 +71,7 @@ static an_term stats_native_summary(an_env *env, int argc, const an_term *argv) 
 
 static an_term stats_native_rows(an_env *env, int argc, const an_term *argv) {
   (void)argc;
-  an_str a0;
+  ng_str a0;
   if (!an_get_string(env, argv[0], &a0.data, &a0.len)) return an_badarg(env, 0);
   return stats_rows(env, a0);
 }
@@ -84,6 +89,4 @@ static const an_type stats_native_types[] = {
 /* Ends the module's one .c file: the tables and agentica_native_init. LOAD is NULL or a const char *(*)(void)
    that runs once at the first call, and refuses the module with the message it returns. */
 #define STATS_NATIVE_MODULE(LOAD) AN_MODULE_TABLES("stats", stats_native_functions, 2, stats_native_types, 2, NULL, 0, LOAD)
-#endif
-
 #endif

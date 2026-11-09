@@ -1,8 +1,9 @@
 ## The C names of an `extern module` block (pure): a function name as a C identifier, a parameter name that is a C or
 ## C++ keyword, and the check that no two names of a header map to one identifier.
 
-# The words a parameter name cannot be in C11 or C++ (the header compiles as both), and `env`, the first parameter of
-# every prototype. Such a name gets a trailing `_`.
+# The words a parameter name cannot be in C11 or C++ (the header compiles as both), `env`, the first parameter of
+# every prototype, and the names of the types and macros a prototype or the C file may use (`int64_t`, `errno`). Such
+# a name gets a trailing `_`, as does one in the namespace of the C API (`an_`) or of native-gen's types (`ng_`).
 RESERVED = Set.new([
   "alignas", "alignof", "and", "and_eq", "asm", "auto", "bitand", "bitor", "bool", "break", "case", "catch", "char",
   "char16_t", "char32_t", "char8_t", "class", "co_await", "co_return", "co_yield", "compl", "concept", "const",
@@ -12,8 +13,9 @@ RESERVED = Set.new([
   "or", "or_eq", "private", "protected", "public", "register", "reinterpret_cast", "requires", "restrict", "return",
   "short", "signed", "sizeof", "static", "static_assert", "static_cast", "struct", "switch", "template", "this",
   "thread_local", "throw", "true", "try", "typedef", "typeid", "typename", "union", "unsigned", "using", "virtual",
-  "void", "volatile", "wchar_t", "while", "xor", "xor_eq",
+  "void", "volatile", "wchar_t", "while", "xor", "xor_eq", "int64_t", "uint8_t", "uint32_t", "size_t", "errno",
 ])
+RESERVED_STARTS = ["an_", "ng_"]
 
 ## A C identifier of the header and the name of the block it comes from (`summary`, `Cell.Number`).
 export struct Named
@@ -34,9 +36,10 @@ export def identifier(name: String) -> String
   return name
 end
 
-## A parameter name as a C identifier, with a trailing `_` when it is a keyword of C or C++, or `env`.
+## A parameter name as a C identifier, with a trailing `_` when it is a keyword of C or C++, `env`, a type or macro a
+## prototype may use, or starts with `an_` or `ng_`.
 export def parameter(name: String) -> String
-  if RESERVED.include?(name)
+  if RESERVED.include?(name) or RESERVED_STARTS.any? do |start: String| name.start_with?(start) end
     return "#{name}_"
   end
 

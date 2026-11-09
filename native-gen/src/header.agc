@@ -7,8 +7,9 @@ import Analysis from "std/analysis"
 import Names from "names"
 
 # The C type of a parameter, by its canonical Agentica type; any other type stays a term.
-SCALARS = {"Int": "int64_t", "Float": "double", "Bool": "bool", "String": "an_str", "Bytes": "an_buf"}
-# The getter that decodes a parameter of a scalar type, and whether it fills a slice (data and len).
+SCALARS = {"Int": "int64_t", "Float": "double", "Bool": "bool", "String": "ng_str", "Bytes": "ng_buf"}
+# The getter of `agentica_native.h` that decodes a parameter of each scalar type; those of SLICES fill `data` and
+# `len`.
 GETTERS = {
   "Int": "an_get_int",
   "Float": "an_get_float",
@@ -17,6 +18,11 @@ GETTERS = {
   "Bytes": "an_get_bytes",
 }
 SLICES = Set.new(["String", "Bytes"])
+# The table flags of the function modes and the kinds of the type rows that std/analysis gives.
+MODES = {"short": "AN_SHORT", "dirty": "AN_DIRTY"}
+KINDS = {"struct": "AN_STRUCT", "enum": "AN_ENUM"}
+# Prefixes that would put the header's names in the namespace of the C API (`an_`, `AN_`, `agentica_native_init`).
+RESERVED_PREFIXES = Set.new(["an", "agentica"])
 
 ## The C names of one header: the prefix of its functions and the same in capitals for its macros and constants.
 export struct Prefix
@@ -24,25 +30,43 @@ export struct Prefix
   upper: String
 end
 
-## The prefix `text` for C names, or an error when it is not a C identifier.
+## The prefix `text` for C names, or an error when it is not a C identifier or is one of the C API's.
 export def prefix(text: String) -> Result[Prefix]
   if !Names.c_identifier?(text)
     return error("the prefix #{text.inspect} is not a C identifier")
   end
 
+  lower = text.downcase
+  if RESERVED_PREFIXES.include?(lower) or lower.start_with?("an_")
+    return error("the prefix #{text.inspect} is in the namespace of the C API")
+  end
+
   return ok(Prefix(lower: text, upper: text.upcase))
 end
 
-## The header of `block`, declared in the file `source` (its name only, so the text does not depend on where it ran),
-## or an error when two of its names map to one C identifier.
+## The header of `block`, declared in the file `source` (its name only, so the text does not depend on where it ran).
+## An error starts with its code: `[NATIVE-GEN-NAME]` when two of its names map to one C identifier,
+## `[NATIVE-GEN-UNKNOWN]` for a mode or a type kind that this version does not know.
 export def render(block: Analysis.NativeBlock, names: Prefix, source: String) -> Result[String]
-  try Names.distinct(global_names(block, names))
+  try named(Names.distinct(global_names(block, names)))
   for function in block.functions
-    try Names.distinct(
-      function.parameters.map do |param: Analysis.NativeParameter|
-        Names.Named(c: Names.parameter(param.name), source: "#{function.name}(#{param.name})")
-      end,
+    if !MODES.has_key?(function.mode)
+      return error("[NATIVE-GEN-UNKNOWN] #{function.name} has the mode #{function.mode.inspect}")
+    end
+
+    try named(
+      Names.distinct(
+        function.parameters.map do |param: Analysis.NativeParameter|
+          Names.Named(c: Names.parameter(param.name), source: "#{function.name}(#{param.name})")
+        end,
+      ),
     )
+  end
+
+  for type in block.types
+    if !KINDS.has_key?(type.kind)
+      return error("[NATIVE-GEN-UNKNOWN] #{type.name} has the kind #{type.kind.inspect}")
+    end
   end
 
   lines = joined([
@@ -55,6 +79,14 @@ export def render(block: Analysis.NativeBlock, names: Prefix, source: String) ->
   return ok("#{lines.join("\n")}\n")
 end
 
+def named(distinct: Result[Void]) -> Result[Void]
+  if !distinct.ok?
+    return error("[NATIVE-GEN-NAME] #{distinct.message}")
+  end
+
+  return ok()
+end
+
 # Every C name the header declares at file scope, with the name of the block it comes from.
 def global_names(block: Analysis.NativeBlock, names: Prefix) -> List[Names.Named]
   p = names.lower
@@ -62,6 +94,8 @@ def global_names(block: Analysis.NativeBlock, names: Prefix) -> List[Names.Named
   named = [
     Names.Named(c: "#{big}_NATIVE_H", source: "the include guard"),
     Names.Named(c: "#{big}_NATIVE_IMPLEMENTATION", source: "the implementation switch"),
+    Names.Named(c: "#{big}_NATIVE_IMPLEMENTATION_DONE", source: "the implementation guard"),
+    Names.Named(c: "agentica_native_init", source: "the export of the module"),
     Names.Named(c: "#{big}_NATIVE_MODULE", source: "the module macro"),
     Names.Named(c: "#{p}_native_functions", source: "the function table"),
     Names.Named(c: "#{p}_native_types", source: "the type table"),
@@ -121,17 +155,17 @@ def opening(block: Analysis.NativeBlock, names: Prefix, source: String) -> List[
     "#endif",
     "",
     "/* A String or Bytes argument, borrowed for the call: copy it to keep it. String data is UTF-8 with no NUL at its",
-    "   end. Every header of native-gen has these two, so one file can include several. */",
-    "#ifndef AN_NATIVE_GEN_SLICES",
-    "#define AN_NATIVE_GEN_SLICES",
+    "   end. Every header of this version of native-gen has these two, so one file can include several. */",
+    "#ifndef NATIVE_GEN_SLICES_1",
+    "#define NATIVE_GEN_SLICES_1",
     "typedef struct {",
     "  const char *data;",
     "  size_t len;",
-    "} an_str;",
+    "} ng_str;",
     "typedef struct {",
     "  const uint8_t *data;",
     "  size_t len;",
-    "} an_buf;",
+    "} ng_buf;",
     "#endif",
   ])
 end
@@ -206,7 +240,7 @@ def prototypes(block: Analysis.NativeBlock, names: Prefix) -> List[String]
     lines = joined([lines, [""], doc_comment(function.doc), ["an_term #{name}(#{params.join(", ")});"]])
   end
 
-  return lines.concat(["", "#ifdef __cplusplus", "}", "#endif"])
+  return lines.concat(["", "#ifdef __cplusplus", "}", "#endif", "", "#endif"])
 end
 
 def c_type(type: String) -> String
@@ -215,9 +249,13 @@ end
 
 # The wrappers, the tables and the module macro, for the one .c file that defines the module.
 def implementation(block: Analysis.NativeBlock, names: Prefix) -> List[String]
+  big = names.upper
   lines = [
     "",
-    "#ifdef #{names.upper}_NATIVE_IMPLEMENTATION",
+    "/* Outside the include guard, so a file that included the header before it defined the switch still gets this",
+    "   part; its own guard keeps it to one copy. */",
+    "#if defined(#{big}_NATIVE_IMPLEMENTATION) && !defined(#{big}_NATIVE_IMPLEMENTATION_DONE)",
+    "#define #{big}_NATIVE_IMPLEMENTATION_DONE",
     "/* Declared with C linkage, so a module built as C++ exports it under its C name. */",
     "#ifdef __cplusplus",
     "extern \"C\" {",
@@ -232,7 +270,7 @@ def implementation(block: Analysis.NativeBlock, names: Prefix) -> List[String]
     lines = joined([lines, [""], wrapper(function, names)])
   end
 
-  return joined([lines, tables(block, names), ["#endif", "", "#endif"]])
+  return joined([lines, tables(block, names), ["#endif"]])
 end
 
 # The function of the table: it decodes each scalar argument, answers an_badarg for the first one that does not
@@ -282,13 +320,9 @@ def tables(block: Analysis.NativeBlock, names: Prefix) -> List[String]
   if !block.functions.empty?
     lines = lines.concat(["", "static const an_function #{p}_native_functions[] = {"])
     for function in block.functions
-      mode = "AN_SHORT"
-      if function.mode == "dirty"
-        mode = "AN_DIRTY"
-      end
-
       c = Names.identifier(function.name)
-      lines = lines.push("  {#{c_string(function.name)}, #{c_string(function.signature)}, #{p}_native_#{c}, #{mode}},")
+      signature = c_string(function.signature)
+      lines = lines.push("  {#{c_string(function.name)}, #{signature}, #{p}_native_#{c}, #{MODES[function.mode]}},")
     end
 
     lines = lines.push("};")
@@ -299,12 +333,7 @@ def tables(block: Analysis.NativeBlock, names: Prefix) -> List[String]
   if !block.types.empty?
     lines = lines.concat(["", "static const an_type #{p}_native_types[] = {"])
     for type in block.types
-      kind = "AN_ENUM"
-      if type.kind == "struct"
-        kind = "AN_STRUCT"
-      end
-
-      lines = lines.push("  {#{c_string(type.name)}, #{kind}, #{c_string(type.shape)}},")
+      lines = lines.push("  {#{c_string(type.name)}, #{KINDS[type.kind]}, #{c_string(type.shape)}},")
     end
 
     lines = lines.push("};")
@@ -381,12 +410,34 @@ def doc_comment(doc: String) -> List[String]
   return out
 end
 
-# `text` with no `*/`, which would end the comment that holds it.
+# `text` with no `*/`, which would end the comment that holds it, no `/*`, which -Wcomment refuses inside one, and no
+# `??`, which starts a trigraph (`-std=c11` reads them).
 def comment_safe(text: String) -> String
-  return text.replace("*/", "* /")
+  return text.replace("*/", "* /").replace("/*", "/ *").replace("??", "? ?")
 end
 
-# `text` as a C string literal.
+# `text` as a C string literal: a quote, a backslash, a control character and the second `?` of `??` (a trigraph)
+# escaped, the control characters in octal, three digits, so the next character never joins the escape.
 def c_string(text: String) -> String
-  return "\"#{text.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+  out: List[String] = []
+  previous = ""
+  for c in text.split("")
+    code = c.code
+    if c == "\"" or c == "\\" or (c == "?" and previous == "?")
+      out = out.push("\\#{c}")
+    elsif code < 32 or code == 127
+      out = out.push("\\#{octal(code)}")
+    else
+      out = out.push(c)
+    end
+
+    previous = c
+  end
+
+  return "\"#{out.join("")}\""
+end
+
+# `code` (0 to 127) in three octal digits.
+def octal(code: Int) -> String
+  return "#{code / 64}#{code / 8 % 8}#{code % 8}"
 end
