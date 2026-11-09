@@ -22,10 +22,11 @@ bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub,
                      fixtures/turbo_vectors.json is what Rails signed), bench/fanout.py measures memory per socket
                      and the hub's fan-out by hand, bench/hub_fanout.agc the hub alone (steps and time per frame)
 native-gen/          the C header of an `extern module` block: cli.agc is the command, native_gen.agc the API
-                     (`header`), src/header.agc the text of the header (pure), src/names.agc the C names (pure);
+                     (`header`), src/header.agc the text of the header, src/codecs.agc the C values of the structs and
+                     enums, src/names.agc the C names (all pure);
                      specs/fixtures/ are packages written on their headers (the one of stats is committed as the
-                     golden, a step makes the others), the files that fail (errors/) and cxx.sh, a CC that builds a
-                     module as C++; the features need cc and c++
+                     golden, a step makes the others: kinds, shapes), the files that fail (errors/) and cxx.sh, a CC
+                     that builds a module as C++; the features need cc and c++
 prop/                property-based testing: prop.agc is the API (check, eq, assume, the generators, the laws, of,
                      exhaustive); src/gen.agc the generators (with their small cases), src/tree.agc the shrink trees,
                      src/seed.agc the seed hashing (pure), src/check.agc the runner and the shrinking, src/laws.agc

@@ -1,0 +1,8 @@
+# The codecs of structs and enums: each function gives back what it read, built from native/shapes.c.
+name = "native-gen-shapes"
+
+[style]
+blank_line_after_end = true
+
+[native.shapes]
+build = { sources = ["native/shapes.c"] }

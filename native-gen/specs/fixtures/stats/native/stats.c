@@ -23,12 +23,8 @@ an_term stats_summary(an_env *env, an_term values) {
     max = k == 0 || x > max ? x : max;
     total += x;
   }
-  an_term fields[4];
-  fields[STATS_Summary_count] = an_int(env, (int64_t)n);
-  fields[STATS_Summary_min] = an_float(env, min);
-  fields[STATS_Summary_max] = an_float(env, max);
-  fields[STATS_Summary_mean] = an_float(env, total / (double)n);
-  return an_some(env, an_struct(env, STATS_TYPE_Summary, fields));
+  stats_Summary summary = {(int64_t)n, min, max, total / (double)n};
+  return an_some(env, stats_Summary_make(env, &summary));
 }
 
 /* Empty for no text, a Number when the whole text is a number, else its Text. A number is what strtod reads: leading

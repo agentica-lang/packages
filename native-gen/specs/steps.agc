@@ -20,28 +20,32 @@ def main() -> Void
     BDD.step("a fresh package cache", &fresh_cache),
     BDD.step("the header goes to a fresh folder as {string}", &fresh_output),
     BDD.step("the written header includes:", &written_header),
-    BDD.step("the header of the fixture {string}", &fixture_header),
+    BDD.step("the header of the package of {string}", &package_header),
   ])
 end
 
-# Writes `fixtures/NAME/native/NAME_native.h` from `fixtures/NAME/NAME.agc`, removed when the scenario ends (git
-# ignores it too). A step runs in the folder that `agentica test` ran in, the package or specs/, while the paths of the
-# feature are from specs/.
-def fixture_header(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  base = "fixtures/#{args[0]}"
+# Writes `native/NAME_native.h` beside the package file `FOLDER/NAME.agc`, removed when the scenario ends (git ignores
+# it too). A step runs in the folder that `agentica test` ran in, the package or specs/, while the paths of the feature
+# are from specs/.
+def package_header(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  path = args[0]
   if File.stat("specs/header.feature").ok?
-    base = "specs/#{base}"
+    path = "specs/#{path}"
   end
 
-  made = NativeGen.header("#{base}/#{args[0]}.agc")
+  parts = path.split("/")
+  file = parts[parts.size - 1]
+  name = file.slice(0, file.length - ".agc".length)
+  folder = parts.take(parts.size - 1).join("/")
+  made = NativeGen.header(path)
   if !made.ok?
     return BDD.assert(ctx, false, made.message)
   end
 
-  header = "#{base}/native/#{args[0]}_native.h"
+  header = "#{folder}/native/#{name}_native.h"
   kept = BDD.after(ctx) do |_done| Path.remove(header) end
   written = File.write_text(header, made.unwrap!)
-  return BDD.assert(kept, written.ok?, "cannot write the header of #{args[0]}: #{written.message}")
+  return BDD.assert(kept, written.ok?, "cannot write the header of #{path}: #{written.message}")
 end
 
 def fresh_cache(ctx: BDD.Context, _args: List[String]) -> BDD.Context
