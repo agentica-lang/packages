@@ -26,9 +26,9 @@ native-gen/          the C header of an `extern module` block: cli.agc is the co
                      enums, src/collections.agc the Lists, Maps, Optionals and Results, src/types.agc the type
                      trees, src/names.agc the C names (all pure);
                      specs/fixtures/ are packages written on their headers (the one of stats is committed as the
-                     golden, a step makes the others: kinds, shapes, lists, options), the files that fail (errors/) and
-                     cxx.sh, a CC that builds a module as C++; bench/wide the codecs of a struct of 26 fields; the
-                     features need cc and c++
+                     golden, a step makes the others: kinds, shapes, lists, options, resources), the files that fail
+                     (errors/) and cxx.sh, a CC that builds a module as C++; bench/wide the codecs of a struct of 26
+                     fields; the features need cc and c++
 prop/                property-based testing: prop.agc is the API (check, eq, assume, the generators, the laws, of,
                      exhaustive); src/gen.agc the generators (with their small cases), src/tree.agc the shrink trees,
                      src/seed.agc the seed hashing (pure), src/check.agc the runner and the shrinking, src/laws.agc

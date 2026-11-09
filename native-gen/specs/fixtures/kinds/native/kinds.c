@@ -15,17 +15,14 @@ struct kinds_Counter_state {
 
 an_term kinds_counter(an_env *env, int64_t start) {
   an_term out;
-  struct kinds_Counter_state *state = (struct kinds_Counter_state *)an_resource_new(env, KINDS_RESOURCE_Counter, &out);
+  struct kinds_Counter_state *state = kinds_Counter_new(env, &out);
   if (state) state->value = start;
   return out;
 }
 
-an_term kinds_bump_bang(an_env *env, an_term counter, int64_t step) {
-  void *state;
-  if (!an_get_resource(env, counter, KINDS_RESOURCE_Counter, &state)) return an_badarg(env, 0);
-  struct kinds_Counter_state *count = (struct kinds_Counter_state *)state;
-  count->value += step;
-  return an_int(env, count->value);
+an_term kinds_bump_bang(an_env *env, struct kinds_Counter_state *counter, int64_t step) {
+  counter->value += step;
+  return an_int(env, counter->value);
 }
 
 an_term kinds_describe(an_env *env, int64_t n, double x, bool flag, ng_str text, ng_buf data) {

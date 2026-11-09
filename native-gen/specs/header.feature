@@ -182,6 +182,26 @@ Feature: The C header of an extern module block
       | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_result   | List[Result[Int]].0.ok: expected Int         |
       | C++      | sh ../cxx.sh                      | misread_optional | List[Optional[Point]].0.some.x: expected Int |
 
+  Scenario Outline: A resource parameter is its state and each dropped resource is freed once, built as <language>
+    Given a fresh package cache
+    And the environment variable "CC" is "<cc>"
+    And the header of the package of "fixtures/resources/resources.agc"
+    And the Agentica program "fixtures/resources/resources.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout is:
+      """
+      500500
+      1000
+      [7, 8]
+      false
+
+      """
+
+    Examples:
+      | language | cc                                |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror |
+      | C++      | sh ../cxx.sh                      |
+
   Scenario: The bench of a struct of 26 fields runs
     Given a fresh package cache
     And the header of the package of "../bench/wide/wide.agc"

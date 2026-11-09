@@ -126,6 +126,8 @@ def global_names(block: Analysis.NativeBlock, names: Prefix) -> List[Names.Named
   for resource in block.resources
     named = named.push(Names.Named(c: "#{big}_RESOURCE_#{resource.name}", source: resource.name))
     named = named.push(Names.Named(c: "#{big}_#{resource.name}_FREE", source: "the free of #{resource.name}"))
+    named = named.push(Names.Named(c: "#{p}_#{resource.name}_new", source: "the new of #{resource.name}"))
+    named = named.push(Names.Named(c: "#{p}_#{resource.name}_get", source: "the get of #{resource.name}"))
   end
 
   return named
@@ -211,17 +213,37 @@ def constants(block: Analysis.NativeBlock, names: Prefix) -> List[String]
 
   for resource in block.resources
     note = (
-      "Define it, and #{big}_#{resource.name}_FREE (a void (*)(void *state), or NULL), before #{big}_NATIVE_MODULE."
+      "Define it, and #{big}_#{resource.name}_FREE (a void (*)(void *state), or NULL), before #{big}_NATIVE_MODULE.\n" +
+      "A parameter of this type is its state. _new makes one, with zeroed state, and _get gives the state of a\n" +
+      "term, or NULL when it is not one."
     )
 
     if !resource.doc.empty?
       note = "#{resource.doc}\n\n#{note}"
     end
 
-    lines = joined([lines, [""], doc_comment(note), ["struct #{names.lower}_#{resource.name}_state;"]])
+    lines = joined([lines, [""], doc_comment(note), state_functions(names, resource.name)])
   end
 
   return lines
+end
+
+# The state struct of resource `name`, declared for the author to define, and its two functions: `_new` makes one, and
+# `_get` gives the state of a term, NULL when the term is not one. They only name the row, so every file of the module
+# has them.
+def state_functions(names: Prefix, name: String) -> List[String]
+  state = "struct #{names.lower}_#{name}_state"
+  row = "#{names.upper}_RESOURCE_#{name}"
+  return [
+    "#{state};",
+    "static inline #{state} *#{names.lower}_#{name}_new(an_env *env, an_term *out) {",
+    "  return (#{state} *)an_resource_new(env, #{row}, out);",
+    "}",
+    "static inline #{state} *#{names.lower}_#{name}_get(an_env *env, an_term t) {",
+    "  void *state;",
+    "  return an_get_resource(env, t, #{row}, &state) ? (#{state} *)state : NULL;",
+    "}",
+  ]
 end
 
 # One enum of `items`, numbered from 0 in their order.
@@ -248,9 +270,15 @@ end
 # One prototype per function, each with the `##` doc of its declaration.
 def prototypes(block: Analysis.NativeBlock, names: Prefix, shelf: Collections.Shelf) -> List[String]
   lines: List[String] = []
+  resources = resource_names(block)
   for function in block.functions
     typed = function.parameters.map do |param: Analysis.NativeParameter|
-      "#{Collections.c_type(shelf, param.type)} #{Names.parameter(param.name)}"
+      typed_name = "#{Collections.c_type(shelf, param.type)} #{Names.parameter(param.name)}"
+      if resources.include?(param.type)
+        typed_name = "struct #{names.lower}_#{param.type}_state *#{Names.parameter(param.name)}"
+      end
+
+      typed_name
     end
 
     params = ["an_env *env"].concat(typed)
@@ -282,15 +310,20 @@ def implementation(block: Analysis.NativeBlock, names: Prefix, shelf: Collection
 
   lines = joined([lines, Codecs.definitions(shelf.codecs, !shelf.read.empty?), Collections.definitions(shelf)])
   for function in block.functions
-    lines = joined([lines, [""], wrapper(function, names, shelf)])
+    lines = joined([lines, [""], wrapper(function, names, shelf, resource_names(block))])
   end
 
   return joined([lines, tables(block, names), ["#endif"]])
 end
 
-# The function of the table: it decodes each argument that has a C type (opens it, for a List or Map), fails the call
-# at the first one that does not decode, and calls the author's typed function.
-def wrapper(function: Analysis.NativeFunction, names: Prefix, shelf: Collections.Shelf) -> List[String]
+# The function of the table: it decodes each argument that has a C type (opens it, for a List or Map; gives its state,
+# for a resource), fails the call at the first one that does not decode, and calls the author's typed function.
+def wrapper(
+  function: Analysis.NativeFunction,
+  names: Prefix,
+  shelf: Collections.Shelf,
+  resources: Set[String],
+) -> List[String]
   codecs = shelf.codecs
   c = Names.identifier(function.name)
   lines = ["static an_term #{names.lower}_native_#{c}(an_env *env, int argc, const an_term *argv) {", "  (void)argc;"]
@@ -311,6 +344,14 @@ def wrapper(function: Analysis.NativeFunction, names: Prefix, shelf: Collections
       decoded = Collections.decode_argument(shelf, param.type, local, at)
     end
 
+    if resources.include?(param.type)
+      state = "struct #{names.lower}_#{param.type}_state"
+      decoded = [
+        "  #{state} *#{local} = #{names.lower}_#{param.type}_get(env, argv[#{at}]);",
+        "  if (!#{local}) return an_badarg(env, #{at});",
+      ]
+    end
+
     if decoded.empty?
       passed = passed.push("argv[#{at}]")
     else
@@ -322,6 +363,10 @@ def wrapper(function: Analysis.NativeFunction, names: Prefix, shelf: Collections
   end
 
   return lines.concat(["  return #{names.lower}_#{c}(#{passed.join(", ")});", "}"])
+end
+
+def resource_names(block: Analysis.NativeBlock) -> Set[String]
+  return Set.new(block.resources.map do |resource: Analysis.NativeResource| resource.name end)
 end
 
 # Whether an argument of `type` fails the call with a path when it does not decode.
