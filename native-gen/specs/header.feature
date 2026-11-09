@@ -205,7 +205,8 @@ Feature: The C header of an extern module block
   Scenario Outline: native new writes a module that builds and loads with nothing filled in, built as <language>
     Given a fresh package cache
     And the C compiler builds as "<language>"
-    And a new native module "demo" in a fresh folder
+    And a fresh folder
+    And native new "demo" in the fresh folder
     And the Agentica program "demo.agc" in the fresh folder
     Then the program exits with code 1 within 25000 milliseconds
     And stderr includes:
@@ -219,8 +220,52 @@ Feature: The C header of an extern module block
       | C11      |
       | C++      |
 
+  Scenario: native new adds its entry to the agentica.toml that is there, and keeps the rest
+    Given a fresh package cache
+    And a fresh folder
+    And the agentica.toml of the fresh folder is:
+      """
+      name = "pkg"
+
+      [dependencies]
+      """
+    And native new "demo" in the fresh folder
+    And the Agentica program "demo.agc" in the fresh folder
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      add: not written yet
+      """
+    And the agentica.toml of the fresh folder starts with:
+      """
+      name = "pkg"
+
+      [dependencies]
+
+      # native/demo.c is written on native/demo_native.h
+      """
+
+  Scenario Outline: native new refuses an agentica.toml with native.demo already, written as <form>, and writes nothing
+    Given a fresh folder
+    And the agentica.toml of the fresh folder has the line "<form>"
+    And the program argument "new"
+    And the program argument "demo" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-EXISTS]
+      """
+    And the fresh folder has no "demo.agc"
+
+    Examples:
+      | form                                  |
+      | [native.demo]                         |
+      | native.demo.build = { sources = [] } |
+
   Scenario: native new refuses to write over a module that is there
-    Given a new native module "demo" in a fresh folder
+    Given a fresh folder
+    And native new "demo" in the fresh folder
     And the program argument "new"
     And the program argument "demo" in the fresh folder
     And the Agentica program "../cli.agc"
@@ -230,15 +275,21 @@ Feature: The C header of an extern module block
       [NATIVE-GEN-EXISTS]
       """
 
-  Scenario: native new refuses a name in the namespace of the C API
+  Scenario Outline: native new refuses the name <path>
     Given the program argument "new"
-    And the program argument "ng"
+    And the program argument "<path>"
     And the Agentica program "../cli.agc"
     Then the program exits with code 1 within 25000 milliseconds
     And stderr includes:
       """
       [NATIVE-GEN-PREFIX]
       """
+
+    Examples:
+      | path     |
+      | ng       |
+      | Demo     |
+      | demo.agc |
 
   Scenario: The bench of a struct of 26 fields runs
     Given a fresh package cache

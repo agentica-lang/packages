@@ -23,7 +23,12 @@ def main() -> Void
     BDD.step("the header goes to a fresh folder as {string}", &fresh_output),
     BDD.step("the written header includes:", &written_header),
     BDD.step("the header of the package of {string}", &package_header),
-    BDD.step("a new native module {string} in a fresh folder", &new_module),
+    BDD.step("a fresh folder", &folder_step),
+    BDD.step("the agentica.toml of the fresh folder is:", &manifest_step),
+    BDD.step("the agentica.toml of the fresh folder has the line {string}", &manifest_line),
+    BDD.step("native new {string} in the fresh folder", &new_module),
+    BDD.step("the agentica.toml of the fresh folder starts with:", &manifest_start),
+    BDD.step("the fresh folder has no {string}", &missing),
     BDD.step("the program argument {string} in the fresh folder", &argument_in_folder),
     BDD.step("the Agentica program {string} in the fresh folder", &program_in_folder),
     BDD.step("the C compiler builds as {string}", &compiler),
@@ -54,15 +59,43 @@ def package_header(ctx: BDD.Context, args: List[String]) -> BDD.Context
   return BDD.assert(kept, written.ok?, "cannot write the header of #{path}: #{written.message}")
 end
 
-# `NativeGen.scaffold` of the module `args[0]` in a fresh folder, which the scenario keeps.
-def new_module(ctx: BDD.Context, args: List[String]) -> BDD.Context
+# A fresh folder that the scenario keeps, for `native new`.
+def folder_step(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   case fresh_folder(ctx)
-    ok(made) ->
-      kept = BDD.set(made.ctx, SCAFFOLD, JSON.from(made.path))
-      done = NativeGen.scaffold(Path.join([made.path, args[0]]).unwrap!)
-      return BDD.assert(kept, done.ok?, "native new #{args[0]} failed: #{done.message}")
+    ok(made) -> return BDD.set(made.ctx, SCAFFOLD, JSON.from(made.path))
     error(message) -> return BDD.assert(ctx, false, message)
   end
+end
+
+# The doc string as the agentica.toml of the fresh folder, as it is (no newline added at its end).
+def manifest_step(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  return file_written(ctx, BDD.doc_string(ctx))
+end
+
+def manifest_line(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  return file_written(ctx, "name = \"pkg\"\n#{args[0]}\n")
+end
+
+def file_written(ctx: BDD.Context, text: String) -> BDD.Context
+  done = File.write_text(in_folder(ctx, "agentica.toml"), text)
+  return BDD.assert(ctx, done.ok?, "cannot write agentica.toml: #{done.message}")
+end
+
+# `NativeGen.scaffold` of the module `args[0]` in the fresh folder.
+def new_module(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  done = NativeGen.scaffold(in_folder(ctx, args[0]))
+  return BDD.assert(ctx, done.ok?, "native new #{args[0]} failed: #{done.message}")
+end
+
+def manifest_start(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  case File.read_text(in_folder(ctx, "agentica.toml"))
+    ok(text) -> return BDD.assert(ctx, text.start_with?(BDD.doc_string(ctx)), "agentica.toml changed: #{text}")
+    error(message) -> return BDD.assert(ctx, false, "cannot read agentica.toml: #{message}")
+  end
+end
+
+def missing(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  return BDD.assert(ctx, !File.stat(in_folder(ctx, args[0])).ok?, "#{args[0]} was written")
 end
 
 # CC for "C11", or for "C++" fixtures/cxx.sh by its absolute path, since a program outside the fixtures runs in its

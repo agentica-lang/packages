@@ -4,6 +4,36 @@
 
 import CHeader from "header"
 
+# The letters of the name of a native library in `agentica.toml` that are also a C identifier: one lowercase letter,
+# then lowercase letters, digits and `_` (the manifest takes `-` too, which C does not).
+FIRST = Set.new("abcdefghijklmnopqrstuvwxyz".split(""))
+REST = Set.new("abcdefghijklmnopqrstuvwxyz0123456789_".split(""))
+MAX_NAME = 64
+# The names Windows keeps for devices: a library that builds is a file NAME.dll there.
+DEVICES = Set.new([
+  "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2",
+  "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+])
+
+## Why `name` cannot be a new module, or "": it is the `[native.NAME]` of `agentica.toml`, the library of the block
+## and the start of its C names.
+export def name_problem(name: String) -> String
+  letters = name.split("")
+  if letters.empty? or letters.size > MAX_NAME
+    return "a module name has 1 to #{MAX_NAME} characters"
+  end
+
+  if !FIRST.include?(letters[0]) or !letters.all? do |letter: String| REST.include?(letter) end
+    return "a module name starts with a lowercase letter and holds only lowercase letters, digits and _"
+  end
+
+  if DEVICES.include?(name)
+    return "a module name cannot be a device name of Windows (con, nul, com1 and the like)"
+  end
+
+  return ""
+end
+
 ## The `.agc` of the module `name`: the block, with one function to replace, and a `main` that calls it.
 export def program(name: String) -> String
   return [
@@ -47,7 +77,7 @@ export def entry(name: String, names: CHeader.Prefix) -> String
   return [
     "",
     "# native/#{name}.c is written on #{header}, which native-gen makes from #{name}.agc. Make it again after a",
-    "# change to the block, and check it in CI:",
+    "# change to the block, and check it in CI, from this folder:",
     "#   agentica deps/native-gen/cli.agc #{name}.agc --output #{header}",
     "#   agentica deps/native-gen/cli.agc #{name}.agc --output #{header} --check",
     "[native.#{name}]",
