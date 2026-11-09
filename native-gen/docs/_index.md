@@ -95,7 +95,7 @@ A function you did not write is a link error, not a failure when the module load
 
 ## A new module
 
-`native new` starts a module in a package:
+`new` starts a module in a package (the command is `cli.agc new`, `native-gen new` in its errors):
 
 ```sh
 agentica deps/native-gen/cli.agc new demo
@@ -111,19 +111,19 @@ It writes, in the folder of the path (the current one for a bare name):
 
 The package builds and loads as it is: running `demo.agc` fails at the call with `add: not written yet`. Replace the example with your functions, then make the header again.
 
-The name is the `[native.NAME]` of `agentica.toml`, the library of the block and the start of the C names: a lowercase letter, then lowercase letters, digits and `_`, at most 64 characters, and not a device name of Windows (`con`, `nul`, `com1`, ...). Pass `NAME` or `FOLDER/NAME`, without `.agc`.
+The name is the `[native.NAME]` of `agentica.toml`, the library of the block and the start of the C names: a lowercase letter, then lowercase letters, digits and `_`, at most 64 characters, not a device name of Windows (`con`, `nul`, `com1`, ...), and not a prefix of the C API (`an`, `ng`, `agentica`, or one that starts with `an_` or `ng_`). Pass `NAME` or `FOLDER/NAME`, without `.agc`.
 
 `new` writes only new files. It writes nothing when `demo.agc`, `native/demo.c` or the header is there, or when `agentica.toml` has `native.demo` already (`NATIVE-GEN-EXISTS`), or when `agentica.toml` with the entry added is not TOML (`NATIVE-GEN-MANIFEST`). Every text is made before the first write; only a write that fails midway (`NATIVE-GEN-IO`) leaves the files written before it.
 
 ## Errors
 
-An error is one line on stderr, `native-gen: [CODE] message`, and the exit code is 1. Bad usage prints the usage error and a `Try 'native-gen --help'` line, and the exit code is 2.
+An error is one line on stderr, `native-gen: [CODE] message`, and the exit code is 1. Bad usage prints the usage error and a `Try 'native-gen --help'` line (`Try 'native-gen new --help'` for `new`, which also takes a missing or an extra argument as bad usage), and the exit code is 2.
 
 | Code | When |
 |---|---|
 | `NATIVE-GEN-NAME` | two names map to one C identifier (`empty?` and `empty_p`), or a variant with a payload is named after a C macro |
 | `NATIVE-GEN-BLOCK` | the file has no `extern module` block, or more than one |
-| `NATIVE-GEN-PREFIX` | the prefix is not a C identifier, or is the C API's; give another with `--prefix`. For `new`, the name breaks the rule above |
+| `NATIVE-GEN-PREFIX` | the prefix is not a C identifier, or is the C API's; give another with `--prefix`. For `new`, the name breaks the rule above, or is the C API's (`an`, `ng`, `agentica`, or starts with `an_` or `ng_`) |
 | `NATIVE-GEN-UNKNOWN` | `std/analysis` gives a function mode or a type kind that this version does not know |
 | `NATIVE-GEN-STALE` | `--check`: the file at `--output` is not the header that the `.agc` gives |
 | `NATIVE-GEN-EXISTS` | `new`: a file it would write is there, or `agentica.toml` has `native.NAME` already |
