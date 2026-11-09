@@ -156,10 +156,11 @@ def under_header(text: String, table: String, entry: String, newline: String) ->
   return some(lines.take(at).push(added).concat(lines.drop(at)).join("\n"))
 end
 
-# Whether the library file `file` of an entry is in `native/`, with no `..` part.
+# Whether the library file `file` of an entry is a file in `native/`: no empty, `.` or `..` part.
 def in_native?(file: String) -> Bool
   parts = file.replace("\\", "/").split("/")
-  return parts.size > 1 and parts[0] == "native" and !parts.include?("..")
+  plain = parts.all? do |part: String| part != "" and part != "." and part != ".." end
+  return parts.size > 1 and parts[0] == "native" and plain
 end
 
 # Whether `line` is the table header `header`, with a comment after it or not.

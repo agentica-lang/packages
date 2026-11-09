@@ -12,7 +12,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - The crate `agentica-native` is in `native/agentica-native`, which `agentica install` copies into `deps/native-gen/`.
-
 - A bad item of a `List` or `Map` argument now fails the call with `argument N:` before its path, as a bad argument does (`argument 1: List[Int].2: expected Int`), also for a `List` or `Map` inside an item, an `Optional` or a `Result` of it. A cursor of `_open` keeps the plain path.
 
 ## [0.1.0] - 2026-11-09

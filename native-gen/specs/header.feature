@@ -582,7 +582,24 @@ Feature: The C header of an extern module block
     And the agentica.toml of the fresh folder has the entry of "demo"
     And the fresh folder has no "src/rust"
     And the fresh folder has no "src/native"
+    And the fresh folder has no "src/agentica.toml"
+    And the fresh folder has no "src/demo_native.rs"
 
+  Scenario: build of a FILE given relative to the current folder finds the root from it
+    Given a fresh package with the Rust module in "src/demo.agc"
+    And a fake cargo on PATH that exits with 0 and prints:
+      """
+      {"reason":"compiler-artifact","target":{"kind":["cdylib"]},"filenames":["FOLDER/libdemoEXT"]}
+      """
+    And the program argument "build"
+    And the program argument "src/demo.agc" in the fresh folder, relative to the current folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And the fresh folder has the library of "demo"
+    And the agentica.toml of the fresh folder has the entry of "demo"
+
+  # The fresh folder is in TMPDIR (or /tmp): this assumes no folder above it has an agentica.toml. The steps cannot
+  # make a folder above the temp folder, so the scenario cannot rule that out itself.
   Scenario: build without an agentica.toml up from the file fails with NATIVE-GEN-IO
     Given a fresh folder
     And the file "demo.agc" in the fresh folder is:
@@ -641,16 +658,17 @@ Feature: The C header of an extern module block
     Then the program exits with code 1 within 25000 milliseconds
     And stderr includes:
       """
-      [NATIVE-GEN-CARGO] cargo <message>
+      [NATIVE-GEN-CARGO]
       """
+    And the fresh folder has "rust/src/demo_native.rs"
     And the agentica.toml of the fresh folder still has only the line ""
     And the fresh folder has no "native"
 
     Examples:
-      | case               | code | files                                   | message                         |
-      | fails              | 101  | "FOLDER/libdemoEXT"                     | build failed with exit code 101 |
-      | builds no cdylib   | 0    |                                         | built 0 libraries               |
-      | builds two cdylibs | 0    | "FOLDER/libdemoEXT", "FOLDER/libtwoEXT" | built 2 libraries               |
+      | case               | code | files                                   |
+      | fails              | 101  | "FOLDER/libdemoEXT"                     |
+      | builds no cdylib   | 0    |                                         |
+      | builds two cdylibs | 0    | "FOLDER/libdemoEXT", "FOLDER/libtwoEXT" |
 
   Scenario Outline: build refuses an agentica.toml where <case>, before it runs cargo
     Given a fresh package with the Rust module in "demo.agc"
@@ -710,11 +728,14 @@ Feature: The C header of an extern module block
     Then the entry of "demo" on "linux" cannot be added: "[NATIVE-GEN-MANIFEST]"
 
     Examples:
-      | case                                       | text                                                            |
-      | the entry of the system has no file        | name = 'pkg'\nnative.demo.linux = { system = 'libdemo.so' }\n   |
-      | the entry's file is outside native/        | name = 'pkg'\nnative.demo.linux = { file = '../libdemo.so' }\n  |
-      | the entry's file has a .. part             | name = 'pkg'\nnative.demo.linux = { file = 'native/../x.so' }\n |
+      | case                                       | text                                                              |
+      | the entry of the system has no file        | name = 'pkg'\nnative.demo.linux = { system = 'libdemo.so' }\n     |
+      | the entry's file is outside native/        | name = 'pkg'\nnative.demo.linux = { file = '../libdemo.so' }\n    |
+      | the entry's file has a .. part             | name = 'pkg'\nnative.demo.linux = { file = 'native/../x.so' }\n   |
       | the only [native.demo] line is in a string | name = 'pkg'\nnote = '''\n[native.demo]\n'''\nnative.demo.x = 1\n |
+      | the entry's file is native/                | name = 'pkg'\nnative.demo.linux = { file = 'native/' }            |
+      | the entry's file is native/.               | name = 'pkg'\nnative.demo.linux = { file = 'native/.' }           |
+      | the entry's file has an empty part         | name = 'pkg'\nnative.demo.linux = { file = 'native//x.so' }       |
 
   Scenario Outline: build plans again on an agentica.toml that changed during the build, where <case>
     Given a fresh folder
@@ -722,10 +743,16 @@ Feature: The C header of an extern module block
     Then the entry of "demo" on "linux", planned before agentica.toml became "<now>", gives "<result>"
 
     Examples:
-      | case          | now                                                        | result                |
-      | table added   | name = 'pkg'\n\n[dependencies]                               | added                 |
-      | same entry    | name = 'pkg'\nnative.demo.linux = { file = 'native/libdemo.so' } | kept                  |
-      | another file  | name = 'pkg'\nnative.demo.linux = { file = 'native/other.so' }   | [NATIVE-GEN-MANIFEST] |
+      | case         | now                                                | result                |
+      | table added  | [dependencies]                                     | added                 |
+      | same entry   | native.demo.linux = { file = 'native/libdemo.so' } | kept                  |
+      | another file | native.demo.linux = { file = 'native/o.so' }       | [NATIVE-GEN-MANIFEST] |
+      | invalid TOML | name =                                             | [NATIVE-GEN-MANIFEST] |
+
+  Scenario: build refuses an agentica.toml whose entry was removed during the build, as it names another file now
+    Given a fresh folder
+    And the agentica.toml of the fresh folder has the line "native.demo.linux = { file = 'native/c.so' }"
+    Then the entry of "demo" on "linux", planned before agentica.toml became "", gives "[NATIVE-GEN-MANIFEST]"
 
   Scenario Outline: build names the library of demo on <os> <file>
     Then the library of "demo" on "<os>" is "<file>"

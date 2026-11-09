@@ -94,7 +94,10 @@ export def build(path: String, check: Bool = false) -> Result[List[String]]
     done = done.push("#{library} is current")
   end
 
-  # The manifest is read again: an edit made while cargo ran is kept, with the entry planned on it.
+  # The manifest is read again: an edit made while cargo ran is kept, with the entry planned on it. When the edit names
+  # another library file, replan refuses and the library just copied stays in native/; the error says to run build
+  # again. An edit made between this read and the write below is still lost: that window is short, and File.replace
+  # has no compare-and-swap to close it.
   now = try io(manifest, File.read_text(manifest))
   final = try Build.replan(manifest, toml, plan, now, name, os)
   key = "native.#{name}.#{os}"

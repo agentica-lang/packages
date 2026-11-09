@@ -38,6 +38,7 @@ def main() -> Void
     BDD.step("the file {string} in the fresh folder is:", &file_in_folder),
     BDD.step("the library of {string} on {string} is {string}", &library_file),
     BDD.step("a fresh package with the Rust module in {string}", &rust_package),
+    BDD.step("the program argument {string} in the fresh folder, relative to the current folder", &relative_argument),
     BDD.step("a fake cargo on PATH that exits with {int} and prints:", &fake_cargo),
     BDD.step("the file {string} in the fresh folder is removed", &removed),
     BDD.step("the fresh folder has {string}", &present),
@@ -304,6 +305,19 @@ def entry_added(ctx: BDD.Context, args: List[String]) -> BDD.Context
     ok(plan) -> return BDD.assert(ctx, plan.manifest == BDD.doc_string(ctx), "agentica.toml is: #{plan.manifest}")
     error(message) -> return BDD.assert(ctx, false, message)
   end
+end
+
+# The path of `args[0]` in the fresh folder, written from the folder the program runs in (specs/, where a step may
+# run in the package): one `..` per part of that folder, then the absolute path without its leading `/` (Unix only).
+def relative_argument(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  current = Path.cwd().unwrap!
+  if File.stat("specs/header.feature").ok?
+    current = "#{current}/specs"
+  end
+
+  up = current.split("/").select do |part: String| !part.empty? end.map do |_part: String| ".." end
+  path = in_folder(ctx, args[0])
+  return BDD.given_argument(ctx, "#{up.join("/")}#{path}")
 end
 
 def argument_in_folder(ctx: BDD.Context, args: List[String]) -> BDD.Context
