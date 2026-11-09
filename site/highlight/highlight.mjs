@@ -202,8 +202,8 @@ for (const file of htmlFiles(site)) {
     if (decode(colored) !== decode(body)) fail(`${file}: a signature block changed its text`);
     return `<div class=signature>${open}<code class=language-signature data-lang=signature>${colored}${close}</div>`;
   });
-  // A block that SIGNATURE or BLOCK does not match would stay plain with no word, so check the wrappers the template
-  // wrote.
+  // A signature block that SIGNATURE does not match would stay plain with no word, so count the wrappers the template
+  // wrote; an agentica block that BLOCK does not match is caught by the agc-code check below.
   const wrapped = (out.match(/<div class="?signature"?>/g) ?? []).length;
   if (wrapped !== colored_here) fail(`${file}: ${wrapped} signature blocks, but ${colored_here} have the expected shape`);
   if (/class="?agc-code"?/.test(signed)) fail(`${file}: an agentica block has an unexpected shape`);
