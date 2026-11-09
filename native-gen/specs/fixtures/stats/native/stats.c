@@ -23,12 +23,8 @@ an_term stats_summary(an_env *env, an_term values) {
     max = k == 0 || x > max ? x : max;
     total += x;
   }
-  an_term fields[4];
-  fields[STATS_Summary_count] = an_int(env, (int64_t)n);
-  fields[STATS_Summary_min] = an_float(env, min);
-  fields[STATS_Summary_max] = an_float(env, max);
-  fields[STATS_Summary_mean] = an_float(env, total / (double)n);
-  return an_some(env, an_struct(env, STATS_TYPE_Summary, fields));
+  stats_Summary summary = {(int64_t)n, min, max, total / (double)n};
+  return an_some(env, stats_Summary_make(env, &summary));
 }
 
 /* Empty for no text, a Number when the whole text is a number, else its Text. A number is what strtod reads: leading
@@ -36,16 +32,15 @@ an_term stats_summary(an_env *env, an_term values) {
    setlocale keeps at "." */
 static an_term cell(an_env *env, const char *text, size_t len) {
   char number[64], *end;
-  if (len == 0) return an_enum(env, STATS_TYPE_Cell, STATS_Cell_Empty, NULL);
+  if (len == 0) return stats_Cell_Empty(env);
   if (len < sizeof number) {
     memcpy(number, text, len);
     number[len] = '\0';
     double x = strtod(number, &end);
-    an_term value = an_float(env, x);
-    if (end == number + len) return an_enum(env, STATS_TYPE_Cell, STATS_Cell_Number, &value);
+    if (end == number + len) return stats_Cell_Number(env, x);
   }
-  an_term value = an_string(env, text, len);
-  return an_enum(env, STATS_TYPE_Cell, STATS_Cell_Text, &value);
+  ng_str value = {text, len};
+  return stats_Cell_Text(env, value);
 }
 
 /* The lines after the header, each a Map from the header's names to its cells; a line with another number of cells

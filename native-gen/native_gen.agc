@@ -13,6 +13,7 @@
 
 import Analysis from "std/analysis"
 import CHeader from "src/header"
+import Names from "src/names"
 
 ## The header of the one `extern module` block of the file at `path`. Its C names start with `prefix`, by default the
 ## last part of the block's library name up to its first `.` (`stats` for "stats" and for "native/stats.so").
@@ -34,7 +35,7 @@ def header_of(blocks: List[Analysis.NativeBlock], path: String, prefix: String) 
     name = default_prefix(block.library)
   end
 
-  case CHeader.prefix(name)
+  case Names.prefix(name)
     ok(names) -> return CHeader.render(block, names, last_part(path))
     error(message) -> return error("[NATIVE-GEN-PREFIX] #{message}; choose another with --prefix")
   end

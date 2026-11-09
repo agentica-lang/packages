@@ -13,9 +13,10 @@ Feature: The C header of an extern module block
     Then the program exits with code 0 within 25000 milliseconds
 
     Examples:
-      | name  |
-      | stats |
-      | kinds |
+      | name   |
+      | stats  |
+      | kinds  |
+      | shapes |
 
   Scenario Outline: The stats module on the header, built as <language>, gives the output of the hand-written one
     Given a fresh package cache
@@ -58,6 +59,46 @@ Feature: The C header of an extern module block
       | C11      | cc -std=c11 -Wall -Wextra -Werror |
       | C++      | sh ../cxx.sh                     |
 
+  Scenario Outline: Structs and enums come back equal through their C values, built as <language>
+    Given a fresh package cache
+    And the environment variable "CC" is "<cc>"
+    And the Agentica program "fixtures/shapes/shapes.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout is:
+      """
+      true
+      true
+      [true, true, true]
+      true
+      Shape.Circle(Point(x: 1, y: 2), 0.5)
+
+      """
+
+    Examples:
+      | language | cc                               |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror |
+      | C++      | sh ../cxx.sh                     |
+
+  Scenario: A term of another type fails the call that reads it
+    Given a fresh package cache
+    And the program argument "misread"
+    And the Agentica program "fixtures/shapes/shapes.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [RUNTIME-NATIVE-ERROR]
+      """
+
+  Scenario: The bench of a struct of 26 fields runs
+    Given a fresh package cache
+    And the program argument "10"
+    And the Agentica program "../bench/wide/wide.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout includes:
+      """
+      decode and make:
+      """
+
   Scenario: The header goes to stdout without --output, with names from --prefix
     Given the program argument "fixtures/errors/path.agc"
     And the program argument "--prefix"
@@ -85,6 +126,7 @@ Feature: The C header of an extern module block
       | two_blocks.agc | NATIVE-GEN-BLOCK  |
       | no_block.agc   | NATIVE-GEN-BLOCK  |
       | reserved.agc   | NATIVE-GEN-NAME   |
+      | fields.agc     | NATIVE-GEN-NAME   |
       | path.agc       | NATIVE-GEN-PREFIX |
       | missing.agc    | QUERY-USAGE       |
 

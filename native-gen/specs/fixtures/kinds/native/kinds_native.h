@@ -33,8 +33,8 @@ typedef struct {
 /* The rows of the type table: the TYPE of an_struct, an_enum and their getters. */
 enum { KINDS_TYPE_Shape = 0, KINDS_TYPE_Point = 1 };
 
-/* The variants of Shape, in declared order. */
-enum { KINDS_Shape_Dot = 0, KINDS_Shape_Circle = 1 };
+/* The variants of Shape, in declared order: the tag of its C value. */
+typedef enum { KINDS_Shape_Dot = 0, KINDS_Shape_Circle = 1 } kinds_Shape_tag;
 
 /* The fields of Point, in declared order. */
 enum { KINDS_Point_x = 0, KINDS_Point_y = 1 };
@@ -46,6 +46,28 @@ enum { KINDS_RESOURCE_Counter = 0 };
 
    Define it, and KINDS_Counter_FREE (a void (*)(void *state), or NULL), before KINDS_NATIVE_MODULE. */
 struct kinds_Counter_state;
+
+/* The structs and enums as C values. A String or Bytes in them is borrowed, a term lasts for the call: keep them
+   in C locals. _get reads a term into OUT; false when it is not one, and then the call has failed with the path of
+   the first bad part. _make and the constructors (one per variant) make a term. */
+
+typedef struct {
+  int64_t x;
+  int64_t y;
+} kinds_Point;
+bool kinds_Point_get(an_env *env, an_term t, kinds_Point *out);
+an_term kinds_Point_make(an_env *env, const kinds_Point *value);
+
+typedef struct {
+  kinds_Shape_tag tag;
+  union {
+    struct {
+      kinds_Point _0;
+      double _1;
+    } Circle;
+  } as;
+} kinds_Shape;
+bool kinds_Shape_get(an_env *env, an_term t, kinds_Shape *out);
 
 /* A new counter at `start`. */
 an_term kinds_counter(an_env *env, int64_t start);
@@ -68,7 +90,7 @@ an_term kinds_nothing(an_env *env);
 an_term kinds_total(an_env *env, an_term values);
 
 /* The center of a circle; none for a dot. */
-an_term kinds_corner(an_env *env, an_term shape);
+an_term kinds_corner(an_env *env, kinds_Shape shape);
 
 #ifdef __cplusplus
 }
@@ -88,6 +110,102 @@ AN_EXPORT const an_module *agentica_native_init(const an_api *api);
 #ifdef __cplusplus
 }
 #endif
+
+#ifndef NATIVE_GEN_FAIL_1
+#define NATIVE_GEN_FAIL_1
+#include <stdio.h>
+#include <string.h>
+
+/* Where a decode failed: the path from the outer value in, and the type that was expected there. */
+typedef struct {
+  char path[192];
+  size_t len;
+  const char *expected;
+} ng_fail;
+
+static inline bool ng_expected(ng_fail *fail, const char *expected) {
+  fail->path[0] = '\0';
+  fail->len = 0;
+  fail->expected = expected;
+  return false;
+}
+
+/* Puts SEGMENT in front of the path; a path that would not fit keeps its inner part. */
+static inline bool ng_at(ng_fail *fail, const char *segment) {
+  size_t n = strlen(segment), dot = fail->len > 0 ? 1 : 0;
+  if (n + dot + fail->len >= sizeof fail->path) return false;
+  memmove(fail->path + n + dot, fail->path, fail->len + 1);
+  memcpy(fail->path, segment, n);
+  if (dot) fail->path[n] = '.';
+  fail->len += n + dot;
+  return false;
+}
+
+static inline bool ng_leaf(ng_fail *fail, const char *expected, const char *segment) {
+  ng_expected(fail, expected);
+  return ng_at(fail, segment);
+}
+
+/* Fails the call with "WHERE TYPE.PATH: expected X". */
+static inline bool ng_raise(an_env *env, const char *where, const char *type, ng_fail *fail) {
+  char message[256];
+  ng_at(fail, type);
+  snprintf(message, sizeof message, "%s%s: expected %s", where, fail->path, fail->expected);
+  an_raise(env, message);
+  return false;
+}
+
+static inline an_term ng_fail_argument(an_env *env, ng_fail *fail, const char *type, int index) {
+  char where[32];
+  snprintf(where, sizeof where, "argument %d: ", index + 1);
+  ng_raise(env, where, type, fail);
+  return an_void(env);
+}
+#endif
+
+static bool kinds_native_get_Point(an_env *env, an_term t, kinds_Point *out, ng_fail *fail) {
+  an_term x;
+  if (!an_get_field(env, t, KINDS_TYPE_Point, 0, &x)) return ng_expected(fail, "Point");
+  if (!an_get_int(env, x, &out->x)) return ng_leaf(fail, "Int", "x");
+  if (!an_get_field(env, t, KINDS_TYPE_Point, 1, &x)) return ng_expected(fail, "Point");
+  if (!an_get_int(env, x, &out->y)) return ng_leaf(fail, "Int", "y");
+  return true;
+}
+
+bool kinds_Point_get(an_env *env, an_term t, kinds_Point *out) {
+  ng_fail fail;
+  return kinds_native_get_Point(env, t, out, &fail) || ng_raise(env, "", "Point", &fail);
+}
+
+an_term kinds_Point_make(an_env *env, const kinds_Point *value) {
+  an_term fields[2];
+  fields[0] = an_int(env, value->x);
+  fields[1] = an_int(env, value->y);
+  return an_struct(env, KINDS_TYPE_Point, fields);
+}
+
+static bool kinds_native_get_Shape(an_env *env, an_term t, kinds_Shape *out, ng_fail *fail) {
+  uint32_t variant;
+  an_term x;
+  if (!an_get_variant(env, t, KINDS_TYPE_Shape, &variant)) return ng_expected(fail, "Shape");
+  out->tag = (kinds_Shape_tag)variant;
+  switch (out->tag) {
+    case KINDS_Shape_Dot:
+      return true;
+    case KINDS_Shape_Circle:
+      if (!an_get_payload(env, t, KINDS_TYPE_Shape, 0, &x)) return ng_expected(fail, "Shape");
+      if (!kinds_native_get_Point(env, x, &out->as.Circle._0, fail)) return ng_at(fail, "Circle.0");
+      if (!an_get_payload(env, t, KINDS_TYPE_Shape, 1, &x)) return ng_expected(fail, "Shape");
+      if (!an_get_float(env, x, &out->as.Circle._1)) return ng_leaf(fail, "Float", "Circle.1");
+      return true;
+  }
+  return ng_expected(fail, "Shape");
+}
+
+bool kinds_Shape_get(an_env *env, an_term t, kinds_Shape *out) {
+  ng_fail fail;
+  return kinds_native_get_Shape(env, t, out, &fail) || ng_raise(env, "", "Shape", &fail);
+}
 
 static an_term kinds_native_counter(an_env *env, int argc, const an_term *argv) {
   (void)argc;
@@ -153,7 +271,10 @@ static an_term kinds_native_total(an_env *env, int argc, const an_term *argv) {
 
 static an_term kinds_native_corner(an_env *env, int argc, const an_term *argv) {
   (void)argc;
-  return kinds_corner(env, argv[0]);
+  ng_fail fail;
+  kinds_Shape a0;
+  if (!kinds_native_get_Shape(env, argv[0], &a0, &fail)) return ng_fail_argument(env, &fail, "Shape", 0);
+  return kinds_corner(env, a0);
 }
 
 static const an_function kinds_native_functions[] = {

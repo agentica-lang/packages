@@ -4,51 +4,18 @@
 ## program's, so the header never writes one of its own.
 
 import Analysis from "std/analysis"
+import CText from "c_text"
+import Codecs from "codecs"
 import Names from "names"
 
-# The C type of a parameter, by its canonical Agentica type; any other type stays a term.
-SCALARS = {"Int": "int64_t", "Float": "double", "Bool": "bool", "String": "ng_str", "Bytes": "ng_buf"}
-# The getter of `agentica_native.h` that decodes a parameter of each scalar type; those of SLICES fill `data` and
-# `len`.
-GETTERS = {
-  "Int": "an_get_int",
-  "Float": "an_get_float",
-  "Bool": "an_get_bool",
-  "String": "an_get_string",
-  "Bytes": "an_get_bytes",
-}
-SLICES = Set.new(["String", "Bytes"])
 # The table flags of the function modes and the kinds of the type rows that std/analysis gives.
 MODES = {"short": "AN_SHORT", "dirty": "AN_DIRTY"}
 KINDS = {"struct": "AN_STRUCT", "enum": "AN_ENUM"}
-# Prefixes that would put the header's names in the namespace of the C API (`an_`, `AN_`, `agentica_native_init`).
-RESERVED_PREFIXES = Set.new(["an", "agentica"])
-
-## The C names of one header: the prefix of its functions and the same in capitals for its macros and constants.
-export struct Prefix
-  lower: String
-  upper: String
-end
-
-## The prefix `text` for C names, or an error when it is not a C identifier or is one of the C API's.
-export def prefix(text: String) -> Result[Prefix]
-  if !Names.c_identifier?(text)
-    return error("the prefix #{text.inspect} is not a C identifier")
-  end
-
-  lower = text.downcase
-  if RESERVED_PREFIXES.include?(lower) or lower.start_with?("an_")
-    return error("the prefix #{text.inspect} is in the namespace of the C API")
-  end
-
-  return ok(Prefix(lower: text, upper: text.upcase))
-end
 
 ## The header of `block`, declared in the file `source` (its name only, so the text does not depend on where it ran).
 ## An error starts with its code: `[NATIVE-GEN-NAME]` when two of its names map to one C identifier,
 ## `[NATIVE-GEN-UNKNOWN]` for a mode or a type kind that this version does not know.
-export def render(block: Analysis.NativeBlock, names: Prefix, source: String) -> Result[String]
-  try named(Names.distinct(global_names(block, names)))
+export def render(block: Analysis.NativeBlock, names: Names.Prefix, source: String) -> Result[String]
   for function in block.functions
     if !MODES.has_key?(function.mode)
       return error("[NATIVE-GEN-UNKNOWN] #{function.name} has the mode #{function.mode.inspect}")
@@ -69,11 +36,18 @@ export def render(block: Analysis.NativeBlock, names: Prefix, source: String) ->
     end
   end
 
-  lines = joined([
+  codecs = Codecs.of(block, names)
+  try named(Names.distinct(global_names(block, names).concat(Codecs.global_names(codecs))))
+  for fields in Codecs.field_names(codecs)
+    try named(Names.distinct(fields))
+  end
+
+  lines = CText.joined([
     opening(block, names, source),
     constants(block, names),
-    prototypes(block, names),
-    implementation(block, names),
+    Codecs.declarations(codecs),
+    prototypes(block, codecs),
+    implementation(block, codecs),
   ])
 
   return ok("#{lines.join("\n")}\n")
@@ -88,7 +62,7 @@ def named(distinct: Result[Void]) -> Result[Void]
 end
 
 # Every C name the header declares at file scope, with the name of the block it comes from.
-def global_names(block: Analysis.NativeBlock, names: Prefix) -> List[Names.Named]
+def global_names(block: Analysis.NativeBlock, names: Names.Prefix) -> List[Names.Named]
   p = names.lower
   big = names.upper
   named = [
@@ -124,11 +98,11 @@ def global_names(block: Analysis.NativeBlock, names: Prefix) -> List[Names.Named
 end
 
 # The guard of the file and of the API version, and the borrowed String and Bytes of the arguments.
-def opening(block: Analysis.NativeBlock, names: Prefix, source: String) -> List[String]
+def opening(block: Analysis.NativeBlock, names: Names.Prefix, source: String) -> List[String]
   guard = "#{names.upper}_NATIVE_H"
   file = "#{names.lower}_native.h"
   lines = [
-    "/* #{comment_safe("The C side of `extern module #{block.library.inspect}` in #{source}, made by native-gen.")}",
+    "/* #{CText.comment_safe("The C side of `extern module #{block.library.inspect}` in #{source}, made by native-gen.")}",
     "   Do not edit it: change the .agc and make it again. */",
     "#ifndef #{guard}",
     "#define #{guard}",
@@ -171,28 +145,34 @@ def opening(block: Analysis.NativeBlock, names: Prefix, source: String) -> List[
 end
 
 # The rows of the type and resource tables, the fields and variants of each type, and the state of each resource.
-def constants(block: Analysis.NativeBlock, names: Prefix) -> List[String]
+def constants(block: Analysis.NativeBlock, names: Names.Prefix) -> List[String]
   big = names.upper
   lines: List[String] = []
   if !block.types.empty?
-    rows = numbered(block.types.map do |type: Analysis.NativeType| "#{big}_TYPE_#{type.name}" end)
+    rows = CText.numbered(block.types.map do |type: Analysis.NativeType| "#{big}_TYPE_#{type.name}" end)
     lines = lines.concat([
       "", "/* The rows of the type table: the TYPE of an_struct, an_enum and their getters. */", rows,
     ])
   end
 
   for type in block.types
-    what = "fields"
-    if type.kind == "enum"
-      what = "variants"
-    end
+    members = CText.numbered(
+      type.members.map do |member: Analysis.NativeMember| "#{big}_#{type.name}_#{member.name}" end,
+    )
 
-    members = numbered(type.members.map do |member: Analysis.NativeMember| "#{big}_#{type.name}_#{member.name}" end)
-    lines = lines.concat(["", "/* The #{what} of #{type.name}, in declared order. */", members])
+    if type.kind == "enum"
+      tag = "typedef #{members.slice(0, members.length - 1)} #{names.lower}_#{type.name}_tag;"
+      lines = lines.concat(["", "/* The variants of #{type.name}, in declared order: the tag of its C value. */", tag])
+    else
+      lines = lines.concat(["", "/* The fields of #{type.name}, in declared order. */", members])
+    end
   end
 
   if !block.resources.empty?
-    rows = numbered(block.resources.map do |resource: Analysis.NativeResource| "#{big}_RESOURCE_#{resource.name}" end)
+    rows = CText.numbered(
+      block.resources.map do |resource: Analysis.NativeResource| "#{big}_RESOURCE_#{resource.name}" end,
+    )
+
     lines = lines.concat([
       "",
       "/* The rows of the resource table: the TYPE of an_resource_new and an_get_resource. */",
@@ -209,46 +189,32 @@ def constants(block: Analysis.NativeBlock, names: Prefix) -> List[String]
       note = "#{resource.doc}\n\n#{note}"
     end
 
-    lines = joined([lines, [""], doc_comment(note), ["struct #{names.lower}_#{resource.name}_state;"]])
+    lines = CText.joined([lines, [""], CText.doc_comment(note), ["struct #{names.lower}_#{resource.name}_state;"]])
   end
 
   return lines
 end
 
-# One enum of `items`, numbered from 0 in their order.
-def numbered(items: List[String]) -> String
-  at = 0
-  rows: List[String] = []
-  for item in items
-    rows = rows.push("#{item} = #{at}")
-    at += 1
-  end
-
-  return "enum { #{rows.join(", ")} };"
-end
-
 # One prototype per function, each with the `##` doc of its declaration.
-def prototypes(block: Analysis.NativeBlock, names: Prefix) -> List[String]
+def prototypes(block: Analysis.NativeBlock, codecs: Codecs.Codecs) -> List[String]
+  names = codecs.names
   lines: List[String] = []
   for function in block.functions
     typed = function.parameters.map do |param: Analysis.NativeParameter|
-      "#{c_type(param.type)} #{Names.parameter(param.name)}"
+      "#{Codecs.c_type(codecs, "", param.type)} #{Names.parameter(param.name)}"
     end
 
     params = ["an_env *env"].concat(typed)
     name = "#{names.lower}_#{Names.identifier(function.name)}"
-    lines = joined([lines, [""], doc_comment(function.doc), ["an_term #{name}(#{params.join(", ")});"]])
+    lines = CText.joined([lines, [""], CText.doc_comment(function.doc), ["an_term #{name}(#{params.join(", ")});"]])
   end
 
   return lines.concat(["", "#ifdef __cplusplus", "}", "#endif", "", "#endif"])
 end
 
-def c_type(type: String) -> String
-  return SCALARS.get(type, "an_term")
-end
-
 # The wrappers, the tables and the module macro, for the one .c file that defines the module.
-def implementation(block: Analysis.NativeBlock, names: Prefix) -> List[String]
+def implementation(block: Analysis.NativeBlock, codecs: Codecs.Codecs) -> List[String]
+  names = codecs.names
   big = names.upper
   lines = [
     "",
@@ -266,31 +232,38 @@ def implementation(block: Analysis.NativeBlock, names: Prefix) -> List[String]
     "#endif",
   ]
 
+  lines = lines.concat(Codecs.definitions(codecs))
   for function in block.functions
-    lines = joined([lines, [""], wrapper(function, names)])
+    lines = CText.joined([lines, [""], wrapper(function, codecs)])
   end
 
-  return joined([lines, tables(block, names), ["#endif"]])
+  return CText.joined([lines, tables(block, names), ["#endif"]])
 end
 
-# The function of the table: it decodes each scalar argument, answers an_badarg for the first one that does not
-# decode, and calls the author's typed function.
-def wrapper(function: Analysis.NativeFunction, names: Prefix) -> List[String]
+# The function of the table: it decodes each argument that has a C type, fails the call at the first one that does
+# not decode, and calls the author's typed function.
+def wrapper(function: Analysis.NativeFunction, codecs: Codecs.Codecs) -> List[String]
+  names = codecs.names
   c = Names.identifier(function.name)
   lines = ["static an_term #{names.lower}_native_#{c}(an_env *env, int argc, const an_term *argv) {", "  (void)argc;"]
   if function.parameters.empty?
     lines = lines.push("  (void)argv;")
   end
 
+  if function.parameters.any? do |param: Analysis.NativeParameter| Codecs.embedded?(codecs, "", param.type) end
+    lines = lines.push("  ng_fail fail;")
+  end
+
   passed: List[String] = ["env"]
   at = 0
   for param in function.parameters
     local = "a#{at}"
-    if GETTERS.has_key?(param.type)
-      lines = lines.concat(decode(param.type, local, at))
-      passed = passed.push(local)
-    else
+    decoded = Codecs.decode_argument(codecs, param.type, local, at)
+    if decoded.empty?
       passed = passed.push("argv[#{at}]")
+    else
+      lines = lines.concat(decoded)
+      passed = passed.push(local)
     end
 
     at += 1
@@ -299,21 +272,9 @@ def wrapper(function: Analysis.NativeFunction, names: Prefix) -> List[String]
   return lines.concat(["  return #{names.lower}_#{c}(#{passed.join(", ")});", "}"])
 end
 
-def decode(type: String, local: String, at: Int) -> List[String]
-  into = "&#{local}"
-  if SLICES.include?(type)
-    into = "&#{local}.data, &#{local}.len"
-  end
-
-  return [
-    "  #{SCALARS[type]} #{local};",
-    "  if (!#{GETTERS[type]}(env, argv[#{at}], #{into})) return an_badarg(env, #{at});",
-  ]
-end
-
 # The function and type tables, and the macro that ends the module's file with the resource table, which needs the
 # author's state structs and free functions, so it is made where the macro is used.
-def tables(block: Analysis.NativeBlock, names: Prefix) -> List[String]
+def tables(block: Analysis.NativeBlock, names: Names.Prefix) -> List[String]
   p = names.lower
   lines: List[String] = []
   functions = "NULL, 0"
@@ -321,8 +282,10 @@ def tables(block: Analysis.NativeBlock, names: Prefix) -> List[String]
     lines = lines.concat(["", "static const an_function #{p}_native_functions[] = {"])
     for function in block.functions
       c = Names.identifier(function.name)
-      signature = c_string(function.signature)
-      lines = lines.push("  {#{c_string(function.name)}, #{signature}, #{p}_native_#{c}, #{MODES[function.mode]}},")
+      signature = CText.c_string(function.signature)
+      lines = lines.push(
+        "  {#{CText.c_string(function.name)}, #{signature}, #{p}_native_#{c}, #{MODES[function.mode]}},",
+      )
     end
 
     lines = lines.push("};")
@@ -333,7 +296,7 @@ def tables(block: Analysis.NativeBlock, names: Prefix) -> List[String]
   if !block.types.empty?
     lines = lines.concat(["", "static const an_type #{p}_native_types[] = {"])
     for type in block.types
-      lines = lines.push("  {#{c_string(type.name)}, #{KINDS[type.kind]}, #{c_string(type.shape)}},")
+      lines = lines.push("  {#{CText.c_string(type.name)}, #{KINDS[type.kind]}, #{CText.c_string(type.shape)}},")
     end
 
     lines = lines.push("};")
@@ -343,9 +306,9 @@ def tables(block: Analysis.NativeBlock, names: Prefix) -> List[String]
   return lines.concat(module_macro(block, names, functions, types))
 end
 
-def module_macro(block: Analysis.NativeBlock, names: Prefix, functions: String, types: String) -> List[String]
+def module_macro(block: Analysis.NativeBlock, names: Names.Prefix, functions: String, types: String) -> List[String]
   big = names.upper
-  library = c_string(block.library)
+  library = CText.c_string(block.library)
   lines = [
     "",
     "/* Ends the module's one .c file: the tables and agentica_native_init. LOAD is NULL or a const char *(*)(void)",
@@ -366,78 +329,9 @@ def module_macro(block: Analysis.NativeBlock, names: Prefix, functions: String, 
 
   for resource in block.resources
     name = resource.name
-    lines = lines.push("    {#{c_string(name)}, sizeof(struct #{p}_#{name}_state), #{big}_#{name}_FREE}, \\")
+    lines = lines.push("    {#{CText.c_string(name)}, sizeof(struct #{p}_#{name}_state), #{big}_#{name}_FREE}, \\")
   end
 
   resources = "#{p}_native_resources, #{block.resources.size}"
   return lines.concat(["  }; \\", "  AN_MODULE_TABLES(#{library}, #{functions}, #{types}, #{resources}, LOAD)"])
-end
-
-# The lines of `parts`, in order.
-def joined(parts: List[List[String]]) -> List[String]
-  return parts.flat_map do |part: List[String]| part end
-end
-
-# `doc` as a C comment above a declaration; nothing for no doc.
-def doc_comment(doc: String) -> List[String]
-  if doc.empty?
-    return []
-  end
-
-  lines = comment_safe(doc).split("\n")
-  last = lines.size - 1
-  at = 0
-  out: List[String] = []
-  for line in lines
-    lead = "   "
-    if at == 0
-      lead = "/* "
-    end
-
-    text = "#{lead}#{line}"
-    if line.empty?
-      text = ""
-    end
-
-    if at == last
-      text = "#{text} */"
-    end
-
-    out = out.push(text)
-    at += 1
-  end
-
-  return out
-end
-
-# `text` with no `*/`, which would end the comment that holds it, no `/*`, which -Wcomment refuses inside one, and no
-# `??`, which starts a trigraph (`-std=c11` reads them).
-def comment_safe(text: String) -> String
-  return text.replace("*/", "* /").replace("/*", "/ *").replace("??", "? ?")
-end
-
-# `text` as a C string literal: a quote, a backslash, a control character and the second `?` of `??` (a trigraph)
-# escaped, the control characters in octal, three digits, so the next character never joins the escape.
-def c_string(text: String) -> String
-  out: List[String] = []
-  previous = ""
-  for c in text.split("")
-    code = c.code
-    if c == "\"" or c == "\\" or (c == "?" and previous == "?")
-      out = out.push("\\#{c}")
-    elsif code < 32 or code == 127
-      out = out.push("\\#{octal(code)}")
-    else
-      out = out.push(c)
-    end
-
-    previous = c
-  end
-
-  return "\"#{out.join("")}\""
-end
-
-# `code` (0 to 127) in three octal digits.
-def octal(code: Int) -> String
-  return "#{code / 64}#{code / 8 % 8}#{code % 8}"
 end

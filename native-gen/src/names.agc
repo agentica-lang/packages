@@ -16,11 +16,33 @@ RESERVED = Set.new([
   "void", "volatile", "wchar_t", "while", "xor", "xor_eq", "int64_t", "uint8_t", "uint32_t", "size_t", "errno",
 ])
 RESERVED_STARTS = ["an_", "ng_"]
+# Prefixes that would put the header's names in the namespace of the C API (`an_`, `AN_`, `agentica_native_init`).
+RESERVED_PREFIXES = Set.new(["an", "agentica"])
 
 ## A C identifier of the header and the name of the block it comes from (`summary`, `Cell.Number`).
 export struct Named
   c: String
   source: String
+end
+
+## The C names of one header: the prefix of its functions and the same in capitals for its macros and constants.
+export struct Prefix
+  lower: String
+  upper: String
+end
+
+## The prefix `text` for C names, or an error when it is not a C identifier or is one of the C API's.
+export def prefix(text: String) -> Result[Prefix]
+  if !c_identifier?(text)
+    return error("the prefix #{text.inspect} is not a C identifier")
+  end
+
+  lower = text.downcase
+  if RESERVED_PREFIXES.include?(lower) or lower.start_with?("an_")
+    return error("the prefix #{text.inspect} is in the namespace of the C API")
+  end
+
+  return ok(Prefix(lower: text, upper: text.upcase))
 end
 
 ## A name of the block as a C identifier: `empty?` is `empty_p` and `save!` is `save_bang`.
