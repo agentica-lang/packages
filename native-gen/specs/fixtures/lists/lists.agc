@@ -23,6 +23,12 @@ extern module "lists"
   def misread_argument() -> Int
   ## Calls the wrapper of `sums` with a bad item in the first row: the call fails at `argument 1: List[Float].1`.
   def misread_nested_argument() -> Int
+  ## Calls the wrapper of `tally` with a bad value for the third key: the call fails at
+  ## `argument 1: Map[Int, List[Int]].2.value`.
+  def misread_map_argument() -> Int
+  ## Calls the wrapper of `tally` with a bad item in the value of the second key: the call fails at
+  ## `argument 1: List[Int].2`.
+  def misread_map_value() -> Int
 end
 
 def main() -> Void
@@ -36,6 +42,10 @@ def main() -> Void
     puts(misread_argument())
   elsif call == "misread_nested_argument"
     puts(misread_nested_argument())
+  elsif call == "misread_map_argument"
+    puts(misread_map_argument())
+  elsif call == "misread_map_value"
+    puts(misread_map_value())
   else
     puts(sums([[1.0, 2.5], [], [4.0]]))
     puts(codes(["ab", "", "é"]))

@@ -63,4 +63,16 @@ an_term options_misread_optional(an_env *env, options_list_optional_Point values
   return an_int(env, item.value.x);
 }
 
+/* Calls the internal wrapper of echo_nested on purpose: a program cannot pass a bad item, and only the wrapper sets
+   the argument of the cursor inside the Optional and the Result. */
+an_term options_misread_nested(an_env *env) {
+  an_term items[3], argv[1];
+  items[0] = an_int(env, 1);
+  items[1] = an_int(env, 2);
+  items[2] = an_string(env, "a", 1);
+  argv[0] = an_some(env, an_ok(env, an_list(env, items, 3)));
+  (void)options_native_echo_nested(env, 1, argv);
+  return an_void(env);
+}
+
 OPTIONS_NATIVE_MODULE(NULL)

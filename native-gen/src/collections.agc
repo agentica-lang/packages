@@ -114,7 +114,8 @@ export def declarations(shelf: Shelf) -> List[String]
     "",
     "/* The Lists, Maps, Optionals and Results. A List or Map that is read is a cursor: _next gives 1 for an item, 0 at",
     "   the end, and -1 when the item does not decode: the call has then failed with the path of the item in its own",
-    "   List or Map (an item of a List or Map read from another has the path from the inner one, `List[Float].1`), and",
+    "   List or Map (an item of a List or Map read from another has the path from the inner one, `List[Float].1`),",
+    "   after `argument N: ` when the cursor came from an argument (`argument` is then N; it is 0 after _open), and",
     "   every later _next gives -1 too, as after a failed _open. A builder makes one: _begin, then _push (_put for a",
     "   Map), then _end. Cursors and builders hold terms: keep them in C locals, for this call only. An Optional or",
     "   Result that is read is a struct, whose value is zero when there is none and whose error is borrowed as a String",
@@ -181,9 +182,9 @@ export def decode_argument(shelf: Shelf, type: String, local: String, at: Int) -
     "    return ng_fail_argument(env, &fail, \"#{type}\", #{at});",
   ]
 
-  if collection?(tree)
-    # A cursor reads its items after the wrapper returns them, so it keeps the argument for the "argument N:" prefix.
-    lines = lines.push("  #{local}.argument = #{at + 1};")
+  # A cursor reads its items after the wrapper returns, so it keeps the argument for the "argument N:" prefix.
+  for path in cursor_paths(tree)
+    lines = lines.push("  #{local}#{path}.argument = #{at + 1};")
   end
 
   return lines
@@ -365,15 +366,35 @@ def item_decoder(shelf: Shelf, type: Types.Type) -> List[String]
   return ["#{head} ng_fail *fail) {", body, "}"]
 end
 
-# The line that gives a List or Map item the argument of the cursor it came from, so its own items fail with the same
-# "argument N:" prefix; nothing for another item type.
+# The lines that give the cursors in an item (the pointer `item`) the argument of the cursor it came from, so their own
+# items fail with the same "argument N:" prefix; nothing for an item with no cursor in it.
 def inherit(type: Types.Type, item: String, cursor: String) -> List[String]
-  if !collection?(type)
-    none_needed: List[String] = []
-    return none_needed
+  return cursor_paths(type).map do |path| "#{item}->#{member(path)}argument = #{cursor}->argument;" end
+end
+
+# `path` without its first dot, ready for `->`: ".value.value" is "value.value.", and "" stays "".
+def member(path: String) -> String
+  if path.empty?
+    return ""
   end
 
-  return ["#{item}->argument = #{cursor}->argument;"]
+  return "#{path.slice(1, path.length - 1)}."
+end
+
+# Where the cursors are in the C value of `type`: "" for a List or Map itself, ".value" (repeated) inside an
+# Optional or
+# Result; none in another type, and none inside a cursor, whose items are read later.
+def cursor_paths(type: Types.Type) -> List[String]
+  if collection?(type)
+    return [""]
+  end
+
+  if !held?(type)
+    none_found: List[String] = []
+    return none_found
+  end
+
+  return cursor_paths(items(type)[0]).map do |path| ".value#{path}" end
 end
 
 def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
@@ -417,7 +438,11 @@ def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
         "  list->at++;",
       ],
       took(taken, "  ", inherit(items(type)[0], "out", "list")),
-      ["  list->failed = true;", "  return ng_fail_item(env, &fail, \"#{text}\", list->argument, at, NULL);", "}"],
+      [
+        "  list->failed = true;",
+        "  return ng_fail_cursor_item(env, &fail, \"#{text}\", list->argument, at, NULL);",
+        "}",
+      ],
     ])
   end
 
@@ -442,7 +467,7 @@ def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
       "    part = \"value\";",
       "  }",
       "  map->failed = true;",
-      "  return ng_fail_item(env, &fail, \"#{text}\", map->argument, at, part);",
+      "  return ng_fail_cursor_item(env, &fail, \"#{text}\", map->argument, at, part);",
       "}",
     ],
   ])

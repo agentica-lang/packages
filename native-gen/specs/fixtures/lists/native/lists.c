@@ -1,6 +1,7 @@
 /* The module of lists.agc, on the header that native-gen makes from it: each function walks its arguments with their
    cursors and makes its result with builders. _next gives -1 when an item does not decode, and the call has then
    failed, so the function only returns. */
+#include "fail_0_1_0.h"
 #define LISTS_NATIVE_IMPLEMENTATION
 #include "lists_native.h"
 
@@ -93,8 +94,9 @@ an_term lists_misread_map(an_env *env, lists_map_String_Point named) {
   return an_int(env, read.x);
 }
 
-/* The wrapper opens the argument, and sums reads its items after that: a bad item fails the call with the argument it
-   is in, so the result of the wrapper is never used. */
+/* These call the internal wrappers of the header (lists_native_sums, lists_native_tally) on purpose: a program cannot
+   pass a bad item, and only the wrapper sets the argument of a cursor. The wrapper opens the argument, and the function
+   reads its items after that: a bad item fails the call with the argument it is in, so the result is never used. */
 static an_term misread_sums(an_env *env, bool nested) {
   an_term row[2], rows[2];
   row[0] = an_float(env, 1.0);
@@ -109,5 +111,27 @@ static an_term misread_sums(an_env *env, bool nested) {
 an_term lists_misread_argument(an_env *env) { return misread_sums(env, false); }
 
 an_term lists_misread_nested_argument(an_env *env) { return misread_sums(env, true); }
+
+/* tally(groups, maybe) with groups {1: [2], 4: [5, 6, BAD], 7: BAD}: in the value of key 4 when `in_value`, else at
+   the value of key 7. */
+static an_term misread_tally(an_env *env, bool in_value) {
+  an_term keys[3], values[3], row[3], argv[2];
+  for (int i = 0; i < 3; i++) keys[i] = an_int(env, 1 + 3 * i);
+  row[0] = an_int(env, 2);
+  values[0] = an_list(env, row, 1);
+  row[0] = an_int(env, 5);
+  row[1] = an_int(env, 6);
+  row[2] = in_value ? an_string(env, "a", 1) : an_int(env, 7);
+  values[1] = an_list(env, row, 3);
+  values[2] = in_value ? an_list(env, NULL, 0) : an_string(env, "b", 1);
+  argv[0] = an_map_from(env, keys, values, 3);
+  argv[1] = an_list(env, NULL, 0);
+  (void)lists_native_tally(env, 2, argv);
+  return an_void(env);
+}
+
+an_term lists_misread_map_argument(an_env *env) { return misread_tally(env, false); }
+
+an_term lists_misread_map_value(an_env *env) { return misread_tally(env, true); }
 
 LISTS_NATIVE_MODULE(NULL)
