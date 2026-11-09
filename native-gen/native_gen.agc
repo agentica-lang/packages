@@ -79,19 +79,19 @@ export def build(path: String, check: Bool = false) -> Result[List[String]]
   extension = try Build.extension(os)
   done: List[String] = []
   if File.read_text(source).unwrap_or("") == text
-    done = done.push("#{source} is current")
+    done = done.push("#{shown(source)} is current")
   else
     try io("#{crate}/src", Dir.mkdir("#{crate}/src"))
     try io(source, File.write_text(source, text))
-    done = done.push("wrote #{source}")
+    done = done.push("wrote #{shown(source)}")
   end
 
   built = try cargo(crate, extension)
   library = "#{root}#{plan.file}"
   if try copy(built, library)
-    done = done.push("copied #{built} to #{library}")
+    done = done.push("copied #{shown(built)} to #{shown(library)}")
   else
-    done = done.push("#{library} is current")
+    done = done.push("#{shown(library)} is current")
   end
 
   # The manifest is read again: an edit made while cargo ran is kept, with the entry planned on it. When the edit names
@@ -102,11 +102,11 @@ export def build(path: String, check: Bool = false) -> Result[List[String]]
   final = try Build.replan(manifest, toml, plan, now, name, os)
   key = "native.#{name}.#{os}"
   if final.manifest == now
-    return ok(done.push("#{manifest} has #{key}"))
+    return ok(done.push("#{shown(manifest)} has #{key}"))
   end
 
   try io(manifest, File.replace(manifest, final.manifest.bytes))
-  return ok(done.push("added #{key} to #{manifest}"))
+  return ok(done.push("added #{key} to #{shown(manifest)}"))
 end
 
 ## A new native module at `path` (`demo`, or `pkg/demo` in the folder `pkg`): writes `NAME.agc` with an `extern
@@ -151,6 +151,16 @@ export def scaffold(path: String) -> Result[Void]
   try io(source, File.write_text(source, Scaffold.source(name, names)))
   try io(header_path, File.write_text(header_path, made))
   return io(manifest, File.write_text(manifest, toml))
+end
+
+# `path` from the current folder when it is below it, as build prints it; otherwise `path` as it is.
+def shown(path: String) -> String
+  current = "#{Path.cwd().unwrap_or("")}/"
+  if current != "/" and path.start_with?(current)
+    return path.slice(current.length, path.length - current.length)
+  end
+
+  return path
 end
 
 # The root of the package of the file at `path`, ending in `/`: the nearest folder up from the file that has an

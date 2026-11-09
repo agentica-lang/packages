@@ -41,6 +41,8 @@ header and its `agentica.toml` entry.
 
 A module in Rust: `agentica deps/native-gen/cli.agc build math.agc` writes the Rust side of the block into the crate
 `rust/`, runs `cargo build --release`, copies the library to `native/` and adds its `agentica.toml` entry.
+[examples/rust_math](examples/rust_math) is a whole package (an `.agc` with structs both ways, its `rust/src/lib.rs`
+and `Cargo.toml`); the docs walk through it.
 
 The docs, with every C name, the header layout and the error codes:
 <https://agentica-lang.github.io/packages/native-gen/>.

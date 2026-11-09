@@ -543,9 +543,9 @@ Feature: The C header of an extern module block
       --check needs --output
       """
 
-  Scenario: build --check passes on the committed Rust file of rust_math
+  Scenario: build --check passes on the committed Rust file of examples/rust_math
     Given the program argument "build"
-    And the program argument "fixtures/rust_math/math.agc"
+    And the program argument "../examples/rust_math/math.agc"
     And the program argument "--check"
     And the Agentica program "../cli.agc"
     Then the program exits with code 0 within 25000 milliseconds

@@ -123,9 +123,49 @@ The name is the `[native.NAME]` of `agentica.toml`, the library of the block and
 
 ## A Rust module
 
-A module can be written in Rust instead, on the `agentica-native` crate that native-gen carries in `deps/native-gen/native/agentica-native`. The crate of the module is the folder `rust/` at the package root, the nearest folder up from the `.agc` with an `agentica.toml`, and depends on it by path:
+A module can be written in Rust instead, on the `agentica-native` crate that native-gen carries in `deps/native-gen/native/agentica-native`. The crate of the module is the folder `rust/` at the package root (the nearest folder up from the `.agc` with an `agentica.toml`), and depends on that crate by path. The package [examples/rust_math](https://github.com/agentica-lang/packages/tree/main/native-gen/examples/rust_math) is a whole one; CI builds it and runs it, and checks that the files below are its files.
+
+`math.agc`:
+
+```agentica {mode="check"}
+## A native module written in Rust: `rust/src/lib.rs` implements the block on the file that native-gen makes from it,
+## and `cli.agc build math.agc` builds it into native/ and adds its entry to agentica.toml.
+
+struct Point
+  x: Float
+  y: Float
+end
+
+extern module "math"
+  ## The sum of a and b.
+  def add(a: Int, b: Int) -> Int
+  ## The mean of the values; none for no values.
+  def mean(values: List[Float]) -> Optional[Float]
+  ## x kept between low and high.
+  def clamp(x: Float, low: Float, high: Float) -> Float
+  ## The point halfway between a and b.
+  def midpoint(a: Point, b: Point) -> Point
+end
+
+def main() -> Void
+  puts(add(2, 3))
+  puts(mean([1.0, 2.0, 6.0]))
+  puts(mean([]))
+  puts(clamp(12.5, 0.0, 10.0))
+  puts(midpoint(Point(x: 0.0, y: 0.0), Point(x: 4.0, y: 2.0)))
+end
+```
+
+`rust/Cargo.toml`:
 
 ```toml
+[package]
+name = "math"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
 [lib]
 crate-type = ["cdylib"]
 
@@ -133,11 +173,82 @@ crate-type = ["cdylib"]
 agentica-native = { path = "../deps/native-gen/native/agentica-native" }
 ```
 
-`build` makes the module; paths are from the package root:
+`rust/src/lib.rs`:
+
+```rust
+//! The Rust side of math.agc, on the file `src/math_native.rs` that native-gen makes from its block.
+
+#[rustfmt::skip]
+mod math_native;
+
+use agentica_native::{Env, Raise};
+
+use crate::math_native::{MathNative, Point, module};
+
+struct Math;
+
+impl MathNative for Math {
+    fn add(_env: Env<'_>, a: i64, b: i64) -> Result<i64, Raise> {
+        a.checked_add(b).ok_or_else(|| Raise::new("the sum is out of range"))
+    }
+
+    fn mean(_env: Env<'_>, values: Vec<f64>) -> Result<Option<f64>, Raise> {
+        if values.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(values.iter().sum::<f64>() / values.len() as f64))
+    }
+
+    fn clamp(_env: Env<'_>, x: f64, low: f64, high: f64) -> Result<f64, Raise> {
+        if low.is_nan() || high.is_nan() || low > high {
+            return Err(Raise::new("low is above high, or not a number"));
+        }
+        Ok(x.clamp(low, high))
+    }
+
+    fn midpoint(_env: Env<'_>, a: Point, b: Point) -> Result<Point, Raise> {
+        Ok(Point { x: (a.x + b.x) / 2.0, y: (a.y + b.y) / 2.0 })
+    }
+}
+
+agentica_native::export!(module::<Math>());
+```
+
+`rust/src/math_native.rs` is the file that `build` writes from the block: the struct `Point`, the trait `MathNative` with one method per function, and `module`. Build the module, then run the program, from the package root:
 
 ```sh
 agentica deps/native-gen/cli.agc build math.agc
+agentica math.agc
 ```
+
+The output of `build` (cargo prints its progress on stderr):
+
+```text
+rust/src/math_native.rs is current
+copied rust/target/release/libmath.so to native/libmath.so
+added native.math.linux to agentica.toml
+```
+
+The entry that `build` adds to `agentica.toml`:
+
+```toml
+[native.math]
+linux = { file = "native/libmath.so" }
+```
+
+The output of `agentica math.agc`:
+
+```text
+5
+some(3.0)
+none
+10.0
+Point(x: 2.0, y: 1.0)
+```
+
+A native module cannot call back into Agentica: its functions get values and return values, and never run an Agentica function or block. Return the data, or a resource, and loop in Agentica. A plain `extern` block can pass a function of the program to C as a function pointer, with a [`callback`](https://agentica-lang.github.io/agentica/library/io-and-system/native/types/#callbacks) line.
+
+What `build` does, with paths from the package root:
 
 - It writes `rust/src/NAME_native.rs` (NAME is the library of the block, `math`) when it changed: the types of the block with their codecs, the trait `MathNative` that `src/lib.rs` implements, and `module::<Impl>()` for `agentica_native::export!`. Declare it in `src/lib.rs` with `#[rustfmt::skip] mod math_native;`.
 - It runs `cargo build --release` on the crate (from the current folder, so a `.cargo/config.toml` is found from there, not from `rust/`), and copies the library to `native/libmath.so` on Linux, `native/libmath.dylib` on macOS or `native/math.dll` on Windows.
