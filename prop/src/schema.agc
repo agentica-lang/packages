@@ -27,6 +27,11 @@ end
 ## nested structs and enums) and decodes it, so it makes only values `T` can have, and it shrinks as its parts do (an
 ## Optional to `none`, a list to fewer items). A type that holds itself, through a list, a map, an Optional or a
 ## variant, nests at most `depth` times. Halts when the schema is not the one of `T`.
+##
+## ```ruby
+## Prop.sample(Prop.of(User.codec, JSON.schema(User)), 1, 2) # User has name: String and age: Int
+## # [User(name: "mdRY", age: 423), User(name: "TeL%;yAb+", age: -973)]
+## ```
 export def of[T](codec: Codec[T], schema: Json, depth: Int = 2) -> Gens.Gen[T]
   return Gens.map(build(schema, schema, [], depth)) do |document| decoded(codec, document) end
 end

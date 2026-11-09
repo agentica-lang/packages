@@ -34,6 +34,10 @@ end
 
 ## An Int in `min` ..= `max` (both clamped to +-2^60) that shrinks toward 0, or toward the bound nearest to 0.
 ## Halts when `min` is more than `max`. At size k it has the Ints up to k away from that origin.
+##
+## ```ruby
+## Prop.sample(Prop.int(-5, 5), 1) # [2, -1, -3, 3, 4]
+## ```
 export def int(min: Int, max: Int) -> Gen[Int]
   if min > max
     bad: Result[Gen[Int]] = error("Prop.int: min #{min} is more than max #{max}")
@@ -52,6 +56,10 @@ end
 
 ## A Float in `min` ..= `max` that shrinks toward 0.0, or toward the bound nearest to it. Halts when `min` is more
 ## than `max`; the bounds are clamped to +-1e15. At size k it has the whole numbers up to k away from that origin.
+##
+## ```ruby
+## Prop.sample(Prop.float(0.0, 1.0), 1, 2) # [0.5514195375144482, 0.4739080984145403]
+## ```
 export def float(min: Float, max: Float) -> Gen[Float]
   if min > max
     bad: Result[Gen[Float]] = error("Prop.float: min #{min} is more than max #{max}")
@@ -71,6 +79,10 @@ export def float(min: Float, max: Float) -> Gen[Float]
 end
 
 ## `true` or `false`; `true` shrinks to `false`.
+##
+## ```ruby
+## Prop.sample(Prop.bool(), 1) # [false, false, false, true, true]
+## ```
 export def bool() -> Gen[Bool]
   return one_of([false, true])
 end
@@ -78,6 +90,10 @@ end
 ## A String of up to `max_size` characters from a mix of ASCII, accented, CJK and emoji ones, a tab and a newline. It
 ## shrinks to a shorter string, then toward "a". At size k it has the strings of up to k characters from the first
 ## k + 1 letters.
+##
+## ```ruby
+## Prop.sample(Prop.string(4), 3) # [".", "", "L", "", "R"]
+## ```
 export def string(max_size: Int = 10) -> Gen[String]
   indexes = list(int(0, ALPHABET.size - 1), max_size)
   return map(indexes) do |chosen| chosen.map do |i| ALPHABET.at(i) end.join("") end
@@ -85,6 +101,10 @@ end
 
 ## A List of up to `max_size` (at most 1000) items of `gen`. It shrinks to a shorter list (the empty one first), then
 ## by shrinking an item. At size k it has the lists of up to k items, each an item of `gen` at size k.
+##
+## ```ruby
+## Prop.sample(Prop.list(Prop.int(0, 9), 3), 2, 3) # [[4, 1, 6], [4, 0], [3, 8, 9]]
+## ```
 export def list[T](gen: Gen[T], max_size: Int = 10) -> Gen[List[T]]
   limit = max_size.clamp(0, MAX_SIZE)
   return Gen(
@@ -99,6 +119,10 @@ export def list[T](gen: Gen[T], max_size: Int = 10) -> Gen[List[T]]
 end
 
 ## `none` or `some` of a value of `gen`, half and half; `some` shrinks to `none` first.
+##
+## ```ruby
+## Prop.sample(Prop.optional(Prop.int(0, 3)), 1, 6) # [none, none, none, none, some(3), some(0)]
+## ```
 export def optional[T](gen: Gen[T]) -> Gen[Optional[T]]
   return Gen(
     make: making() do |seed|
@@ -118,6 +142,10 @@ export def optional[T](gen: Gen[T]) -> Gen[Optional[T]]
 end
 
 ## One of `items`, which shrinks toward the first. Halts when `items` is empty. Every size has all the items.
+##
+## ```ruby
+## Prop.sample(Prop.one_of(["ana", "ben", "cat"]), 1) # ["cat", "ana", "ana", "ana", "cat"]
+## ```
 export def one_of[T](items: List[T]) -> Gen[T]
   if items.empty?
     bad: Result[Gen[T]] = error("Prop.one_of: items is empty")
@@ -129,6 +157,10 @@ export def one_of[T](items: List[T]) -> Gen[T]
 end
 
 ## The values of `gen` through `f`. They shrink as the values of `gen` do.
+##
+## ```ruby
+## Prop.sample(Prop.map(Prop.int(1, 5)) do |n| n * 10 end, 1) # [30, 20, 50, 40, 10]
+## ```
 export def map[A, B](gen: Gen[A], f: Fn[A, B]) -> Gen[B]
   return Gen(
     make: making() do |seed| Trees.map_tree(gen.make(seed), f) end,
@@ -138,6 +170,11 @@ export def map[A, B](gen: Gen[A], f: Fn[A, B]) -> Gen[B]
 end
 
 ## A `Pair` of a value of `a` and one of `b`, shrinking `a` first.
+##
+## ```ruby
+## Prop.sample(Prop.pair(Prop.int(0, 9), Prop.bool()), 5, 2)
+## # [Pair(first: 6, second: true), Pair(first: 6, second: false)]
+## ```
 export def pair[A, B](a: Gen[A], b: Gen[B]) -> Gen[Pair[A, B]]
   return Gen(
     make: making() do |seed|
@@ -151,6 +188,10 @@ export def pair[A, B](a: Gen[A], b: Gen[B]) -> Gen[Pair[A, B]]
 end
 
 ## The values that `gen` makes for `count` seeds from `seed` on: the first cases `Prop.check` runs with that seed.
+##
+## ```ruby
+## Prop.sample(Prop.int(0, 9), 1234) # [6, 6, 0, 4, 2]
+## ```
 export def sample[T](gen: Gen[T], seed: Int, count: Int = 5) -> List[T]
   return (0...count).to_a.map do |i| gen.make(Seeds.split(seed, i)).value end
 end

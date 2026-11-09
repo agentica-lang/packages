@@ -33,11 +33,16 @@ struct Probe[T]
 end
 
 ## Runs `law` on `config.runs` values of `gen` and returns `ok()`, or an `error` that names the shrunk counterexample
-## and the seed: `falsified after 37 runs, shrunk to [3,0], seed 1234: expected ...`. The seed is drawn from `Random`
-## (so `agentica --seed N test` replays the run), or is `config.seed`, which replays the check alone. A case that fails
-## with `Prop.assume` is discarded; more than `config.discards` of them is an `error`, so a law cannot pass without
-## being tried. The law should fail with `Prop.eq`, `Prop.assume` or `error(...)`: a failed `Test.eq` or `Test.assert`
-## fails the test at the first case, before it is shrunk.
+## and the seed. The seed is drawn from `Random` (so `agentica --seed N test` replays the run), or is `config.seed`,
+## which replays the check alone. A case that fails with `Prop.assume` is discarded; more than `config.discards` of them
+## is an `error`, so a law cannot pass without being tried. The law should fail with `Prop.eq`, `Prop.assume` or
+## `error(...)`: a failed `Test.eq` or `Test.assert` fails the test at the first case, before it is shrunk.
+##
+## ```ruby
+## Prop.check(Prop.int(0, 100)) do |n| Prop.eq(n + 0, n) end # ok()
+## Prop.check(Prop.int(0, 100), Prop.Config(seed: some(7))) do |n| Prop.eq(n < 50, true) end
+## # error("falsified after 3 runs, shrunk to 50, seed 7: expected true, got false")
+## ```
 export def check[T](gen: Gens.Gen[T], config: Config = Config(), law: Fn[T, Result[Void]]) -> Result[Void]
   if config.runs < 1
     return error("Prop.check: runs must be at least 1, got #{config.runs}")
@@ -70,6 +75,13 @@ export def check[T](gen: Gens.Gen[T], config: Config = Config(), law: Fn[T, Resu
 end
 
 ## Discards the case when `condition` is false. Use it first in a law, for the inputs it does not cover.
+##
+## ```ruby
+## Prop.check(Prop.int(-50, 50)) do |n|
+##   try Prop.assume(n != 0)
+##   Prop.eq(n * 100 / n, 100)
+## end # ok()
+## ```
 export def assume(condition: Bool) -> Result[Void]
   if condition
     return ok()
@@ -80,6 +92,11 @@ end
 
 ## `ok()` when both values encode to the same JSON, else an `error` with both. Unlike `Test.eq` a failure here is a
 ## plain `Result`, so `check` can shrink it. Two maps with the same pairs in another order differ.
+##
+## ```ruby
+## Prop.eq([1, 2], [1, 2]) # ok()
+## Prop.eq([1, 2], [2, 1]) # error("expected [2,1], got [1,2]")
+## ```
 export def eq[T](actual: T, expected: T) -> Result[Void]
   got = JSON.encode(actual)
   want = JSON.encode(expected)

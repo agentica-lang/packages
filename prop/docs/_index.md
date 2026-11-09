@@ -55,7 +55,7 @@ The releases and their notes are in the [changelog](https://github.com/agentica-
 
 ## Reference
 
-Everything is under `Prop`, from `import Prop from "pkg/prop/prop"`. Each page lists its functions.
+Everything is under `Prop`, from `import Prop from "pkg/prop/prop"`. Each function has its signature and a short example on its page.
 
 | Page | Functions |
 |---|---|

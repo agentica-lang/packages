@@ -4,6 +4,10 @@ import Checks from "check"
 import Gens from "gen"
 
 ## How many cases `Prop.exhaustive` tries for `gen` up to `size` (it stops counting at 1_000_000_000).
+##
+## ```ruby
+## Prop.cases(Prop.list(Prop.bool()), 3) # 15
+## ```
 export def cases[T](gen: Gens.Gen[T], size: Int) -> Int
   return gen.count(size)
 end
@@ -13,6 +17,11 @@ end
 ## `error` with the counterexample of the smallest size that has one. What a size means is in each generator (items of
 ## a list, distance of an Int from 0). `max_cases` stops a size that is too big before it runs, because a test has a
 ## step budget. A case that fails with `Prop.assume` is skipped, and a law that skips all of them is an error.
+##
+## ```ruby
+## Prop.exhaustive(Prop.list(Prop.int(0, 9)), 2) do |xs| Prop.eq(xs.reverse, xs) end
+## # error("falsified at size 2, counterexample [0,1]: expected [0,1], got [1,0]")
+## ```
 export def exhaustive[T](
   gen: Gens.Gen[T],
   size: Int,
