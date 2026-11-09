@@ -19,6 +19,10 @@ struct Triple[T]
 end
 
 ## `decode(encode(x))` is `ok(x)`. `decode` returns a `Result`, as `JSON.decode` does; an `error` falsifies the law.
+##
+## ```ruby
+## Prop.roundtrip(Prop.int(-1000, 1000), &show, &parse) # ok(), with show(n) = n.to_s and parse = text.to_i
+## ```
 export def roundtrip[T, E](
   gen: Gens.Gen[T],
   encode: Fn[T, E],
@@ -29,11 +33,19 @@ export def roundtrip[T, E](
 end
 
 ## `f(f(x))` is `f(x)`.
+##
+## ```ruby
+## Prop.idempotent(Prop.list(Prop.int(-9, 9))) do |xs| xs.sort end # ok()
+## ```
 export def idempotent[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), f: Fn[T, T]) -> Result[Void]
   return Checks.check(gen, config) do |value| settles(value, f) end
 end
 
 ## `fast(x)` is `slow(x)`: the fast version against a simple one that is obviously right.
+##
+## ```ruby
+## Prop.oracle(Prop.list(Prop.int(-9, 9)), &fast_sum, &slow_sum) # ok() when both sum the same
+## ```
 export def oracle[A, B](
   gen: Gens.Gen[A],
   fast: Fn[A, B],
@@ -44,18 +56,30 @@ export def oracle[A, B](
 end
 
 ## `op(op(a, b), c)` is `op(a, op(b, c))`.
+##
+## ```ruby
+## Prop.associative(Prop.string(3)) do |a, b| a + b end # ok()
+## ```
 export def associative[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), op: Fn[T, T, T]) -> Result[Void]
   triples = Gens.map(Gens.pair(gen, Gens.pair(gen, gen))) do |p| triple(p) end
   return Checks.check(triples, config) do |t| groups_the_same(t, op) end
 end
 
 ## `op(a, b)` is `op(b, a)`.
+##
+## ```ruby
+## Prop.commutative(Prop.int(-9, 9)) do |a, b| a * b end # ok()
+## ```
 export def commutative[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), op: Fn[T, T, T]) -> Result[Void]
   couples = Gens.map(Gens.pair(gen, gen)) do |p| Couple(a: p.first, b: p.second) end
   return Checks.check(couples, config) do |c| orders_the_same(c, op) end
 end
 
 ## `measure(f(x))` is `measure(x)`: `f` keeps the size, the sum, the sortedness or whatever `measure` reads.
+##
+## ```ruby
+## Prop.preserves(Prop.list(Prop.int(-9, 9)), &reverse, &total) # ok(): a reverse keeps the sum
+## ```
 export def preserves[T, M](
   gen: Gens.Gen[T],
   f: Fn[T, T],

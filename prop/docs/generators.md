@@ -1,49 +1,219 @@
 ---
 title: Generators
-description: The generators, how a value shrinks, and Prop.of for your own structs and enums.
+description: The generators, each with an example of what it makes, then how values shrink and Prop.of for your own types.
 weight: 2
 ---
 
-A `Gen[T]` makes values of type `T` from a seed. It also makes a shrink tree: the value and, on demand, its simpler values. That is why `map` and `pair` shrink with no inverse function.
+A generator, `Gen[T]`, makes values of type `T` from a seed. The examples show what a generator makes with `Prop.sample`, the first values that `Prop.check` would try with that seed.
 
-## The generators
+## Prop.sample
 
-| Generator | Makes | Shrinks |
-|---|---|---|
-| `Prop.int(min, max)` | an Int in the range | toward 0, or the bound nearest to it |
-| `Prop.float(min, max)` | a Float in the range | toward 0.0, or the bound nearest to it |
-| `Prop.bool()` | `true` or `false` | to `false` |
-| `Prop.string(max_size = 10)` | a string of up to `max_size` characters (ASCII, accented, CJK and emoji ones, a tab and a newline) | to a shorter string, then toward `"a"` |
-| `Prop.list(gen, max_size = 10)` | a list of up to `max_size` items | to fewer items (the empty list first), then to smaller items |
-| `Prop.optional(gen)` | `none` or `some` (half each) | `some` to `none` |
-| `Prop.one_of(items)` | one item of the list | toward the first |
-| `Prop.pair(a, b)` | a `Prop.Pair(first, second)` | each part |
-| `Prop.map(gen, f)` | the values of `gen` through `f` | as the originals do |
-
-`max_size` is at most 1000.
-
-```agentica {mode="fragment"}
-ages = Prop.int(0, 120)
-names = Prop.one_of(["ana", "ben", "cat"])
-people = Prop.pair(names, ages)
-tens = Prop.map(Prop.int(1, 5)) do |n| n * 10 end
+```signature
+Prop.sample(gen: Gen[T], seed: Int, count: Int = 5) -> List[T]
 ```
 
-`Prop.sample(gen, seed, count = 5)` returns the first values that `check` would try with that seed. It is a good way to see what a generator makes:
+The values that `gen` makes for `count` seeds from `seed` on: the first cases that `Prop.check` runs with that seed.
 
-```agentica {mode="fragment"}
-puts(Prop.sample(Prop.pair(Prop.int(0, 9), Prop.string(3)), 5, 2))
-puts(Prop.sample(Prop.optional(Prop.int(0, 3)), 1, 6))
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  puts(Prop.sample(Prop.int(0, 9), 1234))
+end
 ```
 
-```text
-[Pair(first: 6, second: "R_f"), Pair(first: 6, second: "")]
+```output
+[6, 6, 0, 4, 2]
+```
+
+## Prop.int
+
+```signature
+Prop.int(min: Int, max: Int) -> Gen[Int]
+```
+
+An Int in `min` to `max`, both included. It shrinks toward 0, or toward the bound nearest to 0. A `min` above `max` halts the test.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  puts(Prop.sample(Prop.int(-5, 5), 1))
+end
+```
+
+```output
+[2, -1, -3, 3, 4]
+```
+
+## Prop.float
+
+```signature
+Prop.float(min: Float, max: Float) -> Gen[Float]
+```
+
+A Float in `min` to `max`. It shrinks toward 0.0, or toward the bound nearest to it.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  puts(Prop.sample(Prop.float(0.0, 1.0), 1, 3))
+end
+```
+
+```output
+[0.5514195375144482, 0.4739080984145403, 0.2005640072748065]
+```
+
+## Prop.bool
+
+```signature
+Prop.bool() -> Gen[Bool]
+```
+
+`true` or `false`. `true` shrinks to `false`.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  puts(Prop.sample(Prop.bool(), 1))
+end
+```
+
+```output
+[false, false, false, true, true]
+```
+
+## Prop.string
+
+```signature
+Prop.string(max_size: Int = 10) -> Gen[String]
+```
+
+A String of up to `max_size` characters: ASCII, accented, CJK and emoji ones, a tab and a newline. It shrinks to a shorter string, then toward `"a"`.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  puts(Prop.sample(Prop.string(4), 3))
+end
+```
+
+```output
+[".", "", "L", "", "R"]
+```
+
+## Prop.list
+
+```signature
+Prop.list(gen: Gen[T], max_size: Int = 10) -> Gen[List[T]]
+```
+
+A List of up to `max_size` items of `gen` (`max_size` is at most 1000). It shrinks to fewer items, the empty list first, then to smaller items.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  puts(Prop.sample(Prop.list(Prop.int(0, 9), 3), 2, 3))
+end
+```
+
+```output
+[[4, 1, 6], [4, 0], [3, 8, 9]]
+```
+
+## Prop.optional
+
+```signature
+Prop.optional(gen: Gen[T]) -> Gen[Optional[T]]
+```
+
+`none` or `some` of a value of `gen`, half and half. `some` shrinks to `none` first.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  puts(Prop.sample(Prop.optional(Prop.int(0, 3)), 1, 6))
+end
+```
+
+```output
 [none, none, none, none, some(3), some(0)]
 ```
 
-## Generators for your types
+## Prop.one_of
 
-`Prop.of(codec, schema, depth = 2)` makes values of a struct or an enum that JSON can decode. Pass the codec and the JSON Schema of the same type:
+```signature
+Prop.one_of(items: List[T]) -> Gen[T]
+```
+
+One of `items`. It shrinks toward the first item, so put the simplest first. An empty list halts the test.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  puts(Prop.sample(Prop.one_of(["ana", "ben", "cat"]), 1))
+end
+```
+
+```output
+["cat", "ana", "ana", "ana", "cat"]
+```
+
+## Prop.map
+
+```signature
+Prop.map(gen: Gen[A], f: Fn[A, B]) -> Gen[B]
+```
+
+The values of `gen` through `f`. They shrink as the values of `gen` do, with no inverse function.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  tens = Prop.map(Prop.int(1, 5)) do |n| n * 10 end
+  puts(Prop.sample(tens, 1))
+end
+```
+
+```output
+[30, 20, 50, 40, 10]
+```
+
+## Prop.pair
+
+```signature
+Prop.pair(a: Gen[A], b: Gen[B]) -> Gen[Pair[A, B]]
+```
+
+A `Prop.Pair(first, second)` of a value of `a` and one of `b`. It shrinks `first`, then `second`.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  puts(Prop.sample(Prop.pair(Prop.int(0, 9), Prop.bool()), 5, 2))
+end
+```
+
+```output
+[Pair(first: 6, second: true), Pair(first: 6, second: false)]
+```
+
+## Prop.of
+
+```signature
+Prop.of(codec: Codec[T], schema: Json, depth: Int = 2) -> Gen[T]
+```
+
+Values of a struct or an enum that JSON can decode. Pass `T.codec` and `JSON.schema(T)` of the same type: the generator makes the JSON that the schema allows, and the codec decodes it.
 
 ```agentica
 import Prop from "pkg/prop/prop"
@@ -51,26 +221,44 @@ import Prop from "pkg/prop/prop"
 struct User
   name: String
   age: Int
-  email: Optional[String]
 end
 
-def encode_user(user: User) -> String
-  return User.codec.encode(user)
-end
-
-def decode_user(text: String) -> Result[User]
-  return User.codec.decode(text)
-end
-
-def test_user_round_trip() -> Result[Void]
-  gen = Prop.of(User.codec, JSON.schema(User))
-  return Prop.roundtrip(gen, &encode_user, &decode_user)
+def main() -> Void
+  users = Prop.of(User.codec, JSON.schema(User))
+  puts(Prop.sample(users, 1, 2))
 end
 ```
 
-Agentica cannot read a type from a codec, so the schema is passed as well. The generator makes the JSON that the schema allows, and the codec decodes it, so a value is always one that `User` can have. A schema of another type than the codec's halts the test with the decode error.
+```output
+[User(name: "mdRY", age: 423), User(name: "TeL%;yAb+", age: -973)]
+```
 
-What it makes:
+## Shrinking
+
+A generator makes a shrink tree: a value and, on demand, its simpler values. When a law fails, `check` walks that tree to the simplest value that still fails. That is why `map` and `pair` shrink with no inverse function.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  config = Prop.Config(seed: some(3))
+  result = Prop.check(Prop.list(Prop.int(0, 100)), config) do |xs|
+    Prop.eq(xs.all? do |x| x <= 40 end, true)
+  end
+
+  puts(result.message)
+end
+```
+
+```output
+falsified after 1 run, shrunk to [41], seed 3: expected true, got false
+```
+
+The shrunk list has one item, at the smallest value that still breaks the law.
+
+## More on Prop.of
+
+Agentica cannot read a type from a codec, so the schema is passed too. A schema of another type than the codec's halts the test with the decode error. What `Prop.of` makes:
 
 - Int is in -1000 to 1000, Float in -1000.0 to 1000.0, strings as `Prop.string()`, and lists have up to 3 items.
 - A map has up to 3 pairs with random keys (up to 4 characters, the empty one too).
