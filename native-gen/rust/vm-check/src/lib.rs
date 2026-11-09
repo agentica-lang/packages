@@ -176,13 +176,31 @@ unsafe extern "C" fn describe(env: *mut sys::an_env, argc: c_int, argv: *const s
     }
 }
 
+/// Whether the borrowed texts of `texts` are still whole after ~100000 new Strings made collections run: an argument
+/// is the VM's own value, so what a decoder borrows from it lasts for the call.
+unsafe extern "C" fn borrowed(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe {
+        call(env, argc, argv, Mode::Short, TYPES, |env, args| {
+            let texts = match args.decode::<Vec<&str>>(0) {
+                Ok(texts) => texts,
+                Err(error) => return env.raise(&error.to_string()),
+            };
+            for k in 0..100000 {
+                env.string(&format!("a string long enough to live on the heap {k}"));
+            }
+            let whole = texts.iter().enumerate().all(|(k, text)| *text == format!("text number {k} of the argument"));
+            whole.encode(env)
+        })
+    }
+}
+
 macro_rules! function {
     ($name:literal, $signature:literal, $fn_:ident, $flags:expr) => {
         sys::an_function { name: $name.as_ptr(), signature: $signature.as_ptr(), fn_: $fn_, flags: $flags }
     };
 }
 
-static FUNCTIONS: [sys::an_function; 15] = [
+static FUNCTIONS: [sys::an_function; 16] = [
     function!(c"strings", c"(Int) -> List[String]", strings, sys::AN_SHORT),
     function!(
         c"echo_rows",
@@ -196,6 +214,7 @@ static FUNCTIONS: [sys::an_function; 15] = [
         echo_staged,
         sys::AN_DIRTY
     ),
+    function!(c"borrowed", c"(List[String]) -> Bool", borrowed, sys::AN_SHORT),
     function!(c"describe", c"(Int, Float, Bool, String, Bytes) -> String", describe, sys::AN_SHORT),
     function!(c"staged_strings", c"(Int) -> List[String]", staged_strings, sys::AN_DIRTY),
     function!(c"squares", c"(Int) -> Map[Int, Int]", squares, sys::AN_SHORT),

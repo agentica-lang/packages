@@ -195,6 +195,13 @@ impl<'a> Env<'a> {
         Term { raw, env: self }
     }
 
+    /// A term that needs no memory of the collector: the VM makes an Int, Float, Bool or Void as an immediate value
+    /// (api_int, api_float, api_bool and api_void of vm/native_module.c build them with agc_int and the others of
+    /// vm/value.h), and a failure gives Void (env_fail), so the root list does not keep them.
+    fn immediate(self, raw: sys::an_term) -> Term<'a> {
+        Term { raw, env: self }
+    }
+
     /// A term that a constructor made, kept in the root list of a short call.
     fn made(self, raw: sys::an_term) -> Term<'a> {
         if !self.roots.is_null() {
@@ -202,6 +209,11 @@ impl<'a> Env<'a> {
             unsafe { (self.api().list_push)(self.raw, self.roots, raw) };
         }
         Term { raw, env: self }
+    }
+
+    /// Whether `self` and `other` are the env of one call.
+    pub fn same_call(self, other: Env<'_>) -> bool {
+        self.raw == other.raw
     }
 
     pub fn mode(self) -> Mode {
@@ -212,19 +224,19 @@ impl<'a> Env<'a> {
     // length passed with it, or is a local of the constructor.
 
     pub fn int(self, n: i64) -> Term<'a> {
-        self.made(unsafe { (self.api().make_int)(self.raw, n) })
+        self.immediate(unsafe { (self.api().make_int)(self.raw, n) })
     }
 
     pub fn float(self, x: f64) -> Term<'a> {
-        self.made(unsafe { (self.api().make_float)(self.raw, x) })
+        self.immediate(unsafe { (self.api().make_float)(self.raw, x) })
     }
 
     pub fn bool(self, b: bool) -> Term<'a> {
-        self.made(unsafe { (self.api().make_bool)(self.raw, b) })
+        self.immediate(unsafe { (self.api().make_bool)(self.raw, b) })
     }
 
     pub fn void(self) -> Term<'a> {
-        self.made(unsafe { (self.api().make_void)(self.raw) })
+        self.immediate(unsafe { (self.api().make_void)(self.raw) })
     }
 
     pub fn string(self, text: &str) -> Term<'a> {
@@ -354,12 +366,12 @@ impl<'a> Env<'a> {
         let mut owned = Vec::with_capacity(text.len() + 1);
         owned.extend_from_slice(text.as_bytes());
         owned.push(0);
-        self.made(unsafe { (self.api().raise)(self.raw, owned.as_ptr() as *const c_char) })
+        self.immediate(unsafe { (self.api().raise)(self.raw, owned.as_ptr() as *const c_char) })
     }
 
     /// Fails the call with "argument INDEX + 1 is not valid".
     pub fn badarg(self, index: usize) -> Term<'a> {
-        self.made(unsafe { (self.api().badarg)(self.raw, c_int::try_from(index).unwrap_or(c_int::MAX)) })
+        self.immediate(unsafe { (self.api().badarg)(self.raw, c_int::try_from(index).unwrap_or(c_int::MAX)) })
     }
 }
 
@@ -387,6 +399,15 @@ impl<'a> Term<'a> {
 
     pub fn env(self) -> Env<'a> {
         self.env
+    }
+
+    /// The term with `env` for its env.
+    ///
+    /// # Safety
+    ///
+    /// `env` is the env of the call that the term belongs to.
+    pub(crate) unsafe fn rebind<'b>(self, env: Env<'b>) -> Term<'b> {
+        Term { raw: self.raw, env }
     }
 
     fn api(self) -> &'a sys::an_api {

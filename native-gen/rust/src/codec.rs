@@ -12,18 +12,24 @@
 //! | `Optional[T]` | `Option<T>` |
 //! | `Result[T]` | `Result<T, String>` (an encoded error is any `Display`) |
 //! | `Void` | `()` (encode only) |
+//! | any | `Term<'a>`, the term as it is |
 //!
 //! A Map is a `Vec` of pairs, not a `HashMap`: the language keeps a Map in insertion order, and a `HashMap` would
-//! lose it. Structs and enums of the block get their codecs from native-gen, through `Term::decode_field`,
-//! `Term::decode_payload`, `Env::make_struct` and `Env::make_enum`.
+//! lose it. Its key is a `MapKey` (`i64`, `String`, `&str`, `Vec<u8>`, `&[u8]`), so a key of another type does not
+//! compile. Structs and enums of the block get their codecs from native-gen, through `Term::decode_field`,
+//! `Term::decode_payload`, `Env::make_struct` and `Env::make_enum`. A payload that leads back to its own enum stays a
+//! `Term<'a>`, as in the C header: the module reads it when it needs it, so a deep value never recurses through the
+//! stack of a scheduler.
 
 use core::fmt;
 
 use crate::term::{Args, Env, Term};
 
 /// A value that could not be read: the path to its bad part, from the outermost value in, and the type it should
-/// have had. Its text is the one of the C header of native-gen: `List[Int].2: expected Int`,
-/// `Shape.Circle.0.x: expected Int`, and `argument 1: ...` for an argument of the call.
+/// have had. The text has the format of the C header of native-gen (`List[Int].2: expected Int`,
+/// `Shape.Circle.0.x: expected Int`, and `argument 1: ...` for an argument of the call), but its path always starts
+/// at the value that was decoded (the argument, for `Args::decode`) and is never cut, where C's starts at the cursor
+/// that failed and stops at 192 bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecodeError {
     argument: Option<usize>,
@@ -114,7 +120,8 @@ impl<'a> Term<'a> {
         T::decode(part).map_err(|e| e.inside::<S>(name))
     }
 
-    /// The payload `k` of the variant named `variant` of an enum `S` of row `type_`.
+    /// The payload `k` of the variant named `variant` of an enum `S` of row `type_`. Call it only once `get_variant`
+    /// gave that variant: the VM reads the payload of the variant the term has, whatever `variant` names.
     pub fn decode_payload<S: Decoder<'a>, T: Decoder<'a>>(
         self,
         type_: u32,
@@ -132,22 +139,51 @@ impl<T: Encoder + ?Sized> Encoder for &T {
     }
 }
 
-impl<T: Encoder + ?Sized> Encoder for Box<T> {
-    fn encode<'a>(&self, env: Env<'a>) -> Term<'a> {
-        (**self).encode(env)
-    }
-}
-
-/// A box is its value: it lets a recursive enum hold itself.
-impl<'a, T: Decoder<'a>> Decoder<'a> for Box<T> {
+/// The term itself, for a part that the module reads when it needs it (a payload that leads back to its own enum).
+impl<'a> Decoder<'a> for Term<'a> {
     fn type_name() -> String {
-        T::type_name()
+        "a value".to_string()
     }
 
     fn decode(term: Term<'a>) -> Result<Self, DecodeError> {
-        T::decode(term).map(Box::new)
+        Ok(term)
     }
 }
+
+impl Encoder for Term<'_> {
+    fn encode<'a>(&self, env: Env<'a>) -> Term<'a> {
+        // Only a term of this call can be encoded in it: `Env<'a>` and `Term<'a>` share the call's lifetime, which
+        // a codec cannot name for `self`, so the two are checked to be one env.
+        // A module never runs two calls on one env at once (a callback runs nothing during a call), so one env pointer
+        // is one call.
+        assert!(self.env().same_call(env), "a term of another call");
+        // SAFETY: the term belongs to this env (checked above), so it is valid for the call `'a`.
+        unsafe { self.rebind(env) }
+    }
+}
+
+/// The types a Map key can have: Int, String and Bytes, as in the language. A key of another type does not compile:
+///
+/// ```compile_fail,E0599
+/// # use agentica_native::*;
+/// fn keyed(env: Env<'_>) -> Term<'_> {
+///     vec![(1.5f64, 1i64)].encode(env)
+/// }
+/// ```
+///
+/// ```no_run
+/// # use agentica_native::*;
+/// fn keyed(env: Env<'_>) -> Term<'_> {
+///     vec![(1i64, 1i64)].encode(env)
+/// }
+/// ```
+pub trait MapKey {}
+
+impl MapKey for i64 {}
+impl MapKey for String {}
+impl MapKey for &str {}
+impl MapKey for Vec<u8> {}
+impl MapKey for &[u8] {}
 
 impl Encoder for () {
     fn encode<'a>(&self, env: Env<'a>) -> Term<'a> {
@@ -268,7 +304,7 @@ impl<T: Encoder> Encoder for Vec<T> {
 }
 
 // A tuple is never a Decoder or an Encoder, so a Vec of pairs is a Map, never a List.
-impl<'a, K: Decoder<'a>, V: Decoder<'a>> Decoder<'a> for Vec<(K, V)> {
+impl<'a, K: Decoder<'a> + MapKey, V: Decoder<'a>> Decoder<'a> for Vec<(K, V)> {
     fn type_name() -> String {
         format!("Map[{}, {}]", K::type_name(), V::type_name())
     }
@@ -288,7 +324,7 @@ impl<'a, K: Decoder<'a>, V: Decoder<'a>> Decoder<'a> for Vec<(K, V)> {
 }
 
 /// A Map in the order of the pairs; a later pair of one key replaces the earlier one.
-impl<K: Encoder, V: Encoder> Encoder for Vec<(K, V)> {
+impl<K: Encoder + MapKey, V: Encoder> Encoder for Vec<(K, V)> {
     fn encode<'a>(&self, env: Env<'a>) -> Term<'a> {
         env.map(self.iter().map(|(key, value)| (key.encode(env), value.encode(env))))
     }

@@ -1,7 +1,8 @@
 //! `Decoder` and `Encoder` on the mock VM: what each encodes decodes back equal, and a bad part fails with its path.
 
+use crate::mock::MockEnv;
 use crate::mock::V;
-use crate::tests::short;
+use crate::tests::{dirty, short};
 use crate::*;
 
 /// The struct and enum of the mock's type table (row 0 and row 1), with the codecs that native-gen writes.
@@ -14,7 +15,7 @@ struct Point {
 #[derive(Clone, Debug, PartialEq)]
 enum Shape {
     Dot,
-    Circle(Box<Point>),
+    Circle(Point),
 }
 
 impl<'a> Decoder<'a> for Point {
@@ -84,7 +85,7 @@ fn each_type_of_a_signature_decodes_back_to_what_it_encoded() {
     assert_eq!(round_trip(codes.clone()), codes);
     let nested: Vec<Option<Result<Vec<i64>, String>>> = vec![Some(Ok(vec![1, 2])), Some(Err("e".into())), None];
     assert_eq!(round_trip(nested.clone()), nested);
-    let shapes = vec![Shape::Dot, Shape::Circle(Box::new(Point { x: -3, y: 4 }))];
+    let shapes = vec![Shape::Dot, Shape::Circle(Point { x: -3, y: 4 })];
     assert_eq!(round_trip(shapes.clone()), shapes);
 }
 
@@ -146,4 +147,50 @@ fn a_bad_part_fails_with_its_path_from_the_argument() {
         env.void()
     });
     assert_eq!(missing, Ok(V::Void));
+}
+
+#[test]
+fn edge_values_and_every_kind_of_map_key_come_back() {
+    assert_eq!(round_trip(i64::MAX), i64::MAX);
+    assert!(round_trip(f64::NAN).is_nan());
+    assert_eq!(round_trip(-0.0f64).to_bits(), (-0.0f64).to_bits());
+    assert_eq!(round_trip(vec![(i64::MIN, 1i64), (0, 2)]), vec![(i64::MIN, 1), (0, 2)]);
+    let by_bytes = vec![(vec![0u8, 255], "a".to_string()), (vec![], "b".to_string())];
+    assert_eq!(round_trip(by_bytes.clone()), by_bytes);
+}
+
+#[test]
+fn a_term_decodes_and_encodes_as_itself_in_its_own_call() {
+    let result = short(vec![V::List(vec![V::Int(1), V::Str(b"x".to_vec())])], |env, args| {
+        let items: Vec<Term> = args.decode(0).unwrap();
+        assert_eq!(items[0].get_int(), Some(1));
+        // A part kept as a term goes back out unchanged.
+        vec![items[1]].encode(env)
+    });
+    assert_eq!(result, Ok(V::List(vec![V::Str(b"x".to_vec())])));
+}
+
+#[test]
+#[should_panic(expected = "a term of another call")]
+fn a_term_of_another_call_is_refused() {
+    let inner = MockEnv::new(false);
+    let _ = short(vec![], |outer, _| {
+        let one = outer.string("one");
+        let argv: [sys::an_term; 0] = [];
+        // SAFETY: the mock env lives for the call, with no arguments.
+        unsafe { call(inner.raw(), 0, argv.as_ptr(), Mode::Short, crate::mock::TYPES, |env, _| one.encode(env)) };
+        outer.void()
+    });
+}
+
+#[test]
+fn a_dirty_call_reads_its_arguments_but_not_what_it_staged() {
+    let result = dirty(vec![V::List(vec![V::Int(1), V::Int(2)])], |env, args| {
+        assert_eq!(args.decode::<Vec<i64>>(0), Ok(vec![1, 2]));
+        let staged = vec![1i64, 2].encode(env);
+        assert_eq!(staged.decode::<Vec<i64>>().unwrap_err().to_string(), "List[Int]: expected List[Int]");
+        assert_eq!("text".encode(env).decode::<String>().unwrap_err().to_string(), "String: expected String");
+        staged
+    });
+    assert_eq!(result, Ok(V::List(vec![V::Int(1), V::Int(2)])));
 }

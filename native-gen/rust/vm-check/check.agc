@@ -23,14 +23,17 @@ extern module "vm_check"
   compute def echo_staged(
     rows: List[Map[String, Optional[Result[List[Float]]]]],
   ) -> List[Map[String, Optional[Result[List[Float]]]]]
+  def borrowed(texts: List[String]) -> Bool
   def describe(n: Int, x: Float, flag: Bool, text: String, data: Bytes) -> String
 end
 
 def main() -> Void
   # While the dirty call runs on the compute pool, the spawned task makes and collects in a short call; a few rounds.
+  rows = [{"b": some(ok([1.5, 2.0])), "a": none}, {}, {"e": some(error("no"))}]
   for _round in 1..3
     short = Task.spawn do strings(200000) end
     puts(summary(staged_strings(200000)))
+    puts(echo_staged(rows) == rows)
     puts(summary(Task.await(short)))
   end
 
@@ -43,7 +46,8 @@ def main() -> Void
   puts(total([1, 2, 3]))
   puts(filled(3).to_a)
   puts([lookup(named, "p"), lookup(named, "z")])
-  rows = [{"b": some(ok([1.5, 2.0])), "a": none}, {}, {"e": some(error("no"))}]
+  texts = (0..999).to_a.map do |k| "text number #{k} of the argument" end
+  puts(borrowed(texts))
   puts([echo_rows(rows) == rows, echo_staged(rows) == rows])
   puts(echo_rows(rows))
   puts(describe(-7, 2.5, true, "héllo", Bytes.from_list([0, 255]).unwrap!))
