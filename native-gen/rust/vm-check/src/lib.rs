@@ -1,9 +1,9 @@
-//! The functions of check.agc on `call`, `Env` and `Term`, with tables written by hand.
+//! The functions of check.agc and failing.agc on `call`, `Env` and `Term`, with tables written by hand.
 
 use core::ffi::c_int;
 use core::ptr;
 
-use agentica_native::{Arity, Encoder, Mode, Term, call, sys};
+use agentica_native::{Arity, Encoder, Env, Mode, Raise, Term, call, sys};
 
 /// Point, the one row of the type table: kept by hand in step with TYPE_ROWS below, row for row.
 static TYPES: &[Arity] = &[Arity::Struct(2)];
@@ -12,41 +12,32 @@ static TYPES: &[Arity] = &[Arity::Struct(2)];
 /// each new String may start a collection.
 unsafe extern "C" fn strings(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     // SAFETY (each function): the VM passes its own env and arguments, and the mode is the one of the table.
-    unsafe {
-        call(env, argc, argv, Mode::Short, TYPES, |env, args| {
-            let n = args.get(0).and_then(Term::get_int).unwrap_or(0);
-            let kept: Vec<Term> =
-                (0..n).map(|k| env.string(&format!("a string long enough to live on the heap {k}"))).collect();
-            env.list(kept)
-        })
-    }
+    unsafe { call(env, argc, argv, Mode::Short, TYPES, |env, args| Ok(long_strings(env, args.decode(0)?))) }
 }
 
 /// The same in a dirty call: the Strings are staged in the VM's memory for the call, not in the collector's, so they
 /// come back whole while the calling scheduler allocates and collects meanwhile.
 unsafe extern "C" fn staged_strings(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
-    unsafe {
-        call(env, argc, argv, Mode::Dirty, TYPES, |env, args| {
-            let n = args.get(0).and_then(Term::get_int).unwrap_or(0);
-            let kept: Vec<Term> =
-                (0..n).map(|k| env.string(&format!("a string long enough to live on the heap {k}"))).collect();
-            env.list(kept)
-        })
-    }
+    unsafe { call(env, argc, argv, Mode::Dirty, TYPES, |env, args| Ok(long_strings(env, args.decode(0)?))) }
+}
+
+fn long_strings(env: Env<'_>, n: i64) -> Term<'_> {
+    let kept: Vec<Term> =
+        (0..n).map(|k| env.string(&format!("a string long enough to live on the heap {k}"))).collect();
+    env.list(kept)
 }
 
 /// The Map from each of `0..n` to its square, made in one map_from past the stack buffer of Env::map.
 unsafe extern "C" fn squares(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
-    unsafe { call(env, argc, argv, Mode::Short, TYPES, |env, args| square_map(env, args.get(0))) }
+    unsafe { call(env, argc, argv, Mode::Short, TYPES, |env, args| Ok(square_map(env, args.decode(0)?))) }
 }
 
 /// The same in a dirty call.
 unsafe extern "C" fn staged_squares(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
-    unsafe { call(env, argc, argv, Mode::Dirty, TYPES, |env, args| square_map(env, args.get(0))) }
+    unsafe { call(env, argc, argv, Mode::Dirty, TYPES, |env, args| Ok(square_map(env, args.decode(0)?))) }
 }
 
-fn square_map<'a>(env: agentica_native::Env<'a>, n: Option<Term<'a>>) -> Term<'a> {
-    let n = n.and_then(Term::get_int).unwrap_or(0);
+fn square_map(env: Env<'_>, n: i64) -> Term<'_> {
     env.map((0..n).map(|k| (env.int(k), env.int(k * k))))
 }
 
@@ -55,12 +46,12 @@ fn square_map<'a>(env: agentica_native::Env<'a>, n: Option<Term<'a>>) -> Term<'a
 unsafe extern "C" fn labels(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     unsafe {
         call(env, argc, argv, Mode::Short, TYPES, |env, args| {
-            let n = args.get(0).and_then(Term::get_int).unwrap_or(0);
+            let n: i64 = args.decode(0)?;
             let mut pairs = Vec::new();
             for k in 0..n {
                 pairs.push((env.string(&format!("label {k}")), env.int(k)));
             }
-            env.map(pairs)
+            Ok(env.map(pairs))
         })
     }
 }
@@ -76,7 +67,7 @@ unsafe extern "C" fn pairs(env: *mut sys::an_env, argc: c_int, argv: *const sys:
                         .collect()
                 })
                 .unwrap_or_default();
-            env.list(texts)
+            Ok(env.list(texts))
         })
     }
 }
@@ -84,13 +75,13 @@ unsafe extern "C" fn pairs(env: *mut sys::an_env, argc: c_int, argv: *const sys:
 unsafe extern "C" fn point(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     unsafe {
         call(env, argc, argv, Mode::Short, TYPES, |env, args| {
-            env.make_struct(0, &[args.get(0).unwrap(), args.get(1).unwrap()])
+            Ok(env.make_struct(0, &[args.get(0).unwrap(), args.get(1).unwrap()]))
         })
     }
 }
 
 unsafe extern "C" fn bad_point(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
-    unsafe { call(env, argc, argv, Mode::Short, TYPES, |env, _| env.make_struct(0, &[env.int(1)])) }
+    unsafe { call(env, argc, argv, Mode::Short, TYPES, |env, _| Ok(env.make_struct(0, &[env.int(1)]))) }
 }
 
 unsafe extern "C" fn sum_x(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
@@ -100,7 +91,7 @@ unsafe extern "C" fn sum_x(env: *mut sys::an_env, argc: c_int, argv: *const sys:
                 .get(0)
                 .unwrap()
                 .list_items(|items| items.map(|p| p.get_field(0, 0).and_then(Term::get_int).unwrap()).sum::<i64>());
-            env.int(total.unwrap())
+            Ok(env.int(total.unwrap()))
         })
     }
 }
@@ -111,7 +102,7 @@ unsafe extern "C" fn total(env: *mut sys::an_env, argc: c_int, argv: *const sys:
             let sum = args.get(0).unwrap().list_items(|items| items.map(|t| t.get_int().unwrap()).sum::<i64>());
             // A dirty call reads the arguments, not what it staged.
             assert!(env.string("staged").get_str().is_none());
-            env.int(sum.unwrap())
+            Ok(env.int(sum.unwrap()))
         })
     }
 }
@@ -119,8 +110,8 @@ unsafe extern "C" fn total(env: *mut sys::an_env, argc: c_int, argv: *const sys:
 unsafe extern "C" fn filled(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     unsafe {
         call(env, argc, argv, Mode::Short, TYPES, |env, args| {
-            let n = args.get(0).and_then(Term::get_int).unwrap() as usize;
-            env.bytes_with(n, |data| data.iter_mut().enumerate().for_each(|(k, b)| *b = k as u8))
+            let n: i64 = args.decode(0)?;
+            Ok(env.bytes_with(n as usize, |data| data.iter_mut().enumerate().for_each(|(k, b)| *b = k as u8)))
         })
     }
 }
@@ -128,10 +119,10 @@ unsafe extern "C" fn filled(env: *mut sys::an_env, argc: c_int, argv: *const sys
 unsafe extern "C" fn lookup(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     unsafe {
         call(env, argc, argv, Mode::Short, TYPES, |env, args| {
-            match args.get(0).unwrap().map_get(args.get(1).unwrap()) {
+            Ok(match args.get(0).unwrap().map_get(args.get(1).unwrap()) {
                 Some(value) => env.some(value),
                 None => env.none(),
-            }
+            })
         })
     }
 }
@@ -141,37 +132,21 @@ type Rows = Vec<Vec<(String, Option<Result<Vec<f64>, String>>)>>;
 
 /// The rows decoded into Rust values and encoded again, in a short call.
 unsafe extern "C" fn echo_rows(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
-    unsafe {
-        call(env, argc, argv, Mode::Short, TYPES, |env, args| match args.decode::<Rows>(0) {
-            Ok(rows) => rows.encode(env),
-            Err(error) => env.raise(&error.to_string()),
-        })
-    }
+    unsafe { call(env, argc, argv, Mode::Short, TYPES, |env, args| Ok(args.decode::<Rows>(0)?.encode(env))) }
 }
 
 /// The same in a dirty call.
 unsafe extern "C" fn echo_staged(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
-    unsafe {
-        call(env, argc, argv, Mode::Dirty, TYPES, |env, args| match args.decode::<Rows>(0) {
-            Ok(rows) => rows.encode(env),
-            Err(error) => env.raise(&error.to_string()),
-        })
-    }
+    unsafe { call(env, argc, argv, Mode::Dirty, TYPES, |env, args| Ok(args.decode::<Rows>(0)?.encode(env))) }
 }
 
 /// The scalars, String and Bytes as one String, read with Args::decode (String and Bytes borrowed).
 unsafe extern "C" fn describe(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     unsafe {
         call(env, argc, argv, Mode::Short, TYPES, |env, args| {
-            let read = || -> Result<String, agentica_native::DecodeError> {
-                let (n, x, flag) = (args.decode::<i64>(0)?, args.decode::<f64>(1)?, args.decode::<bool>(2)?);
-                let (text, data) = (args.decode::<&str>(3)?, args.decode::<&[u8]>(4)?);
-                Ok(format!("{n} {x} {flag} {text} {data:?}"))
-            };
-            match read() {
-                Ok(text) => text.encode(env),
-                Err(error) => env.raise(&error.to_string()),
-            }
+            let (n, x, flag) = (args.decode::<i64>(0)?, args.decode::<f64>(1)?, args.decode::<bool>(2)?);
+            let (text, data) = (args.decode::<&str>(3)?, args.decode::<&[u8]>(4)?);
+            Ok(format!("{n} {x} {flag} {text} {data:?}").encode(env))
         })
     }
 }
@@ -181,15 +156,26 @@ unsafe extern "C" fn describe(env: *mut sys::an_env, argc: c_int, argv: *const s
 unsafe extern "C" fn borrowed(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     unsafe {
         call(env, argc, argv, Mode::Short, TYPES, |env, args| {
-            let texts = match args.decode::<Vec<&str>>(0) {
-                Ok(texts) => texts,
-                Err(error) => return env.raise(&error.to_string()),
-            };
+            let texts: Vec<&str> = args.decode(0)?;
             for k in 0..100000 {
                 env.string(&format!("a string long enough to live on the heap {k}"));
             }
             let whole = texts.iter().enumerate().all(|(k, text)| *text == format!("text number {k} of the argument"));
-            whole.encode(env)
+            Ok(whole.encode(env))
+        })
+    }
+}
+
+/// `n` back; a Raise for a negative `n`, a panic for 0.
+unsafe extern "C" fn checked(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe {
+        call(env, argc, argv, Mode::Dirty, TYPES, |env, args| {
+            let n: i64 = args.decode(0)?;
+            if n < 0 {
+                return Err(Raise::new(format!("{n} is negative")));
+            }
+            assert!(n != 0, "zero is not checked");
+            Ok(env.int(n))
         })
     }
 }
@@ -200,7 +186,7 @@ macro_rules! function {
     };
 }
 
-static FUNCTIONS: [sys::an_function; 16] = [
+static FUNCTIONS: [sys::an_function; 17] = [
     function!(c"strings", c"(Int) -> List[String]", strings, sys::AN_SHORT),
     function!(
         c"echo_rows",
@@ -227,6 +213,7 @@ static FUNCTIONS: [sys::an_function; 16] = [
     function!(c"total", c"(List[Int]) -> Int", total, sys::AN_DIRTY),
     function!(c"filled", c"(Int) -> Bytes", filled, sys::AN_SHORT),
     function!(c"lookup", c"(Map[String, Int], String) -> Optional[Int]", lookup, sys::AN_SHORT),
+    function!(c"checked", c"(Int) -> Int", checked, sys::AN_DIRTY),
 ];
 
 // Kept by hand in step with TYPES above.

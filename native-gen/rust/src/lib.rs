@@ -3,7 +3,11 @@
 //! The `.agc` is the one source of a module: native-gen writes the Rust side of its `extern module` block, and this
 //! crate is what that code stands on. `Env` is one call of the VM and `Term` a value of it, both bound to the call by
 //! a lifetime, so nothing the VM lends outlives the call. `Decoder` and `Encoder` turn terms into Rust values of the
-//! types of a signature and back.
+//! types of a signature and back. `call` is the boundary of each call: a failure is `Err(Raise)`, and a panic is
+//! caught.
+
+#[cfg(panic = "abort")]
+compile_error!("agentica-native catches a panic at the boundary of each call: build with panic = \"unwind\"");
 
 mod codec;
 pub mod sys;
@@ -17,4 +21,4 @@ mod mock;
 mod tests;
 
 pub use codec::{DecodeError, Decoder, Encoder, MapKey};
-pub use term::{Args, Arity, Env, ListItems, MapPairs, Mode, Term, call};
+pub use term::{Args, Arity, Env, ListItems, MapPairs, Mode, Raise, Term, call};

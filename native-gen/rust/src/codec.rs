@@ -23,7 +23,7 @@
 
 use core::fmt;
 
-use crate::term::{Args, Env, Term};
+use crate::term::{Args, Env, Raise, Term};
 
 /// A value that could not be read: the path to its bad part, from the outermost value in, and the type it should
 /// have had. The text has the format of the C header of native-gen (`List[Int].2: expected Int`,
@@ -79,6 +79,12 @@ impl fmt::Display for DecodeError {
 }
 
 impl std::error::Error for DecodeError {}
+
+impl From<DecodeError> for Raise {
+    fn from(error: DecodeError) -> Self {
+        Raise::new(error.to_string())
+    }
+}
 
 /// A Rust value read from a term of the call `'a`.
 pub trait Decoder<'a>: Sized {

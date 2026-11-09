@@ -171,20 +171,20 @@ fn a_term_decodes_and_encodes_as_itself_in_its_own_call() {
 }
 
 #[test]
-#[should_panic(expected = "a term of another call")]
 fn a_term_of_another_call_is_refused() {
     let inner = MockEnv::new(false);
     let _ = short(vec![], |outer, _| {
         let one = outer.string("one");
         let argv: [sys::an_term; 0] = [];
         // SAFETY: the mock env lives for the call, with no arguments.
-        unsafe { call(inner.raw(), 0, argv.as_ptr(), Mode::Short, crate::mock::TYPES, |env, _| one.encode(env)) };
+        unsafe { call(inner.raw(), 0, argv.as_ptr(), Mode::Short, crate::mock::TYPES, |env, _| Ok(one.encode(env))) };
         outer.void()
     });
+    // The assert of Term::encode panics, which the inner call catches and makes its failure.
+    assert_eq!(inner.failure.borrow().as_deref(), Some("panic: a term of another call"));
 }
 
 #[test]
-#[should_panic(expected = "a term of another call")]
 fn a_term_of_a_nested_call_on_the_same_env_is_refused() {
     let mock = MockEnv::new(false);
     let argv: [sys::an_term; 0] = [];
@@ -195,11 +195,12 @@ fn a_term_of_a_nested_call_on_the_same_env_is_refused() {
                 // The inner frame's root list goes away when it returns, so the outer call must not take its term.
                 let one = inner.string("one");
                 let _ = one.encode(outer);
-                inner.void()
+                Ok(inner.void())
             });
-            outer.void()
+            Ok(outer.void())
         })
     };
+    assert_eq!(mock.failure.borrow().as_deref(), Some("panic: a term of another call"));
 }
 
 #[test]

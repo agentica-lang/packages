@@ -10,6 +10,16 @@ fn run(
     args: Vec<V>,
     body: impl for<'a> FnOnce(Env<'a>, Args<'a>) -> Term<'a>,
 ) -> Result<V, String> {
+    run_or_raise(mock, mode, args, |env, args| Ok(body(env, args)))
+}
+
+/// The same for a body that may fail with `Err(Raise)`.
+pub(crate) fn run_or_raise(
+    mock: &MockEnv,
+    mode: Mode,
+    args: Vec<V>,
+    body: impl for<'a> FnOnce(Env<'a>, Args<'a>) -> Result<Term<'a>, Raise>,
+) -> Result<V, String> {
     let argv: Vec<sys::an_term> = args.into_iter().map(|v| mock.put(v)).collect();
     // SAFETY: the mock env lives for the call, with ARGC arguments at ARGV.
     let result = unsafe { call(mock.raw(), argv.len() as i32, argv.as_ptr(), mode, mock::TYPES, body) };
@@ -177,11 +187,42 @@ fn a_resource_gives_its_state_only_as_an_argument() {
 #[test]
 fn the_first_failure_of_a_call_wins() {
     assert_eq!(short(vec![], |env, _| env.raise("bad\0hidden")), Err("bad".to_string()));
-    let failed = short(vec![], |env, _| {
-        env.badarg(1);
-        env.raise("second")
+    let failed = run_or_raise(&MockEnv::new(false), Mode::Short, vec![], |env, _| {
+        env.make_struct(0, &[]);
+        Err(Raise::new("second"))
     });
-    assert_eq!(failed, Err("argument 2 is not valid".to_string()));
+    assert_eq!(failed, Err("make_struct: row 0 does not take 0 fields".to_string()));
+}
+
+#[test]
+fn a_raise_a_decode_error_and_a_panic_fail_the_call() {
+    let mock = || MockEnv::new(false);
+    let raised = run_or_raise(&mock(), Mode::Short, vec![], |_, _| Err("no such row".into()));
+    assert_eq!(raised, Err("no such row".to_string()));
+    let misread = run_or_raise(&mock(), Mode::Dirty, vec![V::Str(b"x".to_vec())], |env, args| {
+        Ok(args.decode::<i64>(0)?.encode(env))
+    });
+    assert_eq!(misread, Err("argument 1: Int: expected Int".to_string()));
+    let panicked = run_or_raise(&mock(), Mode::Short, vec![], |_, _| panic!("at {}", 3));
+    assert_eq!(panicked, Err("panic: at 3".to_string()));
+    let unnamed = run_or_raise(&mock(), Mode::Short, vec![], |_, _| std::panic::panic_any(7));
+    assert_eq!(unnamed, Err("panic".to_string()));
+}
+
+/// A panic payload whose own drop panics.
+struct Bomb;
+
+impl Drop for Bomb {
+    fn drop(&mut self) {
+        panic!("again");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "the payload of the second panic is leaked on purpose")]
+fn a_panic_whose_payload_panics_on_drop_is_still_caught() {
+    let failed = run_or_raise(&MockEnv::new(false), Mode::Short, vec![], |_, _| std::panic::panic_any(Bomb));
+    assert_eq!(failed, Err("panic".to_string()));
 }
 
 #[test]
