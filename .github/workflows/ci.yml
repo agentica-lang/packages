@@ -181,8 +181,9 @@ jobs:
         if: env.RUST == '1'
         run: RUSTUP_TOOLCHAIN=stable ../../rust/gen-check/run.sh
 
-      # `cli.agc build` of the fixture rust_math: the library and the [native.math] entry it writes, a second build with
-      # nothing to do, an entry kept with its own file, and the program's output on the real VM.
+      # `cli.agc build` of examples/rust_math: the docs' copies of its files and outputs, the library and the
+      # [native.math] entry it writes, a second build with nothing to do, an entry kept with its own file, and the
+      # program's output on the real VM.
       - name: Run build-check on the VM
         if: env.RUST == '1'
         run: RUSTUP_TOOLCHAIN=stable ../../rust/build-check.sh

@@ -1,0 +1,3 @@
+# A native module in Rust (the native-gen docs show it). `agentica deps/native-gen/cli.agc build math.agc` builds it
+# and adds the [native.math] entry of the system below; rust/build-check.sh does that on a copy in CI.
+name = "native-gen-rust-math"

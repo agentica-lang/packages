@@ -34,7 +34,8 @@ native-gen/          the C header of an `extern module` block: cli.agc is the co
                      native/ folder so that `agentica install` copies it into deps/ and the lock hashes it;
                      rust/vm-check/ a module on it that run.sh builds and runs on the real VM (needs cargo),
                      rust/gen-check/ the fixtures stats, shapes, kinds and shapes2 on the Rust files native-gen makes,
-                     run the same way;
+                     run the same way; examples/rust_math/ the Rust module that the docs show, which
+                     rust/build-check.sh builds with `cli.agc build` and runs, and compares with the docs' copies;
                      specs/fixtures/ are packages written on their headers (the one of stats is committed as the
                      golden, a step makes the others: kinds, shapes, lists, options, resources), the files that fail
                      (errors/) and cxx.sh, a CC that builds a module as C++; bench/wide the codecs of a struct of 26
