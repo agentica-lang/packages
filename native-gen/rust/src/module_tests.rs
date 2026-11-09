@@ -192,6 +192,7 @@ fn a_shape_that_is_not_canonical_is_refused() {
         (true, "x: Map[String, Int"),
         (true, "x: Int, "),
         (true, "x: Int]"),
+        (true, "?: Int"),
         (false, ""),
         (false, "Empty|Full"),
         (false, "Circle()"),

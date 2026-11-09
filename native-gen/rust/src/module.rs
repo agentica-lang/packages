@@ -298,10 +298,13 @@ fn arity(kind: c_int, shape: &str) -> Option<Arity> {
 /// The text after the name at the start of `text`: an identifier, which for a field may end in `?` or `!`.
 fn name(text: &str, field: bool) -> Option<&str> {
     let mut end = text.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(text.len());
+    if end == 0 {
+        return None;
+    }
     if field && text[end..].starts_with(['?', '!']) {
         end += 1;
     }
-    (end > 0).then(|| &text[end..])
+    Some(&text[end..])
 }
 
 /// The text after the type at the start of `text`: up to the `,`, `)` or space that ends it outside brackets, with
