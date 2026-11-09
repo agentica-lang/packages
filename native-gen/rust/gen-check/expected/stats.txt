@@ -1,0 +1,5 @@
+some(Summary(count: 3, min: 2.0, max: 9.0, mean: 5.0))
+none
+{"name": Cell.Text("kiwi"), "qty": Cell.Number(3.0), "note": Cell.Empty}
+{"name": Cell.Text("apple"), "qty": Cell.Number(1.5), "note": Cell.Text("ripe")}
+error("a row has another number of cells")

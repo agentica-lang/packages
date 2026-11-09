@@ -17,6 +17,51 @@ Feature: The C header of an extern module block
       | name  |
       | stats |
 
+  Scenario: --lang rust writes the Rust file, whose trait is named after --prefix
+    Given the program argument "fixtures/stats/stats.agc"
+    And the program argument "--lang"
+    And the program argument "rust"
+    And the program argument "--prefix"
+    And the program argument "csv_stats"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout includes:
+      """
+      pub trait CsvStatsNative {
+          /// The count, smallest, largest and mean of the values; none for no values.
+          fn summary(env: Env<'_>, values: Vec<f64>) -> Result<Option<Summary>, Raise>;
+      """
+    And stdout includes:
+      """
+          Module::new("stats")
+              .function("summary", "(List[Float]) -> Optional[Summary]", native_summary::<I>, Mode::Short)
+      """
+
+  Scenario Outline: A file the Rust file cannot be made for fails with <code>
+    Given the program argument "fixtures/errors/<file>"
+    And the program argument "--lang"
+    And the program argument "rust"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [<code>]
+      """
+
+    Examples:
+      | file             | code             |
+      | clash.agc        | NATIVE-GEN-NAME  |
+      | rust_keyword.agc | NATIVE-GEN-NAME  |
+      | rust_prelude.agc | NATIVE-GEN-NAME  |
+      | two_blocks.agc   | NATIVE-GEN-BLOCK |
+
+  Scenario: --lang other than c or rust is bad usage
+    Given the program argument "fixtures/stats/stats.agc"
+    And the program argument "--lang"
+    And the program argument "go"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 2 within 25000 milliseconds
+
   Scenario Outline: The stats module on the header, built as <language>, gives the output of the hand-written one
     Given a fresh package cache
     And the environment variable "CC" is "<cc>"

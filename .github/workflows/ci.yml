@@ -90,10 +90,11 @@ jobs:
         if: env.PACKAGES != ''
         run: make doc-examples PACKAGES="$PACKAGES"
 
-  # The Rust crate of native-gen (native-gen/rust), when a pull request changes it or this file, and on main: its
-  # format and lints on stable, its tests on the MSRV of its Cargo.toml and on stable, its doctests on nightly (which
-  # checks the error codes of the compile_fail ones), the tests under Miri, and vm-check, a module on the crate run by
-  # the pinned Agentica release. The crate has no dependencies, so it needs no registry.
+  # The Rust crate of native-gen (native-gen/rust), when a pull request changes native-gen or this file, and on main:
+  # its format and lints on stable, its tests on the MSRV of its Cargo.toml and on stable, its doctests on nightly
+  # (which checks the error codes of the compile_fail ones), the tests under Miri, vm-check, a module on the crate run
+  # by the pinned Agentica release, and gen-check, the modules on the Rust files native-gen makes. The crate has no
+  # dependencies, so it needs no registry.
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -115,7 +116,7 @@ jobs:
             echo "RUST=1" >> "$GITHUB_ENV"
           else
             git diff --name-only --no-renames "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/changed-files"
-            if grep -qE '^(native-gen/rust/|\.github/workflows/ci\.yml$)' "$RUNNER_TEMP/changed-files"; then
+            if grep -qE '^(native-gen/|\.github/workflows/ci\.yml$)' "$RUNNER_TEMP/changed-files"; then
               echo "RUST=1" >> "$GITHUB_ENV"
             else
               echo "The crate did not change: nothing to run."
@@ -136,6 +137,7 @@ jobs:
         run: |
           cargo +stable fmt --check
           cargo +stable fmt --check --manifest-path vm-check/Cargo.toml
+          cargo +stable fmt --check --manifest-path gen-check/Cargo.toml
 
       - name: Lints
         if: env.RUST == '1'
@@ -173,3 +175,8 @@ jobs:
       - name: Run vm-check on the VM
         if: env.RUST == '1'
         run: RUSTUP_TOOLCHAIN=stable vm-check/run.sh
+
+      # The Rust files that native-gen makes for the fixtures stats, shapes and kinds, linted, built and run.
+      - name: Run gen-check on the VM
+        if: env.RUST == '1'
+        run: RUSTUP_TOOLCHAIN=stable gen-check/run.sh

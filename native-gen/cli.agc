@@ -1,10 +1,11 @@
-## The command line of native-gen: writes the C header of the `extern module` block of FILE, or with `--check` fails
-## when the header at `--output` is not the one FILE gives. `new PATH` writes a new module instead: `PATH.agc`, its C
+## The command line of native-gen: writes the C header of the `extern module` block of FILE (or with `--lang rust` its
+## Rust file), or with `--check` fails when the file at `--output` is not the one FILE gives. `new PATH` writes a new module instead: `PATH.agc`, its C
 ## file and header in `native/`, and its entry in `agentica.toml`.
 ##
 ## ```sh
 ## agentica deps/native-gen/cli.agc stats.agc --output native/stats_native.h
 ## agentica deps/native-gen/cli.agc stats.agc --output native/stats_native.h --check
+## agentica deps/native-gen/cli.agc stats.agc --lang rust --output src/stats_native.rs
 ## agentica deps/native-gen/cli.agc new demo
 ## ```
 ##
@@ -22,6 +23,7 @@ struct Options
   prefix: String
   output: String
   check: Bool
+  lang: String
 end
 
 def main() -> Void
@@ -48,6 +50,7 @@ def parsed(args: List[String]) -> Result[Options]
       Opt(name: "prefix", help: "the start of the C names (default: the library name up to its first .)"),
       Opt(name: "output", short: "o", help: "the header file to write (default: stdout)"),
       Opt(name: "check", kind: Kind.Flag, help: "write nothing; fail when the --output file is not the header"),
+      Opt(name: "lang", help: "c (the default) for the C header, rust for the Rust file of the agentica-native crate"),
     ],
   )
 
@@ -57,7 +60,12 @@ def parsed(args: List[String]) -> Result[Options]
     prefix: OP.optional_string(p, "prefix").unwrap_or(""),
     output: OP.optional_string(p, "output").unwrap_or(""),
     check: OP.flag(p, "check"),
+    lang: OP.optional_string(p, "lang").unwrap_or("c"),
   )
+
+  if options.lang != "c" and options.lang != "rust"
+    return error("#{PROGRAM}: --lang is c or rust, not #{options.lang.inspect}\nTry '#{PROGRAM} --help'")
+  end
 
   if options.check and options.output.empty?
     return error("#{PROGRAM}: --check needs --output\nTry '#{PROGRAM} --help'")
@@ -80,7 +88,13 @@ def new_path(args: List[String]) -> Result[String]
 end
 
 def run(options: Options) -> Result[Void]
-  text = try NativeGen.header(options.file, options.prefix)
+  text = ""
+  if options.lang == "rust"
+    text = try NativeGen.rust(options.file, options.prefix)
+  else
+    text = try NativeGen.header(options.file, options.prefix)
+  end
+
   if options.output.empty?
     print(text)
     return ok()
