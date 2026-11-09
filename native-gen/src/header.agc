@@ -10,8 +10,9 @@ import Names from "names"
 # The table flags of the function modes and the kinds of the type rows that std/analysis gives.
 MODES = {"short": "AN_SHORT", "dirty": "AN_DIRTY"}
 KINDS = {"struct": "AN_STRUCT", "enum": "AN_ENUM"}
-# Prefixes that would put the header's names in the namespace of the C API (`an_`, `AN_`, `agentica_native_init`).
-RESERVED_PREFIXES = Set.new(["an", "agentica"])
+# Prefixes that would put the header's names in the namespace of the C API (`an_`, `AN_`, `agentica_native_init`) or
+# of the helpers of native-gen (`ng_`).
+RESERVED_PREFIXES = Set.new(["an", "ng", "agentica"])
 
 ## The C names of one header: the prefix of its functions and the same in capitals for its macros and constants.
 export struct Prefix
@@ -26,11 +27,13 @@ export def prefix(text: String) -> Result[Prefix]
   end
 
   lower = text.downcase
-  if RESERVED_PREFIXES.include?(lower) or lower.start_with?("an_")
-    return error("the prefix #{text.inspect} is in the namespace of the C API")
+  if RESERVED_PREFIXES.include?(lower) or lower.start_with?("an_") or lower.start_with?("ng_")
+    return error("the prefix #{text.inspect} is in the namespace of the C API or of native-gen")
   end
 
-  return ok(Prefix(lower: text, upper: text.upcase))
+  # Functions take the prefix in lower case and constants in capitals, so `GL` cannot make a function and a constant
+  # of one name.
+  return ok(Prefix(lower: lower, upper: text.upcase))
 end
 
 ## The header of `block`, declared in the file `source` (its name only, so the text does not depend on where it ran).
@@ -223,7 +226,7 @@ def numbered(items: List[String]) -> String
 end
 
 # One prototype per function, each with the `##` doc of its declaration.
-def prototypes(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Codecs) -> List[String]
+def prototypes(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Plan) -> List[String]
   lines: List[String] = []
   for function in block.functions
     typed = function.parameters.map do |param: Analysis.NativeParameter|
@@ -239,7 +242,7 @@ def prototypes(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Codecs
 end
 
 # The wrappers, the tables and the module macro, for the one .c file that defines the module.
-def implementation(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Codecs) -> List[String]
+def implementation(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Plan) -> List[String]
   big = names.upper
   lines = [
     "",
@@ -267,7 +270,7 @@ end
 
 # The function of the table: it decodes each argument that has a C type, fails the call at the first one that does
 # not decode, and calls the author's typed function.
-def wrapper(function: Analysis.NativeFunction, names: Prefix, codecs: Codecs.Codecs) -> List[String]
+def wrapper(function: Analysis.NativeFunction, names: Prefix, codecs: Codecs.Plan) -> List[String]
   c = Names.identifier(function.name)
   lines = ["static an_term #{names.lower}_native_#{c}(an_env *env, int argc, const an_term *argv) {", "  (void)argc;"]
   if function.parameters.empty?

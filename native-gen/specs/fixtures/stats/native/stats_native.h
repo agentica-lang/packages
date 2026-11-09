@@ -41,7 +41,8 @@ enum { STATS_Cell_Empty = 0, STATS_Cell_Number = 1, STATS_Cell_Text = 2 };
 
 /* The structs as C values. A String or Bytes in them is borrowed, a term lasts for the call: keep them in C
    locals. _get reads a term into OUT; false when it is not one, and then the call has failed with the path of the
-   first bad part. _make makes a term. */
+   first bad part. A function whose signature does not reach the struct reads none ("Point: expected Point").
+   _make makes a term. */
 
 typedef struct {
   int64_t count;

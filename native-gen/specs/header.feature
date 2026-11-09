@@ -77,16 +77,24 @@ Feature: The C header of an extern module block
       | C11      | cc -std=c11 -Wall -Wextra -Werror |
       | C++      | sh ../cxx.sh                     |
 
-  Scenario: A term of another type fails the call that reads it
+  Scenario Outline: A read of a bad value fails the call with the path of the bad part, built as <language>
     Given a fresh package cache
+    And the environment variable "CC" is "<cc>"
     And the header of the package of "fixtures/shapes/shapes.agc"
-    And the program argument "misread"
+    And the program argument "<call>"
     And the Agentica program "fixtures/shapes/shapes.agc"
     Then the program exits with code 1 within 25000 milliseconds
     And stderr includes:
       """
       [RUNTIME-NATIVE-ERROR]
+      <call>: <path>
       """
+
+    Examples:
+      | language | cc                                | call           | path                           |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread        | Point: expected Point          |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested | Label.at.x: expected Int       |
+      | C++      | sh ../cxx.sh                      | misread_nested | Label.at.x: expected Int       |
 
   Scenario: The bench of a struct of 26 fields runs
     Given a fresh package cache
@@ -99,15 +107,19 @@ Feature: The C header of an extern module block
       decode and make:
       """
 
-  Scenario: The header goes to stdout without --output, with names from --prefix
+  Scenario: The header goes to stdout without --output, with names from --prefix, in lower case for functions
     Given the program argument "fixtures/errors/path.agc"
     And the program argument "--prefix"
-    And the program argument "lib_stats"
+    And the program argument "Lib_Stats"
     And the Agentica program "../cli.agc"
     Then the program exits with code 0 within 25000 milliseconds
     And stdout includes:
       """
       an_term lib_stats_count(an_env *env, an_term values);
+      """
+    And stdout includes:
+      """
+      #define LIB_STATS_NATIVE_MODULE(LOAD)
       """
 
   Scenario Outline: A file the header cannot be made for fails with <code>
@@ -144,6 +156,7 @@ Feature: The C header of an extern module block
     Examples:
       | prefix   |
       | an       |
+      | ng       |
       | AN_stats |
       | agentica |
 
