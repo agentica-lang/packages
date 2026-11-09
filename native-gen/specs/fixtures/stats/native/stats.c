@@ -32,16 +32,15 @@ an_term stats_summary(an_env *env, an_term values) {
    setlocale keeps at "." */
 static an_term cell(an_env *env, const char *text, size_t len) {
   char number[64], *end;
-  if (len == 0) return an_enum(env, STATS_TYPE_Cell, STATS_Cell_Empty, NULL);
+  if (len == 0) return stats_Cell_Empty(env);
   if (len < sizeof number) {
     memcpy(number, text, len);
     number[len] = '\0';
     double x = strtod(number, &end);
-    an_term value = an_float(env, x);
-    if (end == number + len) return an_enum(env, STATS_TYPE_Cell, STATS_Cell_Number, &value);
+    if (end == number + len) return stats_Cell_Number(env, x);
   }
-  an_term value = an_string(env, text, len);
-  return an_enum(env, STATS_TYPE_Cell, STATS_Cell_Text, &value);
+  ng_str value = {text, len};
+  return stats_Cell_Text(env, value);
 }
 
 /* The lines after the header, each a Map from the header's names to its cells; a line with another number of cells

@@ -36,12 +36,12 @@ enum { STATS_TYPE_Summary = 0, STATS_TYPE_Cell = 1 };
 /* The fields of Summary, in declared order. */
 enum { STATS_Summary_count = 0, STATS_Summary_min = 1, STATS_Summary_max = 2, STATS_Summary_mean = 3 };
 
-/* The variants of Cell, in declared order. */
-enum { STATS_Cell_Empty = 0, STATS_Cell_Number = 1, STATS_Cell_Text = 2 };
+/* The variants of Cell, in declared order: the tag of its C value. */
+typedef enum { STATS_Cell_Empty = 0, STATS_Cell_Number = 1, STATS_Cell_Text = 2 } stats_Cell_tag;
 
-/* The structs as C values. A String or Bytes in them is borrowed, a term lasts for the call: keep them in C
-   locals. _get reads a term into OUT; false when it is not one, and then the call has failed with the path of the
-   first bad part. _make makes a term. */
+/* The structs and enums as C values. A String or Bytes in them is borrowed, a term lasts for the call: keep them
+   in C locals. _get reads a term into OUT; false when it is not one, and then the call has failed with the path of
+   the first bad part. _make and the constructors (one per variant) make a term. */
 
 typedef struct {
   int64_t count;
@@ -50,6 +50,22 @@ typedef struct {
   double mean;
 } stats_Summary;
 an_term stats_Summary_make(an_env *env, const stats_Summary *value);
+
+typedef struct {
+  stats_Cell_tag tag;
+  union {
+    struct {
+      double _0;
+    } Number;
+    struct {
+      ng_str _0;
+    } Text;
+  } as;
+} stats_Cell;
+an_term stats_Cell_make(an_env *env, const stats_Cell *value);
+an_term stats_Cell_Empty(an_env *env);
+an_term stats_Cell_Number(an_env *env, double _0);
+an_term stats_Cell_Text(an_env *env, ng_str _0);
 
 /* The count, smallest, largest and mean of the values; none for no values. */
 an_term stats_summary(an_env *env, an_term values);
@@ -83,6 +99,34 @@ an_term stats_Summary_make(an_env *env, const stats_Summary *value) {
   fields[2] = an_float(env, value->max);
   fields[3] = an_float(env, value->mean);
   return an_struct(env, STATS_TYPE_Summary, fields);
+}
+
+an_term stats_Cell_make(an_env *env, const stats_Cell *value) {
+  switch (value->tag) {
+    case STATS_Cell_Empty:
+      return stats_Cell_Empty(env);
+    case STATS_Cell_Number:
+      return stats_Cell_Number(env, value->as.Number._0);
+    case STATS_Cell_Text:
+      return stats_Cell_Text(env, value->as.Text._0);
+  }
+  return an_raise(env, "Cell: the tag is not one of its variants");
+}
+
+an_term stats_Cell_Empty(an_env *env) {
+  return an_enum(env, STATS_TYPE_Cell, STATS_Cell_Empty, NULL);
+}
+
+an_term stats_Cell_Number(an_env *env, double _0) {
+  an_term payload[1];
+  payload[0] = an_float(env, _0);
+  return an_enum(env, STATS_TYPE_Cell, STATS_Cell_Number, payload);
+}
+
+an_term stats_Cell_Text(an_env *env, ng_str _0) {
+  an_term payload[1];
+  payload[0] = an_string(env, _0.data, _0.len);
+  return an_enum(env, STATS_TYPE_Cell, STATS_Cell_Text, payload);
 }
 
 static an_term stats_native_summary(an_env *env, int argc, const an_term *argv) {

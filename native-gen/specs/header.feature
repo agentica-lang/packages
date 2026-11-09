@@ -59,7 +59,7 @@ Feature: The C header of an extern module block
       | C11      | cc -std=c11 -Wall -Wextra -Werror |
       | C++      | sh ../cxx.sh                     |
 
-  Scenario Outline: Structs come back equal through their C values, built as <language>
+  Scenario Outline: Structs and enums come back equal through their C values, built as <language>
     Given a fresh package cache
     And the environment variable "CC" is "<cc>"
     And the header of the package of "fixtures/shapes/shapes.agc"
@@ -69,6 +69,9 @@ Feature: The C header of an extern module block
       """
       true
       true
+      [true, true, true]
+      true
+      Shape.Circle(Point(x: 1, y: 2), 0.5)
 
       """
 

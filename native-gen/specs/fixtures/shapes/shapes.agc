@@ -1,6 +1,6 @@
 ## The codecs of native-gen: each echo function reads its argument into a C value and makes it again, so the run
-## prints `true` when a value comes back equal. `Label` embeds a `Point`, keeps a list as a term and has a field that
-## is a C keyword. `misread` reads a term of the wrong type.
+## prints `true` when a value comes back equal. `Label` embeds a `Point` and keeps a list as a term; `Shape` has
+## payloads; `Tree` is recursive, so its payloads stay terms. `misread` reads a term of the wrong type.
 
 struct Point
   x: Int
@@ -17,9 +17,24 @@ struct Label
   class: Int
 end
 
+enum Shape
+  Dot
+  Circle(Point, Float)
+  Tagged(Label)
+end
+
+enum Tree
+  Leaf(Int)
+  Node(Tree, Tree)
+end
+
 extern module "shapes"
   def echo_point(value: Point) -> Point
   def echo_label(value: Label) -> Label
+  def echo_shape(value: Shape) -> Shape
+  def echo_tree(value: Tree) -> Tree
+  ## A circle made with the one-line constructor of its variant.
+  def circle(x: Int, y: Int, radius: Float) -> Shape
   ## Reads `values` as a Point, which it is not: the call fails.
   def misread(value: Point, values: List[Int]) -> Point
 end
@@ -43,4 +58,8 @@ def main() -> Void
 
   puts(echo_point(point) == point)
   puts(echo_label(label) == label)
+  puts([Shape.Dot, Shape.Circle(point, 1.5), Shape.Tagged(label)].map do |shape| echo_shape(shape) == shape end)
+  tree = Tree.Node(Tree.Leaf(1), Tree.Node(Tree.Leaf(2), Tree.Leaf(3)))
+  puts(echo_tree(tree) == tree)
+  puts(circle(1, 2, 0.5))
 end

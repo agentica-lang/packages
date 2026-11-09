@@ -177,13 +177,13 @@ def constants(block: Analysis.NativeBlock, names: Prefix) -> List[String]
   end
 
   for type in block.types
-    what = "fields"
-    if type.kind == "enum"
-      what = "variants"
-    end
-
     members = numbered(type.members.map do |member: Analysis.NativeMember| "#{big}_#{type.name}_#{member.name}" end)
-    lines = lines.concat(["", "/* The #{what} of #{type.name}, in declared order. */", members])
+    if type.kind == "enum"
+      tag = "typedef #{members.slice(0, members.length - 1)} #{names.lower}_#{type.name}_tag;"
+      lines = lines.concat(["", "/* The variants of #{type.name}, in declared order: the tag of its C value. */", tag])
+    else
+      lines = lines.concat(["", "/* The fields of #{type.name}, in declared order. */", members])
+    end
   end
 
   if !block.resources.empty?
