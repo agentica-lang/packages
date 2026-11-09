@@ -293,6 +293,19 @@ pre code {
   font-size: inherit;
 }
 
+/* A signature block (render-codeblock.html) wraps at any character. Each line hangs one step, so a wrapped line reads
+   as a continuation of its signature. */
+.signature pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.signature .line {
+  display: block;
+  padding-left: 1rem;
+  text-indent: -1rem;
+}
+
 /* Hugo's Chroma classes: other languages, and the Agentica blocks, whose spans highlight.mjs writes with the same names. */
 .chroma .k, .chroma .kc, .chroma .kd, .chroma .kn, .chroma .kp, .chroma .kr, .chroma .ow {
   color: var(--syn-keyword);
