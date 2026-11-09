@@ -14,7 +14,3 @@ Needs Agentica 0.27.0 or later.
 - `List` and `Map` parameters are cursors (`PREFIX_list_Float_next` gives 1, 0 at the end, -1 for a bad item, with its path: `List[Int].1: expected Int`), never copied to an array; `_open` opens a term. A `List` or `Map` result has a builder (`_begin`, `_push` or `_put`, `_end`).
 - `Optional` and `Result` parameters are structs (`some` or `ok`, `value`, and the `error` message of a Result); `_get` reads a term into one. Results have `PREFIX_optional_T_some` and `PREFIX_result_T_ok`, beside `an_none` and `an_error`.
 - `--check` fails (`NATIVE-GEN-STALE`) when the committed header is not the one the file gives. The header starts with a check of the native API version it needs.
-
-### Changed
-
-- **Breaking:** `List`, `Map`, `Optional` and `Result` parameters, and the `Optional` and `Result` items of a List or Map, are cursors and structs now, not `an_term`: a C function written on an earlier header takes the new types.
