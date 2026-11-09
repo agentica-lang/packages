@@ -37,12 +37,19 @@ test:
 doc-examples: doc-examples-test
 	$(AGENTICA) tools/doc_examples.agc $(AGENTICA) $(PACKAGES)
 
-# The fixture page has one block or fence per rule that fails, so the tool must exit 1 with exactly this summary.
-DOC_EXAMPLES_FIXTURE_SUMMARY := doc examples: 2 passed, 6 failed, 1 fragments skipped
+# The fixture page has one block or fence per rule that fails, so the tool must exit 1 with exactly this summary and
+# one located line (page:line:) per failure on stderr.
+DOC_EXAMPLES_FIXTURE := tools/fixtures/doc_examples
+DOC_EXAMPLES_FIXTURE_FAILED := 9
+DOC_EXAMPLES_FIXTURE_SUMMARY := doc examples: 3 passed, $(DOC_EXAMPLES_FIXTURE_FAILED) failed, 1 fragments skipped
 doc-examples-test:
-	@summary=$$($(AGENTICA) tools/doc_examples.agc $(AGENTICA) tools/fixtures/doc_examples 2>/dev/null); code=$$?; \
-	if [ $$code -ne 1 ] || [ "$$summary" != "$(DOC_EXAMPLES_FIXTURE_SUMMARY)" ]; then \
-		echo "doc-examples-test: expected exit 1 and '$(DOC_EXAMPLES_FIXTURE_SUMMARY)', got exit $$code and '$$summary'"; \
+	@errors=$$(mktemp); \
+	summary=$$($(AGENTICA) tools/doc_examples.agc $(AGENTICA) $(DOC_EXAMPLES_FIXTURE) 2>$$errors); code=$$?; \
+	located=$$(grep -cE '^$(DOC_EXAMPLES_FIXTURE)/docs/_index.md:[0-9]+:' $$errors); rm -f $$errors; \
+	if [ $$code -ne 1 ] || [ "$$summary" != "$(DOC_EXAMPLES_FIXTURE_SUMMARY)" ] \
+		|| [ "$$located" != "$(DOC_EXAMPLES_FIXTURE_FAILED)" ]; then \
+		echo "doc-examples-test: expected exit 1, '$(DOC_EXAMPLES_FIXTURE_SUMMARY)' and $(DOC_EXAMPLES_FIXTURE_FAILED)" \
+			"located lines; got exit $$code, '$$summary' and $$located"; \
 		exit 1; \
 	fi; echo "doc-examples-test: ok"
 

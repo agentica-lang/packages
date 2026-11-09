@@ -2,8 +2,8 @@
 title: Doc examples fixture
 ---
 
-`make doc-examples-test` runs tools/doc_examples.agc on this page and expects 2 passes, 1 fragment and 6 failures, one per
-block or fence below.
+`make doc-examples-test` runs tools/doc_examples.agc on this page and expects 3 passes (one in sub/page.md), 1 fragment
+and 9 failures, one per block or fence below.
 
 A whole file that prints what its output block shows: it passes.
 
@@ -47,6 +47,22 @@ end
 checked
 ```
 
+Fails: a type error in a block that is only checked.
+
+```agentica {mode="check"}
+def main() -> Void
+  puts(1 + "2")
+end
+```
+
+Fails: the program exits 1.
+
+```agentica
+def main() -> Void
+  System.exit(1)
+end
+```
+
 Fails: an unknown mode.
 
 ```agentica {mode="skip"}
@@ -54,7 +70,7 @@ def main() -> Void
 end
 ```
 
-Fails: an indented fence, and a `~~~` fence.
+Fails: an indented fence, a `~~~` fence and a four-backtick fence.
 
   ```agentica
   def main() -> Void
@@ -65,6 +81,11 @@ Fails: an indented fence, and a `~~~` fence.
 def main() -> Void
 end
 ~~~
+
+````agentica
+def main() -> Void
+end
+````
 
 Fails: the last block is not closed.
 

@@ -5,12 +5,12 @@
 ## ```
 ##
 ## The first argument is the agentica binary to run the examples with (a name on PATH, or a path); the rest are package
-## folders. Each block of PACKAGE/docs/*.md whose fence is ```` ```agentica ```` or ```` ```agc ```` is written to
-## PACKAGE/_doc_examples/ (removed at the end), with `"pkg/PACKAGE/` turned into `"../`, so it imports the package as a
-## user does and resolves the package's own dependencies.
+## folders. Each block of the .md pages under PACKAGE/docs (subfolders too) whose fence is ```` ```agentica ```` or
+## ```` ```agc ```` is written to PACKAGE/_doc_examples/ (removed at the end), with `"pkg/PACKAGE/` turned into `"../`,
+## so it imports the package as a user does and resolves the package's own dependencies.
 ##
-## - A block with `def main` runs and must exit 0. When the next block (after blank lines only) is an ```` ```output ````
-##   block, its stdout must be that text. A ```` ```text ```` block is never compared.
+## - A block with `def main` runs and must exit 0. When the next block (after blank lines only) is an
+##   ```` ```output ```` block, its stdout must be that text. A ```` ```text ```` block is never compared.
 ## - Any other block is type-checked. `{mode="check"}` after the language only checks a block (a server, say), and
 ##   `{mode="fragment"}` skips one that is not a whole file. `{mode="run"}` is the default; any other info is an error.
 ## - An `output` block that no running block takes, an unclosed fence, and a fence that names agentica but is not read
@@ -30,6 +30,8 @@ struct Example
   line: Int
   text: String
   mode: String
+  # A whole file with `def main` in `run` mode: it runs instead of only being checked.
+  runs: Bool
   output: Optional[String]
 end
 
@@ -86,20 +88,39 @@ def binary(name: String) -> String
   return Path.resolve(name).unwrap_or(name)
 end
 
-# The examples of the docs/*.md pages of `package`, in the order of the pages and of their lines.
+# The examples of the .md pages under `package`/docs, its subfolders too, in the order of the pages and of their lines.
 def examples_of(package: String) -> Parsed
-  none_found: List[String] = []
-  pages = Dir.list("#{package}/docs").unwrap_or(none_found).select do |name: String| name.end_with?(".md") end
   examples: List[Example] = []
   problems: List[String] = []
-  for name in pages
-    path = "#{package}/docs/#{name}"
+  for path in pages("#{package}/docs")
     parsed = blocks(path, File.read_text(path).unwrap!)
     examples = examples.concat(parsed.examples)
     problems = problems.concat(parsed.problems)
   end
 
   return Parsed(examples: examples, problems: problems)
+end
+
+# The .md files under `dir`, sorted by name, each folder's in place (make site ships every one of them).
+def pages(dir: String) -> List[String]
+  none_found: List[String] = []
+  found: List[String] = []
+  for name in Dir.list(dir).unwrap_or(none_found)
+    path = "#{dir}/#{name}"
+    if directory?(path)
+      found = found.concat(pages(path))
+    elsif name.end_with?(".md")
+      found = found.push(path)
+    end
+  end
+
+  return found
+end
+
+# Whether `path` is a folder (a link to one counts).
+def directory?(path: String) -> Bool
+  info = File.stat(path)
+  return info.ok? and info.unwrap!.kind == "directory"
 end
 
 # The `agentica` blocks of the Markdown `text` of `page`, each with the `output` block that follows it, and the
@@ -146,7 +167,9 @@ def blocks(page: String, text: String) -> Parsed
           end
         end
 
-        found = found.push(Example(page: page, line: at + 1, text: body, mode: mode.unwrap!, output: output))
+        found = found.push(
+          Example(page: page, line: at + 1, text: body, mode: mode.unwrap!, runs: runs, output: output),
+        )
       else
         problems = problems.push("#{where}: #{mode.message}")
       end
@@ -256,9 +279,8 @@ def run_one(agentica: String, package: String, folder: String, name: String, exa
     return "cannot write the example: #{written.message}"
   end
 
-  runs = example.mode == "run" and (text.start_with?("def main(") or text.include?("\ndef main("))
   args = ["check", name]
-  if runs
+  if example.runs
     args = [name]
   end
 
