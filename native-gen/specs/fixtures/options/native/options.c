@@ -75,4 +75,30 @@ an_term options_misread_nested(an_env *env) {
   return an_void(env);
 }
 
+an_term options_sum_inner(an_env *env, options_list_optional_list_Int values) {
+  options_optional_list_Int item;
+  int64_t x, total = 0;
+  int more, got;
+  while ((more = options_list_optional_list_Int_next(env, &values, &item)) == 1) {
+    if (!item.some) continue;
+    while ((got = options_list_Int_next(env, &item.value, &x)) == 1) total += x;
+    if (got < 0) return an_void(env);
+  }
+  if (more < 0) return an_void(env);
+  return an_int(env, total);
+}
+
+/* Calls the internal wrapper of sum_inner on purpose, as above: the List inside each Optional item takes the argument
+   of the outer cursor. */
+an_term options_misread_inner(an_env *env) {
+  an_term items[4], rows[2], argv[1];
+  for (int i = 0; i < 3; i++) items[i] = an_int(env, i + 1);
+  items[3] = an_string(env, "a", 1);
+  rows[0] = an_none(env);
+  rows[1] = an_some(env, an_list(env, items, 4));
+  argv[0] = an_list(env, rows, 2);
+  (void)options_native_sum_inner(env, 1, argv);
+  return an_void(env);
+}
+
 OPTIONS_NATIVE_MODULE(NULL)

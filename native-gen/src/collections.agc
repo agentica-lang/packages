@@ -381,9 +381,8 @@ def member(path: String) -> String
   return "#{path.slice(1, path.length - 1)}."
 end
 
-# Where the cursors are in the C value of `type`: "" for a List or Map itself, ".value" (repeated) inside an
-# Optional or
-# Result; none in another type, and none inside a cursor, whose items are read later.
+# Where the cursors are in the C value of `type`: "" for a List or Map itself, ".value" (repeated) inside an Optional
+# or Result; none in another type, and none inside a cursor, whose items are read later.
 def cursor_paths(type: Types.Type) -> List[String]
   if collection?(type)
     return [""]
