@@ -6,6 +6,9 @@ cd "$(dirname "$0")"
 cargo build --release --quiet
 mkdir -p native
 cp target/release/libvm_check.so native/
+# The manifest that points at the library, made here: committed, it would make `agentica check` of native-gen fail
+# where the library was not built.
+printf 'name = "vm-check"\n\n[native.vm_check]\nlinux = { file = "native/libvm_check.so" }\n' > agentica.toml
 status=0
 AGENTICA_GC_HEAP=0 agentica check.agc > target/out.txt 2> target/err.txt || status=$?
 diff -u expected.txt target/out.txt
