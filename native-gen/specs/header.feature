@@ -542,3 +542,224 @@ Feature: The C header of an extern module block
       """
       --check needs --output
       """
+
+  Scenario: build --check passes on the committed Rust file of rust_math
+    Given the program argument "build"
+    And the program argument "fixtures/rust_math/math.agc"
+    And the program argument "--check"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+
+  Scenario: build --check fails when the Rust file is not the one the .agc gives
+    Given a fresh package with the Rust module in "demo.agc"
+    And the file "rust/src/demo_native.rs" in the fresh folder is:
+      """
+      // an older block
+      """
+    And the program argument "build"
+    And the program argument "demo.agc" in the fresh folder
+    And the program argument "--check"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-STALE]
+      """
+
+  Scenario: build of a file below the package root uses the crate, the manifest and native/ of the root
+    Given a fresh package with the Rust module in "src/demo.agc"
+    And a fake cargo on PATH that exits with 0 and prints:
+      """
+      {"reason":"compiler-artifact","target":{"kind":["cdylib"]},"filenames":["FOLDER/libdemoEXT"]}
+      {"reason":"build-finished","success":true}
+      """
+    And the program argument "build"
+    And the program argument "src/demo.agc" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And the fresh folder has "rust/src/demo_native.rs"
+    And the fresh folder has the library of "demo"
+    And the agentica.toml of the fresh folder has the entry of "demo"
+    And the fresh folder has no "src/rust"
+    And the fresh folder has no "src/native"
+    And the fresh folder has no "src/agentica.toml"
+    And the fresh folder has no "src/demo_native.rs"
+
+  Scenario: build of a FILE given relative to the current folder finds the root from it
+    Given a fresh package with the Rust module in "src/demo.agc"
+    And a fake cargo on PATH that exits with 0 and prints:
+      """
+      {"reason":"compiler-artifact","target":{"kind":["cdylib"]},"filenames":["FOLDER/libdemoEXT"]}
+      """
+    And the program argument "build"
+    And the program argument "src/demo.agc" in the fresh folder, relative to the current folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And the fresh folder has the library of "demo"
+    And the agentica.toml of the fresh folder has the entry of "demo"
+
+  # The fresh folder is in TMPDIR (or /tmp): this assumes no folder above it has an agentica.toml. The steps cannot
+  # make a folder above the temp folder, so the scenario cannot rule that out itself.
+  Scenario: build without an agentica.toml up from the file fails with NATIVE-GEN-IO
+    Given a fresh folder
+    And the file "demo.agc" in the fresh folder is:
+      """
+      extern module "demo"
+        def add(a: Int, b: Int) -> Int
+      end
+      """
+    And the program argument "build"
+    And the program argument "demo.agc" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-IO]
+      """
+
+  Scenario: build without a crate in rust/ fails with NATIVE-GEN-IO and writes nothing
+    Given a fresh package with the Rust module in "demo.agc"
+    And the file "rust/Cargo.toml" in the fresh folder is removed
+    And the program argument "build"
+    And the program argument "demo.agc" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-IO]
+      """
+    And the fresh folder has no "rust/src"
+    And the agentica.toml of the fresh folder still has only the line ""
+
+  Scenario: build without cargo on PATH fails with NATIVE-GEN-CARGO and leaves agentica.toml as it was
+    Given a fresh package with the Rust module in "demo.agc"
+    And the environment variable "PATH" is "/nonexistent-native-gen"
+    And the program argument "build"
+    And the program argument "demo.agc" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-CARGO] cannot run cargo
+      """
+    And the agentica.toml of the fresh folder still has only the line ""
+    And the fresh folder has no "native"
+
+  Scenario Outline: build fails with NATIVE-GEN-CARGO when cargo <case>, and leaves agentica.toml as it was
+    Given a fresh package with the Rust module in "demo.agc"
+    And a fake cargo on PATH that exits with <code> and prints:
+      """
+      {"reason":"compiler-artifact","target":{"kind":["lib"]},"filenames":["FOLDER/libdemo.rlib"]}
+      {"reason":"compiler-artifact","target":{"kind":["cdylib"]},"filenames":[<files>]}
+      """
+    And the program argument "build"
+    And the program argument "demo.agc" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-CARGO]
+      """
+    And the fresh folder has "rust/src/demo_native.rs"
+    And the agentica.toml of the fresh folder still has only the line ""
+    And the fresh folder has no "native"
+
+    Examples:
+      | case               | code | files                                   |
+      | fails              | 101  | "FOLDER/libdemoEXT"                     |
+      | builds no cdylib   | 0    |                                         |
+      | builds two cdylibs | 0    | "FOLDER/libdemoEXT", "FOLDER/libtwoEXT" |
+
+  Scenario Outline: build refuses an agentica.toml where <case>, before it runs cargo
+    Given a fresh package with the Rust module in "demo.agc"
+    And the agentica.toml of the fresh folder has the line "<entry>"
+    And the environment variable "PATH" is "/nonexistent-native-gen"
+    And the program argument "build"
+    And the program argument "demo.agc" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-MANIFEST]
+      """
+    And the agentica.toml of the fresh folder still has only the line "<entry>"
+
+    Examples:
+      | case                                   | entry                                     |
+      | native.demo builds C sources           | native.demo.build = { sources = [] }      |
+      | native.demo is an inline table         | native = { demo = { optional = false } }  |
+      | native is an inline table without demo | native = { other = { optional = false } } |
+
+  Scenario: build adds the entry of the system under the [native.NAME] line, and keeps the rest
+    Given a fresh folder
+    And the agentica.toml of the fresh folder is:
+      """
+      name = "pkg"
+
+      [native.demo] # the Rust module
+      windows = { file = "native/demo.dll" }
+
+      [dependencies]
+      """
+    Then the entry of "demo" on "linux" added to the agentica.toml of the fresh folder gives:
+      """
+      name = "pkg"
+
+      [native.demo] # the Rust module
+      linux = { file = "native/libdemo.so" }
+      windows = { file = "native/demo.dll" }
+
+      [dependencies]
+      """
+
+  Scenario Outline: build keeps the CRLF lines of an agentica.toml <form>
+    Given a fresh folder
+    And the agentica.toml of the fresh folder is "<text>" with CRLF lines
+    Then the entry of "demo" on "linux" added to the agentica.toml of the fresh folder has only CRLF lines
+
+    Examples:
+      | form              | text                                                    |
+      | with the table    | name = 'pkg'\n\n[native.demo]\nmacos = { system = 'a' }\n |
+      | without the table | name = 'pkg'\n                                          |
+
+  Scenario Outline: build refuses an agentica.toml where <case>
+    Given a fresh folder
+    And the agentica.toml of the fresh folder is "<text>"
+    Then the entry of "demo" on "linux" cannot be added: "[NATIVE-GEN-MANIFEST]"
+
+    Examples:
+      | case                                       | text                                                              |
+      | the entry of the system has no file        | name = 'pkg'\nnative.demo.linux = { system = 'libdemo.so' }\n     |
+      | the entry's file is outside native/        | name = 'pkg'\nnative.demo.linux = { file = '../libdemo.so' }\n    |
+      | the entry's file has a .. part             | name = 'pkg'\nnative.demo.linux = { file = 'native/../x.so' }\n   |
+      | the only [native.demo] line is in a string | name = 'pkg'\nnote = '''\n[native.demo]\n'''\nnative.demo.x = 1\n |
+      | the entry's file is native/                | name = 'pkg'\nnative.demo.linux = { file = 'native/' }            |
+      | the entry's file is native/.               | name = 'pkg'\nnative.demo.linux = { file = 'native/.' }           |
+      | the entry's file has an empty part         | name = 'pkg'\nnative.demo.linux = { file = 'native//x.so' }       |
+
+  Scenario Outline: build plans again on an agentica.toml that changed during the build, where <case>
+    Given a fresh folder
+    And the agentica.toml of the fresh folder has the line ""
+    Then the entry of "demo" on "linux", planned before agentica.toml became "<now>", gives "<result>"
+
+    Examples:
+      | case         | now                                                | result                |
+      | table added  | [dependencies]                                     | added                 |
+      | same entry   | native.demo.linux = { file = 'native/libdemo.so' } | kept                  |
+      | another file | native.demo.linux = { file = 'native/o.so' }       | [NATIVE-GEN-MANIFEST] |
+      | invalid TOML | name =                                             | [NATIVE-GEN-MANIFEST] |
+
+  Scenario: build refuses an agentica.toml whose entry was removed during the build, as it names another file now
+    Given a fresh folder
+    And the agentica.toml of the fresh folder has the line "native.demo.linux = { file = 'native/c.so' }"
+    Then the entry of "demo" on "linux", planned before agentica.toml became "", gives "[NATIVE-GEN-MANIFEST]"
+
+  Scenario Outline: build names the library of demo on <os> <file>
+    Then the library of "demo" on "<os>" is "<file>"
+
+    Examples:
+      | os      | file                 |
+      | linux   | native/libdemo.so    |
+      | macos   | native/libdemo.dylib |
+      | windows | native/demo.dll      |
+      | plan9   | [NATIVE-GEN-OS]      |

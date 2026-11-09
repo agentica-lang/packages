@@ -39,5 +39,8 @@ agentica deps/native-gen/cli.agc stats.agc --output native/stats_native.h --chec
 `agentica deps/native-gen/cli.agc new demo` starts a module that builds and loads: `demo.agc`, `native/demo.c`, its
 header and its `agentica.toml` entry.
 
+A module in Rust: `agentica deps/native-gen/cli.agc build math.agc` writes the Rust side of the block into the crate
+`rust/`, runs `cargo build --release`, copies the library to `native/` and adds its `agentica.toml` entry.
+
 The docs, with every C name, the header layout and the error codes:
 <https://agentica-lang.github.io/packages/native-gen/>.
