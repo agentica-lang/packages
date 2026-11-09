@@ -1,6 +1,9 @@
 {{- /* An `agentica` block is highlighted with Hugo's Ruby lexer, which highlight/highlight.mjs replaces after the build with the Agentica grammar. */ -}}
+{{- /* A `signature` block (each line "Name(...) -> Type") wraps (main.css), where other code scrolls, and highlight.mjs colors it, as on the Agentica site. It is not a program, so make doc-examples skips it. */ -}}
 {{- $lang := .Type -}}
 {{- $agentica := in (slice "agentica" "agc") $lang -}}
+{{- $signature := eq $lang "signature" -}}
 {{- if $agentica }}<div class="agc-code">{{ transform.Highlight .Inner "ruby" (dict) }}</div>
+{{- else if $signature }}<div class="signature">{{ transform.Highlight .Inner "text" .Options }}</div>
 {{- else }}{{ transform.Highlight .Inner $lang .Options }}
 {{- end -}}

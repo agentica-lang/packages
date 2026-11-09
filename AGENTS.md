@@ -15,7 +15,8 @@ tools/               doc_examples.agc: runs the `agentica` blocks of the docs (t
                      site (pinned Hugo)
 .github/scripts/     changed-packages.sh: which packages a list of changed files marks (the rules are in its header)
 site/                the Hugo site: hugo.toml, layouts/, assets/css/, content/_index.md (the home), highlight/ (colors
-                     the Agentica code blocks after the build, with the grammar of the Agentica site)
+                     the Agentica code blocks and the signature blocks after the build, with the grammar of the
+                     Agentica site)
 PACKAGE/             one package: agentica.toml, agentica.lock (when it has dependencies), src/, specs/, test/, docs/
 bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub, broadcast, stats); src/protocol.agc the frames
                      (pure), src/hub.agc the hub task, src/connection.agc one connection, src/types.agc the records;
