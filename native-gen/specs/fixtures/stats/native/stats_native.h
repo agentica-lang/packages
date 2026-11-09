@@ -68,11 +68,14 @@ an_term stats_Cell_Empty(an_env *env);
 an_term stats_Cell_Number(an_env *env, double _0);
 an_term stats_Cell_Text(an_env *env, ng_str _0);
 
-/* The Lists and Maps. _next gives 1 for an item, 0 at the end, and -1 when the item does not decode: the call has
-   then failed with the path of the item in its own List or Map (an item of a List or Map read from another has
-   the path from the inner one, `List[Float].1`), and every later _next gives -1 too, as after a failed _open. A
-   builder makes one: _begin, then _push (_put for a Map), then _end. Cursors and builders hold terms: keep them
-   in C locals, for this call only. */
+/* The Lists, Maps, Optionals and Results. A List or Map that is read is a cursor: _next gives 1 for an item, 0 at
+   the end, and -1 when the item does not decode: the call has then failed with the path of the item in its own
+   List or Map (an item of a List or Map read from another has the path from the inner one, `List[Float].1`), and
+   every later _next gives -1 too, as after a failed _open. A builder makes one: _begin, then _push (_put for a
+   Map), then _end. Cursors and builders hold terms: keep them in C locals, for this call only. An Optional or
+   Result that is read is a struct, whose value is zero when there is none and whose error is borrowed as a String
+   argument is; _get reads one held as a term. One that is made has _some or _ok (an_none and an_error make the
+   others). */
 
 typedef struct {
   an_term term;
@@ -83,6 +86,8 @@ typedef struct {
 } stats_list_Float;
 bool stats_list_Float_open(an_env *env, an_term t, stats_list_Float *out);
 int stats_list_Float_next(an_env *env, stats_list_Float *list, double *out);
+
+an_term stats_optional_Summary_some(an_env *env, stats_Summary value);
 
 typedef struct {
   an_term map;
@@ -97,6 +102,8 @@ typedef struct {
 void stats_list_map_String_Cell_begin(an_env *env, stats_list_map_String_Cell_builder *b, size_t hint);
 void stats_list_map_String_Cell_push(an_env *env, stats_list_map_String_Cell_builder *b, an_term value);
 an_term stats_list_map_String_Cell_end(an_env *env, stats_list_map_String_Cell_builder *b);
+
+an_term stats_result_list_map_String_Cell_ok(an_env *env, an_term value);
 
 /* The count, smallest, largest and mean of the values; none for no values. */
 an_term stats_summary(an_env *env, stats_list_Float values);
@@ -262,6 +269,10 @@ int stats_list_Float_next(an_env *env, stats_list_Float *list, double *out) {
   return ng_fail_item(env, &fail, "List[Float]", at, NULL);
 }
 
+an_term stats_optional_Summary_some(an_env *env, stats_Summary value) {
+  return an_some(env, stats_Summary_make(env, &value));
+}
+
 void stats_map_String_Cell_begin(an_env *env, stats_map_String_Cell_builder *b) { b->map = an_map_from(env, NULL, NULL, 0); }
 
 void stats_map_String_Cell_put(an_env *env, stats_map_String_Cell_builder *b, ng_str key, stats_Cell value) {
@@ -281,11 +292,16 @@ void stats_list_map_String_Cell_push(an_env *env, stats_list_map_String_Cell_bui
 
 an_term stats_list_map_String_Cell_end(an_env *env, stats_list_map_String_Cell_builder *b) { return an_list_end(env, &b->builder); }
 
+an_term stats_result_list_map_String_Cell_ok(an_env *env, an_term value) {
+  return an_ok(env, value);
+}
+
 static an_term stats_native_summary(an_env *env, int argc, const an_term *argv) {
   (void)argc;
   ng_fail fail;
   stats_list_Float a0;
-  if (!stats_native_open_list_Float(env, argv[0], &a0, &fail)) return ng_fail_argument(env, &fail, "List[Float]", 0);
+  if (!stats_native_open_list_Float(env, argv[0], &a0, &fail))
+    return ng_fail_argument(env, &fail, "List[Float]", 0);
   return stats_summary(env, a0);
 }
 

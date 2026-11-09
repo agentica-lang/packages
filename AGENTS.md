@@ -23,10 +23,10 @@ bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub,
                      and the hub's fan-out by hand, bench/hub_fanout.agc the hub alone (steps and time per frame)
 native-gen/          the C header of an `extern module` block: cli.agc is the command, native_gen.agc the API
                      (`header`), src/header.agc the text of the header, src/codecs.agc the C values of the structs and
-                     enums, src/collections.agc the cursors and builders of Lists and Maps, src/types.agc the type
+                     enums, src/collections.agc the Lists, Maps, Optionals and Results, src/types.agc the type
                      trees, src/names.agc the C names (all pure);
                      specs/fixtures/ are packages written on their headers (the one of stats is committed as the
-                     golden, a step makes the others: kinds, shapes, lists), the files that fail (errors/) and
+                     golden, a step makes the others: kinds, shapes, lists, options), the files that fail (errors/) and
                      cxx.sh, a CC that builds a module as C++; bench/wide the codecs of a struct of 26 fields; the
                      features need cc and c++
 prop/                property-based testing: prop.agc is the API (check, eq, assume, the generators, the laws, of,

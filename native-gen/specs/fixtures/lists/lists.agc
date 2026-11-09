@@ -13,7 +13,7 @@ extern module "lists"
   def codes(words: List[String]) -> Map[String, List[Int]]
   ## The points of `named`, in its order, each moved by `by`.
   def moved(named: Map[String, Point], by: Point) -> List[Point]
-  ## The sum of each key times its values, and 1000 for each item of `maybe`, which stays a term.
+  ## The sum of each key times its values, and 1000 for each item of `maybe` that is there.
   def tally(groups: Map[Int, List[Int]], maybe: List[Optional[Int]]) -> Int
   ## Reads a List whose second item is a String: the call fails at `List[Int].1`.
   def misread_list(values: List[Int]) -> Int

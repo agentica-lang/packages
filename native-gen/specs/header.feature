@@ -114,7 +114,7 @@ Feature: The C header of an extern module block
       [3.5, 0.0, 4.0]
       {"ab": [97, 98], "": [], "é": [195, 169]}
       [Point(x: 11, y: 22), Point(x: 9, y: 20)]
-      [2025, 0]
+      [1025, 0]
 
       """
 
@@ -142,6 +142,45 @@ Feature: The C header of an extern module block
       | C++      | sh ../cxx.sh                      | misread_list | List[Int].1: expected Int                   |
       | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_map  | Map[String, Point].0.value.x: expected Int |
       | C++      | sh ../cxx.sh                      | misread_map  | Map[String, Point].0.value.x: expected Int |
+
+  Scenario Outline: Optional and Result come in as structs and go out through constructors, built as <language>
+    Given a fresh package cache
+    And the environment variable "CC" is "<cc>"
+    And the header of the package of "fixtures/options/options.agc"
+    And the Agentica program "fixtures/options/options.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout is:
+      """
+      [some(Point(x: 1, y: 2)), none]
+      [ok(3), error("no")]
+      [some(ok([1, 2])), some(error("e")), none]
+      [some("b"), none]
+      [104, 3]
+
+      """
+
+    Examples:
+      | language | cc                                |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror |
+      | C++      | sh ../cxx.sh                      |
+
+  Scenario Outline: A bad value in an Optional or Result fails the call with its path, built as <language>
+    Given a fresh package cache
+    And the environment variable "CC" is "<cc>"
+    And the header of the package of "fixtures/options/options.agc"
+    And the program argument "<call>"
+    And the Agentica program "fixtures/options/options.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [RUNTIME-NATIVE-ERROR]
+      <call>: <path>
+      """
+
+    Examples:
+      | language | cc                                | call             | path                                         |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_result   | List[Result[Int]].0.ok: expected Int         |
+      | C++      | sh ../cxx.sh                      | misread_optional | List[Optional[Point]].0.some.x: expected Int |
 
   Scenario: The bench of a struct of 26 fields runs
     Given a fresh package cache

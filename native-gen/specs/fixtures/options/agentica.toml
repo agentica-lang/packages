@@ -1,0 +1,8 @@
+# Optional and Result as C structs and constructors, built from native/options.c.
+name = "native-gen-options"
+
+[style]
+blank_line_after_end = true
+
+[native.options]
+build = { sources = ["native/options.c"] }
