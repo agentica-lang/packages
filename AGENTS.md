@@ -8,7 +8,9 @@ is in GitHub issues of `agentica-lang/packages`.
 ```text
 README.md            the table of packages and how to install one
 Makefile             install, check, fmt-check and test, each run in every folder that has an agentica.toml; site
-.github/workflows/   ci.yml: the pinned Agentica release, then the four targets; pages.yml: the site (pinned Hugo)
+.github/workflows/   ci.yml: the changed packages, the pinned Agentica release, then the four targets; pages.yml: the
+                     site (pinned Hugo)
+.github/scripts/     changed-packages.sh: which packages a list of changed files marks (the rules are in its header)
 site/                the Hugo site: hugo.toml, layouts/, assets/css/, content/_index.md (the home), highlight/ (colors
                      the Agentica code blocks after the build, with the grammar of the Agentica site)
 PACKAGE/             one package: agentica.toml, agentica.lock (when it has dependencies), src/, specs/, test/, docs/
@@ -36,6 +38,9 @@ prop/                property-based testing: prop.agc is the API (check, eq, ass
 - `make install` fetches `deps/` from each lock (git ignores `deps/`). `make check`, `make fmt-check`, `make test`
   run in each package folder; to work on one package, `cd` into it and run `agentica check`, `agentica fmt --check`
   and `agentica test`.
+- `make check PACKAGES="prop native-gen"` (any target) runs only those packages. A pull request runs the packages
+  whose files changed (`.github/scripts/changed-packages.sh`), a push to main runs all of them; a change of a shared
+  file (Makefile, `ci.yml`, a script) marks all.
 - `make site` builds the docs into `site/public` (needs Hugo and Node; CI pins Hugo 0.167.0 in `pages.yml`);
   `make site-serve` previews them. A pull request builds the site, and a push to main deploys it to GitHub Pages.
 - To move a dependency: `agentica add NAME URL --tag TAG` in the package folder, and commit the lock.
