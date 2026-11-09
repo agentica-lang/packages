@@ -14,8 +14,29 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The history of the base branch, for the diff of a pull request.
+          fetch-depth: 0
+
+      # A pull request runs only the packages whose files changed (the rules are in the script); a push to main runs
+      # all of them. The job always succeeds and keeps the name `test`, for the required check: with no package
+      # changed the steps below are skipped. The Makefile takes the list as an argument: its own assignment ignores the
+      # environment.
+      - name: Find the changed packages
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            packages=$(git diff --name-only "origin/$BASE_REF...HEAD" | .github/scripts/changed-packages.sh)
+          else
+            packages=$(.github/scripts/changed-packages.sh --all)
+          fi
+          echo "PACKAGES=$packages" >> "$GITHUB_ENV"
+          if [ -n "$packages" ]; then echo "Packages to run: $packages"; else echo "No package changed: nothing to run."; fi
 
       - name: Install the pinned Agentica release
+        if: env.PACKAGES != ''
         uses: agentica-lang/setup-agentica@v1
         with:
           version: 0.27.0
@@ -23,16 +44,20 @@ jobs:
 
       # The locked packages of each folder, checked against the hashes of its agentica.lock.
       - name: Install the packages
+        if: env.PACKAGES != ''
         run: |
           agentica --version
-          make install
+          make install PACKAGES="$PACKAGES"
 
       - name: Check
-        run: make check
+        if: env.PACKAGES != ''
+        run: make check PACKAGES="$PACKAGES"
 
       - name: Format
-        run: make fmt-check
+        if: env.PACKAGES != ''
+        run: make fmt-check PACKAGES="$PACKAGES"
 
       # The features of specs/ (they listen on 127.0.0.1 only) and the tests of test/.
       - name: Test
-        run: make test
+        if: env.PACKAGES != ''
+        run: make test PACKAGES="$PACKAGES"
