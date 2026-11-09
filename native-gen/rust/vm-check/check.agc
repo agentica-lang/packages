@@ -25,6 +25,11 @@ extern module "vm_check"
   ) -> List[Map[String, Optional[Result[List[Float]]]]]
   def borrowed(texts: List[String]) -> Bool
   def describe(n: Int, x: Float, flag: Bool, text: String, data: Bytes) -> String
+  resource Counter
+  def counter(n: Int) -> Counter
+  def count(counter: Counter) -> Int
+  def dropped() -> Int
+  compute def checked(n: Int) -> Int
 end
 
 def main() -> Void
@@ -51,6 +56,21 @@ def main() -> Void
   puts([echo_rows(rows) == rows, echo_staged(rows) == rows])
   puts(echo_rows(rows))
   puts(describe(-7, 2.5, true, "héllo", Bytes.from_list([0, 255]).unwrap!))
+  # The end of a task frees the resources it made: each Counter is dropped once, after the program read them all.
+  made = Task.spawn do
+    counters = (0..999).to_a.map do |k| counter(k) end
+    sum = 0
+    for one in counters
+      sum += count(one)
+    end
+
+    sum
+  end
+
+  puts([Task.await(made), dropped()])
+  one = counter(7)
+  Native.close(one)
+  puts("#{Native.closed?(one)} #{dropped()} #{checked(5)}")
   puts(bad_point())
 end
 
