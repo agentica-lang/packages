@@ -13,9 +13,10 @@
 ## end
 ## ```
 ##
-## `agentica --seed N test` replays the whole run of a test; `Prop.Config(seed: some(1234))` replays one check. `Prop.roundtrip`, `idempotent`, `oracle`, `associative`,
-## `commutative` and `preserves` state the common laws in one call, `Prop.of(User.codec, JSON.schema(User))` makes
-## values of a struct or enum, and `Prop.exhaustive` tries every case up to a size.
+## `agentica --seed N test` replays the whole run of a test; `Prop.Config(seed: some(1234))` replays one check.
+## `Prop.roundtrip`, `idempotent`, `oracle`, `associative`, `commutative` and `preserves` state the common laws in one
+## call, `Prop.of(User.codec, JSON.schema(User))` makes values of a struct or enum, and `Prop.exhaustive` tries every
+## case up to a size.
 
 import Checks from "src/check"
 import Exhaustive from "src/exhaustive"
