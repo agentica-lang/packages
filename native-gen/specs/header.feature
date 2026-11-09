@@ -137,11 +137,19 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                                | call         | path                                       |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_list | List[Int].1: expected Int                   |
-      | C++      | sh ../cxx.sh                      | misread_list | List[Int].1: expected Int                   |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_map  | Map[String, Point].0.value.x: expected Int |
-      | C++      | sh ../cxx.sh                      | misread_map  | Map[String, Point].0.value.x: expected Int |
+      | language | cc                                | call                    | path                                                        |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_list            | List[Int].1: expected Int                                   |
+      | C++      | sh ../cxx.sh                      | misread_list            | List[Int].1: expected Int                                   |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_map             | Map[String, Point].0.value.x: expected Int                  |
+      | C++      | sh ../cxx.sh                      | misread_map             | Map[String, Point].0.value.x: expected Int                  |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_argument        | argument 1: List[List[Float]].1: expected List[Float]       |
+      | C++      | sh ../cxx.sh                      | misread_argument        | argument 1: List[List[Float]].1: expected List[Float]       |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested_argument | argument 1: List[Float].1: expected Float                   |
+      | C++      | sh ../cxx.sh                      | misread_nested_argument | argument 1: List[Float].1: expected Float                   |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_map_argument    | argument 1: Map[Int, List[Int]].2.value: expected List[Int] |
+      | C++      | sh ../cxx.sh                      | misread_map_argument    | argument 1: Map[Int, List[Int]].2.value: expected List[Int] |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_map_value       | argument 1: List[Int].2: expected Int                       |
+      | C++      | sh ../cxx.sh                      | misread_map_value       | argument 1: List[Int].2: expected Int                       |
 
   Scenario Outline: Optional and Result come in as structs and go out through constructors, built as <language>
     Given a fresh package cache
@@ -181,6 +189,10 @@ Feature: The C header of an extern module block
       | language | cc                                | call             | path                                         |
       | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_result   | List[Result[Int]].0.ok: expected Int         |
       | C++      | sh ../cxx.sh                      | misread_optional | List[Optional[Point]].0.some.x: expected Int |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested   | argument 1: List[Int].2: expected Int        |
+      | C++      | sh ../cxx.sh                      | misread_nested   | argument 1: List[Int].2: expected Int        |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_inner    | argument 1: List[Int].3: expected Int        |
+      | C++      | sh ../cxx.sh                      | misread_inner    | argument 1: List[Int].3: expected Int        |
 
   Scenario Outline: A resource parameter is its state and each dropped resource is freed once, built as <language>
     Given a fresh package cache

@@ -114,7 +114,8 @@ export def declarations(shelf: Shelf) -> List[String]
     "",
     "/* The Lists, Maps, Optionals and Results. A List or Map that is read is a cursor: _next gives 1 for an item, 0 at",
     "   the end, and -1 when the item does not decode: the call has then failed with the path of the item in its own",
-    "   List or Map (an item of a List or Map read from another has the path from the inner one, `List[Float].1`), and",
+    "   List or Map (an item of a List or Map read from another has the path from the inner one, `List[Float].1`),",
+    "   after `argument N: ` when the cursor came from an argument (`argument` is then N; it is 0 after _open), and",
     "   every later _next gives -1 too, as after a failed _open. A builder makes one: _begin, then _push (_put for a",
     "   Map), then _end. Cursors and builders hold terms: keep them in C locals, for this call only. An Optional or",
     "   Result that is read is a struct, whose value is zero when there is none and whose error is borrowed as a String",
@@ -175,11 +176,18 @@ end
 ## The statements of a wrapper that open or decode argument `at`, a List, Map, Optional or Result, into `local`.
 export def decode_argument(shelf: Shelf, type: String, local: String, at: Int) -> List[String]
   tree = Types.parse(type)
-  return [
+  lines = [
     "  #{name(shelf, tree)} #{local};",
     "  if (!#{reader(shelf, tree)}(env, argv[#{at}], &#{local}, &fail))",
     "    return ng_fail_argument(env, &fail, \"#{type}\", #{at});",
   ]
+
+  # A cursor reads its items after the wrapper returns, so it keeps the argument for the "argument N:" prefix.
+  for path in cursor_paths(tree)
+    lines = lines.push("  #{local}#{path}.argument = #{at + 1};")
+  end
+
+  return lines
 end
 
 # The Lists, Maps, Optionals and Results inside `types`, each once, each after the ones it holds.
@@ -313,6 +321,7 @@ def cursor_declaration(shelf: Shelf, type: Types.Type) -> List[String]
     "  size_t len;",
     "  size_t at;",
     "  bool failed;",
+    "  int argument; /* 1 + the index of the argument of the call it was opened for, or 0 (_open) */",
     "} #{c};",
     "bool #{c}_open(an_env *env, an_term t, #{c} *out);",
     "int #{c}_next(an_env *env, #{c} *#{kind}, #{outs});",
@@ -357,6 +366,36 @@ def item_decoder(shelf: Shelf, type: Types.Type) -> List[String]
   return ["#{head} ng_fail *fail) {", body, "}"]
 end
 
+# The lines that give the cursors in an item (the pointer `item`) the argument of the cursor it came from, so their own
+# items fail with the same "argument N:" prefix; nothing for an item with no cursor in it.
+def inherit(type: Types.Type, item: String, cursor: String) -> List[String]
+  return cursor_paths(type).map do |path| "#{item}->#{member(path)}argument = #{cursor}->argument;" end
+end
+
+# `path` without its first dot, ready for `->`: ".value.value" is "value.value.", and "" stays "".
+def member(path: String) -> String
+  if path.empty?
+    return ""
+  end
+
+  return "#{path.slice(1, path.length - 1)}."
+end
+
+# Where the cursors are in the C value of `type`: "" for a List or Map itself, ".value" (repeated) inside an Optional
+# or Result; none in another type, and none inside a cursor, whose items are read later.
+def cursor_paths(type: Types.Type) -> List[String]
+  if collection?(type)
+    return [""]
+  end
+
+  if !held?(type)
+    none_found: List[String] = []
+    return none_found
+  end
+
+  return cursor_paths(items(type)[0]).map do |path| ".value#{path}" end
+end
+
 def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
   p = shelf.codecs.lower
   c = name(shelf, type)
@@ -385,40 +424,62 @@ def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
 
   item = "#{p}_native_item_#{Types.mangled(items(type)[0])}"
   if !map?(type)
-    return lines.concat([
-      "int #{c}_next(an_env *env, #{c} *list, #{item_type(shelf, items(type)[0])} *out) {",
-      "  an_term x;",
-      "  ng_fail fail;",
-      "  size_t at = list->at;",
-      "  if (list->failed) return -1;",
-      "  if (!an_list_next(env, &list->cursor, &x)) return 0;",
-      "  list->at++;",
-      "  if (#{item}(env, x, out, &fail)) return 1;",
-      "  list->failed = true;",
-      "  return ng_fail_item(env, &fail, \"#{text}\", at, NULL);",
-      "}",
+    taken = "#{item}(env, x, out, &fail)"
+    return joined([
+      lines,
+      [
+        "int #{c}_next(an_env *env, #{c} *list, #{item_type(shelf, items(type)[0])} *out) {",
+        "  an_term x;",
+        "  ng_fail fail;",
+        "  size_t at = list->at;",
+        "  if (list->failed) return -1;",
+        "  if (!an_list_next(env, &list->cursor, &x)) return 0;",
+        "  list->at++;",
+      ],
+      took(taken, "  ", inherit(items(type)[0], "out", "list")),
+      [
+        "  list->failed = true;",
+        "  return ng_fail_cursor_item(env, &fail, \"#{text}\", list->argument, at, NULL);",
+        "}",
+      ],
     ])
   end
 
   value = "#{p}_native_item_#{Types.mangled(items(type)[1])}"
   outs = "#{item_type(shelf, items(type)[0])} *key, #{item_type(shelf, items(type)[1])} *value"
-  return lines.concat([
-    "int #{c}_next(an_env *env, #{c} *map, #{outs}) {",
-    "  an_term k, v;",
-    "  ng_fail fail;",
-    "  size_t at = map->at;",
-    "  const char *part = \"key\";",
-    "  if (map->failed) return -1;",
-    "  if (!an_map_next(env, &map->cursor, &k, &v)) return 0;",
-    "  map->at++;",
-    "  if (#{item}(env, k, key, &fail)) {",
-    "    if (#{value}(env, v, value, &fail)) return 1;",
-    "    part = \"value\";",
-    "  }",
-    "  map->failed = true;",
-    "  return ng_fail_item(env, &fail, \"#{text}\", at, part);",
-    "}",
+  inherited = inherit(items(type)[0], "key", "map").concat(inherit(items(type)[1], "value", "map"))
+  return joined([
+    lines,
+    [
+      "int #{c}_next(an_env *env, #{c} *map, #{outs}) {",
+      "  an_term k, v;",
+      "  ng_fail fail;",
+      "  size_t at = map->at;",
+      "  const char *part = \"key\";",
+      "  if (map->failed) return -1;",
+      "  if (!an_map_next(env, &map->cursor, &k, &v)) return 0;",
+      "  map->at++;",
+      "  if (#{item}(env, k, key, &fail)) {",
+    ],
+    took("#{value}(env, v, value, &fail)", "    ", inherited),
+    [
+      "    part = \"value\";",
+      "  }",
+      "  map->failed = true;",
+      "  return ng_fail_cursor_item(env, &fail, \"#{text}\", map->argument, at, part);",
+      "}",
+    ],
   ])
+end
+
+# `if (TAKEN) return 1;` at `indent`, with the `inherited` lines run first when there are any.
+def took(taken: String, indent: String, inherited: List[String]) -> List[String]
+  if inherited.empty?
+    return ["#{indent}if (#{taken}) return 1;"]
+  end
+
+  body = inherited.map do |line| "#{indent}  #{line}" end
+  return joined([["#{indent}if (#{taken}) {"], body, ["#{indent}  return 1;", "#{indent}}"]])
 end
 
 def builder_definition(shelf: Shelf, type: Types.Type) -> List[String]

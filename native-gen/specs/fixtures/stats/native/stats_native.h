@@ -70,7 +70,8 @@ an_term stats_Cell_Text(an_env *env, ng_str _0);
 
 /* The Lists, Maps, Optionals and Results. A List or Map that is read is a cursor: _next gives 1 for an item, 0 at
    the end, and -1 when the item does not decode: the call has then failed with the path of the item in its own
-   List or Map (an item of a List or Map read from another has the path from the inner one, `List[Float].1`), and
+   List or Map (an item of a List or Map read from another has the path from the inner one, `List[Float].1`),
+   after `argument N: ` when the cursor came from an argument (`argument` is then N; it is 0 after _open), and
    every later _next gives -1 too, as after a failed _open. A builder makes one: _begin, then _push (_put for a
    Map), then _end. Cursors and builders hold terms: keep them in C locals, for this call only. An Optional or
    Result that is read is a struct, whose value is zero when there is none and whose error is borrowed as a String
@@ -83,6 +84,7 @@ typedef struct {
   size_t len;
   size_t at;
   bool failed;
+  int argument; /* 1 + the index of the argument of the call it was opened for, or 0 (_open) */
 } stats_list_Float;
 bool stats_list_Float_open(an_env *env, an_term t, stats_list_Float *out);
 int stats_list_Float_next(an_env *env, stats_list_Float *list, double *out);
@@ -203,6 +205,27 @@ static inline an_term ng_fail_argument(an_env *env, ng_fail *fail, const char *t
 }
 #endif
 
+/* A block of its own: the block above is the same in every header since 0.1.0, so a file that includes an older
+   header first keeps that copy, and this one still comes in. */
+#ifndef NATIVE_GEN_FAIL_ITEM_2
+#define NATIVE_GEN_FAIL_ITEM_2
+/* As ng_fail_item, with the "argument N: " prefix when ARGUMENT (1 + the index of the argument the cursor was
+   opened for) is not 0. */
+static inline int ng_fail_cursor_item(an_env *env, ng_fail *fail, const char *type, int argument, size_t index,
+                                      const char *part) {
+  char segment[48];
+  char where[32] = "";
+  if (part)
+    snprintf(segment, sizeof segment, "%zu.%s", index, part);
+  else
+    snprintf(segment, sizeof segment, "%zu", index);
+  if (argument) snprintf(where, sizeof where, "argument %d: ", argument);
+  ng_at(fail, segment);
+  ng_raise(env, where, type, fail);
+  return -1;
+}
+#endif
+
 an_term stats_Summary_make(an_env *env, const stats_Summary *value) {
   an_term fields[4];
   fields[0] = an_int(env, value->count);
@@ -266,7 +289,7 @@ int stats_list_Float_next(an_env *env, stats_list_Float *list, double *out) {
   list->at++;
   if (stats_native_item_Float(env, x, out, &fail)) return 1;
   list->failed = true;
-  return ng_fail_item(env, &fail, "List[Float]", at, NULL);
+  return ng_fail_cursor_item(env, &fail, "List[Float]", list->argument, at, NULL);
 }
 
 an_term stats_optional_Summary_some(an_env *env, stats_Summary value) {
@@ -302,6 +325,7 @@ static an_term stats_native_summary(an_env *env, int argc, const an_term *argv) 
   stats_list_Float a0;
   if (!stats_native_open_list_Float(env, argv[0], &a0, &fail))
     return ng_fail_argument(env, &fail, "List[Float]", 0);
+  a0.argument = 1;
   return stats_summary(env, a0);
 }
 

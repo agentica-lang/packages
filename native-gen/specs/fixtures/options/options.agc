@@ -24,6 +24,12 @@ extern module "options"
   def misread_result(values: List[Result[Int]]) -> Int
   ## Reads a List whose Point has a String `x`: the call fails at `List[Optional[Point]].0.some.x`.
   def misread_optional(values: List[Optional[Point]]) -> Int
+  ## Calls the wrapper of `echo_nested` with `some(ok([1, 2, "a"]))`: the call fails at `argument 1: List[Int].2`.
+  def misread_nested() -> Int
+  ## The sum of the Lists that are there.
+  def sum_inner(values: List[Optional[List[Int]]]) -> Int
+  ## Calls the wrapper of `sum_inner` with `[none, some([1, 2, 3, "a"])]`: the call fails at `argument 1: List[Int].3`.
+  def misread_inner() -> Int
 end
 
 def main() -> Void
@@ -32,6 +38,10 @@ def main() -> Void
     puts(misread_result([ok(1)]))
   elsif call == "misread_optional"
     puts(misread_optional([none]))
+  elsif call == "misread_nested"
+    puts(misread_nested())
+  elsif call == "misread_inner"
+    puts(misread_inner())
   else
     puts([echo_optional(some(Point(x: 1, y: 2))), echo_optional(none)])
     puts([echo_result(ok(3)), echo_result(error("no"))])

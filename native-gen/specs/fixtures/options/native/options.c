@@ -63,4 +63,42 @@ an_term options_misread_optional(an_env *env, options_list_optional_Point values
   return an_int(env, item.value.x);
 }
 
+/* Calls the internal wrapper of echo_nested on purpose: a program cannot pass a bad item, and only the wrapper sets
+   the argument of the cursor inside the Optional and the Result. */
+an_term options_misread_nested(an_env *env) {
+  an_term items[3], argv[1];
+  items[0] = an_int(env, 1);
+  items[1] = an_int(env, 2);
+  items[2] = an_string(env, "a", 1);
+  argv[0] = an_some(env, an_ok(env, an_list(env, items, 3)));
+  (void)options_native_echo_nested(env, 1, argv);
+  return an_void(env);
+}
+
+an_term options_sum_inner(an_env *env, options_list_optional_list_Int values) {
+  options_optional_list_Int item;
+  int64_t x, total = 0;
+  int more, got;
+  while ((more = options_list_optional_list_Int_next(env, &values, &item)) == 1) {
+    if (!item.some) continue;
+    while ((got = options_list_Int_next(env, &item.value, &x)) == 1) total += x;
+    if (got < 0) return an_void(env);
+  }
+  if (more < 0) return an_void(env);
+  return an_int(env, total);
+}
+
+/* Calls the internal wrapper of sum_inner on purpose, as above: the List inside each Optional item takes the argument
+   of the outer cursor. */
+an_term options_misread_inner(an_env *env) {
+  an_term items[4], rows[2], argv[1];
+  for (int i = 0; i < 3; i++) items[i] = an_int(env, i + 1);
+  items[3] = an_string(env, "a", 1);
+  rows[0] = an_none(env);
+  rows[1] = an_some(env, an_list(env, items, 4));
+  argv[0] = an_list(env, rows, 2);
+  (void)options_native_sum_inner(env, 1, argv);
+  return an_void(env);
+}
+
 OPTIONS_NATIVE_MODULE(NULL)
