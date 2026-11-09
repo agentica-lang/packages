@@ -68,14 +68,18 @@ an_term stats_Cell_Empty(an_env *env);
 an_term stats_Cell_Number(an_env *env, double _0);
 an_term stats_Cell_Text(an_env *env, ng_str _0);
 
-/* The Lists and Maps. _next gives 1 for an item, 0 at the end, and -1 when the item does not decode, and then the
-   call has failed with its path. A builder makes one: _begin, then _push (_put for a Map), then _end. */
+/* The Lists and Maps. _next gives 1 for an item, 0 at the end, and -1 when the item does not decode: the call has
+   then failed with the path of the item in its own List or Map (an item of a List or Map read from another has
+   the path from the inner one, `List[Float].1`), and every later _next gives -1 too, as after a failed _open. A
+   builder makes one: _begin, then _push (_put for a Map), then _end. Cursors and builders hold terms: keep them
+   in C locals, for this call only. */
 
 typedef struct {
   an_term term;
   an_list_cursor cursor;
   size_t len;
   size_t at;
+  bool failed;
 } stats_list_Float;
 bool stats_list_Float_open(an_env *env, an_term t, stats_list_Float *out);
 int stats_list_Float_next(an_env *env, stats_list_Float *list, double *out);
@@ -234,9 +238,11 @@ static bool stats_native_item_Float(an_env *env, an_term x, double *out, ng_fail
 }
 
 static bool stats_native_open_list_Float(an_env *env, an_term t, stats_list_Float *out, ng_fail *fail) {
+  memset(out, 0, sizeof *out);
   out->term = t;
-  out->at = 0;
-  return an_list_cursor_begin(env, t, &out->cursor, &out->len) || ng_expected(fail, "List[Float]");
+  if (an_list_cursor_begin(env, t, &out->cursor, &out->len)) return true;
+  out->failed = true;
+  return ng_expected(fail, "List[Float]");
 }
 
 bool stats_list_Float_open(an_env *env, an_term t, stats_list_Float *out) {
@@ -247,10 +253,13 @@ bool stats_list_Float_open(an_env *env, an_term t, stats_list_Float *out) {
 int stats_list_Float_next(an_env *env, stats_list_Float *list, double *out) {
   an_term x;
   ng_fail fail;
+  size_t at = list->at;
+  if (list->failed) return -1;
   if (!an_list_next(env, &list->cursor, &x)) return 0;
-  if (!stats_native_item_Float(env, x, out, &fail)) return ng_fail_item(env, &fail, "List[Float]", list->at, NULL);
   list->at++;
-  return 1;
+  if (stats_native_item_Float(env, x, out, &fail)) return 1;
+  list->failed = true;
+  return ng_fail_item(env, &fail, "List[Float]", at, NULL);
 }
 
 void stats_map_String_Cell_begin(an_env *env, stats_map_String_Cell_builder *b) { b->map = an_map_from(env, NULL, NULL, 0); }

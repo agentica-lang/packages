@@ -307,7 +307,7 @@ def wrapper(function: Analysis.NativeFunction, names: Prefix, shelf: Collections
   for param in function.parameters
     local = "a#{at}"
     decoded = Codecs.decode_argument(codecs, param.type, local, at)
-    if Collections.cursor?(shelf, param.type)
+    if Collections.cursor?(param.type)
       decoded = Collections.decode_argument(shelf, param.type, local, at)
     end
 
@@ -326,7 +326,7 @@ end
 
 # Whether an argument of `type` fails the call with a path when it does not decode.
 def failable?(shelf: Collections.Shelf, type: String) -> Bool
-  return Codecs.embedded?(shelf.codecs, "", type) or Collections.cursor?(shelf, type)
+  return Codecs.embedded?(shelf.codecs, "", type) or Collections.cursor?(type)
 end
 
 # The function and type tables, and the macro that ends the module's file with the resource table, which needs the

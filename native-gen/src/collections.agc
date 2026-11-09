@@ -23,7 +23,7 @@ export def of(block: Analysis.NativeBlock, codecs: Codecs.Plan) -> Shelf
   made: List[String] = []
   for function in block.functions
     for param in function.parameters
-      read = read.concat([param.type])
+      read = read.push(param.type)
     end
 
     made = made.push(function.result)
@@ -44,13 +44,13 @@ export def of(block: Analysis.NativeBlock, codecs: Codecs.Plan) -> Shelf
 end
 
 ## Whether a parameter of `type` arrives as a cursor.
-export def cursor?(shelf: Shelf, type: String) -> Bool
+export def cursor?(type: String) -> Bool
   return collection?(Types.parse(type))
 end
 
 ## The C type of a parameter of `type`: its cursor, or what the codecs give.
 export def c_type(shelf: Shelf, type: String) -> String
-  if cursor?(shelf, type)
+  if cursor?(type)
     return name(shelf, Types.parse(type))
   end
 
@@ -69,6 +69,11 @@ export def global_names(shelf: Shelf) -> List[Names.Named]
       Names.Named(c: "#{c}_next", source: "the next of #{source}"),
       Names.Named(c: "#{shelf.codecs.lower}_native_open_#{Types.mangled(type)}", source: "the decoder of #{source}"),
     ])
+  end
+
+  for held in held_items(shelf)
+    c = "#{shelf.codecs.lower}_native_item_#{Types.mangled(held)}"
+    named = named.push(Names.Named(c: c, source: "the item decoder of #{Types.text(held)}"))
   end
 
   for type in shelf.made
@@ -93,8 +98,11 @@ export def declarations(shelf: Shelf) -> List[String]
 
   lines = [
     "",
-    "/* The Lists and Maps. _next gives 1 for an item, 0 at the end, and -1 when the item does not decode, and then the",
-    "   call has failed with its path. A builder makes one: _begin, then _push (_put for a Map), then _end. */",
+    "/* The Lists and Maps. _next gives 1 for an item, 0 at the end, and -1 when the item does not decode: the call has",
+    "   then failed with the path of the item in its own List or Map (an item of a List or Map read from another has",
+    "   the path from the inner one, `List[Float].1`), and every later _next gives -1 too, as after a failed _open. A",
+    "   builder makes one: _begin, then _push (_put for a Map), then _end. Cursors and builders hold terms: keep them",
+    "   in C locals, for this call only. */",
   ]
 
   for type in shelf.read
@@ -184,6 +192,22 @@ def map?(type: Types.Type) -> Bool
   end
 end
 
+# The item types of the Lists and Maps that are read, each once.
+def held_items(shelf: Shelf) -> List[Types.Type]
+  seen: Set[String] = Set.new([])
+  out: List[Types.Type] = []
+  for type in shelf.read
+    for held in items(type)
+      if !seen.include?(Types.mangled(held))
+        seen = seen.add(Types.mangled(held))
+        out = out.push(held)
+      end
+    end
+  end
+
+  return out
+end
+
 # The item types of a List, or the key and value types of a Map.
 def items(type: Types.Type) -> List[Types.Type]
   case type
@@ -226,6 +250,7 @@ def cursor_declaration(shelf: Shelf, type: Types.Type) -> List[String]
     "  an_#{kind}_cursor cursor;",
     "  size_t len;",
     "  size_t at;",
+    "  bool failed;",
     "} #{c};",
     "bool #{c}_open(an_env *env, an_term t, #{c} *out);",
     "int #{c}_next(an_env *env, #{c} *#{kind}, #{outs});",
@@ -281,9 +306,11 @@ def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
 
   lines = [
     "static bool #{p}_native_open_#{m}(an_env *env, an_term t, #{c} *out, ng_fail *fail) {",
+    "  memset(out, 0, sizeof *out);",
     "  out->term = t;",
-    "  out->at = 0;",
-    "  return an_#{kind}_cursor_begin(env, t, &out->cursor, &out->len) || ng_expected(fail, \"#{text}\");",
+    "  if (an_#{kind}_cursor_begin(env, t, &out->cursor, &out->len)) return true;",
+    "  out->failed = true;",
+    "  return ng_expected(fail, \"#{text}\");",
     "}",
     "",
     "bool #{c}_open(an_env *env, an_term t, #{c} *out) {",
@@ -299,10 +326,13 @@ def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
       "int #{c}_next(an_env *env, #{c} *list, #{item_type(shelf, items(type)[0])} *out) {",
       "  an_term x;",
       "  ng_fail fail;",
+      "  size_t at = list->at;",
+      "  if (list->failed) return -1;",
       "  if (!an_list_next(env, &list->cursor, &x)) return 0;",
-      "  if (!#{item}(env, x, out, &fail)) return ng_fail_item(env, &fail, \"#{text}\", list->at, NULL);",
       "  list->at++;",
-      "  return 1;",
+      "  if (#{item}(env, x, out, &fail)) return 1;",
+      "  list->failed = true;",
+      "  return ng_fail_item(env, &fail, \"#{text}\", at, NULL);",
       "}",
     ])
   end
@@ -313,11 +343,17 @@ def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
     "int #{c}_next(an_env *env, #{c} *map, #{outs}) {",
     "  an_term k, v;",
     "  ng_fail fail;",
+    "  size_t at = map->at;",
+    "  const char *part = \"key\";",
+    "  if (map->failed) return -1;",
     "  if (!an_map_next(env, &map->cursor, &k, &v)) return 0;",
-    "  if (!#{item}(env, k, key, &fail)) return ng_fail_item(env, &fail, \"#{text}\", map->at, \"key\");",
-    "  if (!#{value}(env, v, value, &fail)) return ng_fail_item(env, &fail, \"#{text}\", map->at, \"value\");",
     "  map->at++;",
-    "  return 1;",
+    "  if (#{item}(env, k, key, &fail)) {",
+    "    if (#{value}(env, v, value, &fail)) return 1;",
+    "    part = \"value\";",
+    "  }",
+    "  map->failed = true;",
+    "  return ng_fail_item(env, &fail, \"#{text}\", at, part);",
     "}",
   ])
 end

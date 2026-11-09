@@ -114,6 +114,7 @@ Feature: The C header of an extern module block
       [3.5, 0.0, 4.0]
       {"ab": [97, 98], "": [], "é": [195, 169]}
       [Point(x: 11, y: 22), Point(x: 9, y: 20)]
+      [2025, 0]
 
       """
 

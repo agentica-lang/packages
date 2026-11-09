@@ -50,6 +50,21 @@ an_term lists_moved(an_env *env, lists_map_String_Point named, lists_Point by) {
   return lists_list_Point_end(env, &out);
 }
 
+an_term lists_tally(an_env *env, lists_map_Int_list_Int groups, lists_list_optional_Int maybe) {
+  int64_t key, x, total = 0;
+  lists_list_Int values;
+  an_term item;
+  int more, got;
+  while ((more = lists_map_Int_list_Int_next(env, &groups, &key, &values)) == 1) {
+    while ((got = lists_list_Int_next(env, &values, &x)) == 1) total += key * x;
+    if (got < 0) return an_void(env);
+  }
+  if (more < 0) return an_void(env);
+  while ((more = lists_list_optional_Int_next(env, &maybe, &item)) == 1) total += 1000;
+  if (more < 0) return an_void(env);
+  return an_int(env, total);
+}
+
 /* The constructors of the C API do not check the item types, so a List[Int] with a String in it can be made; reading
    it fails at that item. */
 an_term lists_misread_list(an_env *env, lists_list_Int values) {
