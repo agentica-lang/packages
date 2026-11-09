@@ -93,18 +93,42 @@ A function you did not write is a link error, not a failure when the module load
 - Names: `empty?` is `PREFIX_empty_p` and `save!` is `PREFIX_save_bang`. A parameter that is a C or C++ keyword, `env`, a type or macro a prototype may use (`int64_t`, `size_t`, `uint8_t`, `uint32_t`, `errno`), or that starts with `an_` or `ng_`, gets a trailing `_` (`int_`). The header compiles as C11 and as C++.
 - The header starts with a check of the version of `agentica_native.h`: it stops the build when the API is older than the block needs.
 
+## A new module
+
+`new` starts a module in a package (the command is `cli.agc new`, `native-gen new` in its errors):
+
+```sh
+agentica deps/native-gen/cli.agc new demo
+agentica deps/native-gen/cli.agc new path/to/pkg/demo
+```
+
+It writes, in the folder of the path (the current one for a bare name):
+
+- `demo.agc`, with an `extern module "demo"` block of one example function, `add(a: Int, b: Int) -> Int`, and a `main` that calls it;
+- `native/demo.c`, with one body per function that fails the call with `not written yet` until you write it, and `DEMO_NATIVE_MODULE(NULL)` at its end;
+- `native/demo_native.h`, the header made from the new `.agc`;
+- the `[native.demo]` entry of `agentica.toml` (`build = { sources = ["native/demo.c"] }`), added at the end of the file, or a new `agentica.toml` with `name = "demo"`. A comment above the entry gives the two commands that make and check the header, run from that folder.
+
+The package builds and loads as it is: running `demo.agc` fails at the call with `add: not written yet`. Replace the example with your functions, then make the header again.
+
+The name is the `[native.NAME]` of `agentica.toml`, the library of the block and the start of the C names: a lowercase letter, then lowercase letters, digits and `_`, at most 64 characters, not a device name of Windows (`con`, `nul`, `com1`, ...), and not a prefix of the C API (`an`, `ng`, `agentica`, or one that starts with `an_` or `ng_`). Pass `NAME` or `FOLDER/NAME`, without `.agc`.
+
+`new` writes only new files. It writes nothing when `demo.agc`, `native/demo.c` or the header is there, or when `agentica.toml` has `native.demo` already (`NATIVE-GEN-EXISTS`), or when `agentica.toml` with the entry added is not TOML (`NATIVE-GEN-MANIFEST`). Every text is made before the first write; only a write that fails midway (`NATIVE-GEN-IO`) leaves the files written before it.
+
 ## Errors
 
-An error is one line on stderr, `native-gen: [CODE] message`, and the exit code is 1. Bad usage prints the usage error and a `Try 'native-gen --help'` line, and the exit code is 2.
+An error is one line on stderr, `native-gen: [CODE] message`, and the exit code is 1. Bad usage prints the usage error and a `Try 'native-gen --help'` line (`Try 'native-gen new --help'` for `new`, which also takes a missing or an extra argument as bad usage), and the exit code is 2.
 
 | Code | When |
 |---|---|
 | `NATIVE-GEN-NAME` | two names map to one C identifier (`empty?` and `empty_p`), or a variant with a payload is named after a C macro |
 | `NATIVE-GEN-BLOCK` | the file has no `extern module` block, or more than one |
-| `NATIVE-GEN-PREFIX` | the prefix is not a C identifier, or is the C API's; give another with `--prefix` |
+| `NATIVE-GEN-PREFIX` | the prefix is not a C identifier, or is the C API's; give another with `--prefix`. For `new`, the name breaks the rule above, or is the C API's (`an`, `ng`, `agentica`, or starts with `an_` or `ng_`) |
 | `NATIVE-GEN-UNKNOWN` | `std/analysis` gives a function mode or a type kind that this version does not know |
 | `NATIVE-GEN-STALE` | `--check`: the file at `--output` is not the header that the `.agc` gives |
-| `NATIVE-GEN-IO` | the header cannot be read or written |
+| `NATIVE-GEN-EXISTS` | `new`: a file it would write is there, or `agentica.toml` has `native.NAME` already |
+| `NATIVE-GEN-MANIFEST` | `new`: `agentica.toml`, with the entry added, is not TOML |
+| `NATIVE-GEN-IO` | a file cannot be read or written |
 | any other | the code of the diagnostic when the `.agc` does not check |
 
 ## Check in CI
