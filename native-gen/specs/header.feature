@@ -59,7 +59,7 @@ Feature: The C header of an extern module block
       | C11      | cc -std=c11 -Wall -Wextra -Werror |
       | C++      | sh ../cxx.sh                     |
 
-  Scenario Outline: Structs come back equal through their C values, built as <language>
+  Scenario Outline: Structs and enums come back equal through their C values, built as <language>
     Given a fresh package cache
     And the environment variable "CC" is "<cc>"
     And the header of the package of "fixtures/shapes/shapes.agc"
@@ -69,6 +69,9 @@ Feature: The C header of an extern module block
       """
       true
       true
+      [true, true, true]
+      true
+      Shape.Circle(Point(x: 1, y: 2), 0.5)
 
       """
 
@@ -91,11 +94,25 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                                | call           | path                                 |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread        | Point: expected Point                |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested | Label.at.x: expected Int             |
-      | C++      | sh ../cxx.sh                      | misread_nested | Label.at.x: expected Int             |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | echo_label     | argument 1: Label.at.x: expected Int |
+      | language | cc                                | call            | path                                 |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread         | Point: expected Point                |
+      | C++      | sh ../cxx.sh                      | misread         | Point: expected Point                |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested  | Label.at.x: expected Int             |
+      | C++      | sh ../cxx.sh                      | misread_nested  | Label.at.x: expected Int             |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | echo_label      | argument 1: Label.at.x: expected Int |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_payload | Shape.Circle.0.x: expected Int       |
+      | C++      | sh ../cxx.sh                      | misread_payload | Shape.Circle.0.x: expected Int       |
+
+  Scenario: The bench of a struct of 26 fields runs
+    Given a fresh package cache
+    And the header of the package of "../bench/wide/wide.agc"
+    And the program argument "10"
+    And the Agentica program "../bench/wide/wide.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout includes:
+      """
+      decode and make:
+      """
 
   Scenario: The header goes to stdout without --output, with names from --prefix, in lower case for functions
     Given the program argument "fixtures/errors/path.agc"
@@ -129,6 +146,7 @@ Feature: The C header of an extern module block
       | no_block.agc   | NATIVE-GEN-BLOCK  |
       | reserved.agc   | NATIVE-GEN-NAME   |
       | fields.agc     | NATIVE-GEN-NAME   |
+      | macro.agc      | NATIVE-GEN-NAME   |
       | path.agc       | NATIVE-GEN-PREFIX |
       | missing.agc    | QUERY-USAGE       |
 

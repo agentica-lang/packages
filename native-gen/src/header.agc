@@ -58,6 +58,12 @@ export def render(block: Analysis.NativeBlock, names: Prefix, source: String) ->
     if !KINDS.has_key?(type.kind)
       return error("[NATIVE-GEN-UNKNOWN] #{type.name} has the kind #{type.kind.inspect}")
     end
+
+    for member in type.members
+      if type.kind == "enum" and !member.types.empty? and Names.macro?(member.name)
+        return error("[NATIVE-GEN-NAME] #{type.name}.#{member.name} is a C macro, which its payload cannot be named")
+      end
+    end
   end
 
   codecs = Codecs.of(block, names.lower, names.upper)
@@ -180,13 +186,14 @@ def constants(block: Analysis.NativeBlock, names: Prefix) -> List[String]
   end
 
   for type in block.types
-    what = "fields"
+    member_names = type.members.map do |member: Analysis.NativeMember| "#{big}_#{type.name}_#{member.name}" end
+    members = numbered(member_names)
     if type.kind == "enum"
-      what = "variants"
+      tag = numbered_type(member_names, "#{names.lower}_#{type.name}_tag")
+      lines = lines.concat(["", "/* The variants of #{type.name}, in declared order: the tag of its C value. */", tag])
+    else
+      lines = lines.concat(["", "/* The fields of #{type.name}, in declared order. */", members])
     end
-
-    members = numbered(type.members.map do |member: Analysis.NativeMember| "#{big}_#{type.name}_#{member.name}" end)
-    lines = lines.concat(["", "/* The #{what} of #{type.name}, in declared order. */", members])
   end
 
   if !block.resources.empty?
@@ -215,6 +222,15 @@ end
 
 # One enum of `items`, numbered from 0 in their order.
 def numbered(items: List[String]) -> String
+  return "enum { #{enum_rows(items)} };"
+end
+
+# The same enum as the type `name`.
+def numbered_type(items: List[String], name: String) -> String
+  return "typedef enum { #{enum_rows(items)} } #{name};"
+end
+
+def enum_rows(items: List[String]) -> String
   at = 0
   rows: List[String] = []
   for item in items
@@ -222,7 +238,7 @@ def numbered(items: List[String]) -> String
     at += 1
   end
 
-  return "enum { #{rows.join(", ")} };"
+  return rows.join(", ")
 end
 
 # One prototype per function, each with the `##` doc of its declaration.

@@ -60,13 +60,14 @@ an_term kinds_total(an_env *env, an_term values) {
 }
 
 /* The center of a circle, or none for a dot. */
-an_term kinds_corner(an_env *env, an_term shape) {
-  uint32_t variant;
-  an_term center;
-  if (!an_get_variant(env, shape, KINDS_TYPE_Shape, &variant)) return an_badarg(env, 0);
-  if (variant == KINDS_Shape_Dot) return an_none(env);
-  if (!an_get_payload(env, shape, KINDS_TYPE_Shape, 0, &center)) return an_badarg(env, 0);
-  return an_some(env, center);
+an_term kinds_corner(an_env *env, kinds_Shape shape) {
+  switch (shape.tag) {
+    case KINDS_Shape_Dot:
+      return an_none(env);
+    case KINDS_Shape_Circle:
+      return an_some(env, kinds_Point_make(env, &shape.as.Circle._0));
+  }
+  return an_raise(env, "not a shape");
 }
 
 KINDS_NATIVE_MODULE(NULL)
