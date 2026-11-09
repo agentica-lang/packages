@@ -13,6 +13,7 @@ use core::iter::FusedIterator;
 use core::marker::PhantomData;
 use core::{mem, ptr};
 use std::any::Any;
+use std::borrow::Cow;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::sys;
@@ -27,11 +28,11 @@ pub enum Mode {
 
 /// What a row of the module's type table takes: the number of fields of a struct, or the payload count of each
 /// variant of an enum, in declared order. The VM reads that many terms from what `make_struct` and `make_enum` pass,
-/// so `Env` checks the length first.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// so `Env` checks the length first. `Module` derives it from the row's shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Arity {
     Struct(usize),
-    Enum(&'static [usize]),
+    Enum(Cow<'static, [usize]>),
 }
 
 /// One call of the VM. The lifetime `'a` is the call, which only `call` chooses: a `Term<'a>` and what it lends
