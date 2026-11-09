@@ -8,15 +8,21 @@
 ## ```
 ##
 ## An error starts with its code in brackets: `[NATIVE-GEN-NAME] ...` when two names map to one C identifier,
-## `[NATIVE-GEN-PREFIX]`, `[NATIVE-GEN-BLOCK]`, `[NATIVE-GEN-UNKNOWN]`, `[NATIVE-GEN-EXISTS]`,
-## `[NATIVE-GEN-MANIFEST]`, `[NATIVE-GEN-IO]`, or the code of the diagnostic when the file does not check.
+## `[NATIVE-GEN-PREFIX]`, `[NATIVE-GEN-BLOCK]`, `[NATIVE-GEN-UNKNOWN]`, `[NATIVE-GEN-EXISTS]`, `[NATIVE-GEN-MANIFEST]`,
+## `[NATIVE-GEN-STALE]`, `[NATIVE-GEN-CARGO]`, `[NATIVE-GEN-IO]`, or the code of the diagnostic when the file does not
+## check.
 
 import Analysis from "std/analysis"
 import Toml from "std/toml"
+import Build from "src/build"
 import CHeader from "src/header"
 import Names from "src/names"
 import RustSide from "src/rust"
 import Scaffold from "src/scaffold"
+
+# How long cargo may build, and the bytes of one read of a copy.
+CARGO_MS = 3_600_000
+CHUNK = 1_048_576
 
 ## The header of the one `extern module` block of the file at `path`. Its C names start with `prefix`, by default the
 ## last part of the block's library name up to its first `.` (`stats` for "stats" and for "native/stats.so").
@@ -29,18 +35,71 @@ end
 ## (`StatsNative` for "stats", `MyDbNative` for "MyDb" or "my_db"); by default the one of `header`.
 export def rust(path: String, prefix: String = "") -> Result[String]
   block = try block_in(Analysis.workspace(), path)
-  name = prefix
-  if name.empty?
-    name = default_prefix(block.library)
-  end
+  return rust_of(block, prefix, path)
+end
 
-  if !Names.c_identifier?(name)
+## Builds the Rust module of the file at `path` (`FOLDER/NAME.agc`) from the crate `FOLDER/rust/`: writes its Rust file
+## `rust/src/LIBRARY_native.rs` when it changed, runs `cargo build --release`, copies the library to the file of the
+## `[native.LIBRARY]` entry of `FOLDER/agentica.toml` for this system, and adds that entry when it is missing
+## (`native/libLIBRARY.so` on linux). It gives one line per step, what it did or that it had nothing to do. With
+## `check`, it only fails (`[NATIVE-GEN-STALE]`) when the Rust file is not the one the `.agc` gives.
+export def build(path: String, check: Bool = false) -> Result[List[String]]
+  folder = path.slice(0, path.length - last_part(path).length)
+  block = try block_in(Analysis.Workspace(version: 1, buffers: unbuilt(folder)), path)
+  name = block.library
+  problem = Scaffold.name_problem(name)
+  if !problem.empty?
     return error(
-      "[NATIVE-GEN-PREFIX] the prefix #{name.inspect} is not an ASCII identifier; choose another with --prefix",
+      "[NATIVE-GEN-BLOCK] build needs a library named as its [native.NAME], not #{name.inspect}: #{problem}",
     )
   end
 
-  return RustSide.render(block, RustSide.trait_name(name), last_part(path))
+  text = try rust_of(block, "", path)
+  crate = "#{folder}rust"
+  source = "#{crate}/src/#{name}_native.rs"
+  if check
+    case File.read_text(source)
+      ok(kept) if kept == text -> return ok([])
+      ok(_) -> return error("[NATIVE-GEN-STALE] #{source} is not the one #{path} gives; run build")
+      error(message) -> return error("[NATIVE-GEN-IO] #{source}: #{message}")
+    end
+  end
+
+  if !File.stat("#{crate}/Cargo.toml").ok?
+    return error(
+      "[NATIVE-GEN-IO] #{crate}/Cargo.toml: no Rust crate; build needs it in rust/ beside #{last_part(path)}",
+    )
+  end
+
+  manifest = "#{folder}agentica.toml"
+  toml = try io(manifest, File.read_text(manifest))
+  os = System.os()
+  plan = try Build.plan(manifest, toml, name, os)
+  extension = try Build.extension(os)
+  done: List[String] = []
+  if File.read_text(source).unwrap_or("") == text
+    done = done.push("#{source} is current")
+  else
+    try io("#{crate}/src", Dir.mkdir("#{crate}/src"))
+    try io(source, File.write_text(source, text))
+    done = done.push("wrote #{source}")
+  end
+
+  built = try cargo(crate, extension)
+  library = "#{folder}#{plan.file}"
+  if try copy(built, library)
+    done = done.push("copied #{built} to #{library}")
+  else
+    done = done.push("#{library} is current")
+  end
+
+  key = "native.#{name}.#{os}"
+  if plan.manifest == toml
+    return ok(done.push("#{manifest} has #{key}"))
+  end
+
+  try io(manifest, File.replace(manifest, plan.manifest.bytes))
+  return ok(done.push("added #{key} to #{manifest}"))
 end
 
 ## A new native module at `path` (`demo`, or `pkg/demo` in the folder `pkg`): writes `NAME.agc` with an `extern
@@ -85,6 +144,120 @@ export def scaffold(path: String) -> Result[Void]
   try io(source, File.write_text(source, Scaffold.source(name, names)))
   try io(header_path, File.write_text(header_path, made))
   return io(manifest, File.write_text(manifest, toml))
+end
+
+# The folder's `agentica.toml` without its `native` table, as a buffer: a library that is not built yet, or not for
+# this system, then does not stop the check of the `.agc`. No buffer without a manifest, or for one that is not TOML,
+# which the check reports.
+def unbuilt(folder: String) -> Map[String, String]
+  path = "#{folder}agentica.toml"
+  buffers: Map[String, String] = {}
+  kept = File.read_text(path).unwrap_or("")
+  case Build.without_native(kept)
+    ok(text) if File.stat(path).ok? -> return buffers.put(Path.resolve(path).unwrap_or(path), text)
+    _ -> return buffers
+  end
+end
+
+# The Rust file of `block` of the file at `path`, its trait named after `prefix` or the library.
+def rust_of(block: Analysis.NativeBlock, prefix: String, path: String) -> Result[String]
+  name = prefix
+  if name.empty?
+    name = default_prefix(block.library)
+  end
+
+  if !Names.c_identifier?(name)
+    return error(
+      "[NATIVE-GEN-PREFIX] the prefix #{name.inspect} is not an ASCII identifier; choose another with --prefix",
+    )
+  end
+
+  return RustSide.render(block, RustSide.trait_name(name), last_part(path))
+end
+
+# Runs `cargo build --release` on the crate in the folder `crate` and gives the library it built, the file ending in
+# `extension`, from the messages cargo writes on stdout. Its errors and progress go to stderr as cargo writes them.
+def cargo(crate: String, extension: String) -> Result[String]
+  args = [
+    "build",
+    "--release",
+    "--lib",
+    "--manifest-path",
+    "#{crate}/Cargo.toml",
+    "--message-format=json-render-diagnostics",
+  ]
+
+  started = Process.spawn("cargo", args)
+  if !started.ok?
+    return error("[NATIVE-GEN-CARGO] cannot run cargo: #{started.message}; build needs Rust's cargo on PATH")
+  end
+
+  process = started.unwrap!
+  lines: List[String] = []
+  line = Process.read_line(process, CARGO_MS)
+  while line.ok?
+    lines = lines.push(line.unwrap!)
+    line = Process.read_line(process, CARGO_MS)
+  end
+
+  ended = Process.wait(process, CARGO_MS)
+  Process.close(process)
+  case ended
+    ok(0) -> return Build.library_in(lines, extension)
+    ok(code) -> return error("[NATIVE-GEN-CARGO] cargo build failed with exit code #{code}")
+    error(message) -> return error("[NATIVE-GEN-CARGO] cargo build did not end: #{message}")
+  end
+end
+
+# Copies the file `from` to `to` through a new file beside it, unless `to` has its bytes already; true when it copied.
+def copy(from: String, to: String) -> Result[Bool]
+  hash = try io(from, File.sha256(from))
+  kept = File.sha256(to)
+  if kept.ok? and kept.unwrap! == hash
+    return ok(false)
+  end
+
+  folder = to.slice(0, to.length - last_part(to).length)
+  if !folder.empty?
+    try io(folder, Dir.mkdir(folder))
+  end
+
+  part = "#{folder}.#{last_part(to)}.#{System.pid()}.part"
+  written = copied(from, part)
+  if written.ok? and File.stat(to).ok?
+    written = io(to, Path.remove(to))
+  end
+
+  if written.ok?
+    written = io(to, Path.rename(part, to))
+  end
+
+  if !written.ok?
+    _ = Path.remove(part)
+    return error(written.message)
+  end
+
+  return ok(true)
+end
+
+# Writes the bytes of the file `from` to the new file `to`, 1 MiB at a time.
+def copied(from: String, to: String) -> Result[Void]
+  input = try io(from, File.open(from))
+  output = try io(to, File.open(to, "write"))
+  chunk = io(from, File.read_bytes(input, CHUNK))
+  while chunk.ok? and chunk.unwrap!.size > 0
+    written = io(to, File.write_bytes(output, chunk.unwrap!))
+    if !written.ok?
+      chunk = error(written.message)
+    else
+      chunk = io(from, File.read_bytes(input, CHUNK))
+    end
+  end
+
+  _ = File.close(input)
+  closed = io(to, File.close(output))
+  try chunk
+  return closed
 end
 
 # The header of the file at `path` as `files` has it: the disk, or a buffer in place of the file.

@@ -1,0 +1,3 @@
+# A Rust module that `cli.agc build math.agc` builds: rust/build-check.sh builds a copy of this folder, where build adds
+# the [native.math] entry of the system, and runs math.agc on it.
+name = "native-gen-rust-math"

@@ -5,6 +5,7 @@
 
 import BDD from "std/bdd"
 import NativeGen from "../native_gen"
+import Build from "../src/build"
 
 # The name in the context of the header file that `--output` writes.
 WRITTEN = "written"
@@ -34,6 +35,9 @@ def main() -> Void
     BDD.step("the program argument {string} in the fresh folder", &argument_in_folder),
     BDD.step("the Agentica program {string} in the fresh folder", &program_in_folder),
     BDD.step("the C compiler builds as {string}", &compiler),
+    BDD.step("the file {string} in the fresh folder is:", &file_in_folder),
+    BDD.step("the library of {string} on {string} is {string}", &library_file),
+    BDD.step("the entry of {string} on {string} added to the agentica.toml of the fresh folder gives:", &entry_added),
   ])
 end
 
@@ -133,6 +137,29 @@ def compiler(ctx: BDD.Context, args: List[String]) -> BDD.Context
   end
 
   return BDD.given_env(ctx, "CC", "sh #{Path.resolve(script).unwrap!}")
+end
+
+# The doc string as the file `args[0]` of the fresh folder, in a folder made for it.
+def file_in_folder(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  path = in_folder(ctx, args[0])
+  parts = path.split("/")
+  made = Dir.mkdir(parts.take(parts.size - 1).join("/"))
+  done = File.write_text(path, "#{BDD.doc_string(ctx)}\n")
+  return BDD.assert(ctx, made.ok? and done.ok?, "cannot write #{path}: #{done.message}")
+end
+
+def library_file(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  made = Build.library_file(args[0], args[1])
+  return BDD.assert(ctx, made.ok? and made.unwrap! == args[2], "the library is #{made}")
+end
+
+# The text that build writes to the agentica.toml of the fresh folder for the module `args[0]` on the system `args[1]`.
+def entry_added(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  path = in_folder(ctx, "agentica.toml")
+  case Build.plan(path, File.read_text(path).unwrap_or(""), args[0], args[1])
+    ok(plan) -> return BDD.assert(ctx, plan.manifest == BDD.doc_string(ctx), "agentica.toml is: #{plan.manifest}")
+    error(message) -> return BDD.assert(ctx, false, message)
+  end
 end
 
 def argument_in_folder(ctx: BDD.Context, args: List[String]) -> BDD.Context

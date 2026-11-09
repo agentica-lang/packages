@@ -542,3 +542,140 @@ Feature: The C header of an extern module block
       """
       --check needs --output
       """
+
+  Scenario: build --check passes on the committed Rust file of rust_math
+    Given the program argument "build"
+    And the program argument "fixtures/rust_math/math.agc"
+    And the program argument "--check"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+
+  Scenario: build --check fails when the Rust file is not the one the .agc gives
+    Given a fresh folder
+    And the file "demo.agc" in the fresh folder is:
+      """
+      extern module "demo"
+        def add(a: Int, b: Int) -> Int
+      end
+      """
+    And the file "rust/src/demo_native.rs" in the fresh folder is:
+      """
+      // an older block
+      """
+    And the program argument "build"
+    And the program argument "demo.agc" in the fresh folder
+    And the program argument "--check"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-STALE]
+      """
+
+  Scenario: build without a crate in rust/ fails with NATIVE-GEN-IO and writes nothing
+    Given a fresh folder
+    And the agentica.toml of the fresh folder has the line ""
+    And the file "demo.agc" in the fresh folder is:
+      """
+      extern module "demo"
+        def add(a: Int, b: Int) -> Int
+      end
+      """
+    And the program argument "build"
+    And the program argument "demo.agc" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-IO]
+      """
+    And the fresh folder has no "rust"
+    And the agentica.toml of the fresh folder still has only the line ""
+
+  Scenario: build without cargo on PATH fails with NATIVE-GEN-CARGO and leaves agentica.toml as it was
+    Given a fresh folder
+    And the agentica.toml of the fresh folder has the line ""
+    And the file "demo.agc" in the fresh folder is:
+      """
+      extern module "demo"
+        def add(a: Int, b: Int) -> Int
+      end
+      """
+    And the file "rust/Cargo.toml" in the fresh folder is:
+      """
+      [package]
+      name = "demo"
+      """
+    And the environment variable "PATH" is "/nonexistent-native-gen"
+    And the program argument "build"
+    And the program argument "demo.agc" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-CARGO] cannot run cargo
+      """
+    And the agentica.toml of the fresh folder still has only the line ""
+    And the fresh folder has no "native"
+
+  Scenario Outline: build refuses an agentica.toml where <case>, before it runs cargo
+    Given a fresh folder
+    And the agentica.toml of the fresh folder has the line "<entry>"
+    And the file "demo.agc" in the fresh folder is:
+      """
+      extern module "demo"
+        def add(a: Int, b: Int) -> Int
+      end
+      """
+    And the file "rust/Cargo.toml" in the fresh folder is:
+      """
+      [package]
+      name = "demo"
+      """
+    And the environment variable "PATH" is "/nonexistent-native-gen"
+    And the program argument "build"
+    And the program argument "demo.agc" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-MANIFEST]
+      """
+    And the agentica.toml of the fresh folder still has only the line "<entry>"
+
+    Examples:
+      | case                                | entry                                                                                            |
+      | native.demo builds C sources        | native.demo.build = { sources = [] }                                                             |
+      | the entry of the system has no file | native.demo = { linux = { system = 'a' }, macos = { system = 'a' }, windows = { system = 'a' } } |
+      | native.demo is an inline table      | native = { demo = { optional = false } }                                                         |
+
+  Scenario: build adds the entry of the system under the [native.NAME] line, and keeps the rest
+    Given a fresh folder
+    And the agentica.toml of the fresh folder is:
+      """
+      name = "pkg"
+
+      [native.demo] # the Rust module
+      windows = { file = "native/demo.dll" }
+
+      [dependencies]
+      """
+    Then the entry of "demo" on "linux" added to the agentica.toml of the fresh folder gives:
+      """
+      name = "pkg"
+
+      [native.demo] # the Rust module
+      linux = { file = "native/libdemo.so" }
+      windows = { file = "native/demo.dll" }
+
+      [dependencies]
+      """
+
+  Scenario Outline: build names the library of demo on <os> <file>
+    Then the library of "demo" on "<os>" is "<file>"
+
+    Examples:
+      | os      | file                 |
+      | linux   | native/libdemo.so    |
+      | macos   | native/libdemo.dylib |
+      | windows | native/demo.dll      |

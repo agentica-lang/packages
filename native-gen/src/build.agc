@@ -1,0 +1,153 @@
+## The parts of `build` that do no I/O: where the library of a Rust module goes on each system, the `[native.NAME]`
+## entry of `agentica.toml` that names it, and the library in the messages of `cargo build`.
+
+import Toml from "std/toml"
+
+## What `build` writes for a module: the text of `agentica.toml` (the same text when its entry is there already) and
+## the library's path from the package folder.
+export struct Plan
+  manifest: String
+  file: String
+end
+
+# A line of `cargo build --message-format=json-render-diagnostics`; only a `compiler-artifact` has a target and files.
+struct Message
+  reason: String
+  target: Optional[Target]
+  filenames: Optional[List[String]]
+end
+
+struct Target
+  kind: List[String]
+end
+
+## The library of the module `name` in `native/`, named as cargo names a cdylib on `os`: `native/libNAME.so` on
+## linux, `native/libNAME.dylib` on macos, `native/NAME.dll` on windows.
+export def library_file(name: String, os: String) -> Result[String]
+  ending = try extension(os)
+  if os == "windows"
+    return ok("native/#{name}#{ending}")
+  end
+
+  return ok("native/lib#{name}#{ending}")
+end
+
+## The ending of a cdylib on `os`: `.so`, `.dylib` or `.dll`.
+export def extension(os: String) -> Result[String]
+  case os
+    "linux" -> return ok(".so")
+    "macos" -> return ok(".dylib")
+    "windows" -> return ok(".dll")
+    _ ->
+      return error("[NATIVE-GEN-MANIFEST] agentica.toml has entries for linux, macos and windows, not #{os.inspect}")
+  end
+end
+
+## The manifest `text` without its `native` table, for reading the `.agc` before its library is built: each library
+## of the file is then a bare name, which a check does not open.
+export def without_native(text: String) -> Result[String]
+  case Toml.parse(text)
+    ok(Toml.Value.Table(entries)) -> return Toml.encode(Toml.Value.Table(entries.delete("native")))
+    ok(_) -> return error("not a table")
+    error(message) -> return error(message)
+  end
+end
+
+## The manifest `text` (of the file at `path`) with the entry `OS = { file = "..." }` of `[native.NAME]`, and the
+## library's file. An entry there already is kept, with its file. A missing one goes under the `[native.NAME]` line,
+## or in a new table at the end. A `build` table (C sources), an entry without `file`, a table written another way
+## and a manifest that is not TOML are `[NATIVE-GEN-MANIFEST]`.
+export def plan(path: String, text: String, name: String, os: String) -> Result[Plan]
+  doc = try parsed(path, text)
+  table = "native.#{name}"
+  key = "#{table}.#{os}"
+  if Toml.get(doc, "#{table}.build").ok?
+    return error(
+      "[NATIVE-GEN-MANIFEST] #{path}: #{table} has a build table, which builds C sources; a Rust module has #{key}",
+    )
+  end
+
+  if Toml.get(doc, key).ok?
+    case Toml.get(doc, "#{key}.file")
+      ok(Toml.Value.Str(file)) -> return ok(Plan(manifest: text, file: file))
+      _ -> return error("[NATIVE-GEN-MANIFEST] #{path}: #{key} has no file, the path that build copies the library to")
+    end
+  end
+
+  file = try library_file(name, os)
+  entry = "#{os} = { file = #{file.inspect} }"
+  joined = ""
+  if Toml.get(doc, table).ok?
+    joined = try under_header(path, text, table, entry)
+  else
+    joined = "#{ended(text)}\n[#{table}]\n#{entry}\n"
+  end
+
+  done = try parsed(path, joined)
+  case Toml.get(done, "#{key}.file")
+    ok(Toml.Value.Str(added)) if added == file -> return ok(Plan(manifest: joined, file: file))
+    _ -> return error("[NATIVE-GEN-MANIFEST] #{path}: add #{key} = { file = #{file.inspect} } by hand")
+  end
+end
+
+## The library that cargo built, from the lines it wrote with `--message-format=json-render-diagnostics`: the one file
+## ending in `extension` of a `cdylib` target.
+export def library_in(lines: List[String], extension: String) -> Result[String]
+  found = lines.flat_map do |line: String| cdylib_files(line, extension) end
+  if found.size != 1
+    return error(
+      "[NATIVE-GEN-CARGO] cargo built #{found.size} libraries ending in #{extension}; build needs one (a cdylib)",
+    )
+  end
+
+  return ok(found[0])
+end
+
+# The files ending in `extension` of a message about a `cdylib` target; none for any other line.
+def cdylib_files(line: String, extension: String) -> List[String]
+  case JSON.decode(line, Message)
+    ok(message) if message.reason == "compiler-artifact" and message.target.map(&cdylib?).unwrap_or(false) ->
+      return message.filenames.unwrap_or([]).select do |file: String| file.end_with?(extension) end
+    _ -> return []
+  end
+end
+
+def cdylib?(target: Target) -> Bool
+  return target.kind.include?("cdylib")
+end
+
+# `text` with `entry` on the line after its `[table]` line, which may end with a comment. The table written as dotted
+# keys or inline has no such line.
+def under_header(path: String, text: String, table: String, entry: String) -> Result[String]
+  lines = text.split("\n")
+  header = "[#{table}]"
+  before = lines.take_while do |line: String| !header_line?(line, header) end
+  if before.size == lines.size
+    return error(
+      "[NATIVE-GEN-MANIFEST] #{path}: add #{entry} to #{table} by hand; build adds it under a [#{table}] line",
+    )
+  end
+
+  at = before.size + 1
+  return ok(lines.take(at).push(entry).concat(lines.drop(at)).join("\n"))
+end
+
+# Whether `line` is the table header `header`, with a comment after it or not.
+def header_line?(line: String, header: String) -> Bool
+  return line.split("#")[0].trim == header
+end
+
+def ended(text: String) -> String
+  if text.empty? or text.end_with?("\n")
+    return text
+  end
+
+  return "#{text}\n"
+end
+
+def parsed(path: String, text: String) -> Result[Toml.Value]
+  case Toml.parse(text)
+    ok(doc) -> return ok(doc)
+    error(message) -> return error("[NATIVE-GEN-MANIFEST] #{path} is not TOML: #{message}")
+  end
+end

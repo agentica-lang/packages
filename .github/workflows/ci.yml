@@ -90,11 +90,11 @@ jobs:
         if: env.PACKAGES != ''
         run: make doc-examples PACKAGES="$PACKAGES"
 
-  # The Rust crate of native-gen (native-gen/native/agentica-native), when a pull request changes native-gen or this file, and on main:
-  # its format and lints on stable, its tests on the MSRV of its Cargo.toml and on stable, its doctests on nightly
-  # (which checks the error codes of the compile_fail ones), the tests under Miri, vm-check, a module on the crate run
-  # by the pinned Agentica release, and gen-check, the modules on the Rust files native-gen makes. The crate has no
-  # dependencies, so it needs no registry.
+  # The Rust crate of native-gen (native-gen/native/agentica-native), when a pull request changes native-gen or this
+  # file, and on main: its format and lints on stable, its tests on the MSRV of its Cargo.toml and on stable, its
+  # doctests on nightly (which checks the error codes of the compile_fail ones), the tests under Miri, vm-check, a
+  # module on the crate run by the pinned Agentica release, gen-check, the modules on the Rust files native-gen makes,
+  # and build-check, `cli.agc build` of a Rust module. The crate has no dependencies, so it needs no registry.
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -180,3 +180,9 @@ jobs:
       - name: Run gen-check on the VM
         if: env.RUST == '1'
         run: RUSTUP_TOOLCHAIN=stable ../../rust/gen-check/run.sh
+
+      # `cli.agc build` of the fixture rust_math: the library and the [native.math] entry it writes, a second build with
+      # nothing to do, an entry kept with its own file, and the program's output on the real VM.
+      - name: Run build-check on the VM
+        if: env.RUST == '1'
+        run: RUSTUP_TOOLCHAIN=stable ../../rust/build-check.sh
