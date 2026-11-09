@@ -72,8 +72,9 @@ jobs:
         run: make doc-examples PACKAGES="$PACKAGES"
 
   # The Rust crate of native-gen (native-gen/rust), when a pull request changes it or this file, and on main: its
-  # format and lints on stable, its tests on the MSRV of its Cargo.toml and on stable, and the tests under Miri
-  # (nightly). The crate has no dependencies, so it needs no registry.
+  # format and lints on stable, its tests on the MSRV of its Cargo.toml and on stable, the tests under Miri (nightly),
+  # and vm-check, a module on the crate run by the pinned Agentica release. The crate has no dependencies, so it
+  # needs no registry.
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -113,11 +114,15 @@ jobs:
 
       - name: Format
         if: env.RUST == '1'
-        run: cargo +stable fmt --check
+        run: |
+          cargo +stable fmt --check
+          cargo +stable fmt --check --manifest-path vm-check/Cargo.toml
 
       - name: Lints
         if: env.RUST == '1'
-        run: cargo +stable clippy --all-targets -- -D warnings
+        run: |
+          cargo +stable clippy --all-targets -- -D warnings
+          cargo +stable clippy --all-targets --manifest-path vm-check/Cargo.toml -- -D warnings
 
       - name: Test on the MSRV
         if: env.RUST == '1'
@@ -132,3 +137,16 @@ jobs:
         env:
           MIRIFLAGS: -Zmiri-strict-provenance
         run: cargo +nightly miri test --lib
+
+      - name: Install the pinned Agentica release
+        if: env.RUST == '1'
+        uses: agentica-lang/setup-agentica@v1
+        with:
+          version: 0.27.0
+          sha256: 87319417a3ad3338af8117e0885cbabf63ae54c8e4539318829c221a342342f9 # linux-x86_64
+
+      # A collection runs while one call makes 200000 Strings (the heap floor is off), so a term the root list did
+      # not keep would come back wrong.
+      - name: Run vm-check on the VM
+        if: env.RUST == '1'
+        run: RUSTUP_TOOLCHAIN=stable vm-check/run.sh

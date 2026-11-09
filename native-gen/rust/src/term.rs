@@ -5,7 +5,7 @@
 //! the call stays alive until the call returns, wherever Rust keeps it (a `Vec<Term>` included). A term that a getter
 //! gives is a part of an argument or of a made term, so it lives as long as they do. A dirty call makes no collected
 //! values (the VM stages them), so it keeps no root list. A cursor holds memory of the collector too, so a walk over a
-//! List runs inside a closure, with its cursor in the frame of the walk.
+//! List or a Map runs inside a closure, with its cursor in the frame of the walk.
 
 use core::ffi::{c_char, c_int, c_void};
 use core::iter::FusedIterator;
@@ -22,6 +22,15 @@ pub enum Mode {
     Dirty,
 }
 
+/// What a row of the module's type table takes: the number of fields of a struct, or the payload count of each
+/// variant of an enum, in declared order. The VM reads that many terms from what `make_struct` and `make_enum` pass,
+/// so `Env` checks the length first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Arity {
+    Struct(usize),
+    Enum(Vec<usize>),
+}
+
 /// One call of the VM. The lifetime `'a` is the call, which only `call` chooses: a `Term<'a>` and what it lends
 /// (`&'a str`, `&'a [u8]`) cannot leave it.
 #[derive(Clone, Copy, Debug)]
@@ -29,6 +38,7 @@ pub struct Env<'a> {
     raw: *mut sys::an_env,
     // The root list of a short call (in the frame of `call`), null in a dirty one.
     roots: *mut sys::an_list_builder,
+    types: &'a [Arity],
     // Invariant in 'a, so a term of one call never passes for a term of another.
     _call: PhantomData<fn(&'a ()) -> &'a ()>,
 }
@@ -62,14 +72,14 @@ impl<'a> Args<'a> {
     }
 }
 
-/// Runs `body` for one call of the VM and gives its result to the VM. The env and its terms are valid only inside
-/// `body`:
+/// Runs `body` for one call of the VM and gives its result to the VM. `types` is what each row of the module's type
+/// table takes. The env and its terms are valid only inside `body`:
 ///
 /// ```compile_fail
 /// # use agentica_native::*;
 /// let mut kept = None;
 /// unsafe {
-///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, |env, _| {
+///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |env, _| {
 ///         kept = Some(env.int(1));
 ///         env.void()
 ///     })
@@ -80,7 +90,7 @@ impl<'a> Args<'a> {
 /// # use agentica_native::*;
 /// thread_local! { static KEPT: std::cell::Cell<Option<Term<'static>>> = std::cell::Cell::new(None); }
 /// unsafe {
-///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, |env, _| {
+///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |env, _| {
 ///         KEPT.set(Some(env.int(1)));
 ///         env.void()
 ///     })
@@ -92,9 +102,9 @@ impl<'a> Args<'a> {
 /// ```compile_fail
 /// # use agentica_native::*;
 /// unsafe {
-///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, |outer, _| {
+///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |outer, _| {
 ///         let one = outer.int(1);
-///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, |inner, _| inner.list_of(&[one]));
+///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |inner, _| inner.some(one));
 ///         outer.void()
 ///     })
 /// };
@@ -103,7 +113,7 @@ impl<'a> Args<'a> {
 /// ```compile_fail
 /// # use agentica_native::*;
 /// unsafe {
-///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, |env, _| {
+///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |env, _| {
 ///         let one = env.int(1);
 ///         std::thread::spawn(move || one.get_int());
 ///         env.void()
@@ -116,22 +126,24 @@ impl<'a> Args<'a> {
 /// ```no_run
 /// # use agentica_native::*;
 /// unsafe {
-///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, |outer, _| {
+///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |outer, _| {
 ///         let one = outer.int(1);
-///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, |inner, _| inner.list_of(&[inner.int(1)]));
-///         outer.list_of(&[one])
+///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |inner, _| inner.some(inner.int(1)));
+///         outer.some(one)
 ///     })
 /// };
 /// ```
 ///
 /// # Safety
 ///
-/// `raw`, `argc` and `argv` are what the VM passed to a function of the module's table, whose mode is `mode`.
+/// `raw`, `argc` and `argv` are what the VM passed to a function of the module's table, whose mode is `mode`, and
+/// `types` matches the module's type table.
 pub unsafe fn call(
     raw: *mut sys::an_env,
     argc: c_int,
     argv: *const sys::an_term,
     mode: Mode,
+    types: &[Arity],
     body: impl for<'a> FnOnce(Env<'a>, Args<'a>) -> Term<'a>,
 ) -> sys::an_term {
     // The root list of a short call: in this frame, which the collector scans, for as long as `body` runs. It is never
@@ -145,7 +157,7 @@ pub unsafe fn call(
         }
         Mode::Dirty => ptr::null_mut(),
     };
-    let env = Env { raw, roots, _call: PhantomData };
+    let env = Env { raw, roots, types, _call: PhantomData };
     let argv: &[sys::an_term] = if argv.is_null() || argc <= 0 {
         &[]
     } else {
@@ -239,6 +251,70 @@ impl<'a> Env<'a> {
             unsafe { (self.api().list_push)(self.raw, &mut builder, item.raw) };
         }
         self.made(unsafe { (self.api().list_end)(self.raw, &mut builder) })
+    }
+
+    /// A Map of the pairs that `pairs` gives, in their order; a later pair of one key replaces the earlier one.
+    pub fn map<I: IntoIterator<Item = (Term<'a>, Term<'a>)>>(self, pairs: I) -> Term<'a> {
+        let mut map = self.made(unsafe { (self.api().map_from)(self.raw, ptr::null(), ptr::null(), 0) });
+        for (key, value) in pairs {
+            // SAFETY: the env is the VM's for this call.
+            map = self.made(unsafe { (self.api().map_put)(self.raw, map.raw, key.raw, value.raw) });
+        }
+        map
+    }
+
+    pub fn none(self) -> Term<'a> {
+        self.made(unsafe { (self.api().make_none)(self.raw) })
+    }
+
+    pub fn some(self, value: Term<'a>) -> Term<'a> {
+        self.made(unsafe { (self.api().make_some)(self.raw, value.raw) })
+    }
+
+    pub fn ok(self, value: Term<'a>) -> Term<'a> {
+        self.made(unsafe { (self.api().make_ok)(self.raw, value.raw) })
+    }
+
+    pub fn error(self, message: &str) -> Term<'a> {
+        self.made(unsafe { (self.api().make_error)(self.raw, message.as_ptr() as *const c_char, message.len()) })
+    }
+
+    /// A struct of row `type_` of the type table, with one term per field in declared order. Another number of
+    /// fields, or a row that is not a struct, fails the call.
+    pub fn make_struct(self, type_: u32, fields: &[Term<'a>]) -> Term<'a> {
+        match self.types.get(type_ as usize) {
+            Some(Arity::Struct(n)) if *n == fields.len() => {}
+            _ => {
+                return self.raise(&format!("make_struct: row {type_} does not take {} fields", fields.len()));
+            }
+        }
+        // SAFETY: the row takes exactly as many fields as the slice holds.
+        with_raw(fields, |raw| self.made(unsafe { (self.api().make_struct)(self.raw, type_, raw.as_ptr()) }))
+    }
+
+    /// The variant `variant` of the enum of row `type_`, with its payload (empty for a variant without one). Another
+    /// payload count, or a row or variant that is not there, fails the call.
+    pub fn make_enum(self, type_: u32, variant: u32, payload: &[Term<'a>]) -> Term<'a> {
+        match self.types.get(type_ as usize) {
+            Some(Arity::Enum(variants)) if variants.get(variant as usize) == Some(&payload.len()) => {}
+            _ => {
+                let message = format!("make_enum: row {type_} has no variant {variant} of {} payloads", payload.len());
+                return self.raise(&message);
+            }
+        }
+        with_raw(payload, |raw| {
+            let at = if raw.is_empty() { ptr::null() } else { raw.as_ptr() };
+            // SAFETY: the variant takes exactly as many payloads as the slice holds.
+            self.made(unsafe { (self.api().make_enum)(self.raw, type_, variant, at) })
+        })
+    }
+
+    /// A new resource of row `type_` and its zeroed state, or `None` when the VM refused it (the call has failed).
+    pub fn resource_new(self, type_: u32) -> (Term<'a>, Option<*mut c_void>) {
+        let mut out = sys::an_term { opaque: [0; 2] };
+        // The VM sets OUT in every case (to Void when it refuses).
+        let state = unsafe { (self.api().resource_new)(self.raw, type_, &mut out) };
+        (self.made(out), if state.is_null() { None } else { Some(state) })
     }
 
     /// Fails the call with `message` once it returns. The first failure of a call wins.
@@ -338,6 +414,64 @@ impl<'a> Term<'a> {
         }
         Some(walk(&mut ListItems { cursor: &mut cursor, left: len, env: self.env }))
     }
+
+    /// `walk` of the pairs of a Map, in insertion order; `None` for another term.
+    pub fn map_pairs<R>(self, walk: impl FnOnce(&mut MapPairs<'_, 'a>) -> R) -> Option<R> {
+        let mut cursor = sys::an_map_cursor { opaque: [0; 8] };
+        let mut len = 0;
+        if !unsafe { (self.api().map_cursor)(self.e(), self.raw, &mut cursor, &mut len) } {
+            return None;
+        }
+        Some(walk(&mut MapPairs { cursor: &mut cursor, left: len, env: self.env }))
+    }
+
+    /// The value of `key` in a Map; `None` for a missing key or another term.
+    pub fn map_get(self, key: Term<'a>) -> Option<Term<'a>> {
+        let mut value = self.raw;
+        unsafe { (self.api().map_get)(self.e(), self.raw, key.raw, &mut value) }.then(|| self.env.read(value))
+    }
+
+    /// An Optional as `Some(Some(value))` or `Some(None)`.
+    pub fn get_optional(self) -> Option<Option<Term<'a>>> {
+        let mut some = false;
+        let mut value = self.raw;
+        unsafe { (self.api().get_optional)(self.e(), self.raw, &mut some, &mut value) }
+            .then(|| some.then(|| self.env.read(value)))
+    }
+
+    /// A Result as `Ok(value)` or `Err(message)`, the message a String term.
+    pub fn get_result(self) -> Option<Result<Term<'a>, Term<'a>>> {
+        let mut ok = false;
+        let mut value = self.raw;
+        unsafe { (self.api().get_result)(self.e(), self.raw, &mut ok, &mut value) }.then(|| {
+            let value = self.env.read(value);
+            if ok { Ok(value) } else { Err(value) }
+        })
+    }
+
+    /// The field `field` of a struct of row `type_`.
+    pub fn get_field(self, type_: u32, field: u32) -> Option<Term<'a>> {
+        let mut out = self.raw;
+        unsafe { (self.api().get_field)(self.e(), self.raw, type_, field, &mut out) }.then(|| self.env.read(out))
+    }
+
+    /// The variant of an enum of row `type_`.
+    pub fn get_variant(self, type_: u32) -> Option<u32> {
+        let mut variant = 0;
+        unsafe { (self.api().get_variant)(self.e(), self.raw, type_, &mut variant) }.then_some(variant)
+    }
+
+    /// The payload `k` of the variant of an enum of row `type_`.
+    pub fn get_payload(self, type_: u32, k: u32) -> Option<Term<'a>> {
+        let mut out = self.raw;
+        unsafe { (self.api().get_payload)(self.e(), self.raw, type_, k, &mut out) }.then(|| self.env.read(out))
+    }
+
+    /// The state of a resource of row `type_` that is an argument of the call (not one that the call made).
+    pub fn get_resource(self, type_: u32) -> Option<*mut c_void> {
+        let mut state = ptr::null_mut();
+        unsafe { (self.api().get_resource)(self.e(), self.raw, type_, &mut state) }.then_some(state)
+    }
 }
 
 /// A slice the VM gave for the call; an empty one may come with a null pointer, which a Rust slice cannot have.
@@ -380,3 +514,36 @@ impl<'a> Iterator for ListItems<'_, 'a> {
 
 impl ExactSizeIterator for ListItems<'_, '_> {}
 impl FusedIterator for ListItems<'_, '_> {}
+
+/// The pairs of a Map, through a cursor in the frame of `Term::map_pairs`.
+pub struct MapPairs<'c, 'a> {
+    cursor: &'c mut sys::an_map_cursor,
+    left: usize,
+    env: Env<'a>,
+}
+
+impl<'a> Iterator for MapPairs<'_, 'a> {
+    type Item = (Term<'a>, Term<'a>);
+
+    fn next(&mut self) -> Option<(Term<'a>, Term<'a>)> {
+        if self.left == 0 {
+            return None;
+        }
+        let mut key = sys::an_term { opaque: [0; 2] };
+        let mut value = key;
+        // SAFETY: the VM began the cursor in this call, and it lives in the frame of the walk.
+        if !unsafe { (self.env.api().map_next)(self.env.raw, self.cursor, &mut key, &mut value) } {
+            self.left = 0;
+            return None;
+        }
+        self.left -= 1;
+        Some((self.env.read(key), self.env.read(value)))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.left, Some(self.left))
+    }
+}
+
+impl ExactSizeIterator for MapPairs<'_, '_> {}
+impl FusedIterator for MapPairs<'_, '_> {}

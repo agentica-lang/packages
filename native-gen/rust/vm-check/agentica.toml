@@ -1,0 +1,5 @@
+# The program of run.sh: its module is the cdylib that run.sh builds into native/.
+name = "vm-check"
+
+[native.vm_check]
+linux = { file = "native/libvm_check.so" }
