@@ -4,6 +4,7 @@
 use core::ffi::{c_char, c_int, c_void};
 use std::cell::RefCell;
 
+use crate::Arity;
 use crate::sys::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -27,14 +28,15 @@ pub enum V {
 
 /// The type table of the mock module: row 0 a struct of two fields (Point), row 1 an enum whose variant 0 has no
 /// payload and variant 1 one (Shape). It has one resource row.
-pub const TYPES: [(u32, &[usize]); 2] = [(2, &[]), (0, &[0, 1])];
+pub const TYPES: &[Arity] = &[Arity::Struct(2), Arity::Enum(&[0, 1])];
 pub const RESOURCE_ROWS: u32 = 1;
 
 /// The env of one mock call. It starts with the table pointer, as the VM's does.
 #[repr(C)]
 pub struct MockEnv {
     api: *const an_api,
-    // Each value, and whether a constructor of the call made it (the test's own values are arguments).
+    // Each value, and whether it is staged: a dirty call stages what its constructors make, except the values that
+    // need no memory (the test's own values are arguments).
     values: RefCell<Vec<(V, bool)>>,
     dirty: bool,
     pub failure: RefCell<Option<String>>,
@@ -66,9 +68,9 @@ impl MockEnv {
         self.push(v, false)
     }
 
-    fn push(&self, v: V, made: bool) -> an_term {
+    fn push(&self, v: V, staged: bool) -> an_term {
         let mut values = self.values.borrow_mut();
-        values.push((v, made));
+        values.push((v, staged));
         an_term { opaque: [values.len() as u64 - 1, 0] }
     }
 
@@ -76,7 +78,7 @@ impl MockEnv {
         self.values.borrow()[t.opaque[0] as usize].0.clone()
     }
 
-    /// Whether a getter may read `t`: a dirty call refuses the terms that it made.
+    /// Whether a getter may read `t`: a dirty call refuses the terms that it staged.
     fn readable(&self, t: an_term) -> bool {
         !(self.dirty && self.values.borrow()[t.opaque[0] as usize].1)
     }
@@ -108,9 +110,15 @@ fn fail(e: *mut an_env, message: String) -> an_term {
     made(e, V::Void)
 }
 
-/// A value that a constructor of the call made.
+/// A value that a constructor of the call made. As in the VM, a scalar, Void, none and a variant without a payload
+/// need no memory, so a dirty call does not stage them and its getters read them.
 fn made(e: *mut an_env, v: V) -> an_term {
-    me(e).push(v, true)
+    let staged = match &v {
+        V::Int(_) | V::Float(_) | V::Bool(_) | V::Void | V::None => false,
+        V::Enum(_, _, payload) => !payload.is_empty(),
+        _ => true,
+    };
+    me(e).push(v, staged)
 }
 
 unsafe fn bytes<'b>(data: *const u8, len: usize) -> &'b [u8] {
@@ -133,8 +141,8 @@ fn read<X>(e: *mut an_env, t: an_term, out: *mut X, pick: impl FnOnce(V) -> Opti
 
 /// A part of `t` (an item, a field, a payload): readable when `t` is.
 fn part(e: *mut an_env, t: an_term, v: V) -> an_term {
-    let parent_made = me(e).values.borrow()[t.opaque[0] as usize].1;
-    me(e).push(v, parent_made)
+    let staged = me(e).values.borrow()[t.opaque[0] as usize].1;
+    me(e).push(v, staged)
 }
 
 /// The values of `n` terms at `at`.
@@ -248,9 +256,16 @@ fn key_kind(e: *mut an_env, key: &V) -> bool {
     ok
 }
 unsafe extern "C" fn map_from(e: *mut an_env, keys: *const an_term, values: *const an_term, n: usize) -> an_term {
-    let pairs: Vec<(V, V)> = values_at(e, keys, n).into_iter().zip(values_at(e, values, n)).collect();
-    if !pairs.iter().all(|(k, _)| key_kind(e, k)) {
-        return made(e, V::Void);
+    // As the VM does: each pair put in order, so a later one of a key replaces the earlier.
+    let mut pairs: Vec<(V, V)> = Vec::new();
+    for (key, value) in values_at(e, keys, n).into_iter().zip(values_at(e, values, n)) {
+        if !key_kind(e, &key) {
+            return made(e, V::Void);
+        }
+        match pairs.iter_mut().find(|(k, _)| *k == key) {
+            Some(pair) => pair.1 = value,
+            None => pairs.push((key, value)),
+        }
     }
     made(e, V::Map(pairs))
 }
@@ -343,10 +358,10 @@ unsafe extern "C" fn badarg(e: *mut an_env, index: c_int) -> an_term {
 }
 // The constructors read as many terms as the row takes, as the VM does: the test fails if Env passed fewer.
 unsafe extern "C" fn make_struct(e: *mut an_env, type_: u32, fields: *const an_term) -> an_term {
-    let Some(&(n, _)) = TYPES.get(type_ as usize).filter(|(_, v)| v.is_empty()) else {
+    let Some(&Arity::Struct(n)) = TYPES.get(type_ as usize) else {
         return fail(e, "not a struct row".into());
     };
-    made(e, V::Struct(type_, values_at(e, fields, n as usize)))
+    made(e, V::Struct(type_, values_at(e, fields, n)))
 }
 unsafe extern "C" fn get_field(e: *mut an_env, t: an_term, type_: u32, field: u32, out: *mut an_term) -> bool {
     if !me(e).readable(t) {
@@ -362,7 +377,10 @@ unsafe extern "C" fn get_field(e: *mut an_env, t: an_term, type_: u32, field: u3
     true
 }
 unsafe extern "C" fn make_enum(e: *mut an_env, type_: u32, variant: u32, payload: *const an_term) -> an_term {
-    let Some(&n) = TYPES.get(type_ as usize).and_then(|(_, v)| v.get(variant as usize)) else {
+    let Some(&n) = TYPES.get(type_ as usize).and_then(|row| match row {
+        Arity::Enum(variants) => variants.get(variant as usize),
+        Arity::Struct(_) => None,
+    }) else {
         return fail(e, "not a variant of an enum row".into());
     };
     assert!(n == 0 || !payload.is_null(), "a missing payload");

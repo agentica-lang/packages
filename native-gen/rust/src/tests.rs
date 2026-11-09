@@ -1,12 +1,7 @@
 //! `call`, `Env` and `Term` on the mock VM: what a constructor makes, the getter of its kind reads back.
 
-use crate::mock::{MockEnv, V};
+use crate::mock::{self, MockEnv, V};
 use crate::*;
-
-/// The arities of the mock's type table (mock::TYPES).
-fn types() -> Vec<Arity> {
-    vec![Arity::Struct(2), Arity::Enum(vec![0, 1])]
-}
 
 /// The result of a call of `body` in `mode` with `args`, or its failure.
 fn run(
@@ -17,7 +12,7 @@ fn run(
 ) -> Result<V, String> {
     let argv: Vec<sys::an_term> = args.into_iter().map(|v| mock.put(v)).collect();
     // SAFETY: the mock env lives for the call, with ARGC arguments at ARGV.
-    let result = unsafe { call(mock.raw(), argv.len() as i32, argv.as_ptr(), mode, &types(), body) };
+    let result = unsafe { call(mock.raw(), argv.len() as i32, argv.as_ptr(), mode, mock::TYPES, body) };
     match mock.failure.borrow().clone() {
         Some(message) => Err(message),
         None => Ok(mock.get(result)),
@@ -133,6 +128,11 @@ fn a_short_call_roots_each_term_it_makes_and_a_dirty_one_none() {
     let result = run(&mock, Mode::Dirty, vec![V::Int(7)], |env, args| {
         assert_eq!(env.mode(), Mode::Dirty);
         assert_eq!(args.get(0).unwrap().get_int(), Some(7));
+        // A scalar, none and a variant without a payload need no memory, so the VM does not stage them; a Some is
+        // staged.
+        assert_eq!(env.int(2).get_int(), Some(2));
+        assert!(env.none().get_optional().is_some());
+        assert_eq!(env.make_enum(1, 0, &[]).get_variant(1), Some(0));
         let made = env.some(env.int(1));
         assert!(made.get_optional().is_none());
         made
@@ -172,4 +172,11 @@ fn the_first_failure_of_a_call_wins() {
         env.raise("second")
     });
     assert_eq!(failed, Err("argument 2 is not valid".to_string()));
+}
+
+#[test]
+fn a_map_of_more_pairs_than_the_stack_buffer_keeps_their_order() {
+    let result = short(vec![], |env, _| env.map((0..20).map(|n| (env.int(n), env.int(n * 10)))));
+    let pairs: Vec<(V, V)> = (0..20).map(|n| (V::Int(n), V::Int(n * 10))).collect();
+    assert_eq!(result, Ok(V::Map(pairs)));
 }

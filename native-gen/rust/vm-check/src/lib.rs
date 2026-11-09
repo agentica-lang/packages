@@ -2,19 +2,31 @@
 
 use core::ffi::c_int;
 use core::ptr;
-use std::sync::LazyLock;
 
 use agentica_native::{Arity, Mode, Term, call, sys};
 
 /// Point, the one row of the type table.
-static TYPES: LazyLock<Vec<Arity>> = LazyLock::new(|| vec![Arity::Struct(2)]);
+static TYPES: &[Arity] = &[Arity::Struct(2)];
 
 /// `n` Strings, kept in a Vec of terms until the List is built: the root list of the call keeps them alive while
 /// each new String may start a collection.
 unsafe extern "C" fn strings(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     // SAFETY (each function): the VM passes its own env and arguments, and the mode is the one of the table.
     unsafe {
-        call(env, argc, argv, Mode::Short, &TYPES, |env, args| {
+        call(env, argc, argv, Mode::Short, TYPES, |env, args| {
+            let n = args.get(0).and_then(Term::get_int).unwrap_or(0);
+            let kept: Vec<Term> =
+                (0..n).map(|k| env.string(&format!("a string long enough to live on the heap {k}"))).collect();
+            env.list(kept)
+        })
+    }
+}
+
+/// The same in a dirty call: the Strings are staged in the VM's memory for the call, not in the collector's, so they
+/// come back whole while the calling scheduler allocates and collects meanwhile.
+unsafe extern "C" fn staged_strings(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe {
+        call(env, argc, argv, Mode::Dirty, TYPES, |env, args| {
             let n = args.get(0).and_then(Term::get_int).unwrap_or(0);
             let kept: Vec<Term> =
                 (0..n).map(|k| env.string(&format!("a string long enough to live on the heap {k}"))).collect();
@@ -25,7 +37,7 @@ unsafe extern "C" fn strings(env: *mut sys::an_env, argc: c_int, argv: *const sy
 
 unsafe extern "C" fn pairs(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     unsafe {
-        call(env, argc, argv, Mode::Short, &TYPES, |env, args| {
+        call(env, argc, argv, Mode::Short, TYPES, |env, args| {
             let named = args.get(0).unwrap();
             let texts: Vec<Term> = named
                 .map_pairs(|pairs| {
@@ -41,19 +53,19 @@ unsafe extern "C" fn pairs(env: *mut sys::an_env, argc: c_int, argv: *const sys:
 
 unsafe extern "C" fn point(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     unsafe {
-        call(env, argc, argv, Mode::Short, &TYPES, |env, args| {
+        call(env, argc, argv, Mode::Short, TYPES, |env, args| {
             env.make_struct(0, &[args.get(0).unwrap(), args.get(1).unwrap()])
         })
     }
 }
 
 unsafe extern "C" fn bad_point(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
-    unsafe { call(env, argc, argv, Mode::Short, &TYPES, |env, _| env.make_struct(0, &[env.int(1)])) }
+    unsafe { call(env, argc, argv, Mode::Short, TYPES, |env, _| env.make_struct(0, &[env.int(1)])) }
 }
 
 unsafe extern "C" fn sum_x(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     unsafe {
-        call(env, argc, argv, Mode::Short, &TYPES, |env, args| {
+        call(env, argc, argv, Mode::Short, TYPES, |env, args| {
             let total = args
                 .get(0)
                 .unwrap()
@@ -65,7 +77,7 @@ unsafe extern "C" fn sum_x(env: *mut sys::an_env, argc: c_int, argv: *const sys:
 
 unsafe extern "C" fn total(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     unsafe {
-        call(env, argc, argv, Mode::Dirty, &TYPES, |env, args| {
+        call(env, argc, argv, Mode::Dirty, TYPES, |env, args| {
             let sum = args.get(0).unwrap().list_items(|items| items.map(|t| t.get_int().unwrap()).sum::<i64>());
             // A dirty call reads the arguments, not what it staged.
             assert!(env.string("staged").get_str().is_none());
@@ -76,7 +88,7 @@ unsafe extern "C" fn total(env: *mut sys::an_env, argc: c_int, argv: *const sys:
 
 unsafe extern "C" fn filled(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     unsafe {
-        call(env, argc, argv, Mode::Short, &TYPES, |env, args| {
+        call(env, argc, argv, Mode::Short, TYPES, |env, args| {
             let n = args.get(0).and_then(Term::get_int).unwrap() as usize;
             env.bytes_with(n, |data| data.iter_mut().enumerate().for_each(|(k, b)| *b = k as u8))
         })
@@ -85,7 +97,7 @@ unsafe extern "C" fn filled(env: *mut sys::an_env, argc: c_int, argv: *const sys
 
 unsafe extern "C" fn lookup(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
     unsafe {
-        call(env, argc, argv, Mode::Short, &TYPES, |env, args| {
+        call(env, argc, argv, Mode::Short, TYPES, |env, args| {
             match args.get(0).unwrap().map_get(args.get(1).unwrap()) {
                 Some(value) => env.some(value),
                 None => env.none(),
@@ -100,8 +112,9 @@ macro_rules! function {
     };
 }
 
-static FUNCTIONS: [sys::an_function; 8] = [
+static FUNCTIONS: [sys::an_function; 9] = [
     function!(c"strings", c"(Int) -> List[String]", strings, sys::AN_SHORT),
+    function!(c"staged_strings", c"(Int) -> List[String]", staged_strings, sys::AN_DIRTY),
     function!(c"pairs", c"(Map[String, Int]) -> List[String]", pairs, sys::AN_SHORT),
     function!(c"point", c"(Int, Int) -> Point", point, sys::AN_SHORT),
     function!(c"bad_point", c"() -> Point", bad_point, sys::AN_SHORT),

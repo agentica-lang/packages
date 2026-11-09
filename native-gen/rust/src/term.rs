@@ -15,7 +15,7 @@ use core::ptr;
 use crate::sys;
 
 /// The mode of a function: `def` is `Short` (it runs on the calling scheduler), `compute def` `Dirty` (on the
-/// compute pool, where the VM stages what it makes and a getter refuses a staged term).
+/// compute pool, where the VM stages what it makes and a getter gives `None` for a staged term).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Short,
@@ -25,10 +25,10 @@ pub enum Mode {
 /// What a row of the module's type table takes: the number of fields of a struct, or the payload count of each
 /// variant of an enum, in declared order. The VM reads that many terms from what `make_struct` and `make_enum` pass,
 /// so `Env` checks the length first.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Arity {
     Struct(usize),
-    Enum(Vec<usize>),
+    Enum(&'static [usize]),
 }
 
 /// One call of the VM. The lifetime `'a` is the call, which only `call` chooses: a `Term<'a>` and what it lends
@@ -75,7 +75,7 @@ impl<'a> Args<'a> {
 /// Runs `body` for one call of the VM and gives its result to the VM. `types` is what each row of the module's type
 /// table takes. The env and its terms are valid only inside `body`:
 ///
-/// ```compile_fail
+/// ```compile_fail,E0521
 /// # use agentica_native::*;
 /// let mut kept = None;
 /// unsafe {
@@ -86,7 +86,7 @@ impl<'a> Args<'a> {
 /// };
 /// ```
 ///
-/// ```compile_fail
+/// ```compile_fail,E0521
 /// # use agentica_native::*;
 /// thread_local! { static KEPT: std::cell::Cell<Option<Term<'static>>> = std::cell::Cell::new(None); }
 /// unsafe {
@@ -104,13 +104,13 @@ impl<'a> Args<'a> {
 /// unsafe {
 ///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |outer, _| {
 ///         let one = outer.int(1);
-///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |inner, _| inner.some(one));
+///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |inner, _| inner.list_of(&[one]));
 ///         outer.void()
 ///     })
 /// };
 /// ```
 ///
-/// ```compile_fail
+/// ```compile_fail,E0277
 /// # use agentica_native::*;
 /// unsafe {
 ///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |env, _| {
@@ -121,15 +121,22 @@ impl<'a> Args<'a> {
 /// };
 /// ```
 ///
-/// The same body without the escape compiles:
+/// Each case without its escape compiles: a Rust value leaves the call, a term stays in it, and a thread gets a
+/// Rust value (the case of two calls fails with no error code, so this twin is its check):
 ///
 /// ```no_run
 /// # use agentica_native::*;
+/// thread_local! { static KEPT: std::cell::Cell<Option<i64>> = std::cell::Cell::new(None); }
+/// let mut kept = None;
 /// unsafe {
 ///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |outer, _| {
 ///         let one = outer.int(1);
-///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |inner, _| inner.some(inner.int(1)));
-///         outer.some(one)
+///         kept = one.get_int();
+///         KEPT.set(one.get_int());
+///         let n = one.get_int();
+///         std::thread::spawn(move || n);
+///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |inner, _| inner.list_of(&[inner.int(1)]));
+///         outer.list_of(&[one])
 ///     })
 /// };
 /// ```
@@ -168,15 +175,19 @@ pub unsafe fn call(
 }
 
 /// The table of the call.
-fn api<'a>(raw: *mut sys::an_env) -> &'a sys::an_api {
-    // SAFETY: the VM's env starts with a pointer to the table of the call (an_api_of in agentica_native.h), which
-    // outlives the call.
+///
+/// # Safety
+///
+/// `raw` is the env that the VM passed to the running call: it starts with a pointer to the table of the call
+/// (an_api_of in agentica_native.h), which outlives `'a`.
+unsafe fn api<'a>(raw: *mut sys::an_env) -> &'a sys::an_api {
     unsafe { &**(raw as *const *const sys::an_api) }
 }
 
 impl<'a> Env<'a> {
     fn api(self) -> &'a sys::an_api {
-        api(self.raw)
+        // SAFETY: only `call` makes an Env, from the env of the running call, and `'a` ends with that call.
+        unsafe { api(self.raw) }
     }
 
     /// A term that a getter gave: a part of an argument or of a made term.
@@ -253,14 +264,31 @@ impl<'a> Env<'a> {
         self.made(unsafe { (self.api().list_end)(self.raw, &mut builder) })
     }
 
-    /// A Map of the pairs that `pairs` gives, in their order; a later pair of one key replaces the earlier one.
+    /// A Map of the pairs that `pairs` gives, in their order; a later pair of one key replaces the earlier one. The VM
+    /// makes it in one pass from the keys and values, gathered on the stack for up to 16 pairs.
     pub fn map<I: IntoIterator<Item = (Term<'a>, Term<'a>)>>(self, pairs: I) -> Term<'a> {
-        let mut map = self.made(unsafe { (self.api().map_from)(self.raw, ptr::null(), ptr::null(), 0) });
+        const SHORT: usize = 16;
+        let blank = sys::an_term { opaque: [0; 2] };
+        let (mut keys, mut values) = ([blank; SHORT], [blank; SHORT]);
+        let (mut more_keys, mut more_values) = (Vec::new(), Vec::new());
+        let mut n = 0;
         for (key, value) in pairs {
-            // SAFETY: the env is the VM's for this call.
-            map = self.made(unsafe { (self.api().map_put)(self.raw, map.raw, key.raw, value.raw) });
+            if n < SHORT {
+                (keys[n], values[n]) = (key.raw, value.raw);
+            } else {
+                // Past the stack buffers, a copy on the heap: each term is a root of the call or a part of one.
+                if n == SHORT {
+                    more_keys.extend_from_slice(&keys);
+                    more_values.extend_from_slice(&values);
+                }
+                more_keys.push(key.raw);
+                more_values.push(value.raw);
+            }
+            n += 1;
         }
-        map
+        let (k, v) = if n <= SHORT { (&keys[..n], &values[..n]) } else { (&more_keys[..], &more_values[..]) };
+        // SAFETY: both slices hold N terms of this call.
+        self.made(unsafe { (self.api().map_from)(self.raw, k.as_ptr(), v.as_ptr(), n) })
     }
 
     pub fn none(self) -> Term<'a> {
@@ -309,7 +337,9 @@ impl<'a> Env<'a> {
         })
     }
 
-    /// A new resource of row `type_` and its zeroed state, or `None` when the VM refused it (the call has failed).
+    /// A new resource of row `type_` and its zeroed state, or `None` when the VM refused it (the call has failed). The
+    /// VM owns the state: it frees it (after the free function of the row) at `Native.close`, at the end of the task
+    /// that owns the resource, or at the end of the run, so the pointer must not be kept past the call.
     pub fn resource_new(self, type_: u32) -> (Term<'a>, Option<*mut c_void>) {
         let mut out = sys::an_term { opaque: [0; 2] };
         // The VM sets OUT in every case (to Void when it refuses).
@@ -348,8 +378,8 @@ fn with_raw<R>(terms: &[Term<'_>], f: impl FnOnce(&[sys::an_term]) -> R) -> R {
     }
 }
 
-/// The getters. Each gives `None` for a term of another type; in a dirty call, also for one that the call made and
-/// the VM staged (anything but a scalar).
+/// The getters. Each gives `None` for a term of another type, and in a dirty call for a term the VM staged. Which made
+/// terms are staged is the VM's choice, so a dirty call must not read back what it made.
 impl<'a> Term<'a> {
     pub fn as_raw(self) -> sys::an_term {
         self.raw
@@ -467,7 +497,8 @@ impl<'a> Term<'a> {
         unsafe { (self.api().get_payload)(self.e(), self.raw, type_, k, &mut out) }.then(|| self.env.read(out))
     }
 
-    /// The state of a resource of row `type_` that is an argument of the call (not one that the call made).
+    /// The state of a resource of row `type_` that is an argument of the call (not one that the call made). The VM
+    /// holds the resource open for the call and may free the state after it, so the pointer is valid for the call only.
     pub fn get_resource(self, type_: u32) -> Option<*mut c_void> {
         let mut state = ptr::null_mut();
         unsafe { (self.api().get_resource)(self.e(), self.raw, type_, &mut state) }.then_some(state)

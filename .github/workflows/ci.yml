@@ -10,9 +10,21 @@ permissions:
 
 jobs:
   test:
+    # `test` is the required check, so it also carries the result of the rust job: it waits for it, and fails when it
+    # did not pass.
+    needs: rust
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Check that the rust job passed
+        if: needs.rust.result != 'success'
+        env:
+          RESULT: ${{ needs.rust.result }}
+        run: |
+          echo "The rust job ended with $RESULT." >&2
+          exit 1
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The history of the base branch, for the diff of a pull request.
@@ -72,9 +84,9 @@ jobs:
         run: make doc-examples PACKAGES="$PACKAGES"
 
   # The Rust crate of native-gen (native-gen/rust), when a pull request changes it or this file, and on main: its
-  # format and lints on stable, its tests on the MSRV of its Cargo.toml and on stable, the tests under Miri (nightly),
-  # and vm-check, a module on the crate run by the pinned Agentica release. The crate has no dependencies, so it
-  # needs no registry.
+  # format and lints on stable, its tests on the MSRV of its Cargo.toml and on stable, its doctests on nightly (which
+  # checks the error codes of the compile_fail ones), the tests under Miri, and vm-check, a module on the crate run by
+  # the pinned Agentica release. The crate has no dependencies, so it needs no registry.
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -132,6 +144,10 @@ jobs:
         if: env.RUST == '1'
         run: cargo +stable test
 
+      - name: Doctests on nightly
+        if: env.RUST == '1'
+        run: cargo +nightly test --doc
+
       - name: Test under Miri
         if: env.RUST == '1'
         env:
@@ -145,8 +161,8 @@ jobs:
           version: 0.27.0
           sha256: 87319417a3ad3338af8117e0885cbabf63ae54c8e4539318829c221a342342f9 # linux-x86_64
 
-      # A collection runs while one call makes 200000 Strings (the heap floor is off), so a term the root list did
-      # not keep would come back wrong.
+      # Collections run while one call keeps 200000 Strings in a Vec (the heap floor is off), so a term the root list
+      # did not keep would come back wrong.
       - name: Run vm-check on the VM
         if: env.RUST == '1'
         run: RUSTUP_TOOLCHAIN=stable vm-check/run.sh

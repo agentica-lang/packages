@@ -1,6 +1,7 @@
 #!/bin/sh
-# Builds the vm-check module (Linux), runs check.agc on it, and compares its output with expected.txt; the last call
-# must fail with the arity check of make_struct. Needs cargo and agentica on PATH.
+# Builds the vm-check module (Linux), runs check.agc on it with the heap floor off (so collections run during the
+# calls), and compares its output with expected.txt; the last call must fail with the arity check of make_struct.
+# Needs cargo and agentica on PATH.
 set -eu
 cd "$(dirname "$0")"
 cargo build --release --quiet
