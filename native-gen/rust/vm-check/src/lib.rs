@@ -5,7 +5,7 @@ use core::ptr;
 
 use agentica_native::{Arity, Mode, Term, call, sys};
 
-/// Point, the one row of the type table.
+/// Point, the one row of the type table: kept by hand in step with TYPE_ROWS below, row for row.
 static TYPES: &[Arity] = &[Arity::Struct(2)];
 
 /// `n` Strings, kept in a Vec of terms until the List is built: the root list of the call keeps them alive while
@@ -31,6 +31,36 @@ unsafe extern "C" fn staged_strings(env: *mut sys::an_env, argc: c_int, argv: *c
             let kept: Vec<Term> =
                 (0..n).map(|k| env.string(&format!("a string long enough to live on the heap {k}"))).collect();
             env.list(kept)
+        })
+    }
+}
+
+/// The Map from each of `0..n` to its square, made in one map_from past the stack buffer of Env::map.
+unsafe extern "C" fn squares(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe { call(env, argc, argv, Mode::Short, TYPES, |env, args| square_map(env, args.get(0))) }
+}
+
+/// The same in a dirty call.
+unsafe extern "C" fn staged_squares(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe { call(env, argc, argv, Mode::Dirty, TYPES, |env, args| square_map(env, args.get(0))) }
+}
+
+fn square_map<'a>(env: agentica_native::Env<'a>, n: Option<Term<'a>>) -> Term<'a> {
+    let n = n.and_then(Term::get_int).unwrap_or(0);
+    env.map((0..n).map(|k| (env.int(k), env.int(k * k))))
+}
+
+/// The Map from "label K" to K for each of `0..n`: String keys made in a loop, each kept only by the root list until
+/// the Map is made.
+unsafe extern "C" fn labels(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe {
+        call(env, argc, argv, Mode::Short, TYPES, |env, args| {
+            let n = args.get(0).and_then(Term::get_int).unwrap_or(0);
+            let mut pairs = Vec::new();
+            for k in 0..n {
+                pairs.push((env.string(&format!("label {k}")), env.int(k)));
+            }
+            env.map(pairs)
         })
     }
 }
@@ -112,9 +142,12 @@ macro_rules! function {
     };
 }
 
-static FUNCTIONS: [sys::an_function; 9] = [
+static FUNCTIONS: [sys::an_function; 12] = [
     function!(c"strings", c"(Int) -> List[String]", strings, sys::AN_SHORT),
     function!(c"staged_strings", c"(Int) -> List[String]", staged_strings, sys::AN_DIRTY),
+    function!(c"squares", c"(Int) -> Map[Int, Int]", squares, sys::AN_SHORT),
+    function!(c"staged_squares", c"(Int) -> Map[Int, Int]", staged_squares, sys::AN_DIRTY),
+    function!(c"labels", c"(Int) -> Map[String, Int]", labels, sys::AN_SHORT),
     function!(c"pairs", c"(Map[String, Int]) -> List[String]", pairs, sys::AN_SHORT),
     function!(c"point", c"(Int, Int) -> Point", point, sys::AN_SHORT),
     function!(c"bad_point", c"() -> Point", bad_point, sys::AN_SHORT),
@@ -124,6 +157,7 @@ static FUNCTIONS: [sys::an_function; 9] = [
     function!(c"lookup", c"(Map[String, Int], String) -> Optional[Int]", lookup, sys::AN_SHORT),
 ];
 
+// Kept by hand in step with TYPES above.
 static TYPE_ROWS: [sys::an_type; 1] =
     [sys::an_type { name: c"Point".as_ptr(), kind: sys::AN_STRUCT, shape: c"x: Int, y: Int".as_ptr() }];
 

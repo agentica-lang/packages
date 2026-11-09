@@ -96,6 +96,7 @@ impl MockEnv {
 impl Drop for MockEnv {
     fn drop(&mut self) {
         for (_, state) in self.states.borrow_mut().drain(..) {
+            // SAFETY: resource_new made each state with Box::into_raw of a u64, and only this drop frees it.
             drop(unsafe { Box::from_raw(state as *mut u64) });
         }
     }
@@ -284,7 +285,7 @@ unsafe extern "C" fn map_put(e: *mut an_env, map: an_term, key: an_term, value: 
     made(e, V::Map(pairs))
 }
 unsafe extern "C" fn map_get(e: *mut an_env, map: an_term, key: an_term, value: *mut an_term) -> bool {
-    if !me(e).readable(map) {
+    if !me(e).readable(map) || !me(e).readable(key) {
         return false;
     }
     let (V::Map(pairs), key) = (me(e).get(map), me(e).get(key)) else {

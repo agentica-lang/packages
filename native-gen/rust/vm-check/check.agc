@@ -9,6 +9,9 @@ end
 extern module "vm_check"
   def strings(n: Int) -> List[String]
   compute def staged_strings(n: Int) -> List[String]
+  def squares(n: Int) -> Map[Int, Int]
+  compute def staged_squares(n: Int) -> Map[Int, Int]
+  def labels(n: Int) -> Map[String, Int]
   def pairs(named: Map[String, Int]) -> List[String]
   def point(x: Int, y: Int) -> Point
   def bad_point() -> Point
@@ -19,10 +22,15 @@ extern module "vm_check"
 end
 
 def main() -> Void
-  # While the dirty call runs on the compute pool, the spawned task makes and collects in a short call.
-  short = Task.spawn do strings(200000) end
-  puts(summary(staged_strings(200000)))
-  puts(summary(Task.await(short)))
+  # While the dirty call runs on the compute pool, the spawned task makes and collects in a short call; a few rounds.
+  for _round in 1..3
+    short = Task.spawn do strings(200000) end
+    puts(summary(staged_strings(200000)))
+    puts(summary(Task.await(short)))
+  end
+
+  puts([squared?(squares(5000), 5000), squared?(staged_squares(5000), 5000)])
+  puts(labeled?(labels(5000), 5000))
   named = {"q": 1, "p": 2}
   puts(pairs(named))
   puts(point(3, 4))
@@ -46,4 +54,32 @@ def summary(made: List[String]) -> String
   end
 
   return "#{made.size} #{whole}"
+end
+
+# Whether `map` has the keys 0 to n - 1 in order, each with its square.
+def squared?(map: Map[Int, Int], n: Int) -> Bool
+  at = 0
+  for key in map.keys
+    if key != at or map[key] != at * at
+      return false
+    end
+
+    at += 1
+  end
+
+  return at == n
+end
+
+# Whether `map` has "label K" for K from 0 to n - 1 in order, each with K.
+def labeled?(map: Map[String, Int], n: Int) -> Bool
+  at = 0
+  for key in map.keys
+    if key != "label #{at}" or map[key] != at
+      return false
+    end
+
+    at += 1
+  end
+
+  return at == n
 end

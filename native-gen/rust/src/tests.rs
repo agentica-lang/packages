@@ -125,9 +125,12 @@ fn a_short_call_roots_each_term_it_makes_and_a_dirty_one_none() {
     assert_eq!(mock.roots(), Some(4));
 
     let mock = MockEnv::new(true);
-    let result = run(&mock, Mode::Dirty, vec![V::Int(7)], |env, args| {
+    let named = V::Map(vec![(V::Str(b"k".to_vec()), V::Int(1))]);
+    let result = run(&mock, Mode::Dirty, vec![V::Int(7), named], |env, args| {
         assert_eq!(env.mode(), Mode::Dirty);
         assert_eq!(args.get(0).unwrap().get_int(), Some(7));
+        // A staged key is not a value the VM can look up.
+        assert!(args.get(1).unwrap().map_get(env.string("k")).is_none());
         // A scalar, none and a variant without a payload need no memory, so the VM does not stage them; a Some is
         // staged.
         assert_eq!(env.int(2).get_int(), Some(2));
