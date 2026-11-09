@@ -14,12 +14,26 @@
 import Analysis from "std/analysis"
 import Toml from "std/toml"
 import CHeader from "src/header"
+import RustSide from "src/rust"
 import Scaffold from "src/scaffold"
 
 ## The header of the one `extern module` block of the file at `path`. Its C names start with `prefix`, by default the
 ## last part of the block's library name up to its first `.` (`stats` for "stats" and for "native/stats.so").
 export def header(path: String, prefix: String = "") -> Result[String]
   return header_in(Analysis.workspace(), path, prefix)
+end
+
+## The Rust file of the one `extern module` block of the file at `path`, on the `agentica-native` crate: its types
+## with their codecs, the trait the module implements and its tables. `prefix` names the trait, as for `header`
+## (`StatsNative` for "stats").
+export def rust(path: String, prefix: String = "") -> Result[String]
+  case Analysis.native_modules(Analysis.open(Analysis.workspace()), path)
+    ok(found) ->
+      block = try one_block(found.blocks, path)
+      names = try prefix_of(block, prefix)
+      return RustSide.render(block, RustSide.trait_name(names.lower), last_part(path))
+    error(message) -> return error(diagnostic_text(message))
+  end
 end
 
 ## A new native module at `path` (`demo`, or `pkg/demo` in the folder `pkg`): writes `NAME.agc` with an `extern
@@ -111,18 +125,28 @@ def io[T](path: String, done: Result[T]) -> Result[T]
 end
 
 def header_of(blocks: List[Analysis.NativeBlock], path: String, prefix: String) -> Result[String]
+  block = try one_block(blocks, path)
+  names = try prefix_of(block, prefix)
+  return CHeader.render(block, names, last_part(path))
+end
+
+def one_block(blocks: List[Analysis.NativeBlock], path: String) -> Result[Analysis.NativeBlock]
   if blocks.size != 1
     return error("[NATIVE-GEN-BLOCK] #{path} has #{blocks.size} extern module blocks; the header is made for one")
   end
 
-  block = blocks[0]
+  return ok(blocks[0])
+end
+
+# The prefix `prefix` of the C names, or the default one of the block's library when it is empty.
+def prefix_of(block: Analysis.NativeBlock, prefix: String) -> Result[CHeader.Prefix]
   name = prefix
   if name.empty?
     name = default_prefix(block.library)
   end
 
   case CHeader.prefix(name)
-    ok(names) -> return CHeader.render(block, names, last_part(path))
+    ok(names) -> return ok(names)
     error(message) -> return error("[NATIVE-GEN-PREFIX] #{message}; choose another with --prefix")
   end
 end

@@ -1,0 +1,18 @@
+# The modules of the fixtures stats, shapes and kinds written on the Rust files native-gen makes, built one feature at
+# a time and run against the real VM by run.sh.
+[package]
+name = "gen-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+stats = []
+shapes = []
+kinds = []
+
+[dependencies]
+agentica-native = { path = ".." }

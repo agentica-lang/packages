@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `cli.agc FILE --lang rust --output FILE.rs` writes the Rust side of the block on the `agentica-native` crate: a type with its codecs per struct and enum, the trait `PREFIXNative` with one method per function (each takes `env` and returns `Result<T, Raise>`; a resource is an associated type, held as `ResourceArc`), and `module::<Impl>()` for `agentica_native::export!`. A payload that leads back to its own type stays a term (`TreeTerm<'a>`).
+
 ### Changed
 
 - A bad item of a `List` or `Map` argument now fails the call with `argument N:` before its path, as a bad argument does (`argument 1: List[Int].2: expected Int`), also for a `List` or `Map` inside an item, an `Optional` or a `Result` of it. A cursor of `_open` keeps the plain path.
