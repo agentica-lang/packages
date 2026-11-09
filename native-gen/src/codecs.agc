@@ -106,16 +106,6 @@ export def global_names(codecs: Plan) -> List[Names.Named]
   return named
 end
 
-## The C names of the fields of each struct, each list of which must be distinct.
-export def field_names(codecs: Plan) -> List[List[Names.Named]]
-  structs = codecs.types.select do |type: Analysis.NativeType| type.kind == "struct" end
-  return structs.map do |type: Analysis.NativeType|
-    type.members.map do |member: Analysis.NativeMember|
-      Names.Named(c: Names.parameter(member.name), source: "#{type.name}.#{member.name}")
-    end
-  end
-end
-
 ## The typedefs, in an order where each comes after the types it embeds, and the prototypes of the codecs.
 export def declarations(codecs: Plan) -> List[String]
   if codecs.types.empty?

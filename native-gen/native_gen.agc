@@ -14,6 +14,7 @@
 import Analysis from "std/analysis"
 import Toml from "std/toml"
 import CHeader from "src/header"
+import Names from "src/names"
 import RustSide from "src/rust"
 import Scaffold from "src/scaffold"
 
@@ -24,16 +25,22 @@ export def header(path: String, prefix: String = "") -> Result[String]
 end
 
 ## The Rust file of the one `extern module` block of the file at `path`, on the `agentica-native` crate: its types
-## with their codecs, the trait the module implements and its tables. `prefix` names the trait, as for `header`
-## (`StatsNative` for "stats").
+## with their codecs, the trait the module implements and its tables. `prefix` names the trait, with its case kept
+## (`StatsNative` for "stats", `MyDbNative` for "MyDb" or "my_db"); by default the one of `header`.
 export def rust(path: String, prefix: String = "") -> Result[String]
-  case Analysis.native_modules(Analysis.open(Analysis.workspace()), path)
-    ok(found) ->
-      block = try one_block(found.blocks, path)
-      names = try prefix_of(block, prefix)
-      return RustSide.render(block, RustSide.trait_name(names.lower), last_part(path))
-    error(message) -> return error(diagnostic_text(message))
+  block = try block_in(Analysis.workspace(), path)
+  name = prefix
+  if name.empty?
+    name = default_prefix(block.library)
   end
+
+  if !Names.c_identifier?(name)
+    return error(
+      "[NATIVE-GEN-PREFIX] the prefix #{name.inspect} is not an ASCII identifier; choose another with --prefix",
+    )
+  end
+
+  return RustSide.render(block, RustSide.trait_name(name), last_part(path))
 end
 
 ## A new native module at `path` (`demo`, or `pkg/demo` in the folder `pkg`): writes `NAME.agc` with an `extern
@@ -82,8 +89,15 @@ end
 
 # The header of the file at `path` as `files` has it: the disk, or a buffer in place of the file.
 def header_in(files: Analysis.Workspace, path: String, prefix: String) -> Result[String]
+  block = try block_in(files, path)
+  names = try prefix_of(block, prefix)
+  return CHeader.render(block, names, last_part(path))
+end
+
+# The one `extern module` block of the file at `path` as `files` has it.
+def block_in(files: Analysis.Workspace, path: String) -> Result[Analysis.NativeBlock]
   case Analysis.native_modules(Analysis.open(files), path)
-    ok(found) -> return header_of(found.blocks, path, prefix)
+    ok(found) -> return one_block(found.blocks, path)
     error(message) -> return error(diagnostic_text(message))
   end
 end
@@ -124,15 +138,9 @@ def io[T](path: String, done: Result[T]) -> Result[T]
   end
 end
 
-def header_of(blocks: List[Analysis.NativeBlock], path: String, prefix: String) -> Result[String]
-  block = try one_block(blocks, path)
-  names = try prefix_of(block, prefix)
-  return CHeader.render(block, names, last_part(path))
-end
-
 def one_block(blocks: List[Analysis.NativeBlock], path: String) -> Result[Analysis.NativeBlock]
   if blocks.size != 1
-    return error("[NATIVE-GEN-BLOCK] #{path} has #{blocks.size} extern module blocks; the header is made for one")
+    return error("[NATIVE-GEN-BLOCK] #{path} has #{blocks.size} extern module blocks; native-gen makes a file for one")
   end
 
   return ok(blocks[0])

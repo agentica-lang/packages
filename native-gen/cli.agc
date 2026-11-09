@@ -1,6 +1,6 @@
-## The command line of native-gen: writes the C header of the `extern module` block of FILE (or with `--lang rust` its
-## Rust file), or with `--check` fails when the file at `--output` is not the one FILE gives. `new PATH` writes a new module instead: `PATH.agc`, its C
-## file and header in `native/`, and its entry in `agentica.toml`.
+## The command line of native-gen: writes the C header of the `extern module` block of FILE (or with `--lang rust`
+## its Rust file), or with `--check` fails when the file at `--output` is not the one FILE gives. `new PATH` writes a
+## new module instead: `PATH.agc`, its C file and header in `native/`, and its entry in `agentica.toml`.
 ##
 ## ```sh
 ## agentica deps/native-gen/cli.agc stats.agc --output native/stats_native.h
@@ -44,12 +44,16 @@ end
 def parsed(args: List[String]) -> Result[Options]
   parser = OP.new(
     PROGRAM,
-    "Writes the C header of the extern module block of FILE.",
+    "Writes the C header (or the Rust file) of the extern module block of FILE.",
     [Arg(name: "file", help: "the .agc file with the extern module block")],
     [
-      Opt(name: "prefix", help: "the start of the C names (default: the library name up to its first .)"),
-      Opt(name: "output", short: "o", help: "the header file to write (default: stdout)"),
-      Opt(name: "check", kind: Kind.Flag, help: "write nothing; fail when the --output file is not the header"),
+      Opt(name: "prefix", help: "the start of the C names, or of the Rust trait (default: the library name up to .)"),
+      Opt(name: "output", short: "o", help: "the file to write (default: stdout)"),
+      Opt(
+        name: "check",
+        kind: Kind.Flag,
+        help: "write nothing; fail when the --output file is not the one FILE gives",
+      ),
       Opt(name: "lang", help: "c (the default) for the C header, rust for the Rust file of the agentica-native crate"),
     ],
   )
@@ -106,7 +110,7 @@ def run(options: Options) -> Result[Void]
 
   case File.read_text(options.output)
     ok(kept) if kept == text -> return ok()
-    ok(_) -> return error("[NATIVE-GEN-STALE] #{options.output} is not the header of #{options.file}; make it again")
+    ok(_) -> return error("[NATIVE-GEN-STALE] #{options.output} is not the one #{options.file} gives; make it again")
     error(message) -> return error("[NATIVE-GEN-IO] #{options.output}: #{message}")
   end
 end
