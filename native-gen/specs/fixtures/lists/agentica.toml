@@ -1,0 +1,8 @@
+# Lists and Maps through their cursors and builders, built from native/lists.c.
+name = "native-gen-lists"
+
+[style]
+blank_line_after_end = true
+
+[native.lists]
+build = { sources = ["native/lists.c"] }

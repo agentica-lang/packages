@@ -46,16 +46,11 @@ an_term kinds_keywords(an_env *env, int64_t int_, ng_str env_, bool class_, int6
 
 an_term kinds_nothing(an_env *env) { return an_void(env); }
 
-an_term kinds_total(an_env *env, an_term values) {
-  an_list_cursor c;
-  an_term item;
-  size_t n;
+an_term kinds_total(an_env *env, kinds_list_Int values) {
   int64_t sum = 0, x;
-  if (!an_list_cursor_begin(env, values, &c, &n)) return an_badarg(env, 0);
-  while (an_list_next(env, &c, &item)) {
-    if (!an_get_int(env, item, &x)) return an_badarg(env, 0);
-    sum += x;
-  }
+  int more;
+  while ((more = kinds_list_Int_next(env, &values, &x)) == 1) sum += x;
+  if (more < 0) return an_void(env);
   return an_int(env, sum);
 }
 

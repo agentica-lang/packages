@@ -137,10 +137,11 @@ export def declarations(codecs: Plan) -> List[String]
   return lines
 end
 
-## The definitions of the codecs, for the implementation part of the header.
-export def definitions(codecs: Plan) -> List[String]
+## The definitions of the codecs, for the implementation part of the header, after the helpers of a failed decode when
+## they read a type or `failing` (another part of the header reads with a path).
+export def definitions(codecs: Plan, failing: Bool) -> List[String]
   lines: List[String] = []
-  if !codecs.read.empty?
+  if failing or !codecs.read.empty?
     lines = lines.concat(failures())
   end
 
@@ -182,6 +183,41 @@ export def decode_argument(codecs: Plan, type: String, local: String, at: Int) -
   end
 
   return []
+end
+
+## The C expression that reads the term `x` of `type` into `target` and is false, with `fail` set, when it does not
+## decode. A term stays a term.
+export def decode_value(codecs: Plan, type: String, target: String) -> String
+  if SLICES.include?(type)
+    return "#{GETTERS[type]}(env, x, &#{target}.data, &#{target}.len) || ng_expected(fail, \"#{type}\")"
+  end
+
+  if GETTERS.has_key?(type)
+    return "#{GETTERS[type]}(env, x, &#{target}) || ng_expected(fail, \"#{type}\")"
+  end
+
+  if embedded?(codecs, "", type)
+    return "#{codecs.lower}_native_get_#{type}(env, x, &#{target}, fail)"
+  end
+
+  return "((void)env, (void)fail, (#{target} = x), true)"
+end
+
+## The term of the C value `source` of `type` in `owner` ("" for an item of a List or Map).
+export def encoded(codecs: Plan, owner: String, type: String, source: String) -> String
+  if SLICES.include?(type)
+    return "#{MAKERS[type]}(env, #{source}.data, #{source}.len)"
+  end
+
+  if MAKERS.has_key?(type)
+    return "#{MAKERS[type]}(env, #{source})"
+  end
+
+  if embedded?(codecs, owner, type)
+    return "#{codecs.lower}_#{type}_make(env, &#{source})"
+  end
+
+  return source
 end
 
 # Whether `to` is `from` or a type that `from` names in a field or payload, at any depth.
@@ -367,6 +403,18 @@ def failures() -> List[String]
     "  return false;",
     "}",
     "",
+    "/* Fails the call at item INDEX (and PART of it, \"key\" or \"value\", or NULL) of a List or Map; -1 for _next. */",
+    "static inline int ng_fail_item(an_env *env, ng_fail *fail, const char *type, size_t index, const char *part) {",
+    "  char segment[48];",
+    "  if (part)",
+    "    snprintf(segment, sizeof segment, \"%zu.%s\", index, part);",
+    "  else",
+    "    snprintf(segment, sizeof segment, \"%zu\", index);",
+    "  ng_at(fail, segment);",
+    "  ng_raise(env, \"\", type, fail);",
+    "  return -1;",
+    "}",
+    "",
     "static inline an_term ng_fail_argument(an_env *env, ng_fail *fail, const char *type, int index) {",
     "  char where[32];",
     "  snprintf(where, sizeof where, \"argument %d: \", index + 1);",
@@ -523,23 +571,6 @@ def constructors(codecs: Plan, type: Analysis.NativeType) -> List[String]
   end
 
   return lines
-end
-
-# The term of the C value `source` of `type`.
-def encoded(codecs: Plan, owner: String, type: String, source: String) -> String
-  if SLICES.include?(type)
-    return "#{MAKERS[type]}(env, #{source}.data, #{source}.len)"
-  end
-
-  if MAKERS.has_key?(type)
-    return "#{MAKERS[type]}(env, #{source})"
-  end
-
-  if embedded?(codecs, owner, type)
-    return "#{codecs.lower}_#{type}_make(env, &#{source})"
-  end
-
-  return source
 end
 
 def joined(parts: List[List[String]]) -> List[String]
