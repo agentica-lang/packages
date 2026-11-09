@@ -1,0 +1,12 @@
+[package]
+name = "agentica-native"
+version = "0.1.0"
+edition = "2024"
+# Stable of about a year before the crate; CI builds and tests it on this version and on the latest stable.
+rust-version = "1.90"
+description = "Safe Rust wrappers over agentica_native.h, for the native modules that native-gen generates."
+license = "MIT"
+repository = "https://github.com/agentica-lang/packages"
+publish = false
+
+[dependencies]

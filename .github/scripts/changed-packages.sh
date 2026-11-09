@@ -5,7 +5,7 @@
 #
 # - A file under PKG/ marks PKG, except PKG/README.md and PKG/CHANGELOG.md: they hold no code. PKG/docs/ marks PKG,
 #   since `make doc-examples` runs its examples (pages.yml builds the pages).
-# - README.md, AGENTS.md, site/ and pages.yml at the root mark none.
+# - README.md, AGENTS.md, LICENSE, site/ and pages.yml at the root mark none.
 # - Any other file outside a package (Makefile, ci.yml, .github/scripts/, .github/actions/, a shared config) marks all
 #   of them: an unknown file is safer to treat as shared.
 # - A package stands alone (AGENTS.md), so no package depends on another folder of this repo and a change never
@@ -36,7 +36,7 @@ while IFS= read -r -d '' file; do
     continue
   fi
   case $file in
-    README.md | AGENTS.md | site/* | .github/workflows/pages.yml) ;;
+    README.md | AGENTS.md | LICENSE | site/* | .github/workflows/pages.yml) ;;
     *) everything=1 ;;
   esac
 done
