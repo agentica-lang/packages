@@ -202,6 +202,44 @@ Feature: The C header of an extern module block
       | C11      | cc -std=c11 -Wall -Wextra -Werror |
       | C++      | sh ../cxx.sh                      |
 
+  Scenario Outline: native new writes a module that builds and loads with nothing filled in, built as <language>
+    Given a fresh package cache
+    And the C compiler builds as "<language>"
+    And a new native module "demo" in a fresh folder
+    And the Agentica program "demo.agc" in the fresh folder
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [RUNTIME-NATIVE-ERROR]
+      add: not written yet
+      """
+
+    Examples:
+      | language |
+      | C11      |
+      | C++      |
+
+  Scenario: native new refuses to write over a module that is there
+    Given a new native module "demo" in a fresh folder
+    And the program argument "new"
+    And the program argument "demo" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-EXISTS]
+      """
+
+  Scenario: native new refuses a name in the namespace of the C API
+    Given the program argument "new"
+    And the program argument "ng"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-PREFIX]
+      """
+
   Scenario: The bench of a struct of 26 fields runs
     Given a fresh package cache
     And the header of the package of "../bench/wide/wide.agc"

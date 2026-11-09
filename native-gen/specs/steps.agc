@@ -8,6 +8,8 @@ import NativeGen from "../native_gen"
 
 # The name in the context of the header file that `--output` writes.
 WRITTEN = "written"
+# The name in the context of the folder that `native new` wrote a module in.
+SCAFFOLD = "scaffold"
 
 # A fresh folder and the context that removes it at the end of the scenario.
 struct Made
@@ -21,6 +23,10 @@ def main() -> Void
     BDD.step("the header goes to a fresh folder as {string}", &fresh_output),
     BDD.step("the written header includes:", &written_header),
     BDD.step("the header of the package of {string}", &package_header),
+    BDD.step("a new native module {string} in a fresh folder", &new_module),
+    BDD.step("the program argument {string} in the fresh folder", &argument_in_folder),
+    BDD.step("the Agentica program {string} in the fresh folder", &program_in_folder),
+    BDD.step("the C compiler builds as {string}", &compiler),
   ])
 end
 
@@ -46,6 +52,46 @@ def package_header(ctx: BDD.Context, args: List[String]) -> BDD.Context
   kept = BDD.after(ctx) do |_done| Path.remove(header) end
   written = File.write_text(header, made.unwrap!)
   return BDD.assert(kept, written.ok?, "cannot write the header of #{path}: #{written.message}")
+end
+
+# `NativeGen.scaffold` of the module `args[0]` in a fresh folder, which the scenario keeps.
+def new_module(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  case fresh_folder(ctx)
+    ok(made) ->
+      kept = BDD.set(made.ctx, SCAFFOLD, JSON.from(made.path))
+      done = NativeGen.scaffold(Path.join([made.path, args[0]]).unwrap!)
+      return BDD.assert(kept, done.ok?, "native new #{args[0]} failed: #{done.message}")
+    error(message) -> return BDD.assert(ctx, false, message)
+  end
+end
+
+# CC for "C11", or for "C++" fixtures/cxx.sh by its absolute path, since a program outside the fixtures runs in its
+# own folder.
+def compiler(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  if args[0] == "C11"
+    return BDD.given_env(ctx, "CC", "cc -std=c11 -Wall -Wextra -Werror")
+  end
+
+  script = "fixtures/cxx.sh"
+  if File.stat("specs/header.feature").ok?
+    script = "specs/#{script}"
+  end
+
+  return BDD.given_env(ctx, "CC", "sh #{Path.resolve(script).unwrap!}")
+end
+
+def argument_in_folder(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  return BDD.given_argument(ctx, in_folder(ctx, args[0]))
+end
+
+def program_in_folder(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  return BDD.given_program(ctx, in_folder(ctx, args[0]))
+end
+
+# The path of `name` in the folder of `new_module`.
+def in_folder(ctx: BDD.Context, name: String) -> String
+  folder = JSON.string(BDD.get(ctx, SCAFFOLD).unwrap!).unwrap!
+  return Path.join([folder, name]).unwrap!
 end
 
 def fresh_cache(ctx: BDD.Context, _args: List[String]) -> BDD.Context

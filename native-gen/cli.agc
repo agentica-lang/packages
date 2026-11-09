@@ -1,9 +1,11 @@
 ## The command line of native-gen: writes the C header of the `extern module` block of FILE, or with `--check` fails
-## when the header at `--output` is not the one FILE gives.
+## when the header at `--output` is not the one FILE gives. `new PATH` writes a new module instead: `PATH.agc`, its C
+## file and header in `native/`, and its entry in `agentica.toml`.
 ##
 ## ```sh
 ## agentica deps/native-gen/cli.agc stats.agc --output native/stats_native.h
 ## agentica deps/native-gen/cli.agc stats.agc --output native/stats_native.h --check
+## agentica deps/native-gen/cli.agc new demo
 ## ```
 ##
 ## Exit 0 on success, 1 on an error of the file or a stale header, 2 on bad usage. An error is one line on stderr,
@@ -23,8 +25,14 @@ struct Options
 end
 
 def main() -> Void
-  options = OP.run!(parsed(System.args()))
-  done = run(options)
+  args = System.args()
+  done = ok()
+  if !args.empty? and args[0] == "new"
+    done = NativeGen.scaffold(OP.run!(new_path(args.drop(1))))
+  else
+    done = run(OP.run!(parsed(args)))
+  end
+
   if !done.ok?
     IO.warn("#{PROGRAM}: #{done.message}")
     System.exit(1)
@@ -56,6 +64,19 @@ def parsed(args: List[String]) -> Result[Options]
   end
 
   return ok(options)
+end
+
+# The PATH of `new PATH`.
+def new_path(args: List[String]) -> Result[String]
+  parser = OP.new(
+    "#{PROGRAM} new",
+    "Writes a new native module: PATH.agc, native/NAME.c, its header, and its entry in agentica.toml.",
+    [Arg(name: "path", help: "the module, NAME or FOLDER/NAME")],
+    [],
+  )
+
+  p = try OP.parse(parser, args)
+  return ok(OP.string(p, "path"))
 end
 
 def run(options: Options) -> Result[Void]
