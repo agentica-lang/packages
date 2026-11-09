@@ -28,7 +28,8 @@ bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub,
 native-gen/          the C header of an `extern module` block: cli.agc is the command, native_gen.agc the API
                      (`header`), src/header.agc the text of the header, src/codecs.agc the C values of the structs and
                      enums, src/collections.agc the Lists, Maps, Optionals and Results, src/types.agc the type
-                     trees, src/names.agc the C names, src/scaffold.agc the files of `new` (all pure);
+                     trees, src/names.agc the C names, src/scaffold.agc the files of `new` (all pure); rust/ the
+                     crate agentica-native (safe wrappers over agentica_native.h; `cargo test` there, CI job `rust`);
                      specs/fixtures/ are packages written on their headers (the one of stats is committed as the
                      golden, a step makes the others: kinds, shapes, lists, options, resources), the files that fail
                      (errors/) and cxx.sh, a CC that builds a module as C++; bench/wide the codecs of a struct of 26

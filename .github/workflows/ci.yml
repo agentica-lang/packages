@@ -70,3 +70,33 @@ jobs:
       - name: Doc examples
         if: env.PACKAGES != ''
         run: make doc-examples PACKAGES="$PACKAGES"
+
+  # The Rust crate of native-gen (native-gen/rust): its format and lints on stable, its tests on the MSRV of its
+  # Cargo.toml and on stable. It has no dependencies, so it needs no registry.
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: native-gen/rust
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install the toolchains
+        run: |
+          msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
+          echo "MSRV=$msrv" >> "$GITHUB_ENV"
+          rustup toolchain install "$msrv" --profile minimal
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - name: Format
+        run: cargo +stable fmt --check
+
+      - name: Lints
+        run: cargo +stable clippy --all-targets -- -D warnings
+
+      - name: Test on the MSRV
+        run: cargo +"$MSRV" test
+
+      - name: Test on stable
+        run: cargo +stable test
