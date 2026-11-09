@@ -26,9 +26,13 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
+        shell: bash
+        # The diff goes to a file first: in a pipe a failed git diff (no base branch, no merge base) would read as
+        # "no package changed" and turn the required check green untested.
         run: |
           if [ "$EVENT" = pull_request ]; then
-            packages=$(git diff --name-only "origin/$BASE_REF...HEAD" | .github/scripts/changed-packages.sh)
+            git diff --name-only --no-renames -z "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/changed-files"
+            packages=$(.github/scripts/changed-packages.sh < "$RUNNER_TEMP/changed-files")
           else
             packages=$(.github/scripts/changed-packages.sh --all)
           fi

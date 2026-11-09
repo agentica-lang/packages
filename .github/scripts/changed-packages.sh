@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Prints the packages (folders with an agentica.toml) that CI must run, space separated, for a list of changed files
-# read from stdin (git diff --name-only). `--all` prints every package.
+# Prints the packages (folders with an agentica.toml) that CI must run, space separated, for the changed files read
+# from stdin as NUL-separated names (git diff --name-only --no-renames -z: a rename lists both paths, and git does not
+# quote odd names). `--all` prints every package.
 #
 # - A file under PKG/ marks PKG, except PKG/docs/, PKG/README.md and PKG/CHANGELOG.md: they hold no code, and
 #   pages.yml builds the docs.
@@ -25,8 +26,7 @@ fi
 
 declare -A marked=()
 everything=0
-while IFS= read -r file; do
-  [ -n "$file" ] || continue
+while IFS= read -r -d '' file; do
   top=${file%%/*}
   if [ "$top" != "$file" ] && [ -f "$top/agentica.toml" ]; then
     case ${file#*/} in
