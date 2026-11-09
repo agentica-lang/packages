@@ -22,7 +22,7 @@ A `Gen[T]` makes values of type `T` from a seed. It also makes a shrink tree: th
 
 `max_size` is at most 1000.
 
-```agentica
+```agentica {mode="fragment"}
 ages = Prop.int(0, 120)
 names = Prop.one_of(["ana", "ben", "cat"])
 people = Prop.pair(names, ages)
@@ -31,7 +31,7 @@ tens = Prop.map(Prop.int(1, 5)) do |n| n * 10 end
 
 `Prop.sample(gen, seed, count = 5)` returns the first values that `check` would try with that seed. It is a good way to see what a generator makes:
 
-```agentica
+```agentica {mode="fragment"}
 puts(Prop.sample(Prop.pair(Prop.int(0, 9), Prop.string(3)), 5, 2))
 puts(Prop.sample(Prop.optional(Prop.int(0, 3)), 1, 6))
 ```

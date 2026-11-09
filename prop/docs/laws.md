@@ -15,7 +15,7 @@ Each helper returns the `Result[Void]` of `check`, so it goes straight into a te
 | `Prop.commutative(gen, op)` | `op(a, b)` is `op(b, a)` |
 | `Prop.preserves(gen, f, measure)` | `measure(f(x))` is `measure(x)`: the size, the sum, the sortedness |
 
-```agentica
+```agentica {mode="fragment"}
 def fast_sum(xs: List[Int]) -> Int
   return xs.sum
 end
@@ -40,7 +40,7 @@ end
 
 A failure names the law and both values:
 
-```agentica
+```agentica {mode="fragment"}
 result = Prop.idempotent(Prop.list(Prop.int(-9, 9)), Prop.Config(seed: some(3))) do |xs| xs.reverse end
 puts(result.message)
 ```

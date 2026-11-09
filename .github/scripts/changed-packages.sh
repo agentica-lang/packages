@@ -3,8 +3,8 @@
 # from stdin as NUL-separated names (git diff --name-only --no-renames -z: a rename lists both paths, and git does not
 # quote odd names). `--all` prints every package.
 #
-# - A file under PKG/ marks PKG, except PKG/docs/, PKG/README.md and PKG/CHANGELOG.md: they hold no code, and
-#   pages.yml builds the docs.
+# - A file under PKG/ marks PKG, except PKG/README.md and PKG/CHANGELOG.md: they hold no code. PKG/docs/ marks PKG,
+#   since `make doc-examples` runs its examples (pages.yml builds the pages).
 # - README.md, AGENTS.md, site/ and pages.yml at the root mark none.
 # - Any other file outside a package (Makefile, ci.yml, .github/scripts/, .github/actions/, a shared config) marks all
 #   of them: an unknown file is safer to treat as shared.
@@ -30,7 +30,7 @@ while IFS= read -r -d '' file; do
   top=${file%%/*}
   if [ "$top" != "$file" ] && [ -f "$top/agentica.toml" ]; then
     case ${file#*/} in
-      docs/* | README.md | CHANGELOG.md) ;;
+      README.md | CHANGELOG.md) ;;
       *) marked[$top]=1 ;;
     esac
     continue

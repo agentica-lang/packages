@@ -18,7 +18,7 @@ The name is signed, not encrypted: anybody can read it. The signature is what st
 
 `Channels.verified_stream_name(key, signed)` returns the name as `some(name)` if `key` signed it, and `none` for anything else (a bad signature, or a message that is not a name).
 
-```agentica
+```agentica {mode="fragment"}
 key = Channels.stream_key("dev-secret").unwrap!
 signed = Channels.signed_stream_name(key, "user:ana")
 puts(signed)
@@ -40,7 +40,7 @@ The first line depends on the secret. Use the real secret of your app, not the o
 
 The signature says that the page was made for someone, not that this person may read the stream now. `authorize` is the membership check of your app:
 
-```agentica
+```agentica {mode="fragment"}
 # A person may listen to the stream of their own name only.
 def allowed?(session: Channels.Session, name: String) -> Bool
   return name == "user:#{session.identity.id}"
@@ -57,7 +57,7 @@ Register it under the channel names that the page uses (`Turbo::StreamsChannel`,
 
 `Channels.broadcast_text(hub, topic, text)` sends the text as a JSON string, which is how Turbo reads a Turbo Stream. The topic is the verified name:
 
-```agentica
+```agentica {mode="fragment"}
 html = "<turbo-stream action=\"append\" target=\"log\"><template>hi</template></turbo-stream>"
 Channels.broadcast_text(hub, "user:ana", html).unwrap!
 ```

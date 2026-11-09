@@ -1,5 +1,6 @@
 deps/
 _build/
+_doc_examples/
 site/public/
 site/resources/
 site/mounts.toml

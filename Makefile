@@ -5,13 +5,14 @@ PACKAGES := $(patsubst %/agentica.toml,%,$(wildcard */agentica.toml))
 # How many test files of a package run at once.
 JOBS ?= 4
 
-.PHONY: help install check fmt-check test site site-mounts site-serve
+.PHONY: help install check fmt-check test doc-examples site site-mounts site-serve
 
 help:
 	@echo "install    fetch the packages of each agentica.lock into deps/"
 	@echo "check      type-check every .agc file of each package"
 	@echo "fmt-check  fail when a file is not formatted (agentica fmt)"
 	@echo "test       run the features of specs/ and the tests of test/ of each package"
+	@echo "doc-examples run the agentica code blocks of the docs/ of each package (tools/doc_examples.agc)"
 	@echo "site       build the documentation site into site/public (the docs/ folder of each package)"
 	@echo "site-serve serve the site on localhost for a preview"
 
@@ -29,6 +30,11 @@ fmt-check:
 
 test:
 	@set -e; for p in $(PACKAGES); do echo "== $$p"; (cd $$p && $(AGENTICA) test --jobs $(JOBS)); done
+
+# The examples of each docs/ folder: a block with `def main` runs (and matches the `output` block after it), any other
+# is checked; the rules are in the header of tools/doc_examples.agc.
+doc-examples:
+	$(AGENTICA) tools/doc_examples.agc $(AGENTICA) $(PACKAGES)
 
 # The documentation site (Hugo): site/ has the layouts, and the pages are the docs/ folder of each package.
 HUGO ?= hugo
