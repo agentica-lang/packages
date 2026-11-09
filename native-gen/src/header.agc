@@ -4,20 +4,9 @@
 ## program's, so the header never writes one of its own.
 
 import Analysis from "std/analysis"
+import Codecs from "codecs"
 import Names from "names"
 
-# The C type of a parameter, by its canonical Agentica type; any other type stays a term.
-SCALARS = {"Int": "int64_t", "Float": "double", "Bool": "bool", "String": "ng_str", "Bytes": "ng_buf"}
-# The getter of `agentica_native.h` that decodes a parameter of each scalar type; those of SLICES fill `data` and
-# `len`.
-GETTERS = {
-  "Int": "an_get_int",
-  "Float": "an_get_float",
-  "Bool": "an_get_bool",
-  "String": "an_get_string",
-  "Bytes": "an_get_bytes",
-}
-SLICES = Set.new(["String", "Bytes"])
 # The table flags of the function modes and the kinds of the type rows that std/analysis gives.
 MODES = {"short": "AN_SHORT", "dirty": "AN_DIRTY"}
 KINDS = {"struct": "AN_STRUCT", "enum": "AN_ENUM"}
@@ -48,7 +37,6 @@ end
 ## An error starts with its code: `[NATIVE-GEN-NAME]` when two of its names map to one C identifier,
 ## `[NATIVE-GEN-UNKNOWN]` for a mode or a type kind that this version does not know.
 export def render(block: Analysis.NativeBlock, names: Prefix, source: String) -> Result[String]
-  try named(Names.distinct(global_names(block, names)))
   for function in block.functions
     if !MODES.has_key?(function.mode)
       return error("[NATIVE-GEN-UNKNOWN] #{function.name} has the mode #{function.mode.inspect}")
@@ -69,11 +57,18 @@ export def render(block: Analysis.NativeBlock, names: Prefix, source: String) ->
     end
   end
 
+  codecs = Codecs.of(block, names.lower, names.upper)
+  try named(Names.distinct(global_names(block, names).concat(Codecs.global_names(codecs))))
+  for fields in Codecs.field_names(codecs)
+    try named(Names.distinct(fields))
+  end
+
   lines = joined([
     opening(block, names, source),
     constants(block, names),
-    prototypes(block, names),
-    implementation(block, names),
+    Codecs.declarations(codecs),
+    prototypes(block, names, codecs),
+    implementation(block, names, codecs),
   ])
 
   return ok("#{lines.join("\n")}\n")
@@ -228,11 +223,11 @@ def numbered(items: List[String]) -> String
 end
 
 # One prototype per function, each with the `##` doc of its declaration.
-def prototypes(block: Analysis.NativeBlock, names: Prefix) -> List[String]
+def prototypes(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Codecs) -> List[String]
   lines: List[String] = []
   for function in block.functions
     typed = function.parameters.map do |param: Analysis.NativeParameter|
-      "#{c_type(param.type)} #{Names.parameter(param.name)}"
+      "#{Codecs.c_type(codecs, "", param.type)} #{Names.parameter(param.name)}"
     end
 
     params = ["an_env *env"].concat(typed)
@@ -243,12 +238,8 @@ def prototypes(block: Analysis.NativeBlock, names: Prefix) -> List[String]
   return lines.concat(["", "#ifdef __cplusplus", "}", "#endif", "", "#endif"])
 end
 
-def c_type(type: String) -> String
-  return SCALARS.get(type, "an_term")
-end
-
 # The wrappers, the tables and the module macro, for the one .c file that defines the module.
-def implementation(block: Analysis.NativeBlock, names: Prefix) -> List[String]
+def implementation(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Codecs) -> List[String]
   big = names.upper
   lines = [
     "",
@@ -266,49 +257,43 @@ def implementation(block: Analysis.NativeBlock, names: Prefix) -> List[String]
     "#endif",
   ]
 
+  lines = lines.concat(Codecs.definitions(codecs))
   for function in block.functions
-    lines = joined([lines, [""], wrapper(function, names)])
+    lines = joined([lines, [""], wrapper(function, names, codecs)])
   end
 
   return joined([lines, tables(block, names), ["#endif"]])
 end
 
-# The function of the table: it decodes each scalar argument, answers an_badarg for the first one that does not
-# decode, and calls the author's typed function.
-def wrapper(function: Analysis.NativeFunction, names: Prefix) -> List[String]
+# The function of the table: it decodes each argument that has a C type, fails the call at the first one that does
+# not decode, and calls the author's typed function.
+def wrapper(function: Analysis.NativeFunction, names: Prefix, codecs: Codecs.Codecs) -> List[String]
   c = Names.identifier(function.name)
   lines = ["static an_term #{names.lower}_native_#{c}(an_env *env, int argc, const an_term *argv) {", "  (void)argc;"]
   if function.parameters.empty?
     lines = lines.push("  (void)argv;")
   end
 
+  if function.parameters.any? do |param: Analysis.NativeParameter| Codecs.embedded?(codecs, "", param.type) end
+    lines = lines.push("  ng_fail fail;")
+  end
+
   passed: List[String] = ["env"]
   at = 0
   for param in function.parameters
     local = "a#{at}"
-    if GETTERS.has_key?(param.type)
-      lines = lines.concat(decode(param.type, local, at))
-      passed = passed.push(local)
-    else
+    decoded = Codecs.decode_argument(codecs, param.type, local, at)
+    if decoded.empty?
       passed = passed.push("argv[#{at}]")
+    else
+      lines = lines.concat(decoded)
+      passed = passed.push(local)
     end
 
     at += 1
   end
 
   return lines.concat(["  return #{names.lower}_#{c}(#{passed.join(", ")});", "}"])
-end
-
-def decode(type: String, local: String, at: Int) -> List[String]
-  into = "&#{local}"
-  if SLICES.include?(type)
-    into = "&#{local}.data, &#{local}.len"
-  end
-
-  return [
-    "  #{SCALARS[type]} #{local};",
-    "  if (!#{GETTERS[type]}(env, argv[#{at}], #{into})) return an_badarg(env, #{at});",
-  ]
 end
 
 # The function and type tables, and the macro that ends the module's file with the resource table, which needs the

@@ -39,6 +39,18 @@ enum { STATS_Summary_count = 0, STATS_Summary_min = 1, STATS_Summary_max = 2, ST
 /* The variants of Cell, in declared order. */
 enum { STATS_Cell_Empty = 0, STATS_Cell_Number = 1, STATS_Cell_Text = 2 };
 
+/* The structs as C values. A String or Bytes in them is borrowed, a term lasts for the call: keep them in C
+   locals. _get reads a term into OUT; false when it is not one, and then the call has failed with the path of the
+   first bad part. _make makes a term. */
+
+typedef struct {
+  int64_t count;
+  double min;
+  double max;
+  double mean;
+} stats_Summary;
+an_term stats_Summary_make(an_env *env, const stats_Summary *value);
+
 /* The count, smallest, largest and mean of the values; none for no values. */
 an_term stats_summary(an_env *env, an_term values);
 
@@ -63,6 +75,15 @@ AN_EXPORT const an_module *agentica_native_init(const an_api *api);
 #ifdef __cplusplus
 }
 #endif
+
+an_term stats_Summary_make(an_env *env, const stats_Summary *value) {
+  an_term fields[4];
+  fields[0] = an_int(env, value->count);
+  fields[1] = an_float(env, value->min);
+  fields[2] = an_float(env, value->max);
+  fields[3] = an_float(env, value->mean);
+  return an_struct(env, STATS_TYPE_Summary, fields);
+}
 
 static an_term stats_native_summary(an_env *env, int argc, const an_term *argv) {
   (void)argc;

@@ -2,3 +2,4 @@
 # golden, which `--check` compares.
 specs/fixtures/*/native/*_native.h
 !specs/fixtures/stats/native/stats_native.h
+bench/*/native/*_native.h

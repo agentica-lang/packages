@@ -40,7 +40,7 @@ Feature: The C header of an extern module block
   Scenario Outline: Every kind of argument reaches the C function, built as <language>
     Given a fresh package cache
     And the environment variable "CC" is "<cc>"
-    And the header of the fixture "kinds"
+    And the header of the package of "fixtures/kinds/kinds.agc"
     And the Agentica program "fixtures/kinds/kinds.agc"
     Then the program exits with code 0 within 25000 milliseconds
     And stdout is:
@@ -58,6 +58,46 @@ Feature: The C header of an extern module block
       | language | cc                               |
       | C11      | cc -std=c11 -Wall -Wextra -Werror |
       | C++      | sh ../cxx.sh                     |
+
+  Scenario Outline: Structs come back equal through their C values, built as <language>
+    Given a fresh package cache
+    And the environment variable "CC" is "<cc>"
+    And the header of the package of "fixtures/shapes/shapes.agc"
+    And the Agentica program "fixtures/shapes/shapes.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout is:
+      """
+      true
+      true
+
+      """
+
+    Examples:
+      | language | cc                               |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror |
+      | C++      | sh ../cxx.sh                     |
+
+  Scenario: A term of another type fails the call that reads it
+    Given a fresh package cache
+    And the header of the package of "fixtures/shapes/shapes.agc"
+    And the program argument "misread"
+    And the Agentica program "fixtures/shapes/shapes.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [RUNTIME-NATIVE-ERROR]
+      """
+
+  Scenario: The bench of a struct of 26 fields runs
+    Given a fresh package cache
+    And the header of the package of "../bench/wide/wide.agc"
+    And the program argument "10"
+    And the Agentica program "../bench/wide/wide.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout includes:
+      """
+      decode and make:
+      """
 
   Scenario: The header goes to stdout without --output, with names from --prefix
     Given the program argument "fixtures/errors/path.agc"
@@ -86,6 +126,7 @@ Feature: The C header of an extern module block
       | two_blocks.agc | NATIVE-GEN-BLOCK  |
       | no_block.agc   | NATIVE-GEN-BLOCK  |
       | reserved.agc   | NATIVE-GEN-NAME   |
+      | fields.agc     | NATIVE-GEN-NAME   |
       | path.agc       | NATIVE-GEN-PREFIX |
       | missing.agc    | QUERY-USAGE       |
 
