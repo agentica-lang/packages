@@ -1,10 +1,16 @@
 # packages
 
-Small Agentica packages, one folder each. A folder is a package with its own `agentica.toml`; install one with `subdir` and its prefixed tag:
+Small Agentica packages, one folder each. A folder is a package with its own `agentica.toml`; add one with its prefixed tag and its folder as `--subdir`:
+
+```sh
+agentica add prop https://github.com/agentica-lang/packages --tag prop-0.1.0 --subdir prop
+```
+
+It writes the line of `agentica.toml` and the entry of `agentica.lock`, and fetches the package:
 
 ```toml
 [dependencies]
-cache = { git = "https://github.com/agentica-lang/packages", tag = "cache-0.1.0", subdir = "cache" }
+prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.1.0", subdir = "prop" }
 ```
 
 | Package | What it is |

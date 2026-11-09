@@ -11,13 +11,20 @@ It speaks the Rails protocol, so the Action Cable client of Rails and `<turbo-ca
 
 Needs Agentica 0.27.0 or later and Bond 0.10.1. The app depends on Bond itself, at the same tag as the package, because two sources for one name in a tree is `PKG-SOURCE-CONFLICT`:
 
+```sh
+agentica add bond https://github.com/agentica-lang/bond --tag 0.10.1
+agentica add bond-channels https://github.com/agentica-lang/packages --tag bond-channels-0.2.1 --subdir bond-channels
+```
+
+They write these lines of `agentica.toml`, and the entries of `agentica.lock`:
+
 ```toml
 [dependencies]
 bond = { git = "https://github.com/agentica-lang/bond", tag = "0.10.1" }
 bond-channels = { git = "https://github.com/agentica-lang/packages", tag = "bond-channels-0.2.1", subdir = "bond-channels" }
 ```
 
-Run `agentica install`. The releases and their notes are in the [changelog](https://github.com/agentica-lang/packages/blob/main/bond-channels/CHANGELOG.md).
+The releases and their notes are in the [changelog](https://github.com/agentica-lang/packages/blob/main/bond-channels/CHANGELOG.md).
 
 ## Example
 

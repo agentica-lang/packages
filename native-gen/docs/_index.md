@@ -7,7 +7,13 @@ description: The C header of an extern module block. Write plain C functions wit
 
 ## Install
 
-Needs Agentica 0.27.0 or later. Add it to `agentica.toml` with the prefixed tag of the release, and run `agentica install`:
+Needs Agentica 0.27.0 or later. Add it with the prefixed tag of the release:
+
+```sh
+agentica add native-gen https://github.com/agentica-lang/packages --tag native-gen-0.1.0 --subdir native-gen
+```
+
+That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]

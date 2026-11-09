@@ -4,7 +4,12 @@ The C header of an Agentica `extern module` block. Write plain C functions with 
 arguments, the codecs of your structs, enums, Lists, Maps, Optionals and Results, and the tables of the module are
 generated from the `.agc`, the one source of every signature.
 
-Needs Agentica 0.27.0 or later. Add it to `agentica.toml` and run `agentica install`:
+Needs Agentica 0.27.0 or later. Add it with `agentica add`, which writes this line of `agentica.toml` and the entry of
+`agentica.lock`:
+
+```sh
+agentica add native-gen https://github.com/agentica-lang/packages --tag native-gen-0.1.0 --subdir native-gen
+```
 
 ```toml
 [dependencies]

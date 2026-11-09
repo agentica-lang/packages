@@ -7,7 +7,13 @@ description: Property-based testing. State a law, check it on many generated inp
 
 ## Install
 
-Needs Agentica 0.25.0 or later. Add it to `agentica.toml` with the prefixed tag of the release, and run `agentica install`:
+Needs Agentica 0.25.0 or later. Add it with the prefixed tag of the release:
+
+```sh
+agentica add prop https://github.com/agentica-lang/packages --tag prop-0.1.0 --subdir prop
+```
+
+That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
