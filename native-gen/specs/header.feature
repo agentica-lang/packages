@@ -96,17 +96,6 @@ Feature: The C header of an extern module block
       | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested | Label.at.x: expected Int       |
       | C++      | sh ../cxx.sh                      | misread_nested | Label.at.x: expected Int       |
 
-  Scenario: The bench of a struct of 26 fields runs
-    Given a fresh package cache
-    And the header of the package of "../bench/wide/wide.agc"
-    And the program argument "10"
-    And the Agentica program "../bench/wide/wide.agc"
-    Then the program exits with code 0 within 25000 milliseconds
-    And stdout includes:
-      """
-      decode and make:
-      """
-
   Scenario: The header goes to stdout without --output, with names from --prefix, in lower case for functions
     Given the program argument "fixtures/errors/path.agc"
     And the program argument "--prefix"

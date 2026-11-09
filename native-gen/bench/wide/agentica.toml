@@ -1,8 +1,0 @@
-# The bench of the codecs on a struct of 26 fields (wide.agc), built from native/wide.c.
-name = "native-gen-wide"
-
-[style]
-blank_line_after_end = true
-
-[native.wide]
-build = { sources = ["native/wide.c"] }
