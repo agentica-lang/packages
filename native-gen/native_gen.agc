@@ -8,8 +8,8 @@
 ## ```
 ##
 ## An error starts with its code in brackets: `[NATIVE-GEN-NAME] ...` when two names map to one C identifier,
-## `[NATIVE-GEN-PREFIX]`, `[NATIVE-GEN-BLOCK]`, `[NATIVE-GEN-UNKNOWN]`, `[NATIVE-GEN-EXISTS]`, `[NATIVE-GEN-MANIFEST]`, `[NATIVE-GEN-IO]`, or
-## the code of the diagnostic when the file does not check.
+## `[NATIVE-GEN-PREFIX]`, `[NATIVE-GEN-BLOCK]`, `[NATIVE-GEN-UNKNOWN]`, `[NATIVE-GEN-EXISTS]`,
+## `[NATIVE-GEN-MANIFEST]`, `[NATIVE-GEN-IO]`, or the code of the diagnostic when the file does not check.
 
 import Analysis from "std/analysis"
 import Toml from "std/toml"
