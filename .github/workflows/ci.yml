@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+env:
+  # The pinned Agentica release, for both jobs.
+  AGENTICA_VERSION: 0.27.0
+  AGENTICA_SHA256: 87319417a3ad3338af8117e0885cbabf63ae54c8e4539318829c221a342342f9 # linux-x86_64
+  # The nightly of Miri and of the doctests that check error codes, pinned so a new nightly cannot break CI by itself.
+  NIGHTLY: nightly-2026-11-01
+
 jobs:
   test:
     # `test` is the required check, so it also carries the result of the rust job: it waits for it, and fails when it
@@ -55,8 +62,8 @@ jobs:
         if: env.PACKAGES != ''
         uses: agentica-lang/setup-agentica@v1
         with:
-          version: 0.27.0
-          sha256: 87319417a3ad3338af8117e0885cbabf63ae54c8e4539318829c221a342342f9 # linux-x86_64
+          version: ${{ env.AGENTICA_VERSION }}
+          sha256: ${{ env.AGENTICA_SHA256 }}
 
       # The locked packages of each folder, checked against the hashes of its agentica.lock.
       - name: Install the packages
@@ -122,7 +129,7 @@ jobs:
           echo "MSRV=$msrv" >> "$GITHUB_ENV"
           rustup toolchain install "$msrv" --profile minimal
           rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup toolchain install nightly --profile minimal --component miri
+          rustup toolchain install "$NIGHTLY" --profile minimal --component miri
 
       - name: Format
         if: env.RUST == '1'
@@ -146,20 +153,20 @@ jobs:
 
       - name: Doctests on nightly
         if: env.RUST == '1'
-        run: cargo +nightly test --doc
+        run: cargo +"$NIGHTLY" test --doc
 
       - name: Test under Miri
         if: env.RUST == '1'
         env:
           MIRIFLAGS: -Zmiri-strict-provenance
-        run: cargo +nightly miri test --lib
+        run: cargo +"$NIGHTLY" miri test --lib
 
       - name: Install the pinned Agentica release
         if: env.RUST == '1'
         uses: agentica-lang/setup-agentica@v1
         with:
-          version: 0.27.0
-          sha256: 87319417a3ad3338af8117e0885cbabf63ae54c8e4539318829c221a342342f9 # linux-x86_64
+          version: ${{ env.AGENTICA_VERSION }}
+          sha256: ${{ env.AGENTICA_SHA256 }}
 
       # Collections run while one call keeps 200000 Strings in a Vec (the heap floor is off), so a term the root list
       # did not keep would come back wrong.
