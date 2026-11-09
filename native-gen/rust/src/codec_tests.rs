@@ -87,6 +87,8 @@ fn each_type_of_a_signature_decodes_back_to_what_it_encoded() {
     assert_eq!(round_trip(nested.clone()), nested);
     let shapes = vec![Shape::Dot, Shape::Circle(Point { x: -3, y: 4 })];
     assert_eq!(round_trip(shapes.clone()), shapes);
+    let voids: Vec<Result<(), String>> = vec![Ok(()), Err("no".into()), Ok(())];
+    assert_eq!(round_trip(voids.clone()), voids);
 }
 
 #[test]

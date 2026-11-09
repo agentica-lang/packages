@@ -24,7 +24,7 @@ KEYWORDS = Set.new([
 IMPORTS = [
   "DecodeError", "Decoder", "Encoder", "Env", "Mode", "Module", "Raise", "ResourceArc", "Term", "sys", "types",
 ]
-PRELUDE = ["Option", "Result", "String", "Vec", "Some", "None", "Ok", "Err", "Box", "Send", "Sync", "Clone", "Debug"]
+PRELUDE = ["Option", "Result", "String", "Vec", "Send", "Sync", "Some", "None", "Ok", "Err"]
 
 # The types of a block and what the Rust side needs of them: the row of each struct and enum, the resources, the
 # types each one names in its fields or payloads, and those that borrow the call.
@@ -61,6 +61,14 @@ export def render(block: Analysis.NativeBlock, trait_name: String, source: Strin
   for type in block.types
     if type.kind != "struct" and type.kind != "enum"
       return error("[NATIVE-GEN-UNKNOWN] #{type.name} has the kind #{type.kind.inspect}")
+    end
+
+    # `Self` is a keyword of Rust that no type or variant can be named.
+    if (
+      type.name == "Self" or
+      (type.kind == "enum" and type.members.any? do |member: Analysis.NativeMember| member.name == "Self" end)
+    )
+      return error("[NATIVE-GEN-NAME] #{type.name} is or has a variant named Self, a keyword of Rust")
     end
 
     if type.kind == "struct"
@@ -321,6 +329,11 @@ def type_lines(plan: Plan, type: Analysis.NativeType) -> List[String]
   if type.kind == "struct"
     lines = lines.push("pub struct #{generic(plan, name)} {")
     decode = ["        Ok(#{name} {"]
+    if type.members.empty?
+      # A struct of no fields reads nothing of its term.
+      decode = ["        let _ = term;", "        Ok(#{name} {"]
+    end
+
     parts: List[String] = []
     at = 0
     for member in type.members
@@ -555,7 +568,7 @@ def doc_lines(indent: String, doc: String) -> List[String]
 
   lines: List[String] = []
   open = false
-  for line in doc.split("\n")
+  for line in doc.replace("\r", "").split("\n")
     text = line
     if line.trim.start_with?("```")
       if !open and line.trim == "```"

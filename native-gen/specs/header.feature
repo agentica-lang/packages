@@ -53,6 +53,7 @@ Feature: The C header of an extern module block
       | clash.agc        | NATIVE-GEN-NAME  |
       | rust_keyword.agc | NATIVE-GEN-NAME  |
       | rust_prelude.agc | NATIVE-GEN-NAME  |
+      | rust_self.agc    | NATIVE-GEN-NAME  |
       | two_blocks.agc   | NATIVE-GEN-BLOCK |
 
   Scenario: --lang other than c or rust is bad usage
@@ -96,6 +97,7 @@ Feature: The C header of an extern module block
       1 e 0 2 3
       6
       [none, some(Point(x: 3, y: 4))]
+      2
 
       """
 

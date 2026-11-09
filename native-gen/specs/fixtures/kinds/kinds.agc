@@ -29,6 +29,8 @@ extern module "kinds"
   compute def total(values: List[Int]) -> Int
   ## The center of a circle; none for a dot.
   def corner(shape: Shape) -> Optional[Point]
+  ## How many of the results are ok.
+  def oks(results: List[Result[Void]]) -> Int
 end
 
 def main() -> Void
@@ -40,4 +42,5 @@ def main() -> Void
   nothing()
   puts(total([1, 2, 3]))
   puts([corner(Shape.Dot), corner(Shape.Circle(Point(x: 3, y: 4), 1.5))])
+  puts(oks([ok(), error("no"), ok()]))
 end

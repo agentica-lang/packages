@@ -191,6 +191,18 @@ impl MapKey for &str {}
 impl MapKey for Vec<u8> {}
 impl MapKey for &[u8] {}
 
+/// Void, inside a `Result[Void]` or a List of them. The C API has no getter for Void, and the VM checks each argument
+/// against the signature, so any term decodes as `()`, as the C header reads it.
+impl<'a> Decoder<'a> for () {
+    fn type_name() -> String {
+        "Void".to_string()
+    }
+
+    fn decode(_term: Term<'a>) -> Result<Self, DecodeError> {
+        Ok(())
+    }
+}
+
 impl Encoder for () {
     fn encode<'a>(&self, env: Env<'a>) -> Term<'a> {
         env.void()

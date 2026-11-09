@@ -4,3 +4,4 @@
 1 e 0 2 3
 6
 [none, some(Point(x: 3, y: 4))]
+2

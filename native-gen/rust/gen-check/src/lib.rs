@@ -175,6 +175,10 @@ mod kinds {
             Ok(values.iter().sum())
         }
 
+        fn oks(_env: Env<'_>, results: Vec<Result<(), String>>) -> Result<i64, Raise> {
+            Ok(results.iter().filter(|result| result.is_ok()).count() as i64)
+        }
+
         fn corner(_env: Env<'_>, shape: Shape) -> Result<Option<Point>, Raise> {
             Ok(match shape {
                 Shape::Dot => None,

@@ -62,4 +62,14 @@ an_term kinds_corner(an_env *env, kinds_Shape shape) {
   return an_raise(env, "not a shape");
 }
 
+/* How many of the results are ok. */
+an_term kinds_oks(an_env *env, kinds_list_result_Void results) {
+  int64_t count = 0;
+  kinds_result_Void x;
+  int more;
+  while ((more = kinds_list_result_Void_next(env, &results, &x)) == 1) count += x.ok;
+  if (more < 0) return an_void(env);
+  return an_int(env, count);
+}
+
 KINDS_NATIVE_MODULE(NULL)
