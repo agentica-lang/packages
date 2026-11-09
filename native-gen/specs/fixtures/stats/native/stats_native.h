@@ -68,12 +68,14 @@ an_term stats_Cell_Empty(an_env *env);
 an_term stats_Cell_Number(an_env *env, double _0);
 an_term stats_Cell_Text(an_env *env, ng_str _0);
 
-/* The Lists, Maps, Optionals and Results. _next gives 1 for an item, 0 at the end, and -1 when the item does not decode: the call has
-   then failed with the path of the item in its own List or Map (an item of a List or Map read from another has
-   the path from the inner one, `List[Float].1`), and every later _next gives -1 too, as after a failed _open. A
-   builder makes one: _begin, then _push (_put for a Map), then _end. Cursors and builders hold terms: keep them
-   in C locals, for this call only. An Optional or Result that is read is a struct, whose error is borrowed as
-   a String argument is; one that is made has _some or _ok (an_none and an_error make the others). */
+/* The Lists, Maps, Optionals and Results. A List or Map that is read is a cursor: _next gives 1 for an item, 0 at
+   the end, and -1 when the item does not decode: the call has then failed with the path of the item in its own
+   List or Map (an item of a List or Map read from another has the path from the inner one, `List[Float].1`), and
+   every later _next gives -1 too, as after a failed _open. A builder makes one: _begin, then _push (_put for a
+   Map), then _end. Cursors and builders hold terms: keep them in C locals, for this call only. An Optional or
+   Result that is read is a struct, whose value is zero when there is none and whose error is borrowed as a String
+   argument is; _get reads one held as a term. One that is made has _some or _ok (an_none and an_error make the
+   others). */
 
 typedef struct {
   an_term term;

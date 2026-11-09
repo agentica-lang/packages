@@ -6,10 +6,18 @@ struct Point
   y: Int
 end
 
+struct Box
+  maybe: Optional[Int]
+  outcome: Result[String]
+end
+
 extern module "options"
   def echo_optional(value: Optional[Point]) -> Optional[Point]
   def echo_result(value: Result[Int]) -> Result[Int]
   def echo_nested(value: Optional[Result[List[Int]]]) -> Optional[Result[List[Int]]]
+  ## The value of `maybe` (0 when none) plus the length of the String of `outcome` (100 for an error), read from the
+  ## terms of the fields with _get.
+  def open_box(box: Box) -> Int
   ## The first String of `values` that is there.
   def first_some(values: List[Optional[String]]) -> Optional[String]
   ## Reads a List whose Result holds a String: the call fails at `List[Result[Int]].0.ok`.
@@ -29,5 +37,6 @@ def main() -> Void
     puts([echo_result(ok(3)), echo_result(error("no"))])
     puts([echo_nested(some(ok([1, 2]))), echo_nested(some(error("e"))), echo_nested(none)])
     puts([first_some([none, some("b"), some("c")]), first_some([])])
+    puts([open_box(Box(maybe: some(4), outcome: error("x"))), open_box(Box(maybe: none, outcome: ok("yes")))])
   end
 end

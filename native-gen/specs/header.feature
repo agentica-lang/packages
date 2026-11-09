@@ -155,6 +155,7 @@ Feature: The C header of an extern module block
       [ok(3), error("no")]
       [some(ok([1, 2])), some(error("e")), none]
       [some("b"), none]
+      [104, 3]
 
       """
 

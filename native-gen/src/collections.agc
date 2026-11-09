@@ -75,6 +75,8 @@ export def global_names(shelf: Shelf) -> List[Names.Named]
         Names.Named(c: "#{c}_open", source: "the open of #{source}"),
         Names.Named(c: "#{c}_next", source: "the next of #{source}"),
       ])
+    else
+      named = named.push(Names.Named(c: "#{c}_get", source: "the get of #{source}"))
     end
   end
 
@@ -110,12 +112,14 @@ export def declarations(shelf: Shelf) -> List[String]
 
   lines = [
     "",
-    "/* The Lists, Maps, Optionals and Results. _next gives 1 for an item, 0 at the end, and -1 when the item does not decode: the call has",
-    "   then failed with the path of the item in its own List or Map (an item of a List or Map read from another has",
-    "   the path from the inner one, `List[Float].1`), and every later _next gives -1 too, as after a failed _open. A",
-    "   builder makes one: _begin, then _push (_put for a Map), then _end. Cursors and builders hold terms: keep them",
-    "   in C locals, for this call only. An Optional or Result that is read is a struct, whose error is borrowed as",
-    "   a String argument is; one that is made has _some or _ok (an_none and an_error make the others). */",
+    "/* The Lists, Maps, Optionals and Results. A List or Map that is read is a cursor: _next gives 1 for an item, 0 at",
+    "   the end, and -1 when the item does not decode: the call has then failed with the path of the item in its own",
+    "   List or Map (an item of a List or Map read from another has the path from the inner one, `List[Float].1`), and",
+    "   every later _next gives -1 too, as after a failed _open. A builder makes one: _begin, then _push (_put for a",
+    "   Map), then _end. Cursors and builders hold terms: keep them in C locals, for this call only. An Optional or",
+    "   Result that is read is a struct, whose value is zero when there is none and whose error is borrowed as a String",
+    "   argument is; _get reads one held as a term. One that is made has _some or _ok (an_none and an_error make the",
+    "   others). */",
   ]
 
   for type in shelf.read
@@ -450,12 +454,14 @@ end
 
 # The struct of an Optional (`some`, `value`) or a Result (`ok`, `value`, `error`) that is read.
 def struct_declaration(shelf: Shelf, type: Types.Type) -> List[String]
+  c = name(shelf, type)
   value = "  #{item_type(shelf, items(type)[0])} value;"
+  getter = "bool #{c}_get(an_env *env, an_term t, #{c} *out);"
   if maker(type) == "some"
-    return ["typedef struct {", "  bool some;", value, "} #{name(shelf, type)};"]
+    return ["typedef struct {", "  bool some;", value, "} #{c};", getter]
   end
 
-  return ["typedef struct {", "  bool ok;", value, "  ng_str error;", "} #{name(shelf, type)};"]
+  return ["typedef struct {", "  bool ok;", value, "  ng_str error;", "} #{c};", getter]
 end
 
 # The decoder of an Optional or Result into its struct: the value is decoded only when there is one, and the error of a
@@ -471,20 +477,38 @@ def struct_definition(shelf: Shelf, type: Types.Type) -> List[String]
   ]
 
   if maker(type) == "some"
-    return lines.concat([
-      "  if (!an_get_optional(env, x, &out->some, &v)) return ng_expected(fail, \"#{text}\");",
-      "  return !out->some || #{item}(env, v, &out->value, fail) || ng_at(fail, \"some\");",
-      "}",
-    ])
+    return (
+      lines.concat([
+        "  if (!an_get_optional(env, x, &out->some, &v)) return ng_expected(fail, \"#{text}\");",
+        "  return !out->some || #{item}(env, v, &out->value, fail) || ng_at(fail, \"some\");",
+        "}",
+      ])
+        .concat(public_get(shelf, type))
+    )
   end
 
-  return lines.concat([
-    "  if (!an_get_result(env, x, &out->ok, &v)) return ng_expected(fail, \"#{text}\");",
-    "  if (!out->ok)",
-    "    return an_get_string(env, v, &out->error.data, &out->error.len) || ng_leaf(fail, \"String\", \"error\");",
-    "  return #{item}(env, v, &out->value, fail) || ng_at(fail, \"ok\");",
+  return (
+    lines.concat([
+      "  if (!an_get_result(env, x, &out->ok, &v)) return ng_expected(fail, \"#{text}\");",
+      "  if (!out->ok)",
+      "    return an_get_string(env, v, &out->error.data, &out->error.len) || ng_leaf(fail, \"String\", \"error\");",
+      "  return #{item}(env, v, &out->value, fail) || ng_at(fail, \"ok\");",
+      "}",
+    ])
+      .concat(public_get(shelf, type))
+  )
+end
+
+# `_get`, which reads an Optional or Result that the C code holds as a term, such as a field of a struct.
+def public_get(shelf: Shelf, type: Types.Type) -> List[String]
+  c = name(shelf, type)
+  return [
+    "",
+    "bool #{c}_get(an_env *env, an_term t, #{c} *out) {",
+    "  ng_fail fail;",
+    "  return #{reader(shelf, type)}(env, t, out, &fail) || ng_raise(env, \"\", \"#{Types.text(type)}\", &fail);",
     "}",
-  ])
+  ]
 end
 
 def maker_head(shelf: Shelf, type: Types.Type) -> String

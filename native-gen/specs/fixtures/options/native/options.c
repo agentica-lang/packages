@@ -34,6 +34,14 @@ an_term options_first_some(an_env *env, options_list_optional_String values) {
   return an_none(env);
 }
 
+an_term options_open_box(an_env *env, options_Box box) {
+  options_optional_Int maybe;
+  options_result_String outcome;
+  if (!options_optional_Int_get(env, box.maybe, &maybe) || !options_result_String_get(env, box.outcome, &outcome))
+    return an_void(env);
+  return an_int(env, maybe.value + (outcome.ok ? (int64_t)outcome.value.len : 100));
+}
+
 /* The constructors of the C API do not check what they hold, so a List[Result[Int]] can hold an ok String, and a
    List[Optional[Point]] a Point with a String x; reading the item fails with its path. */
 an_term options_misread_result(an_env *env, options_list_result_Int values) {
