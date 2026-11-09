@@ -3,3 +3,5 @@
 *.md text eol=lf
 # Generated C headers are compared byte for byte (native-gen --check).
 *_native.h text eol=lf
+# Open PRs all add lines under [Unreleased] of a CHANGELOG.md: keep both sides when merging.
+CHANGELOG.md merge=union
