@@ -80,11 +80,11 @@ $(THEME)/highlight/node_modules: $(THEME)/highlight/package.json $(THEME)/highli
 	npm ci --prefix $(THEME)/highlight --ignore-scripts --no-audit --no-fund
 	touch $@
 
-# --panicOnWarning: a link to a page that does not exist fails the build. No --strict: the docs do not use every
-# color class of the grammar.
+# --panicOnWarning: a link to a page that does not exist fails the build. --strict: the docs have agentica and
+# signature blocks; --allow-unused-classes: their code does not use every color class of the grammar.
 site: site-tools site-mounts $(THEME)/highlight/node_modules
 	$(HUGO) $(HUGO_CONFIG) --cleanDestinationDir --panicOnWarning $(HUGO_FLAGS)
-	node $(THEME)/highlight/highlight.mjs site/public
+	node $(THEME)/highlight/highlight.mjs --strict --allow-unused-classes site/public
 
 # Agentica blocks stay plain here: the highlighter runs in `make site`.
 site-serve: site-tools site-mounts

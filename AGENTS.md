@@ -12,7 +12,7 @@ Makefile             install, check, fmt-check, test and doc-examples, each run 
 tools/               doc_examples.agc: runs the `agentica` blocks of the docs (the rules are in its header);
                      fixtures/doc_examples: a page where it must fail
 .github/workflows/   ci.yml: the changed packages, the pinned Agentica release, then the five targets; pages.yml: the
-                     site (pinned Hugo)
+                     site (pinned Hugo and Dart Sass)
 .github/scripts/     changed-packages.sh: which packages a list of changed files marks (the rules are in its header)
 site/                the Hugo site: hugo.toml, content/_index.md (the home), layouts/ (overrides: the home's list of
                      packages, and links written as files that fail when missing); the look, the layouts and the
