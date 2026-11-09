@@ -184,6 +184,25 @@ fn a_term_of_another_call_is_refused() {
 }
 
 #[test]
+#[should_panic(expected = "a term of another call")]
+fn a_term_of_a_nested_call_on_the_same_env_is_refused() {
+    let mock = MockEnv::new(false);
+    let argv: [sys::an_term; 0] = [];
+    // SAFETY: the mock env lives for both calls, with no arguments.
+    unsafe {
+        call(mock.raw(), 0, argv.as_ptr(), Mode::Short, crate::mock::TYPES, |outer, _| {
+            call(mock.raw(), 0, argv.as_ptr(), Mode::Short, crate::mock::TYPES, |inner, _| {
+                // The inner frame's root list goes away when it returns, so the outer call must not take its term.
+                let one = inner.string("one");
+                let _ = one.encode(outer);
+                inner.void()
+            });
+            outer.void()
+        })
+    };
+}
+
+#[test]
 fn a_dirty_call_reads_its_arguments_but_not_what_it_staged() {
     let result = dirty(vec![V::List(vec![V::Int(1), V::Int(2)])], |env, args| {
         assert_eq!(args.decode::<Vec<i64>>(0), Ok(vec![1, 2]));

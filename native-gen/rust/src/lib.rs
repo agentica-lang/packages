@@ -16,5 +16,5 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
-pub use codec::{DecodeError, Decoder, Encoder};
+pub use codec::{DecodeError, Decoder, Encoder, MapKey};
 pub use term::{Args, Arity, Env, ListItems, MapPairs, Mode, Term, call};

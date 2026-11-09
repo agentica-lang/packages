@@ -154,8 +154,8 @@ impl Encoder for Term<'_> {
     fn encode<'a>(&self, env: Env<'a>) -> Term<'a> {
         // Only a term of this call can be encoded in it: `Env<'a>` and `Term<'a>` share the call's lifetime, which
         // a codec cannot name for `self`, so the two are checked to be one env.
-        // A module never runs two calls on one env at once (a callback runs nothing during a call), so one env pointer
-        // is one call.
+        // The same env and root list is the same live frame of `call` (see Env::same_call): a term of a nested `call` on
+        // the same env would lose its root when that frame returns, so it is refused.
         assert!(self.env().same_call(env), "a term of another call");
         // SAFETY: the term belongs to this env (checked above), so it is valid for the call `'a`.
         unsafe { self.rebind(env) }

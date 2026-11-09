@@ -211,9 +211,12 @@ impl<'a> Env<'a> {
         Term { raw, env: self }
     }
 
-    /// Whether `self` and `other` are the env of one call.
-    pub fn same_call(self, other: Env<'_>) -> bool {
-        self.raw == other.raw
+    /// Whether `self` and `other` are the env of one live call. The VM's env is a local of its call, so one address
+    /// serves consecutive calls, and a nested `call` on the same env is another frame: the root list (the address of
+    /// the builder in the frame of `call`) tells two live short calls apart. Two dirty calls on one env both have no
+    /// root list, and their staged values last until the VM's call ends, so one is as good as the other.
+    pub(crate) fn same_call(self, other: Env<'_>) -> bool {
+        self.raw == other.raw && self.roots == other.roots
     }
 
     pub fn mode(self) -> Mode {
