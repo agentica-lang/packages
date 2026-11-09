@@ -21,7 +21,7 @@ an_term stats_summary(an_env *env, stats_list_Float values) {
   }
   if (more < 0) return an_void(env);
   stats_Summary summary = {(int64_t)values.len, min, max, total / (double)values.len};
-  return an_some(env, stats_Summary_make(env, &summary));
+  return stats_optional_Summary_some(env, summary);
 }
 
 /* Empty for no text, a Number when the whole text is a number, else its Text. A number is what strtod reads: leading
@@ -71,7 +71,7 @@ an_term stats_rows(an_env *env, ng_str text) {
       an_list_push(env, &b, an_map_from(env, names, cells, n));
     at = stop < end ? stop + 1 : end;
   }
-  return an_ok(env, an_list_end(env, &b));
+  return stats_result_list_map_String_Cell_ok(env, an_list_end(env, &b));
 }
 
 STATS_NATIVE_MODULE(NULL)

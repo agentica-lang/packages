@@ -53,14 +53,14 @@ an_term lists_moved(an_env *env, lists_map_String_Point named, lists_Point by) {
 an_term lists_tally(an_env *env, lists_map_Int_list_Int groups, lists_list_optional_Int maybe) {
   int64_t key, x, total = 0;
   lists_list_Int values;
-  an_term item;
+  lists_optional_Int item;
   int more, got;
   while ((more = lists_map_Int_list_Int_next(env, &groups, &key, &values)) == 1) {
     while ((got = lists_list_Int_next(env, &values, &x)) == 1) total += key * x;
     if (got < 0) return an_void(env);
   }
   if (more < 0) return an_void(env);
-  while ((more = lists_list_optional_Int_next(env, &maybe, &item)) == 1) total += 1000;
+  while ((more = lists_list_optional_Int_next(env, &maybe, &item)) == 1) total += item.some ? 1000 : 0;
   if (more < 0) return an_void(env);
   return an_int(env, total);
 }

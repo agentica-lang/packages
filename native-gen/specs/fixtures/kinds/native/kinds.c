@@ -60,7 +60,7 @@ an_term kinds_corner(an_env *env, kinds_Shape shape) {
     case KINDS_Shape_Dot:
       return an_none(env);
     case KINDS_Shape_Circle:
-      return an_some(env, kinds_Point_make(env, &shape.as.Circle._0));
+      return kinds_optional_Point_some(env, shape.as.Circle._0);
   }
   return an_raise(env, "not a shape");
 }
