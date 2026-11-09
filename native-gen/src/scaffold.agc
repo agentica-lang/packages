@@ -101,8 +101,9 @@ export def gitignore() -> String
 end
 
 ## The `src/lib.rs` of the Rust module `name`: the method of the example function fails the call until it is written.
-## The type that implements the trait is `Functions` whatever the name, so no name (`raise`, `result`, `self_`) makes
-## a type that clashes with an import or the prelude, and no list of such names has to be kept.
+## The type that implements the trait is `Functions` whatever the name, so no name (`raise`, `result`) makes a type
+## that clashes with an import or the prelude; and the crate is named `::agentica_native`, which only an extern crate
+## can be, so the module `agentica_native` of the name `agentica` does not shadow it. No list of names is kept.
 export def lib_rs(name: String) -> String
   trait_name = RustSide.trait_name(name)
   return [
@@ -112,7 +113,7 @@ export def lib_rs(name: String) -> String
     "#[rustfmt::skip]",
     "mod #{name}_native;",
     "",
-    "use agentica_native::{Env, Raise};",
+    "use ::agentica_native::{Env, Raise};",
     "",
     "use crate::#{name}_native::{#{trait_name}, module};",
     "",
@@ -124,7 +125,7 @@ export def lib_rs(name: String) -> String
     "    }",
     "}",
     "",
-    "agentica_native::export!(module::<Functions>());",
+    "::agentica_native::export!(module::<Functions>());",
     "",
   ].join("\n")
 end

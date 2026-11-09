@@ -2,7 +2,7 @@
 // Do not edit it: change the .agc and make it again.
 
 #[allow(unused_imports)]
-use agentica_native::{DecodeError, Decoder, Encoder, Env, Mode, Module, Raise, ResourceArc, Term, sys, types};
+use ::agentica_native::{DecodeError, Decoder, Encoder, Env, Mode, Module, Raise, ResourceArc, Term, sys, types};
 
 #[derive(Clone, Debug, PartialEq)]
 #[allow(clippy::type_complexity, clippy::upper_case_acronyms)]
@@ -52,7 +52,7 @@ unsafe extern "C" fn native_add<I: MathNative>(
     // SAFETY: the VM calls it through the table of `module`, with its own env and arguments, in the
     // row's mode.
     unsafe {
-        agentica_native::call(env, argc, argv, Mode::Short, types(), |env, args| {
+        ::agentica_native::call(env, argc, argv, Mode::Short, types(), |env, args| {
             Ok(I::add(env, args.decode(0)?, args.decode(1)?)?.encode(env))
         })
     }
@@ -66,7 +66,7 @@ unsafe extern "C" fn native_mean<I: MathNative>(
     // SAFETY: the VM calls it through the table of `module`, with its own env and arguments, in the
     // row's mode.
     unsafe {
-        agentica_native::call(env, argc, argv, Mode::Short, types(), |env, args| {
+        ::agentica_native::call(env, argc, argv, Mode::Short, types(), |env, args| {
             Ok(I::mean(env, args.decode(0)?)?.encode(env))
         })
     }
@@ -80,7 +80,7 @@ unsafe extern "C" fn native_clamp<I: MathNative>(
     // SAFETY: the VM calls it through the table of `module`, with its own env and arguments, in the
     // row's mode.
     unsafe {
-        agentica_native::call(env, argc, argv, Mode::Short, types(), |env, args| {
+        ::agentica_native::call(env, argc, argv, Mode::Short, types(), |env, args| {
             Ok(I::clamp(env, args.decode(0)?, args.decode(1)?, args.decode(2)?)?.encode(env))
         })
     }
@@ -94,7 +94,7 @@ unsafe extern "C" fn native_midpoint<I: MathNative>(
     // SAFETY: the VM calls it through the table of `module`, with its own env and arguments, in the
     // row's mode.
     unsafe {
-        agentica_native::call(env, argc, argv, Mode::Short, types(), |env, args| {
+        ::agentica_native::call(env, argc, argv, Mode::Short, types(), |env, args| {
             Ok(I::midpoint(env, args.decode(0)?, args.decode(1)?)?.encode(env))
         })
     }

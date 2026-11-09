@@ -171,7 +171,7 @@ def scaffold_rust(folder: String, name: String) -> Result[Void]
   end
 
   program = "#{folder}#{name}.agc"
-  root = package_root(program).unwrap_or(folder)
+  root = (try nearest_root(program)).unwrap_or(folder)
   crate = "#{root}rust"
   files = [
     program,
@@ -220,17 +220,26 @@ end
 # The root of the package of the file at `path`, ending in `/`: the nearest folder up from the file that has an
 # `agentica.toml`.
 def package_root(path: String) -> Result[String]
+  case try nearest_root(path)
+    some(root) -> return ok(root)
+    none -> return error("[NATIVE-GEN-IO] #{path}: no agentica.toml in its folder or above; build needs a package")
+  end
+end
+
+# The nearest folder up from the file at `path` that has an `agentica.toml`, ending in `/`; none when no folder has
+# one. A path that does not resolve is an error.
+def nearest_root(path: String) -> Result[Optional[String]]
   file = try io(path, Path.resolve(path))
   folder = parent(file)
   while !folder.empty?
     if File.stat("#{folder}/agentica.toml").ok?
-      return ok("#{folder}/")
+      return ok(some("#{folder}/"))
     end
 
     folder = parent(folder)
   end
 
-  return error("[NATIVE-GEN-IO] #{path}: no agentica.toml in its folder or above; build needs the package root")
+  return ok(none)
 end
 
 # `path` without its last part and the separator before it ("" for a path of one part).

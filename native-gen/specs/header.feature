@@ -438,10 +438,11 @@ Feature: The C header of an extern module block
     Then the program exits with code 0 within 25000 milliseconds
 
     Examples:
-      | name   |
-      | demo   |
-      | raise  |
-      | result |
+      | name     |
+      | demo     |
+      | raise    |
+      | result   |
+      | agentica |
 
   Scenario: native new --lang rust keeps the agentica.toml that is there as it is
     Given a fresh folder
@@ -464,6 +465,22 @@ Feature: The C header of an extern module block
     And the program argument "--check"
     And the Agentica program "../cli.agc"
     Then the program exits with code 0 within 25000 milliseconds
+
+  Scenario: native new --lang rust refuses a second Rust module in a package: one crate, one module
+    Given a fresh folder
+    And the agentica.toml of the fresh folder has the line ""
+    And native new --lang rust "demo" in the fresh folder
+    And the program argument "new"
+    And the program argument "--lang"
+    And the program argument "rust"
+    And the program argument "src/other" in the fresh folder
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-EXISTS]
+      """
+    And the fresh folder has no "src"
 
   Scenario: native new --lang rust writes the Cargo.toml and .gitignore of examples/rust_math for math
     Then native new --lang rust "math" writes the files of "../examples/rust_math"

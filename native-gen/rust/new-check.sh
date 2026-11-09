@@ -1,16 +1,17 @@
 #!/bin/sh
-# Runs `cli.agc new --lang rust NAME` in an empty folder, for demo and raise, with native-gen's crate in its deps/
-# where `agentica install` puts it, then `build NAME.agc` and the program, with no edit: the module builds and loads,
-# and the call of its one function fails with RUNTIME-NATIVE-ERROR "add: not written yet", as the C scaffold's does.
-# The crate passes fmt (with rustfmt's defaults) and clippy -D warnings. Needs cargo and agentica on PATH.
+# Runs `cli.agc new --lang rust NAME` in an empty folder, for demo, raise and agentica, with native-gen's crate in its
+# deps/ where `agentica install` puts it, then `build NAME.agc` and the program, with no edit: the module builds and
+# loads, and the call of its one function fails with RUNTIME-NATIVE-ERROR "add: not written yet", as the C scaffold's
+# does. The crate passes fmt (with rustfmt's defaults) and clippy -D warnings. Needs cargo and agentica on PATH.
 set -eu
 cd "$(dirname "$0")"
 root=$(cd ../.. && pwd)
 cli=$root/native-gen/cli.agc
 pkg=$(mktemp -d)
 trap 'rm -rf "$pkg"' EXIT
-# demo, and raise, whose name is also a type of the crate.
-for name in demo raise; do
+# demo; raise, whose name is also a type of the crate; and agentica, whose module agentica_native has the name of the
+# crate it depends on.
+for name in demo raise agentica; do
   dir=$pkg/$name
   mkdir "$dir"
   cd "$dir"
