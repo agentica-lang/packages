@@ -1,0 +1,5 @@
+# agentica's examples/native_module, with native/stats.c written on the header that native-gen makes from stats.agc.
+name = "native-gen-stats"
+
+[native.stats]
+build = { sources = ["native/stats.c"] }
