@@ -19,8 +19,12 @@ fn run(
     }
 }
 
-fn short(args: Vec<V>, body: impl for<'a> FnOnce(Env<'a>, Args<'a>) -> Term<'a>) -> Result<V, String> {
+pub(crate) fn short(args: Vec<V>, body: impl for<'a> FnOnce(Env<'a>, Args<'a>) -> Term<'a>) -> Result<V, String> {
     run(&MockEnv::new(false), Mode::Short, args, body)
+}
+
+pub(crate) fn dirty(args: Vec<V>, body: impl for<'a> FnOnce(Env<'a>, Args<'a>) -> Term<'a>) -> Result<V, String> {
+    run(&MockEnv::new(true), Mode::Dirty, args, body)
 }
 
 #[test]
@@ -113,15 +117,18 @@ fn a_struct_or_variant_of_another_arity_fails_the_call_before_the_vm_reads_it() 
 }
 
 #[test]
-fn a_short_call_roots_each_term_it_makes_and_a_dirty_one_none() {
+fn a_short_call_roots_each_term_it_makes_in_memory_and_a_dirty_one_none() {
     let mock = MockEnv::new(false);
     let result = run(&mock, Mode::Short, vec![], |env, _| {
         assert_eq!(env.mode(), Mode::Short);
-        // Terms kept on the heap: each is in the root list, so the collector keeps it.
-        let kept: Vec<Term> = (0..3).map(|n| env.int(n)).collect();
+        // Terms kept on the heap: each String is in the root list, so the collector keeps it. An Int is an immediate
+        // value, which needs no root.
+        let kept: Vec<Term> = (0..3).map(|n| env.string(&n.to_string())).collect();
+        env.int(7);
         env.list(kept)
     });
-    assert_eq!(result, Ok(V::List(vec![V::Int(0), V::Int(1), V::Int(2)])));
+    let text = |s: &str| V::Str(s.as_bytes().to_vec());
+    assert_eq!(result, Ok(V::List(vec![text("0"), text("1"), text("2")])));
     assert_eq!(mock.roots(), Some(4));
 
     let mock = MockEnv::new(true);

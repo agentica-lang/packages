@@ -1,8 +1,11 @@
 200000 true
+true
 200000 true
 200000 true
+true
 200000 true
 200000 true
+true
 200000 true
 [true, true]
 true
@@ -12,3 +15,7 @@ Point(x: 3, y: 4)
 6
 [0, 1, 2]
 [some(2), none]
+true
+[true, true]
+[{"b": some(ok([1.5, 2.0])), "a": none}, {}, {"e": some(error("no"))}]
+-7 2.5 true héllo [0, 255]
