@@ -4,7 +4,7 @@ use crate::mock::{self, MockEnv, V};
 use crate::*;
 
 /// The result of a call of `body` in `mode` with `args`, or its failure.
-fn run(
+pub(crate) fn run(
     mock: &MockEnv,
     mode: Mode,
     args: Vec<V>,
@@ -19,7 +19,7 @@ fn run(
     }
 }
 
-fn short(args: Vec<V>, body: impl for<'a> FnOnce(Env<'a>, Args<'a>) -> Term<'a>) -> Result<V, String> {
+pub(crate) fn short(args: Vec<V>, body: impl for<'a> FnOnce(Env<'a>, Args<'a>) -> Term<'a>) -> Result<V, String> {
     run(&MockEnv::new(false), Mode::Short, args, body)
 }
 

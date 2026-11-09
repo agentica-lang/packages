@@ -3,7 +3,7 @@
 use core::ffi::c_int;
 use core::ptr;
 
-use agentica_native::{Arity, Mode, Term, call, sys};
+use agentica_native::{Arity, Encoder, Mode, Term, call, sys};
 
 /// Point, the one row of the type table: kept by hand in step with TYPE_ROWS below, row for row.
 static TYPES: &[Arity] = &[Arity::Struct(2)];
@@ -136,14 +136,67 @@ unsafe extern "C" fn lookup(env: *mut sys::an_env, argc: c_int, argv: *const sys
     }
 }
 
+/// The type of `echo_rows` and `echo_staged`: every codec of a collection, nested.
+type Rows = Vec<Vec<(String, Option<Result<Vec<f64>, String>>)>>;
+
+/// The rows decoded into Rust values and encoded again, in a short call.
+unsafe extern "C" fn echo_rows(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe {
+        call(env, argc, argv, Mode::Short, TYPES, |env, args| match args.decode::<Rows>(0) {
+            Ok(rows) => rows.encode(env),
+            Err(error) => env.raise(&error.to_string()),
+        })
+    }
+}
+
+/// The same in a dirty call.
+unsafe extern "C" fn echo_staged(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe {
+        call(env, argc, argv, Mode::Dirty, TYPES, |env, args| match args.decode::<Rows>(0) {
+            Ok(rows) => rows.encode(env),
+            Err(error) => env.raise(&error.to_string()),
+        })
+    }
+}
+
+/// The scalars, String and Bytes as one String, read with Args::decode (String and Bytes borrowed).
+unsafe extern "C" fn describe(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe {
+        call(env, argc, argv, Mode::Short, TYPES, |env, args| {
+            let read = || -> Result<String, agentica_native::DecodeError> {
+                let (n, x, flag) = (args.decode::<i64>(0)?, args.decode::<f64>(1)?, args.decode::<bool>(2)?);
+                let (text, data) = (args.decode::<&str>(3)?, args.decode::<&[u8]>(4)?);
+                Ok(format!("{n} {x} {flag} {text} {data:?}"))
+            };
+            match read() {
+                Ok(text) => text.encode(env),
+                Err(error) => env.raise(&error.to_string()),
+            }
+        })
+    }
+}
+
 macro_rules! function {
     ($name:literal, $signature:literal, $fn_:ident, $flags:expr) => {
         sys::an_function { name: $name.as_ptr(), signature: $signature.as_ptr(), fn_: $fn_, flags: $flags }
     };
 }
 
-static FUNCTIONS: [sys::an_function; 12] = [
+static FUNCTIONS: [sys::an_function; 15] = [
     function!(c"strings", c"(Int) -> List[String]", strings, sys::AN_SHORT),
+    function!(
+        c"echo_rows",
+        c"(List[Map[String, Optional[Result[List[Float]]]]]) -> List[Map[String, Optional[Result[List[Float]]]]]",
+        echo_rows,
+        sys::AN_SHORT
+    ),
+    function!(
+        c"echo_staged",
+        c"(List[Map[String, Optional[Result[List[Float]]]]]) -> List[Map[String, Optional[Result[List[Float]]]]]",
+        echo_staged,
+        sys::AN_DIRTY
+    ),
+    function!(c"describe", c"(Int, Float, Bool, String, Bytes) -> String", describe, sys::AN_SHORT),
     function!(c"staged_strings", c"(Int) -> List[String]", staged_strings, sys::AN_DIRTY),
     function!(c"squares", c"(Int) -> Map[Int, Int]", squares, sys::AN_SHORT),
     function!(c"staged_squares", c"(Int) -> Map[Int, Int]", staged_squares, sys::AN_DIRTY),
