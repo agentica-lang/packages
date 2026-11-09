@@ -1,0 +1,8 @@
+# Every kind of argument the header decodes, built from native/kinds.c by the run that needs it.
+name = "native-gen-kinds"
+
+[style]
+blank_line_after_end = true
+
+[native.kinds]
+build = { sources = ["native/kinds.c"] }
