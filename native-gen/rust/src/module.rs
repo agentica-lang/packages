@@ -1,7 +1,7 @@
 //! The tables of a module and its init: what `agentica_native_init` gives the VM, built once per process.
 
 use core::any::TypeId;
-use core::ffi::c_char;
+use core::ffi::{c_char, c_int};
 use core::mem::size_of;
 use core::ptr;
 use std::ffi::{CStr, CString};
@@ -21,7 +21,7 @@ struct Function {
 
 struct Type {
     name: String,
-    kind: Arity,
+    kind: c_int,
     shape: String,
 }
 
@@ -54,16 +54,15 @@ impl Module {
         self
     }
 
-    /// The next row of the type table, a struct of `fields` fields with its shape (`count: Int, min: Float`).
-    pub fn struct_type(mut self, name: &str, shape: &str, fields: usize) -> Self {
-        self.types.push(Type { name: name.to_string(), kind: Arity::Struct(fields), shape: shape.to_string() });
+    /// The next row of the type table, a struct with its canonical shape (`count: Int, min: Float`).
+    pub fn struct_type(mut self, name: &str, shape: &str) -> Self {
+        self.types.push(Type { name: name.to_string(), kind: sys::AN_STRUCT, shape: shape.to_string() });
         self
     }
 
-    /// The next row of the type table, an enum with its shape (`Empty | Number(Float)`) and the payload count of each
-    /// variant.
-    pub fn enum_type(mut self, name: &str, shape: &str, payloads: &'static [usize]) -> Self {
-        self.types.push(Type { name: name.to_string(), kind: Arity::Enum(payloads), shape: shape.to_string() });
+    /// The next row of the type table, an enum with its canonical shape (`Empty | Number(Float)`).
+    pub fn enum_type(mut self, name: &str, shape: &str) -> Self {
+        self.types.push(Type { name: name.to_string(), kind: sys::AN_ENUM, shape: shape.to_string() });
         self
     }
 
@@ -101,6 +100,11 @@ impl Built {
     }
 
     #[cfg(test)]
+    pub(crate) fn arities(&self) -> &[Arity] {
+        &self.arities
+    }
+
+    #[cfg(test)]
     pub(crate) fn refusal(&self) -> Option<&CStr> {
         self.refusal.as_deref()
     }
@@ -132,7 +136,7 @@ pub(crate) fn resource_row<T: 'static>() -> Option<(u32, &'static str)> {
     let rows = &BUILT.get()?.resource_rows;
     let id = TypeId::of::<T>();
     let at = rows.iter().position(|(row, _)| *row == id)?;
-    Some((at as u32, rows[at].1.as_str()))
+    Some((u32::try_from(at).ok()?, rows[at].1.as_str()))
 }
 
 /// The module that `make` describes, built at the first call and the same at every later one: what
@@ -158,10 +162,13 @@ pub(crate) fn build(module: Module) -> Built {
     let mut strings = Vec::new();
     let mut refusal = None;
     let mut text = |s: &str| -> *const c_char {
-        // A NUL inside a name cannot cross in a C string, so LOAD refuses the module.
+        // A NUL inside a name cannot cross in a C string, so LOAD refuses the module. The VM checks that no two rows
+        // share a name before LOAD runs, so the text in its place is one no other row has: a control character and
+        // the index of the text.
+        let at = strings.len();
         let owned = CString::new(s).unwrap_or_else(|_| {
             refusal.get_or_insert_with(|| format!("{s:?} holds a NUL, which a C string cannot"));
-            CString::default()
+            CString::new(format!("\u{1}{at}")).unwrap_or_default()
         });
         let at = owned.into_raw();
         strings.push(at);
@@ -181,14 +188,7 @@ pub(crate) fn build(module: Module) -> Built {
         })
         .collect();
     let types: Vec<sys::an_type> = (module.types.iter())
-        .map(|t| sys::an_type {
-            name: text(&t.name),
-            kind: match t.kind {
-                Arity::Struct(_) => sys::AN_STRUCT,
-                Arity::Enum(_) => sys::AN_ENUM,
-            },
-            shape: text(&t.shape),
-        })
+        .map(|t| sys::an_type { name: text(&t.name), kind: t.kind, shape: text(&t.shape) })
         .collect();
     let resources: Vec<sys::an_resource_type> = (module.resources.iter())
         .map(|r| sys::an_resource_type {
@@ -196,6 +196,17 @@ pub(crate) fn build(module: Module) -> Built {
             // The state holds the pointer of an Arc (ResourceArc).
             size: size_of::<*const ()>(),
             free: Some(r.free),
+        })
+        .collect();
+
+    // The VM reads as many terms from make_struct and make_enum as the shape has, so the arity that Env checks is the
+    // shape's own; a shape that is not in the form the VM writes refuses the module.
+    let arities: Vec<Arity> = (module.types.iter())
+        .map(|t| {
+            arity(t.kind, &t.shape).unwrap_or_else(|| {
+                refusal.get_or_insert_with(|| format!("the shape of {} is not canonical: {:?}", t.name, t.shape));
+                Arity::Struct(0)
+            })
         })
         .collect();
 
@@ -208,18 +219,27 @@ pub(crate) fn build(module: Module) -> Built {
         }
     }
 
+    let mut count = |len: usize, what: &str| {
+        u32::try_from(len).unwrap_or_else(|_| {
+            refusal.get_or_insert_with(|| format!("the module has more {what} than a u32 counts"));
+            0
+        })
+    };
+    let (function_count, type_count, resource_count) =
+        (count(functions.len(), "functions"), count(types.len(), "types"), count(resources.len(), "resources"));
     let module_value = sys::an_module {
         major: sys::AN_API_MAJOR,
         minor: sys::AN_API_MINOR,
+        // 80 bytes (sys asserts it).
         size: size_of::<sys::an_module>() as u32,
         name,
         load: Some(load),
         functions: functions.as_ptr(),
-        function_count: functions.len() as u32,
+        function_count,
         types: if types.is_empty() { ptr::null() } else { types.as_ptr() },
-        type_count: types.len() as u32,
+        type_count,
         resources: if resources.is_empty() { ptr::null() } else { resources.as_ptr() },
-        resource_count: resources.len() as u32,
+        resource_count,
     };
     Built {
         module: module_value,
@@ -227,11 +247,77 @@ pub(crate) fn build(module: Module) -> Built {
         _functions: functions,
         _types: types,
         _resources: resources,
-        arities: module.types.iter().map(|t| t.kind).collect(),
+        arities,
         resource_rows: module.resources.iter().map(|r| (r.type_id, r.name.clone())).collect(),
         // The message names the text that holds a NUL with {:?}, which escapes it.
         refusal: refusal.map(|message| CString::new(message).unwrap_or_default()),
     }
+}
+
+/// The arity of a type row of `kind` from its shape, in the canonical form that the VM compares byte for byte
+/// (`shape_fits` of vm/native_module.c): a struct is `name: Type` fields joined by `, ` (none for no field), an enum
+/// `Name` or `Name(Type, Type)` variants joined by ` | `. None for any other text.
+fn arity(kind: c_int, shape: &str) -> Option<Arity> {
+    if kind == sys::AN_STRUCT {
+        if shape.is_empty() {
+            return Some(Arity::Struct(0));
+        }
+        let (mut rest, mut fields) = (shape, 0);
+        loop {
+            rest = shape_type(name(rest, true)?.strip_prefix(": ")?)?;
+            fields += 1;
+            if rest.is_empty() {
+                return Some(Arity::Struct(fields));
+            }
+            rest = rest.strip_prefix(", ")?;
+        }
+    }
+    let (mut rest, mut variants) = (shape, Vec::new());
+    loop {
+        rest = name(rest, false)?;
+        let mut payloads = 0;
+        if let Some(mut inner) = rest.strip_prefix('(') {
+            loop {
+                inner = shape_type(inner)?;
+                payloads += 1;
+                if let Some(after) = inner.strip_prefix(')') {
+                    rest = after;
+                    break;
+                }
+                inner = inner.strip_prefix(", ")?;
+            }
+        }
+        variants.push(payloads);
+        if rest.is_empty() {
+            return Some(Arity::Enum(variants.into()));
+        }
+        rest = rest.strip_prefix(" | ")?;
+    }
+}
+
+/// The text after the name at the start of `text`: an identifier, which for a field may end in `?` or `!`.
+fn name(text: &str, field: bool) -> Option<&str> {
+    let mut end = text.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(text.len());
+    if field && text[end..].starts_with(['?', '!']) {
+        end += 1;
+    }
+    (end > 0).then(|| &text[end..])
+}
+
+/// The text after the type at the start of `text`: up to the `,`, `)` or space that ends it outside brackets, with
+/// its brackets balanced (`Map[String, List[Int]]`).
+fn shape_type(text: &str) -> Option<&str> {
+    let mut depth = 0usize;
+    for (at, c) in text.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => depth = depth.checked_sub(1)?,
+            '(' | '|' | ':' => return None,
+            ',' | ')' | ' ' if depth == 0 => return (at > 0).then(|| &text[at..]),
+            _ => {}
+        }
+    }
+    (!text.is_empty() && depth == 0).then_some("")
 }
 
 /// The LOAD of the module, which the VM runs once after the init: the message that refuses the module when its tables

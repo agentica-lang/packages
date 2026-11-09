@@ -6,6 +6,7 @@ use std::cell::RefCell;
 
 use crate::Arity;
 use crate::sys::*;
+use std::borrow::Cow;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum V {
@@ -28,7 +29,7 @@ pub enum V {
 
 /// The type table of the mock module: row 0 a struct of two fields (Point), row 1 an enum whose variant 0 has no
 /// payload and variant 1 one (Shape). It has two resource rows.
-pub const TYPES: &[Arity] = &[Arity::Struct(2), Arity::Enum(&[0, 1])];
+pub const TYPES: &[Arity] = &[Arity::Struct(2), Arity::Enum(Cow::Borrowed(&[0, 1]))];
 pub const RESOURCE_ROWS: u32 = 2;
 
 /// The env of one mock call. It starts with the table pointer, as the VM's does.

@@ -1,4 +1,4 @@
-//! The functions of check.agc and panics.agc on `call`, `Env`, `Term`, `Module` and `ResourceArc`.
+//! The functions of check.agc and failing.agc on `call`, `Env`, `Term`, `Module` and `ResourceArc`.
 
 use core::ffi::c_int;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -232,7 +232,7 @@ fn module() -> Module {
         .function("count", "(Counter) -> Int", count, Mode::Short)
         .function("dropped", "() -> Int", dropped, Mode::Short)
         .function("checked", "(Int) -> Int", checked, Mode::Dirty)
-        .struct_type("Point", "x: Int, y: Int", 2)
+        .struct_type("Point", "x: Int, y: Int")
         .resource::<Counter>("Counter")
 }
 

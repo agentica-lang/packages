@@ -42,8 +42,8 @@ fn module() -> Module {
     Module::new("mock")
         .function("nothing", "() -> Void", nothing, Mode::Short)
         .function("slow?", "(Int) -> Int", nothing, Mode::Dirty)
-        .struct_type("Point", "x: Int, y: Int", 2)
-        .enum_type("Shape", "Empty | Circle(Point)", &[0, 1])
+        .struct_type("Point", "x: Int, y: Int")
+        .enum_type("Shape", "Empty | Circle(Point)")
         .resource::<Counted>("Counter")
         .resource::<Panicky>("Panicky")
 }
@@ -88,8 +88,12 @@ fn a_module_with_a_nul_or_two_resources_of_one_type_is_refused() {
     let empty = build(Module::new("empty"));
     assert!(empty.refusal().is_none());
     assert!(empty.module().types.is_null() && empty.module().resources.is_null());
-    let nul = build(Module::new("mock").struct_type("Po\0int", "x: Int", 1));
+    let nul = build(Module::new("mock").struct_type("Po\0int", "x: Int").struct_type("P\0", "x: Int"));
     assert_eq!(nul.refusal().unwrap().to_str().unwrap(), r#""Po\0int" holds a NUL, which a C string cannot"#);
+    // Each text in place of one with a NUL is its own, so the VM's check of two rows of one name passes to LOAD.
+    // SAFETY: the type table has two rows.
+    let rows = unsafe { core::slice::from_raw_parts(nul.module().types, 2) };
+    assert_ne!(text(rows[0].name), text(rows[1].name));
     let twice = build(Module::new("mock").resource::<Counted>("A").resource::<Counted>("B"));
     let message = twice.refusal().unwrap().to_str().unwrap();
     assert!(message.starts_with("the resources A and B are both the Rust type "), "{message}");
@@ -163,4 +167,43 @@ fn a_resource_of_another_row_or_type_is_refused() {
     // SAFETY: the one state of row 0 that encode wrote, freed once.
     unsafe { (*m.resources).free.unwrap()(state) };
     assert_eq!(drops.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn the_arity_of_each_type_row_comes_from_its_shape() {
+    let built = build(
+        Module::new("mock")
+            .struct_type("Row", "named: Map[String, List[Int]], ok?: Bool, at: Optional[Result[List[Float]]]")
+            .struct_type("Unit", "")
+            .enum_type("Token", "End | Stop")
+            .enum_type("Shape", "Empty | Circle(Point) | Pair(Map[Int, String], List[Shape]) | Unit"),
+    );
+    assert!(built.refusal().is_none(), "{:?}", built.refusal());
+    let arities: Vec<Arity> =
+        vec![Arity::Struct(3), Arity::Struct(0), Arity::Enum(vec![0, 0].into()), Arity::Enum(vec![0, 1, 2, 0].into())];
+    assert_eq!(built.arities(), arities);
+}
+
+#[test]
+fn a_shape_that_is_not_canonical_is_refused() {
+    let shapes = [
+        (true, "x: Int,y: Int"),
+        (true, "x Int"),
+        (true, "x: Map[String, Int"),
+        (true, "x: Int, "),
+        (true, "x: Int]"),
+        (false, ""),
+        (false, "Empty|Full"),
+        (false, "Circle()"),
+        (false, "Circle(Int"),
+        (false, "Circle(Int,Int)"),
+        (false, "Stop!"),
+    ];
+    for (is_struct, shape) in shapes {
+        let module = Module::new("mock");
+        let module = if is_struct { module.struct_type("T", shape) } else { module.enum_type("T", shape) };
+        let built = build(module);
+        let refusal = built.refusal().map(|r| r.to_str().unwrap().to_string());
+        assert_eq!(refusal, Some(format!("the shape of T is not canonical: {shape:?}")), "{shape:?}");
+    }
 }

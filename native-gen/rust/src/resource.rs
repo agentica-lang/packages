@@ -16,6 +16,10 @@ use crate::term::{Env, Term};
 /// resource of the program that shares the same `T` (the program's `==` tells the two apart).
 ///
 /// The calls of every scheduler share `T`, and the VM drops it on a thread of its own, so `T` is `Send + Sync`.
+///
+/// One case never drops `T`: a resource that a dirty call made, when the run ends before the call's result is taken
+/// (`agc_native_dirty_free` frees its state as memory alone, without the row's free function). So a value that must
+/// flush or finish something should get an explicit close of its own, not rely on `Drop` alone.
 pub struct ResourceArc<T: Send + Sync + 'static>(Arc<T>);
 
 impl<T: Send + Sync + 'static> ResourceArc<T> {
