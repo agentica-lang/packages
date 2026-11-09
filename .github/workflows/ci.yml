@@ -65,3 +65,8 @@ jobs:
       - name: Test
         if: env.PACKAGES != ''
         run: make test PACKAGES="$PACKAGES"
+
+      # The agentica code blocks of each docs/ folder run, or are checked.
+      - name: Doc examples
+        if: env.PACKAGES != ''
+        run: make doc-examples PACKAGES="$PACKAGES"

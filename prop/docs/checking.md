@@ -6,7 +6,7 @@ weight: 1
 
 ## Prop.check
 
-```agentica
+```agentica {mode="fragment"}
 Prop.check(gen, config, law)
 ```
 
@@ -29,7 +29,7 @@ falsified after 1 run, shrunk to [0,-1], seed 1234: expected [0,-1], got [-1,0]
 | `discards` | 1000 | how many discarded cases are too many |
 | `shrinks` | 500 | how many laws to run when shrinking; the message says `(shrinking stopped after N steps)` when it runs out |
 
-```agentica
+```agentica {mode="fragment"}
 config = Prop.Config(runs: 300, seed: some(1234))
 ```
 
@@ -39,7 +39,7 @@ config = Prop.Config(runs: 300, seed: some(1234))
 
 The seed of a failure is in its message. `Prop.Config(seed: some(1234))` runs that check again, and nothing else. Use `Prop.sample(gen, seed, count)` to look at the values that a seed makes:
 
-```agentica
+```agentica {mode="fragment"}
 puts(Prop.sample(Prop.int(0, 9), 1234, 5))
 ```
 
@@ -51,7 +51,7 @@ puts(Prop.sample(Prop.int(0, 9), 1234, 5))
 
 `Prop.assume(condition)` returns `ok()` when the condition is true. When it is false, the case is discarded: it does not count as a pass or as a failure. Put it at the start of a law, with `try`:
 
-```agentica
+```agentica {mode="fragment"}
 def test_division() -> Result[Void]
   return Prop.check(Prop.int(-50, 50)) do |n|
     try Prop.assume(n != 0)

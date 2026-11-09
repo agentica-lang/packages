@@ -6,7 +6,7 @@ weight: 4
 
 `Prop.exhaustive(gen, size, max_cases = 10_000, law)` tries every case that `gen` has up to `size`, smallest first. It returns `ok()` when all of them hold. `Prop.cases(gen, size)` says how many cases there are.
 
-```agentica
+```agentica {mode="fragment"}
 def test_reverse_twice_up_to_size_3() -> Result[Void]
   return Prop.exhaustive(Prop.list(Prop.bool()), 3) do |xs|
     Prop.eq(xs.reverse.reverse, xs)
@@ -18,7 +18,7 @@ end
 
 A false law returns the counterexample of the smallest size that has one:
 
-```agentica
+```agentica {mode="fragment"}
 result = Prop.exhaustive(Prop.list(Prop.int(0, 9)), 2) do |xs| Prop.eq(xs.reverse, xs) end
 puts(result.message)
 ```

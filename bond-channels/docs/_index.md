@@ -30,7 +30,7 @@ The releases and their notes are in the [changelog](https://github.com/agentica-
 
 A chat room. A person is the cookie `user`. A subscription listens to the topic `room:ROOM`, and `GET /say?room=1&text=hi` tells everyone in room 1:
 
-```agentica
+```agentica {mode="check"}
 import Bond from "pkg/bond/bond"
 import Channels from "pkg/bond-channels/channels"
 

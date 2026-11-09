@@ -63,7 +63,7 @@ A connection that is too slow for its traffic is closed by the hub: it gets a `d
 
 Use it when a person loses a right that `connect` or `subscribed` checked once: a sign-out, a deactivation, a removal from a room.
 
-```agentica
+```agentica {mode="fragment"}
 Channels.disconnect(hub, "ana", false).unwrap!
 ```
 

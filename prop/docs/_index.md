@@ -40,7 +40,7 @@ end
 
 A false law fails the test with the shrunk counterexample. This law is false for any list that is not a palindrome:
 
-```agentica
+```agentica {mode="fragment"}
 result = Prop.check(Prop.list(Prop.int(-100, 100)), Prop.Config(seed: some(1234))) do |xs|
   Prop.eq(xs.reverse, xs)
 end

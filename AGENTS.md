@@ -7,8 +7,11 @@ is in GitHub issues of `agentica-lang/packages`.
 
 ```text
 README.md            the table of packages and how to install one
-Makefile             install, check, fmt-check and test, each run in every folder that has an agentica.toml; site
-.github/workflows/   ci.yml: the changed packages, the pinned Agentica release, then the four targets; pages.yml: the
+Makefile             install, check, fmt-check, test and doc-examples, each run in every folder that has an
+                     agentica.toml; site
+tools/               doc_examples.agc: runs the `agentica` blocks of the docs (the rules are in its header);
+                     fixtures/doc_examples: a page where it must fail
+.github/workflows/   ci.yml: the changed packages, the pinned Agentica release, then the five targets; pages.yml: the
                      site (pinned Hugo)
 .github/scripts/     changed-packages.sh: which packages a list of changed files marks (the rules are in its header)
 site/                the Hugo site: hugo.toml, layouts/, assets/css/, content/_index.md (the home), highlight/ (colors
@@ -66,9 +69,13 @@ prop/                property-based testing: prop.agc is the API (check, eq, ass
   `weight` to order a page): `_index.md` is the package page (what it is, the `agentica add` command with `--subdir` and
   the prefixed tag and the `agentica.toml` line it writes, a short example, the API), and each other `.md` is a page of
   it. `make site` mounts each `docs/` as `/PACKAGE/`, so a new package adds its docs with that folder alone, and no file
-  of `site/` changes. Link to a page
-  as `[text](page.md)`; a broken link fails the build. Examples in the docs must run (an `agentica` code block is
-  colored with the Agentica grammar). Site prose: one line per paragraph or list item, simple words.
+  of `site/` changes. Link to a page as `[text](page.md)`; a broken link fails the build. Examples in the docs must run
+  (an `agentica` code block is colored with the Agentica grammar): `make doc-examples` runs each block with `def main`
+  and compares its stdout with an `output` block right after it (a `text` block is never compared), checks the others,
+  and skips a block marked `{mode="fragment"}` (`{mode="check"}` only checks one, such as a server). Many existing
+  blocks are still fragments; a new example is a whole file with its `output`. The rules are in the header of
+  `tools/doc_examples.agc`, and `make doc-examples-test` checks the tool on its fixture. Site prose: one line per
+  paragraph or list item, simple words.
 - Each package has its own CHANGELOG.md; a user-visible change adds a line under its `## [Unreleased]`; a release renames
   it to `## [X.Y.Z] - DATE` and tags `PACKAGE-X.Y.Z`.
 - Release: a tag `PACKAGE-X.Y.Z` on main, made by the owner. A PR never pushes a tag.

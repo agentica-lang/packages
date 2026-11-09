@@ -8,7 +8,7 @@ weight: 1
 
 `MountOptions.connect` runs once for each connection, with the handshake of the WebSocket (so with its cookies). It returns the `Identity` of the person, or an `error`:
 
-```agentica
+```agentica {mode="fragment"}
 def connect(conn: Bond.Conn) -> Result[Channels.Identity]
   user = try Bond.cookie(conn, "user")
   return ok(Channels.Identity(id: user, data: JSON.from(user)))
@@ -35,7 +35,7 @@ A handshake from another site is answered 403. `MountOptions.allowed_origins` li
 
 `Channels.handler(subscribed)` makes a handler that has no `unsubscribed` and takes no actions. Replace those with `with`:
 
-```agentica
+```agentica {mode="fragment"}
 room = Channels.handler(&subscribed).with(unsubscribed: on_leave, perform: on_action)
 handlers = {"RoomChannel": room}
 ```
@@ -56,7 +56,7 @@ An `error` from any of them is logged, and the connection stays open. An `error`
 | `transmit` | `[]` | payloads for this connection only, sent before the confirmation; a JSON string is a Turbo Stream, an object is a notice |
 | `rejected` | `false` | answer `reject_subscription` instead of the confirmation |
 
-```agentica
+```agentica {mode="fragment"}
 def subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
   room = try room_of(params)
   greeting = JSON.from("welcome #{session.identity.id}")
@@ -70,7 +70,7 @@ A broadcast never reaches a client before the confirmation of its subscription. 
 
 A client message has an `action` and any other keys in its `data`. `perform` gets the `action` and the whole `data`, and returns the payloads to send to that connection only. A blank `action` is `receive`, as in Action Cable.
 
-```agentica
+```agentica {mode="fragment"}
 def acted(
   hub: Channels.Hub,
   session: Channels.Session,
@@ -93,7 +93,7 @@ A client that sends `{"command":"message","identifier":"...","data":"{\"action\"
 
 The block of a handler is not a function you can store in a map directly, so give its type a name first, with a function that returns its argument:
 
-```agentica
+```agentica {mode="fragment"}
 def leaving(f: Fn[Channels.Session, Json, Result[Void]]) -> Fn[Channels.Session, Json, Result[Void]]
   return f
 end
@@ -109,7 +109,7 @@ As in Rails, these get no reply, and the connection stays open: a subscribe to a
 
 `unsubscribed` runs for each subscription when the client unsubscribes, closes, drops, is cut off for being too slow, or when its handler crashes. It is the place to announce that a person left:
 
-```agentica
+```agentica {mode="fragment"}
 def left(hub: Channels.Hub, session: Channels.Session, params: Json) -> Result[Void]
   room = try room_of(params)
   return Channels.broadcast_text(hub, "room:#{room}", "#{session.identity.id} left")
