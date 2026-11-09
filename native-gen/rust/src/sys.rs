@@ -130,3 +130,26 @@ pub struct an_api {
     pub resource_new: unsafe extern "C" fn(E, u32, *mut T) -> *mut c_void,
     pub get_resource: unsafe extern "C" fn(E, T, u32, *mut *mut c_void) -> bool,
 }
+
+/// The one export of a module, `agentica_native_init`.
+pub type an_init = unsafe extern "C" fn(api: *const an_api) -> *const an_module;
+
+// SAFETY: the pointers of the tables point at read-only data (names, signatures, shapes and the other tables) that
+// lives as long as the module, as agentica_native.h asks, so the tables can be statics shared by every thread.
+unsafe impl Sync for an_function {}
+unsafe impl Sync for an_type {}
+unsafe impl Sync for an_resource_type {}
+unsafe impl Sync for an_module {}
+
+// The sizes of the C layouts on a 64-bit target, so a field added or moved here fails the build.
+#[cfg(target_pointer_width = "64")]
+const _: () = {
+    use core::mem::size_of;
+    assert!(size_of::<an_term>() == 16);
+    assert!(size_of::<an_api>() == 320);
+    assert!(size_of::<an_module>() == 80);
+    assert!(size_of::<an_function>() == 32);
+    assert!(size_of::<an_type>() == 24);
+    assert!(size_of::<an_resource_type>() == 24);
+    assert!(size_of::<an_list_builder>() == 64);
+};

@@ -71,32 +71,64 @@ jobs:
         if: env.PACKAGES != ''
         run: make doc-examples PACKAGES="$PACKAGES"
 
-  # The Rust crate of native-gen (native-gen/rust): its format and lints on stable, its tests on the MSRV of its
-  # Cargo.toml and on stable. It has no dependencies, so it needs no registry.
+  # The Rust crate of native-gen (native-gen/rust), when a pull request changes it or this file, and on main: its
+  # format and lints on stable, its tests on the MSRV of its Cargo.toml and on stable, and the tests under Miri
+  # (nightly). The crate has no dependencies, so it needs no registry.
   rust:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: native-gen/rust
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Find whether the crate changed
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        shell: bash
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "RUST=1" >> "$GITHUB_ENV"
+          else
+            git diff --name-only --no-renames "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/changed-files"
+            if grep -qE '^(native-gen/rust/|\.github/workflows/ci\.yml$)' "$RUNNER_TEMP/changed-files"; then
+              echo "RUST=1" >> "$GITHUB_ENV"
+            else
+              echo "The crate did not change: nothing to run."
+            fi
+          fi
 
       - name: Install the toolchains
+        if: env.RUST == '1'
         run: |
           msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
           echo "MSRV=$msrv" >> "$GITHUB_ENV"
           rustup toolchain install "$msrv" --profile minimal
           rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup toolchain install nightly --profile minimal --component miri
 
       - name: Format
+        if: env.RUST == '1'
         run: cargo +stable fmt --check
 
       - name: Lints
+        if: env.RUST == '1'
         run: cargo +stable clippy --all-targets -- -D warnings
 
       - name: Test on the MSRV
+        if: env.RUST == '1'
         run: cargo +"$MSRV" test
 
       - name: Test on stable
+        if: env.RUST == '1'
         run: cargo +stable test
+
+      - name: Test under Miri
+        if: env.RUST == '1'
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+        run: cargo +nightly miri test --lib

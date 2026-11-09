@@ -12,4 +12,4 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
-pub use term::{Env, ListItems, MapPairs, Term};
+pub use term::{Args, Env, ListItems, Mode, Term, call};
