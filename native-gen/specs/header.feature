@@ -598,6 +598,24 @@ Feature: The C header of an extern module block
     And the fresh folder has the library of "demo"
     And the agentica.toml of the fresh folder has the entry of "demo"
 
+  Scenario: build run in the package root prints the paths below it relative to it
+    Given a fresh package with the Rust module in "demo.agc"
+    And a fake cargo on PATH that exits with 0 and prints:
+      """
+      {"reason":"compiler-artifact","target":{"kind":["cdylib"]},"filenames":["FOLDER/target/libdemoEXT"]}
+      """
+    And a program in the fresh folder that runs build of "demo.agc" there
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout includes:
+      """
+      wrote rust/src/demo_native.rs
+      copied target/libdemo
+      """
+    And stdout includes:
+      """
+      to agentica.toml
+      """
+
   # The fresh folder is in TMPDIR (or /tmp): this assumes no folder above it has an agentica.toml. The steps cannot
   # make a folder above the temp folder, so the scenario cannot rule that out itself.
   Scenario: build without an agentica.toml up from the file fails with NATIVE-GEN-IO

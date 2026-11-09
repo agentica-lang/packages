@@ -38,6 +38,7 @@ def main() -> Void
     BDD.step("the file {string} in the fresh folder is:", &file_in_folder),
     BDD.step("the library of {string} on {string} is {string}", &library_file),
     BDD.step("a fresh package with the Rust module in {string}", &rust_package),
+    BDD.step("a program in the fresh folder that runs build of {string} there", &build_runner),
     BDD.step("the program argument {string} in the fresh folder, relative to the current folder", &relative_argument),
     BDD.step("a fake cargo on PATH that exits with {int} and prints:", &fake_cargo),
     BDD.step("the file {string} in the fresh folder is removed", &removed),
@@ -199,7 +200,7 @@ end
 # and exits with `args[0]`. FOLDER in it is the fresh folder and EXT the ending of a library on this system; the
 # files libdemoEXT and libtwoEXT are made there.
 def fake_cargo(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  folder = "#{JSON.string(BDD.get(ctx, SCAFFOLD).unwrap!).unwrap!}/"
+  folder = "#{fresh_path(ctx)}/"
   ext = Build.extension(System.os()).unwrap_or(".so")
   text = BDD.doc_string(ctx).replace("FOLDER", folder.slice(0, folder.length - 1)).replace("EXT", ext)
   lines = text.split("\n").map do |line: String| "printf '%s\\n' '#{line}'" end
@@ -207,6 +208,7 @@ def fake_cargo(ctx: BDD.Context, args: List[String]) -> BDD.Context
   made = [
     written_in(ctx, "bin/cargo", script),
     written_in(ctx, "libdemo#{ext}", "demo"),
+    written_in(ctx, "target/libdemo#{ext}", "demo"),
     written_in(ctx, "libtwo#{ext}", "two"),
   ]
 
@@ -220,6 +222,47 @@ def fake_cargo(ctx: BDD.Context, args: List[String]) -> BDD.Context
   end
 
   return BDD.given_env(ctx, "PATH", in_folder(ctx, "bin"))
+end
+
+# A program `run.agc` in the fresh folder that runs `agentica cli.agc build args[0]` in that folder (a program under
+# test runs in the folder of the feature, and `spawn_captured` gives the build its own), then prints what build
+# printed and exits with its code. So build runs in the package, as a user runs it.
+def build_runner(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  cli = "../cli.agc"
+  if File.stat("specs/header.feature").ok?
+    cli = "cli.agc"
+  end
+
+  found = Process.spawn_captured("sh", ["-c", "command -v agentica"])
+  if !found.ok?
+    return BDD.assert(ctx, false, "cannot look for agentica: #{found.message}")
+  end
+
+  binary = ""
+  case Process.output(found.unwrap!, 10_000)
+    ok(out) -> binary = out.stdout.trim
+    error(_) -> binary = ""
+  end
+
+  Process.close(found.unwrap!)
+  command = "[#{Path.resolve(cli).unwrap!.inspect}, \"build\", #{args[0].inspect}]"
+  program = [
+    "def main() -> Void",
+    "  p = Process.spawn_captured(#{binary.inspect}, #{command}, #{fresh_path(ctx).inspect}).unwrap!",
+    "  out = Process.output(p, 60_000).unwrap!",
+    "  print(out.stdout)",
+    "  IO.warn(out.stderr)",
+    "  System.exit(Process.wait(p, 60_000).unwrap!)",
+    "end",
+    "",
+  ].join("\n")
+
+  done = written_in(ctx, "run.agc", program)
+  if !done.ok? or binary.empty?
+    return BDD.assert(ctx, false, "cannot write run.agc (agentica is #{binary.inspect})")
+  end
+
+  return BDD.given_program(ctx, in_folder(ctx, "run.agc"))
 end
 
 def removed(ctx: BDD.Context, args: List[String]) -> BDD.Context
@@ -330,8 +373,7 @@ end
 
 # The path of `name` in the folder of `new_module`.
 def in_folder(ctx: BDD.Context, name: String) -> String
-  folder = JSON.string(BDD.get(ctx, SCAFFOLD).unwrap!).unwrap!
-  return Path.join([folder, name]).unwrap!
+  return Path.join([fresh_path(ctx), name]).unwrap!
 end
 
 def fresh_cache(ctx: BDD.Context, _args: List[String]) -> BDD.Context
@@ -374,4 +416,9 @@ def fresh_folder(ctx: BDD.Context) -> Result[Made]
   end
 
   return ok(Made(ctx: BDD.after(ctx) do |_done| Path.remove(folder) end, path: folder))
+end
+
+# The path of the fresh folder of `folder_step`.
+def fresh_path(ctx: BDD.Context) -> String
+  return JSON.string(BDD.get(ctx, SCAFFOLD).unwrap!).unwrap!
 end

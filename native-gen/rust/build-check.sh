@@ -13,20 +13,27 @@ trap 'rm -rf "$pkg"' EXIT
 cli=$root/native-gen/cli.agc
 docs=$root/native-gen/docs/_index.md
 
-# The fenced block that follows the line $1 of the docs page, without its fences.
+# The fenced block of the docs page whose caption is the line $1, without its fences. Fails unless the caption occurs
+# once, the next line that is not blank opens the block, and the block is closed and holds a line.
 doc_block() {
   awk -v caption="$1" '
-    $0 == caption { found = 1; next }
-    found == 1 && /^```/ { found = 2; next }
-    found == 2 && /^```/ { exit }
-    found == 2 { print }
+    $0 == caption { count++; if (count == 1) state = 1; next }
+    state == 1 && $0 == "" { next }
+    state == 1 && /^```/ { state = 2; next }
+    state == 1 { state = 9; next }
+    state == 2 && /^```/ { state = 3; next }
+    state == 2 { print; lines++ }
+    END { if (count != 1 || state != 3 || lines == 0) exit 1 }
   ' "$docs"
 }
 
-# Fails when the block after the line $1 of the docs page is not the file $2.
+# Fails when the block of the docs page whose caption is $1 is not the file $2.
 same() {
-  doc_block "$1" | diff -u "$2" - || { echo "build-check: the block after $1 in $docs is not $2" >&2; exit 1; }
+  doc_block "$1" > "$pkg/block.txt" ||
+    { echo "build-check: $docs needs the caption $1 once, then a block with text" >&2; exit 1; }
+  diff -u "$2" "$pkg/block.txt" || { echo "build-check: the block after $1 in $docs is not $2" >&2; exit 1; }
 }
+
 cp -R "$fixture/." "$pkg"
 rm -rf "$pkg/rust/target" "$pkg/native"
 cp rustfmt.toml "$pkg/rust/"
@@ -37,15 +44,18 @@ ln -s "$root/native-gen/native" "$pkg/deps/native-gen/native"
 agentica "$cli" build "$fixture/math.agc" --check
 
 # The files that docs/_index.md shows are the example's own.
+same "\`agentica.toml\`, before the build:" "$fixture/agentica.toml"
 same "\`math.agc\`:" "$fixture/math.agc"
 same "\`rust/Cargo.toml\`:" "$fixture/rust/Cargo.toml"
 same "\`rust/src/lib.rs\`:" "$fixture/rust/src/lib.rs"
 same "The output of \`agentica math.agc\`:" "$fixture/expected.txt"
 
-# The first build, run from the package root as the docs show it: the library goes to native/libmath.so, the entry is
+# The first build, run from the package root as the docs show it, without the committed Rust file (which the
+# scenario of build --check checks), as a user's first build is: the library goes to native/libmath.so, the entry is
 # added at the end of agentica.toml, and what it prints and adds are the docs' blocks.
+rm "$pkg/rust/src/math_native.rs"
 (cd "$pkg" && agentica "$cli" build math.agc) > "$pkg/first.txt"
-same "The output of \`build\` (cargo prints its progress on stderr):" "$pkg/first.txt"
+same "The output of \`build\` on Linux (cargo prints its progress on stderr):" "$pkg/first.txt"
 tail -n 2 "$pkg/agentica.toml" > "$pkg/entry.txt"
 same "The entry that \`build\` adds to \`agentica.toml\`:" "$pkg/entry.txt"
 entry='\n[native.math]\nlinux = { file = "native/libmath.so" }\n'

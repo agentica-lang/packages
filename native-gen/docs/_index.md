@@ -125,6 +125,16 @@ The name is the `[native.NAME]` of `agentica.toml`, the library of the block and
 
 A module can be written in Rust instead, on the `agentica-native` crate that native-gen carries in `deps/native-gen/native/agentica-native`. The crate of the module is the folder `rust/` at the package root (the nearest folder up from the `.agc` with an `agentica.toml`), and depends on that crate by path. The package [examples/rust_math](https://github.com/agentica-lang/packages/tree/main/native-gen/examples/rust_math) is a whole one; CI builds it and runs it, and checks that the files below are its files.
 
+It needs cargo, and the install above, which puts the crate in `deps/native-gen/`.
+
+`agentica.toml`, before the build:
+
+```toml
+# A native module in Rust (the native-gen docs show it). `agentica deps/native-gen/cli.agc build math.agc` builds it
+# and adds the [native.math] entry of the system below; rust/build-check.sh does that on a copy in CI.
+name = "native-gen-rust-math"
+```
+
 `math.agc`:
 
 ```agentica {mode="check"}
@@ -221,13 +231,15 @@ agentica deps/native-gen/cli.agc build math.agc
 agentica math.agc
 ```
 
-The output of `build` (cargo prints its progress on stderr):
+The output of `build` on Linux (cargo prints its progress on stderr):
 
 ```text
-rust/src/math_native.rs is current
+wrote rust/src/math_native.rs
 copied rust/target/release/libmath.so to native/libmath.so
 added native.math.linux to agentica.toml
 ```
+
+With a cargo workspace or `CARGO_TARGET_DIR`, the library that cargo built is at another path, which the `copied` line names.
 
 The entry that `build` adds to `agentica.toml`:
 
