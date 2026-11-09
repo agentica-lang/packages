@@ -1,0 +1,8 @@
+# Resources through the header, built from native/resources.c.
+name = "native-gen-resources"
+
+[style]
+blank_line_after_end = true
+
+[native.resources]
+build = { sources = ["native/resources.c"] }
