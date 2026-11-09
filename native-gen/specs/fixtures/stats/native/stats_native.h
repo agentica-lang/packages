@@ -83,6 +83,7 @@ typedef struct {
   size_t len;
   size_t at;
   bool failed;
+  int argument; /* 1 + the index of the argument of the call it was opened for, or 0 (_open) */
 } stats_list_Float;
 bool stats_list_Float_open(an_env *env, an_term t, stats_list_Float *out);
 int stats_list_Float_next(an_env *env, stats_list_Float *list, double *out);
@@ -183,15 +184,19 @@ static inline bool ng_raise(an_env *env, const char *where, const char *type, ng
   return false;
 }
 
-/* Fails the call at item INDEX (and PART of it, "key" or "value", or NULL) of a List or Map; -1 for _next. */
-static inline int ng_fail_item(an_env *env, ng_fail *fail, const char *type, size_t index, const char *part) {
+/* Fails the call at item INDEX (and PART of it, "key" or "value", or NULL) of a List or Map, with the
+   "argument N: " prefix when ARGUMENT (1 + its index) is not 0; -1 for _next. */
+static inline int ng_fail_item(an_env *env, ng_fail *fail, const char *type, int argument, size_t index,
+                               const char *part) {
   char segment[48];
+  char where[32] = "";
   if (part)
     snprintf(segment, sizeof segment, "%zu.%s", index, part);
   else
     snprintf(segment, sizeof segment, "%zu", index);
+  if (argument) snprintf(where, sizeof where, "argument %d: ", argument);
   ng_at(fail, segment);
-  ng_raise(env, "", type, fail);
+  ng_raise(env, where, type, fail);
   return -1;
 }
 
@@ -266,7 +271,7 @@ int stats_list_Float_next(an_env *env, stats_list_Float *list, double *out) {
   list->at++;
   if (stats_native_item_Float(env, x, out, &fail)) return 1;
   list->failed = true;
-  return ng_fail_item(env, &fail, "List[Float]", at, NULL);
+  return ng_fail_item(env, &fail, "List[Float]", list->argument, at, NULL);
 }
 
 an_term stats_optional_Summary_some(an_env *env, stats_Summary value) {
@@ -302,6 +307,7 @@ static an_term stats_native_summary(an_env *env, int argc, const an_term *argv) 
   stats_list_Float a0;
   if (!stats_native_open_list_Float(env, argv[0], &a0, &fail))
     return ng_fail_argument(env, &fail, "List[Float]", 0);
+  a0.argument = 1;
   return stats_summary(env, a0);
 }
 

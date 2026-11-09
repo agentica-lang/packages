@@ -93,4 +93,21 @@ an_term lists_misread_map(an_env *env, lists_map_String_Point named) {
   return an_int(env, read.x);
 }
 
+/* The wrapper opens the argument, and sums reads its items after that: a bad item fails the call with the argument it
+   is in, so the result of the wrapper is never used. */
+static an_term misread_sums(an_env *env, bool nested) {
+  an_term row[2], rows[2];
+  row[0] = an_float(env, 1.0);
+  row[1] = an_string(env, "a", 1);
+  rows[0] = an_list(env, row, nested ? 2 : 1);
+  rows[1] = nested ? an_list(env, NULL, 0) : an_string(env, "b", 1);
+  an_term argv[1] = {an_list(env, rows, 2)};
+  (void)lists_native_sums(env, 1, argv);
+  return an_void(env);
+}
+
+an_term lists_misread_argument(an_env *env) { return misread_sums(env, false); }
+
+an_term lists_misread_nested_argument(an_env *env) { return misread_sums(env, true); }
+
 LISTS_NATIVE_MODULE(NULL)

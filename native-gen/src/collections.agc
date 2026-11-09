@@ -175,11 +175,18 @@ end
 ## The statements of a wrapper that open or decode argument `at`, a List, Map, Optional or Result, into `local`.
 export def decode_argument(shelf: Shelf, type: String, local: String, at: Int) -> List[String]
   tree = Types.parse(type)
-  return [
+  lines = [
     "  #{name(shelf, tree)} #{local};",
     "  if (!#{reader(shelf, tree)}(env, argv[#{at}], &#{local}, &fail))",
     "    return ng_fail_argument(env, &fail, \"#{type}\", #{at});",
   ]
+
+  if collection?(tree)
+    # A cursor reads its items after the wrapper returns them, so it keeps the argument for the "argument N:" prefix.
+    lines = lines.push("  #{local}.argument = #{at + 1};")
+  end
+
+  return lines
 end
 
 # The Lists, Maps, Optionals and Results inside `types`, each once, each after the ones it holds.
@@ -313,6 +320,7 @@ def cursor_declaration(shelf: Shelf, type: Types.Type) -> List[String]
     "  size_t len;",
     "  size_t at;",
     "  bool failed;",
+    "  int argument; /* 1 + the index of the argument of the call it was opened for, or 0 (_open) */",
     "} #{c};",
     "bool #{c}_open(an_env *env, an_term t, #{c} *out);",
     "int #{c}_next(an_env *env, #{c} *#{kind}, #{outs});",
@@ -357,6 +365,17 @@ def item_decoder(shelf: Shelf, type: Types.Type) -> List[String]
   return ["#{head} ng_fail *fail) {", body, "}"]
 end
 
+# The line that gives a List or Map item the argument of the cursor it came from, so its own items fail with the same
+# "argument N:" prefix; nothing for another item type.
+def inherit(type: Types.Type, item: String, cursor: String) -> List[String]
+  if !collection?(type)
+    none_needed: List[String] = []
+    return none_needed
+  end
+
+  return ["#{item}->argument = #{cursor}->argument;"]
+end
+
 def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
   p = shelf.codecs.lower
   c = name(shelf, type)
@@ -385,40 +404,58 @@ def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
 
   item = "#{p}_native_item_#{Types.mangled(items(type)[0])}"
   if !map?(type)
-    return lines.concat([
-      "int #{c}_next(an_env *env, #{c} *list, #{item_type(shelf, items(type)[0])} *out) {",
-      "  an_term x;",
-      "  ng_fail fail;",
-      "  size_t at = list->at;",
-      "  if (list->failed) return -1;",
-      "  if (!an_list_next(env, &list->cursor, &x)) return 0;",
-      "  list->at++;",
-      "  if (#{item}(env, x, out, &fail)) return 1;",
-      "  list->failed = true;",
-      "  return ng_fail_item(env, &fail, \"#{text}\", at, NULL);",
-      "}",
+    taken = "#{item}(env, x, out, &fail)"
+    return joined([
+      lines,
+      [
+        "int #{c}_next(an_env *env, #{c} *list, #{item_type(shelf, items(type)[0])} *out) {",
+        "  an_term x;",
+        "  ng_fail fail;",
+        "  size_t at = list->at;",
+        "  if (list->failed) return -1;",
+        "  if (!an_list_next(env, &list->cursor, &x)) return 0;",
+        "  list->at++;",
+      ],
+      took(taken, "  ", inherit(items(type)[0], "out", "list")),
+      ["  list->failed = true;", "  return ng_fail_item(env, &fail, \"#{text}\", list->argument, at, NULL);", "}"],
     ])
   end
 
   value = "#{p}_native_item_#{Types.mangled(items(type)[1])}"
   outs = "#{item_type(shelf, items(type)[0])} *key, #{item_type(shelf, items(type)[1])} *value"
-  return lines.concat([
-    "int #{c}_next(an_env *env, #{c} *map, #{outs}) {",
-    "  an_term k, v;",
-    "  ng_fail fail;",
-    "  size_t at = map->at;",
-    "  const char *part = \"key\";",
-    "  if (map->failed) return -1;",
-    "  if (!an_map_next(env, &map->cursor, &k, &v)) return 0;",
-    "  map->at++;",
-    "  if (#{item}(env, k, key, &fail)) {",
-    "    if (#{value}(env, v, value, &fail)) return 1;",
-    "    part = \"value\";",
-    "  }",
-    "  map->failed = true;",
-    "  return ng_fail_item(env, &fail, \"#{text}\", at, part);",
-    "}",
+  inherited = inherit(items(type)[0], "key", "map").concat(inherit(items(type)[1], "value", "map"))
+  return joined([
+    lines,
+    [
+      "int #{c}_next(an_env *env, #{c} *map, #{outs}) {",
+      "  an_term k, v;",
+      "  ng_fail fail;",
+      "  size_t at = map->at;",
+      "  const char *part = \"key\";",
+      "  if (map->failed) return -1;",
+      "  if (!an_map_next(env, &map->cursor, &k, &v)) return 0;",
+      "  map->at++;",
+      "  if (#{item}(env, k, key, &fail)) {",
+    ],
+    took("#{value}(env, v, value, &fail)", "    ", inherited),
+    [
+      "    part = \"value\";",
+      "  }",
+      "  map->failed = true;",
+      "  return ng_fail_item(env, &fail, \"#{text}\", map->argument, at, part);",
+      "}",
+    ],
   ])
+end
+
+# `if (TAKEN) return 1;` at `indent`, with the `inherited` lines run first when there are any.
+def took(taken: String, indent: String, inherited: List[String]) -> List[String]
+  if inherited.empty?
+    return ["#{indent}if (#{taken}) return 1;"]
+  end
+
+  body = inherited.map do |line| "#{indent}  #{line}" end
+  return joined([["#{indent}if (#{taken}) {"], body, ["#{indent}  return 1;", "#{indent}}"]])
 end
 
 def builder_definition(shelf: Shelf, type: Types.Type) -> List[String]

@@ -137,11 +137,15 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                                | call         | path                                       |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_list | List[Int].1: expected Int                   |
-      | C++      | sh ../cxx.sh                      | misread_list | List[Int].1: expected Int                   |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_map  | Map[String, Point].0.value.x: expected Int |
-      | C++      | sh ../cxx.sh                      | misread_map  | Map[String, Point].0.value.x: expected Int |
+      | language | cc                                | call                    | path                                                  |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_list            | List[Int].1: expected Int                             |
+      | C++      | sh ../cxx.sh                      | misread_list            | List[Int].1: expected Int                             |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_map             | Map[String, Point].0.value.x: expected Int            |
+      | C++      | sh ../cxx.sh                      | misread_map             | Map[String, Point].0.value.x: expected Int            |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_argument        | argument 1: List[List[Float]].1: expected List[Float] |
+      | C++      | sh ../cxx.sh                      | misread_argument        | argument 1: List[List[Float]].1: expected List[Float] |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested_argument | argument 1: List[Float].1: expected Float             |
+      | C++      | sh ../cxx.sh                      | misread_nested_argument | argument 1: List[Float].1: expected Float             |
 
   Scenario Outline: Optional and Result come in as structs and go out through constructors, built as <language>
     Given a fresh package cache
