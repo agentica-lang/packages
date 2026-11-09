@@ -44,6 +44,14 @@ extern module "shapes2"
   ## ~~~
   ## no Rust here either
   ## ~~~
+  ##
+  ## ````
+  ## a fence of four, closed by five
+  ## `````
+  ##
+  ## - an item
+  ##
+  ##     more of the item, not code
   def chain(n: Int) -> Node
   ## The sum of the values of the chain, read in the compute pool.
   compute def total(node: Node) -> Int

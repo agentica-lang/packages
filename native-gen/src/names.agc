@@ -4,6 +4,11 @@
 
 import Analysis from "std/analysis"
 
+## The modes of the functions and the kinds of the type rows that std/analysis gives, each with its flag in the C
+## tables: the ones this version knows.
+export MODES = {"short": "AN_SHORT", "dirty": "AN_DIRTY"}
+export KINDS = {"struct": "AN_STRUCT", "enum": "AN_ENUM"}
+
 # The words a parameter name cannot be in C11 or C++ (the header compiles as both), `env`, the first parameter of
 # every prototype, and the names of the types and macros a prototype or the C file may use (`int64_t`, `errno`). Such
 # a name gets a trailing `_`, as does one in the namespace of the C API (`an_`) or of native-gen's types (`ng_`).
@@ -105,7 +110,7 @@ end
 ## function, or fields of a struct, that `rename` maps to one `target` (`[NATIVE-GEN-NAME]`).
 export def validate(block: Analysis.NativeBlock, target: String, rename: Fn[String, String]) -> Result[Void]
   for function in block.functions
-    if function.mode != "short" and function.mode != "dirty"
+    if !MODES.has_key?(function.mode)
       return error("[NATIVE-GEN-UNKNOWN] #{function.name} has the mode #{function.mode.inspect}")
     end
 
@@ -117,7 +122,7 @@ export def validate(block: Analysis.NativeBlock, target: String, rename: Fn[Stri
   end
 
   for type in block.types
-    if type.kind != "struct" and type.kind != "enum"
+    if !KINDS.has_key?(type.kind)
       return error("[NATIVE-GEN-UNKNOWN] #{type.name} has the kind #{type.kind.inspect}")
     end
 

@@ -35,7 +35,9 @@ export def rust(path: String, prefix: String = "") -> Result[String]
   end
 
   if !Names.c_identifier?(name)
-    return error("[NATIVE-GEN-PREFIX] the prefix #{name.inspect} is not an identifier; choose another with --prefix")
+    return error(
+      "[NATIVE-GEN-PREFIX] the prefix #{name.inspect} is not an ASCII identifier; choose another with --prefix",
+    )
   end
 
   return RustSide.render(block, RustSide.trait_name(name), last_part(path))

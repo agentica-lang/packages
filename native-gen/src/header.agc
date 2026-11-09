@@ -8,9 +8,6 @@ import Codecs from "codecs"
 import Collections from "collections"
 import Names from "names"
 
-# The table flags of the function modes and the kinds of the type rows that std/analysis gives.
-MODES = {"short": "AN_SHORT", "dirty": "AN_DIRTY"}
-KINDS = {"struct": "AN_STRUCT", "enum": "AN_ENUM"}
 # Prefixes that would put the header's names in the namespace of the C API (`an_`, `AN_`, `agentica_native_init`) or
 # of the helpers of native-gen (`ng_`).
 RESERVED_PREFIXES = Set.new(["an", "ng", "agentica"])
@@ -373,7 +370,9 @@ def tables(block: Analysis.NativeBlock, names: Prefix) -> List[String]
     for function in block.functions
       c = Names.identifier(function.name)
       signature = c_string(function.signature)
-      lines = lines.push("  {#{c_string(function.name)}, #{signature}, #{p}_native_#{c}, #{MODES[function.mode]}},")
+      lines = lines.push(
+        "  {#{c_string(function.name)}, #{signature}, #{p}_native_#{c}, #{Names.MODES[function.mode]}},",
+      )
     end
 
     lines = lines.push("};")
@@ -384,7 +383,7 @@ def tables(block: Analysis.NativeBlock, names: Prefix) -> List[String]
   if !block.types.empty?
     lines = lines.concat(["", "static const an_type #{p}_native_types[] = {"])
     for type in block.types
-      lines = lines.push("  {#{c_string(type.name)}, #{KINDS[type.kind]}, #{c_string(type.shape)}},")
+      lines = lines.push("  {#{c_string(type.name)}, #{Names.KINDS[type.kind]}, #{c_string(type.shape)}},")
     end
 
     lines = lines.push("};")

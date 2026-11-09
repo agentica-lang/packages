@@ -1,5 +1,5 @@
-//! The modules of the fixtures stats, shapes and kinds, each on the Rust file that native-gen makes from its `.agc`
-//! (run.sh makes them, and builds one feature at a time).
+//! The modules of the fixtures stats, shapes, kinds and shapes2, each on the Rust file that native-gen makes from
+//! its `.agc` (run.sh makes them, and builds one feature at a time).
 
 #[cfg(feature = "stats")]
 #[rustfmt::skip]

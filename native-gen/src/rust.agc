@@ -389,7 +389,6 @@ def term_lines(plan: Plan) -> List[String]
         "/// A #{name} that stays a term, as it leads back to the type that holds it: read it with",
         "/// `.0.decode()`. A dirty call cannot read one that it made.",
         "#[derive(Clone, Copy, Debug)]",
-        "#[allow(clippy::upper_case_acronyms)]",
         "pub struct #{name}Term<'a>(pub Term<'a>);",
         "",
         "impl<'a> Decoder<'a> for #{name}Term<'a> {",
@@ -527,24 +526,26 @@ def module_lines(block: Analysis.NativeBlock, trait: String) -> List[String]
   return lines.push("}")
 end
 
-# `doc` as `///` lines at `indent`. A code block that rustdoc would run as Rust is marked text: a fence (``` or ~~~)
-# with no language, and lines indented by 4 spaces or a tab after a blank line, which get a fence of their own.
+# `doc` as `///` lines at `indent`. A code block that rustdoc would run as Rust is marked text: a fence of 3 or more
+# ` or ~ with nothing after it, and lines indented to column 4 after a blank line (not in a list item), which get a
+# fence of their own.
 def doc_lines(indent: String, doc: String) -> List[String]
   if doc.empty?
     return []
   end
 
   lines: List[String] = []
-  # The fence of the open fenced block ("" outside one), whether an indented block is open, and whether the line
-  # before was blank.
+  # The opening run of the open fenced block ("" outside one), whether an indented block is open, whether the line
+  # before was blank, and whether the last line with text was a list item or its continuation.
   fence = ""
   indented = false
   blank = true
+  listed = false
   for line in doc.replace("\r", "").split("\n")
     trimmed = line.trim
     text = line
-    deep = line.start_with?("    ") or line.start_with?("\t")
-    if fence.empty? and !indented and deep and blank and !trimmed.empty?
+    deep = !trimmed.empty? and column(line) >= 4
+    if fence.empty? and !indented and deep and blank and !listed
       lines = lines.push("#{indent}/// ```text")
       indented = true
     elsif indented and !deep and !trimmed.empty?
@@ -552,23 +553,17 @@ def doc_lines(indent: String, doc: String) -> List[String]
       indented = false
     end
 
-    opener = ""
-    if trimmed.start_with?("```")
-      opener = "```"
-    elsif trimmed.start_with?("~~~")
-      opener = "~~~"
-    end
-
-    if !indented and !opener.empty?
-      if fence.empty?
-        if trimmed == opener
-          text = line.replace(opener, "#{opener}text")
-        end
-
-        fence = opener
-      elsif trimmed == fence
-        fence = ""
+    run = fence_run(trimmed)
+    if !indented and fence.empty? and run.length >= 3
+      if trimmed == run
+        text = line.replace(run, "#{run}text")
       end
+
+      fence = run
+    elsif !fence.empty? and trimmed == run and run.start_with?(fence.slice(0, 1)) and run.length >= fence.length
+      fence = ""
+    elsif fence.empty? and !indented and !trimmed.empty?
+      listed = list_item?(trimmed) or (listed and deep)
     end
 
     if text.empty?
@@ -585,6 +580,59 @@ def doc_lines(indent: String, doc: String) -> List[String]
   end
 
   return lines
+end
+
+# The column where the text of `line` starts, a tab moving to the next multiple of 4.
+def column(line: String) -> Int
+  at = 0
+  for c in line.split("")
+    if c == " "
+      at += 1
+    elsif c == "\t"
+      at = (at / 4 + 1) * 4
+    else
+      return at
+    end
+  end
+
+  return at
+end
+
+# The run of ` or ~ that `text` starts with ("" for none).
+def fence_run(text: String) -> String
+  if !text.start_with?("`") and !text.start_with?("~")
+    return ""
+  end
+
+  mark = text.slice(0, 1)
+  length = 0
+  for c in text.split("")
+    if c != mark
+      return text.slice(0, length)
+    end
+
+    length += 1
+  end
+
+  return text
+end
+
+# Whether `text` starts a Markdown list item: `- `, `* `, `+ ` or `N. `.
+def list_item?(text: String) -> Bool
+  if text.start_with?("- ") or text.start_with?("* ") or text.start_with?("+ ")
+    return true
+  end
+
+  digits = 0
+  for c in text.split("")
+    if c.code < 48 or c.code > 57
+      return digits > 0 and text.slice(digits, 2) == ". "
+    end
+
+    digits += 1
+  end
+
+  return false
 end
 
 # `text` as a Rust string literal.
