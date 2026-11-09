@@ -4,6 +4,7 @@
 use core::ffi::{c_char, c_int, c_void};
 use std::cell::RefCell;
 
+use crate::Arity;
 use crate::sys::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -15,7 +16,20 @@ pub enum V {
     Str(Vec<u8>),
     Bytes(Vec<u8>),
     List(Vec<V>),
+    Map(Vec<(V, V)>),
+    None,
+    Some(Box<V>),
+    Ok(Box<V>),
+    Err(String),
+    Struct(u32, Vec<V>),
+    Enum(u32, u32, Vec<V>),
+    Resource(u32, *mut c_void),
 }
+
+/// The type table of the mock module: row 0 a struct of two fields (Point), row 1 an enum whose variant 0 has no
+/// payload and variant 1 one (Shape). It has one resource row.
+pub const TYPES: &[Arity] = &[Arity::Struct(2), Arity::Enum(&[0, 1])];
+pub const RESOURCE_ROWS: u32 = 1;
 
 /// The env of one mock call. It starts with the table pointer, as the VM's does.
 #[repr(C)]
@@ -26,6 +40,8 @@ pub struct MockEnv {
     values: RefCell<Vec<(V, bool)>>,
     dirty: bool,
     pub failure: RefCell<Option<String>>,
+    /// The states that resource_new gave: (row, state), for the free functions of a test.
+    pub states: RefCell<Vec<(u32, *mut c_void)>>,
     // The List of the first builder begun: the root list of a short call.
     first_builder: RefCell<Option<u64>>,
 }
@@ -38,6 +54,7 @@ impl MockEnv {
             values: RefCell::new(Vec::new()),
             dirty,
             failure: RefCell::new(None),
+            states: RefCell::new(Vec::new()),
             first_builder: RefCell::new(None),
         })
     }
@@ -76,6 +93,15 @@ impl MockEnv {
     }
 }
 
+impl Drop for MockEnv {
+    fn drop(&mut self) {
+        for (_, state) in self.states.borrow_mut().drain(..) {
+            // SAFETY: resource_new made each state with Box::into_raw of a u64, and only this drop frees it.
+            drop(unsafe { Box::from_raw(state as *mut u64) });
+        }
+    }
+}
+
 fn me<'a>(e: *mut an_env) -> &'a MockEnv {
     unsafe { &*(e as *const MockEnv) }
 }
@@ -85,10 +111,14 @@ fn fail(e: *mut an_env, message: String) -> an_term {
     made(e, V::Void)
 }
 
-/// A value that a constructor of the call made. As in the VM, a scalar and Void need no memory, so a dirty call does
-/// not stage them and its getters read them.
+/// A value that a constructor of the call made. As in the VM, a scalar, Void, none and a variant without a payload
+/// need no memory, so a dirty call does not stage them and its getters read them.
 fn made(e: *mut an_env, v: V) -> an_term {
-    let staged = !matches!(v, V::Int(_) | V::Float(_) | V::Bool(_) | V::Void);
+    let staged = match &v {
+        V::Int(_) | V::Float(_) | V::Bool(_) | V::Void | V::None => false,
+        V::Enum(_, _, payload) => !payload.is_empty(),
+        _ => true,
+    };
     me(e).push(v, staged)
 }
 
@@ -218,6 +248,108 @@ unsafe extern "C" fn list_next(e: *mut an_env, c: *mut an_list_cursor, item: *mu
     unsafe { (*item, (*c).opaque[1]) = (part(e, t, v.clone()), at + 1) };
     true
 }
+/// A key is an Int, a String or a Bytes; another fails the call.
+fn key_kind(e: *mut an_env, key: &V) -> bool {
+    let ok = matches!(key, V::Int(_) | V::Str(_) | V::Bytes(_));
+    if !ok {
+        fail(e, "a Map key is an Int, a String or a Bytes".into());
+    }
+    ok
+}
+unsafe extern "C" fn map_from(e: *mut an_env, keys: *const an_term, values: *const an_term, n: usize) -> an_term {
+    // As the VM does: each pair put in order, so a later one of a key replaces the earlier.
+    let mut pairs: Vec<(V, V)> = Vec::new();
+    for (key, value) in values_at(e, keys, n).into_iter().zip(values_at(e, values, n)) {
+        if !key_kind(e, &key) {
+            return made(e, V::Void);
+        }
+        match pairs.iter_mut().find(|(k, _)| *k == key) {
+            Some(pair) => pair.1 = value,
+            None => pairs.push((key, value)),
+        }
+    }
+    made(e, V::Map(pairs))
+}
+unsafe extern "C" fn map_put(e: *mut an_env, map: an_term, key: an_term, value: an_term) -> an_term {
+    let V::Map(mut pairs) = me(e).get(map) else {
+        return fail(e, "map_put of a non-map".into());
+    };
+    let (key, value) = (me(e).get(key), me(e).get(value));
+    if !key_kind(e, &key) {
+        return made(e, V::Void);
+    }
+    match pairs.iter_mut().find(|(k, _)| *k == key) {
+        Some(pair) => pair.1 = value,
+        None => pairs.push((key, value)),
+    }
+    made(e, V::Map(pairs))
+}
+unsafe extern "C" fn map_get(e: *mut an_env, map: an_term, key: an_term, value: *mut an_term) -> bool {
+    if !me(e).readable(map) || !me(e).readable(key) {
+        return false;
+    }
+    let (V::Map(pairs), key) = (me(e).get(map), me(e).get(key)) else {
+        return false;
+    };
+    let Some((_, v)) = pairs.into_iter().find(|(k, _)| *k == key) else {
+        return false;
+    };
+    unsafe { *value = part(e, map, v) };
+    true
+}
+unsafe extern "C" fn map_cursor(e: *mut an_env, t: an_term, c: *mut an_map_cursor, len: *mut usize) -> bool {
+    if !me(e).readable(t) {
+        return false;
+    }
+    let V::Map(pairs) = me(e).get(t) else { return false };
+    unsafe { ((*c).opaque[0], (*c).opaque[1], *len) = (t.opaque[0], 0, pairs.len()) };
+    true
+}
+unsafe extern "C" fn map_next(e: *mut an_env, c: *mut an_map_cursor, key: *mut an_term, value: *mut an_term) -> bool {
+    let (map, at) = unsafe { ((*c).opaque[0], (*c).opaque[1]) };
+    let t = an_term { opaque: [map, 0] };
+    let V::Map(pairs) = me(e).get(t) else { return false };
+    let Some((k, v)) = pairs.get(at as usize) else {
+        return false;
+    };
+    unsafe { (*key, *value, (*c).opaque[1]) = (part(e, t, k.clone()), part(e, t, v.clone()), at + 1) };
+    true
+}
+unsafe extern "C" fn make_none(e: *mut an_env) -> an_term {
+    made(e, V::None)
+}
+unsafe extern "C" fn make_some(e: *mut an_env, value: an_term) -> an_term {
+    made(e, V::Some(Box::new(me(e).get(value))))
+}
+unsafe extern "C" fn get_optional(e: *mut an_env, t: an_term, some: *mut bool, value: *mut an_term) -> bool {
+    if !me(e).readable(t) {
+        return false;
+    }
+    match me(e).get(t) {
+        V::None => unsafe { *some = false },
+        V::Some(v) => unsafe { (*some, *value) = (true, part(e, t, *v)) },
+        _ => return false,
+    }
+    true
+}
+unsafe extern "C" fn make_ok(e: *mut an_env, value: an_term) -> an_term {
+    made(e, V::Ok(Box::new(me(e).get(value))))
+}
+unsafe extern "C" fn make_error(e: *mut an_env, message: *const c_char, len: usize) -> an_term {
+    let text = String::from_utf8_lossy(unsafe { bytes(message as *const u8, len) }).into_owned();
+    made(e, V::Err(text))
+}
+unsafe extern "C" fn get_result(e: *mut an_env, t: an_term, ok: *mut bool, value: *mut an_term) -> bool {
+    if !me(e).readable(t) {
+        return false;
+    }
+    match me(e).get(t) {
+        V::Ok(v) => unsafe { (*ok, *value) = (true, part(e, t, *v)) },
+        V::Err(m) => unsafe { (*ok, *value) = (false, part(e, t, V::Str(m.into_bytes()))) },
+        _ => return false,
+    }
+    true
+}
 unsafe extern "C" fn raise(e: *mut an_env, message: *const c_char) -> an_term {
     let text = unsafe { std::ffi::CStr::from_ptr(message) }.to_string_lossy().into_owned();
     fail(e, text)
@@ -225,62 +357,74 @@ unsafe extern "C" fn raise(e: *mut an_env, message: *const c_char) -> an_term {
 unsafe extern "C" fn badarg(e: *mut an_env, index: c_int) -> an_term {
     fail(e, format!("argument {} is not valid", index + 1))
 }
-
-// The parts of the API that the crate does not wrap yet: each fails the call.
-unsafe extern "C" fn map_from(e: *mut an_env, _: *const an_term, _: *const an_term, _: usize) -> an_term {
-    fail(e, "map_from".into())
+// The constructors read as many terms as the row takes, as the VM does: the test fails if Env passed fewer.
+unsafe extern "C" fn make_struct(e: *mut an_env, type_: u32, fields: *const an_term) -> an_term {
+    let Some(&Arity::Struct(n)) = TYPES.get(type_ as usize) else {
+        return fail(e, "not a struct row".into());
+    };
+    made(e, V::Struct(type_, values_at(e, fields, n)))
 }
-unsafe extern "C" fn map_put(e: *mut an_env, _: an_term, _: an_term, _: an_term) -> an_term {
-    fail(e, "map_put".into())
+unsafe extern "C" fn get_field(e: *mut an_env, t: an_term, type_: u32, field: u32, out: *mut an_term) -> bool {
+    if !me(e).readable(t) {
+        return false;
+    }
+    let V::Struct(row, fields) = me(e).get(t) else {
+        return false;
+    };
+    let Some(v) = fields.get(field as usize).filter(|_| row == type_) else {
+        return false;
+    };
+    unsafe { *out = part(e, t, v.clone()) };
+    true
 }
-unsafe extern "C" fn map_get(_: *mut an_env, _: an_term, _: an_term, _: *mut an_term) -> bool {
-    false
+unsafe extern "C" fn make_enum(e: *mut an_env, type_: u32, variant: u32, payload: *const an_term) -> an_term {
+    let Some(&n) = TYPES.get(type_ as usize).and_then(|row| match row {
+        Arity::Enum(variants) => variants.get(variant as usize),
+        Arity::Struct(_) => None,
+    }) else {
+        return fail(e, "not a variant of an enum row".into());
+    };
+    assert!(n == 0 || !payload.is_null(), "a missing payload");
+    made(e, V::Enum(type_, variant, values_at(e, payload, n)))
 }
-unsafe extern "C" fn map_cursor(_: *mut an_env, _: an_term, _: *mut an_map_cursor, _: *mut usize) -> bool {
-    false
+unsafe extern "C" fn get_variant(e: *mut an_env, t: an_term, type_: u32, variant: *mut u32) -> bool {
+    read(e, t, variant, |v| match v {
+        V::Enum(row, variant, _) if row == type_ => Some(variant),
+        _ => None,
+    })
 }
-unsafe extern "C" fn map_next(_: *mut an_env, _: *mut an_map_cursor, _: *mut an_term, _: *mut an_term) -> bool {
-    false
+unsafe extern "C" fn get_payload(e: *mut an_env, t: an_term, type_: u32, k: u32, out: *mut an_term) -> bool {
+    if !me(e).readable(t) {
+        return false;
+    }
+    let V::Enum(row, _, payload) = me(e).get(t) else {
+        return false;
+    };
+    let Some(v) = payload.get(k as usize).filter(|_| row == type_) else {
+        return false;
+    };
+    unsafe { *out = part(e, t, v.clone()) };
+    true
 }
-unsafe extern "C" fn make_none(e: *mut an_env) -> an_term {
-    fail(e, "make_none".into())
+unsafe extern "C" fn resource_new(e: *mut an_env, type_: u32, out: *mut an_term) -> *mut c_void {
+    if type_ >= RESOURCE_ROWS {
+        unsafe { *out = fail(e, "not a resource row".into()) };
+        return core::ptr::null_mut();
+    }
+    let state = Box::into_raw(Box::new(0u64)) as *mut c_void;
+    me(e).states.borrow_mut().push((type_, state));
+    unsafe { *out = made(e, V::Resource(type_, state)) };
+    state
 }
-unsafe extern "C" fn make_some(e: *mut an_env, _: an_term) -> an_term {
-    fail(e, "make_some".into())
-}
-unsafe extern "C" fn get_optional(_: *mut an_env, _: an_term, _: *mut bool, _: *mut an_term) -> bool {
-    false
-}
-unsafe extern "C" fn make_ok(e: *mut an_env, _: an_term) -> an_term {
-    fail(e, "make_ok".into())
-}
-unsafe extern "C" fn make_error(e: *mut an_env, _: *const c_char, _: usize) -> an_term {
-    fail(e, "make_error".into())
-}
-unsafe extern "C" fn get_result(_: *mut an_env, _: an_term, _: *mut bool, _: *mut an_term) -> bool {
-    false
-}
-unsafe extern "C" fn make_struct(e: *mut an_env, _: u32, _: *const an_term) -> an_term {
-    fail(e, "make_struct".into())
-}
-unsafe extern "C" fn get_field(_: *mut an_env, _: an_term, _: u32, _: u32, _: *mut an_term) -> bool {
-    false
-}
-unsafe extern "C" fn make_enum(e: *mut an_env, _: u32, _: u32, _: *const an_term) -> an_term {
-    fail(e, "make_enum".into())
-}
-unsafe extern "C" fn get_variant(_: *mut an_env, _: an_term, _: u32, _: *mut u32) -> bool {
-    false
-}
-unsafe extern "C" fn get_payload(_: *mut an_env, _: an_term, _: u32, _: u32, _: *mut an_term) -> bool {
-    false
-}
-unsafe extern "C" fn resource_new(e: *mut an_env, _: u32, out: *mut an_term) -> *mut c_void {
-    unsafe { *out = fail(e, "resource_new".into()) };
-    core::ptr::null_mut()
-}
-unsafe extern "C" fn get_resource(_: *mut an_env, _: an_term, _: u32, _: *mut *mut c_void) -> bool {
-    false
+unsafe extern "C" fn get_resource(e: *mut an_env, t: an_term, type_: u32, state: *mut *mut c_void) -> bool {
+    // A resource that the call made is never an argument of it.
+    if me(e).values.borrow()[t.opaque[0] as usize].1 {
+        return false;
+    }
+    read(e, t, state, |v| match v {
+        V::Resource(row, state) if row == type_ => Some(state),
+        _ => None,
+    })
 }
 
 static API: an_api = an_api {
