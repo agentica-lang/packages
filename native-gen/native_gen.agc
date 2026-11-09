@@ -112,15 +112,17 @@ end
 ## A new native module at `path` (`demo`, or `pkg/demo` in the folder `pkg`): writes `NAME.agc` with an `extern
 ## module "NAME"` block, `native/NAME.c` with a body per function that fails the call until it is written, the header
 ## made from the `.agc`, and the `[native.NAME]` entry of the folder's `agentica.toml`, which it makes when there is
-## none. It writes nothing when one of those files, or the entry, is there already (`[NATIVE-GEN-EXISTS]`).
-export def scaffold(path: String, lang: String = "c") -> Result[Void]
+## none. It writes nothing when one of those files, or the entry, is there already (`[NATIVE-GEN-EXISTS]`). With
+## `rust`, it writes a Rust module instead: `NAME.agc` and the crate `rust/` at the package root, the nearest folder up
+## with an `agentica.toml` (the folder of `path` when there is none, which then gets one), and no entry.
+export def scaffold(path: String, rust: Bool = false) -> Result[Void]
   name = last_part(path)
   folder = path.slice(0, path.length - name.length)
   if folder.empty?
     folder = "./"
   end
 
-  if lang == "rust"
+  if rust
     return scaffold_rust(folder, name)
   end
 
@@ -157,9 +159,11 @@ export def scaffold(path: String, lang: String = "c") -> Result[Void]
   return io(manifest, File.write_text(manifest, toml))
 end
 
-# The Rust module `name` in `folder`: `NAME.agc`, the crate `rust/` with the Rust file made from the new `.agc`, and an
-# `agentica.toml` with the name when the folder has none. It adds no `[native.NAME]` entry: `build` adds the one of
-# the system with the library it built. As for C, it writes only new files, all made before the first write.
+# The Rust module `name` in `folder`: `NAME.agc` there, and the crate `rust/` at the package root, with the Rust file
+# made from the new `.agc`. The root is the nearest folder up from `folder` with an `agentica.toml`, as for `build`;
+# with none, it is `folder`, which gets an `agentica.toml` with the name. An `agentica.toml` that is there is never
+# written. It adds no `[native.NAME]` entry: `build` adds the one of the system with the library it built. As for C,
+# it writes only new files, all made before the first write.
 def scaffold_rust(folder: String, name: String) -> Result[Void]
   problem = Scaffold.rust_name_problem(name)
   if !problem.empty?
@@ -167,7 +171,8 @@ def scaffold_rust(folder: String, name: String) -> Result[Void]
   end
 
   program = "#{folder}#{name}.agc"
-  crate = "#{folder}rust"
+  root = package_root(program).unwrap_or(folder)
+  crate = "#{root}rust"
   files = [
     program,
     "#{crate}/Cargo.toml",
@@ -182,18 +187,20 @@ def scaffold_rust(folder: String, name: String) -> Result[Void]
     end
   end
 
-  manifest = "#{folder}agentica.toml"
+  manifest = "#{root}agentica.toml"
+  kept_manifest = File.stat(manifest).ok?
   toml = try manifest_with(manifest, name, "")
   text = Scaffold.rust_program(name)
   block = try block_in(Analysis.Workspace(version: 1, buffers: {program: text}), program)
   made = try rust_of(block, "", program)
   texts = [text, Scaffold.cargo_toml(name), Scaffold.gitignore(), Scaffold.lib_rs(name), made]
   try io("#{crate}/src", Dir.mkdir("#{crate}/src"))
+  try io(folder, Dir.mkdir(folder))
   for at in 0...files.size
     try io(files[at], File.write_text(files[at], texts[at]))
   end
 
-  if File.read_text(manifest).unwrap_or("") == toml
+  if kept_manifest
     return ok()
   end
 

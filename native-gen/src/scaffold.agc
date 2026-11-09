@@ -45,6 +45,11 @@ export def rust_name_problem(name: String) -> String
     return "a Rust module name cannot be a Rust keyword or the name of a crate of Rust (fn, test, std and the like)"
   end
 
+  # `NAME_native`, the module of the Rust file, must be snake case for rustc's lint.
+  if problem.empty? and (name.end_with?("_") or name.include?("__"))
+    return "a Rust module name does not end with _ or hold __, so NAME_native is snake case"
+  end
+
   return problem
 end
 
@@ -96,9 +101,10 @@ export def gitignore() -> String
 end
 
 ## The `src/lib.rs` of the Rust module `name`: the method of the example function fails the call until it is written.
+## The type that implements the trait is `Functions` whatever the name, so no name (`raise`, `result`, `self_`) makes
+## a type that clashes with an import or the prelude, and no list of such names has to be kept.
 export def lib_rs(name: String) -> String
   trait_name = RustSide.trait_name(name)
-  type_name = trait_name.slice(0, trait_name.length - "Native".length)
   return [
     "//! The Rust side of #{name}.agc, on the file `src/#{name}_native.rs` that native-gen makes from its block. Each",
     "//! function fails the call until it is written.",
@@ -110,15 +116,15 @@ export def lib_rs(name: String) -> String
     "",
     "use crate::#{name}_native::{#{trait_name}, module};",
     "",
-    "struct #{type_name};",
+    "struct Functions;",
     "",
-    "impl #{trait_name} for #{type_name} {",
+    "impl #{trait_name} for Functions {",
     "    fn add(_env: Env<'_>, _a: i64, _b: i64) -> Result<i64, Raise> {",
     "        Err(Raise::new(\"not written yet\"))",
     "    }",
     "}",
     "",
-    "agentica_native::export!(module::<#{type_name}>());",
+    "agentica_native::export!(module::<Functions>());",
     "",
   ].join("\n")
 end

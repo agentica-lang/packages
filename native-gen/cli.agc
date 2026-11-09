@@ -45,7 +45,7 @@ def main() -> Void
   done = ok()
   if !args.empty? and args[0] == "new"
     options = OP.run!(new_options(args.drop(1)))
-    done = NativeGen.scaffold(options.path, options.lang)
+    done = NativeGen.scaffold(options.path, options.lang == "rust")
   elsif !args.empty? and args[0] == "build"
     done = built(OP.run!(build_options(args.drop(1))))
   else
