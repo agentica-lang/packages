@@ -9,9 +9,9 @@ cache = { git = "https://github.com/agentica-lang/packages", tag = "cache-0.1.0"
 
 | Package | What it is |
 |---|---|
-| `bond-channels` (in progress) | Action Cable (`actioncable-v1-json`) channels for Bond apps: one WebSocket per tab at `/cable`, channels and a pub/sub hub. The frames, the hub, the connections and the Turbo Streams signing are in (`bond-channels/channels.agc`). [#1](https://github.com/agentica-lang/packages/issues/1) has the plan |
-| `prop` (in progress) | Property-based testing: generators, shrinking, `Prop.check`, which runs a law on generated inputs and reports the smallest counterexample with its seed, law helpers, `Prop.of` for your types and a bounded exhaustive check. [#12](https://github.com/agentica-lang/packages/issues/12) has the plan |
-| `native-gen` (in progress) | The C header of an `extern module` block: typed prototypes, the argument checks and the tables of the module, generated from the `.agc` (`native-gen/cli.agc`). [#11](https://github.com/agentica-lang/packages/issues/11) has the plan |
+| `bond-channels` (`bond-channels-0.2.1`) | Action Cable (`actioncable-v1-json`) channels for Bond apps: one WebSocket per tab at `/cable`, channels and a pub/sub hub, with the frames, the connections and the Turbo Streams signing (`bond-channels/channels.agc`). [Docs](https://agentica-lang.github.io/packages/bond-channels/) |
+| `prop` (`prop-0.1.0`) | Property-based testing: generators, shrinking, `Prop.check`, which runs a law on generated inputs and reports the smallest counterexample with its seed, law helpers, `Prop.of` for your types and a bounded exhaustive check. [Docs](https://agentica-lang.github.io/packages/prop/) |
+| `native-gen` (`native-gen-0.1.0`) | The C header of an `extern module` block: typed prototypes, the argument checks, the codecs and the tables of the module, generated from the `.agc`, and `new` to start a module. [Docs](https://agentica-lang.github.io/packages/native-gen/) |
 | `cache` (planned) | Cache strategies (CLOCK, sampled LRU, TinyLFU) behind the `Cache` facade of `std/cache` |
 
 ## Tags
