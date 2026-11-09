@@ -22,7 +22,7 @@ end
 falsified after 1 run, shrunk to [0,-1], seed 1234: expected [0,-1], got [-1,0]
 ```
 
-The law "a reversed list is the same list" is false. `check` shrank the first list that broke it to the smallest one it found, `[0,-1]`, and gives the seed that replays the run.
+`Prop.check` runs the block on 100 generated lists (`Prop.Config` changes the count), and the block returns a `Result[Void]`: `Prop.eq(actual, expected)` gives `ok()` when the two are equal and an `error` that shows both when they are not. The law "a reversed list is the same list" is false. `check` shrank the first list that broke it to the smallest one it found, `[0,-1]`, and gives the seed that replays the run.
 
 In a test, return the result of `check`. A test is a function whose name starts with `test_`, in a file of `test/` that ends in `_test.agc`:
 
@@ -55,7 +55,7 @@ The releases and their notes are in the [changelog](https://github.com/agentica-
 
 ## Reference
 
-Everything is under `Prop`, from `import Prop from "pkg/prop/prop"`. Each function has a short example on its page.
+Everything is under `Prop`, from `import Prop from "pkg/prop/prop"`. Each page lists its functions.
 
 | Page | Functions |
 |---|---|
