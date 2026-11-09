@@ -1,8 +1,9 @@
 Feature: The C header of an extern module block
   `cli.agc FILE` writes the C header of the one `extern module` block of FILE: typed prototypes for the C author and,
   under `PREFIX_NATIVE_IMPLEMENTATION`, the wrappers and tables of the module. The fixtures are packages whose C file
-  is written on the committed header: `stats` is agentica's examples/native_module, `kinds` has every argument kind
-  that the header decodes, the names it changes, a compute def and a resource.
+  is written on that header: `stats` is agentica's examples/native_module, with its header committed as the golden;
+  `kinds` has every argument kind that the header decodes, the names it changes, a compute def and a resource, and a
+  step makes its header before the build.
 
   Scenario Outline: The committed header of <name> is the one its .agc gives
     Given the program argument "fixtures/<name>/<name>.agc"
@@ -15,7 +16,6 @@ Feature: The C header of an extern module block
     Examples:
       | name  |
       | stats |
-      | kinds |
 
   Scenario Outline: The stats module on the header, built as <language>, gives the output of the hand-written one
     Given a fresh package cache
@@ -40,6 +40,7 @@ Feature: The C header of an extern module block
   Scenario Outline: Every kind of argument reaches the C function, built as <language>
     Given a fresh package cache
     And the environment variable "CC" is "<cc>"
+    And the header of the fixture "kinds"
     And the Agentica program "fixtures/kinds/kinds.agc"
     Then the program exits with code 0 within 25000 milliseconds
     And stdout is:
@@ -141,7 +142,7 @@ Feature: The C header of an extern module block
   Scenario: --check fails when the header is not the one the file gives
     Given the program argument "fixtures/stats/stats.agc"
     And the program argument "--output"
-    And the program argument "fixtures/kinds/native/kinds_native.h"
+    And the program argument "fixtures/stats/native/stats.c"
     And the program argument "--check"
     And the Agentica program "../cli.agc"
     Then the program exits with code 1 within 25000 milliseconds

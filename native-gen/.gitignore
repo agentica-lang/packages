@@ -1,0 +1,4 @@
+# The headers of the fixtures are made by the step that builds them (specs/steps.agc); stats keeps a committed
+# golden, which `--check` compares.
+specs/fixtures/*/native/*_native.h
+!specs/fixtures/stats/native/stats_native.h

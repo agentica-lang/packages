@@ -1,8 +1,10 @@
 ## The steps of `header.feature`. The command runs as a program under test; the steps here give a scenario a package
-## cache of its own, so a native build never reuses or leaves an entry in the user's cache, and a folder for the header
-## that `--output` writes. Both folders are removed when the scenario ends.
+## cache of its own, so a native build never reuses or leaves an entry in the user's cache, a folder for the header
+## that `--output` writes (both removed when the scenario ends), and the header of a fixture package, made before it is
+## built, so only one golden header is committed.
 
 import BDD from "std/bdd"
+import NativeGen from "../native_gen"
 
 # The name in the context of the header file that `--output` writes.
 WRITTEN = "written"
@@ -18,7 +20,25 @@ def main() -> Void
     BDD.step("a fresh package cache", &fresh_cache),
     BDD.step("the header goes to a fresh folder as {string}", &fresh_output),
     BDD.step("the written header includes:", &written_header),
+    BDD.step("the header of the fixture {string}", &fixture_header),
   ])
+end
+
+# Writes `fixtures/NAME/native/NAME_native.h` from `fixtures/NAME/NAME.agc` (git ignores it). A step runs in the folder
+# that `agentica test` ran in, the package or specs/, while the paths of the feature are from specs/.
+def fixture_header(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  base = "fixtures/#{args[0]}"
+  if File.stat("specs/header.feature").ok?
+    base = "specs/#{base}"
+  end
+
+  made = NativeGen.header("#{base}/#{args[0]}.agc")
+  if !made.ok?
+    return BDD.assert(ctx, false, made.message)
+  end
+
+  written = File.write_text("#{base}/native/#{args[0]}_native.h", made.unwrap!)
+  return BDD.assert(ctx, written.ok?, "cannot write the header of #{args[0]}: #{written.message}")
 end
 
 def fresh_cache(ctx: BDD.Context, _args: List[String]) -> BDD.Context
