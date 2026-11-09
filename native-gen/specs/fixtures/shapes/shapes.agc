@@ -42,6 +42,8 @@ extern module "shapes"
   def misread_nested(value: Label) -> Label
   ## Builds a Circle whose Point has a String `x` and reads it: the call fails at `Shape.Circle.0.x`.
   def misread_payload(value: Shape) -> Shape
+  ## The Label of `misread_nested`, given back without reading it, for the wrapper of `echo_label` to read.
+  def bad_label(value: Label) -> Label
 end
 
 def main() -> Void
@@ -61,6 +63,8 @@ def main() -> Void
     puts(misread(point, [1, 2]))
   elsif call == "misread_nested"
     puts(misread_nested(label))
+  elsif call == "echo_label"
+    puts(echo_label(bad_label(label)))
   elsif call == "misread_payload"
     puts(misread_payload(Shape.Dot))
   else

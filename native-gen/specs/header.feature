@@ -94,12 +94,14 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                                | call           | path                           |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread        | Point: expected Point          |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested | Label.at.x: expected Int       |
-      | C++      | sh ../cxx.sh                      | misread_nested | Label.at.x: expected Int       |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_payload | Shape.Circle.0.x: expected Int |
-      | C++      | sh ../cxx.sh                      | misread_payload | Shape.Circle.0.x: expected Int |
+      | language | cc                                | call            | path                                 |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread         | Point: expected Point                |
+      | C++      | sh ../cxx.sh                      | misread         | Point: expected Point                |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested  | Label.at.x: expected Int             |
+      | C++      | sh ../cxx.sh                      | misread_nested  | Label.at.x: expected Int             |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | echo_label      | argument 1: Label.at.x: expected Int |
+      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_payload | Shape.Circle.0.x: expected Int       |
+      | C++      | sh ../cxx.sh                      | misread_payload | Shape.Circle.0.x: expected Int       |
 
   Scenario: The bench of a struct of 26 fields runs
     Given a fresh package cache
