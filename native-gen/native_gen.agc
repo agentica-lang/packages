@@ -54,8 +54,8 @@ export def scaffold(path: String) -> Result[Void]
     end
   end
 
-  # Every text is made before the first write, the header from the new .agc as a buffer, so a refusal or a failure
-  # leaves the folder as it was.
+  # Every text is made before the first write, the header from the new .agc as a buffer, so a refusal, or a failure
+  # while making them, leaves the folder as it was; a write that fails midway leaves the files written before it.
   toml = try manifest_with(manifest, name, Scaffold.entry(name, names))
   text = Scaffold.program(name)
   made = try header_in(Analysis.Workspace(version: 1, buffers: {program: text}), program, "")

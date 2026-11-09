@@ -29,6 +29,8 @@ def main() -> Void
     BDD.step("native new {string} in the fresh folder", &new_module),
     BDD.step("the agentica.toml of the fresh folder starts with:", &manifest_start),
     BDD.step("the fresh folder has no {string}", &missing),
+    BDD.step("the agentica.toml of the fresh folder still has only the line {string}", &manifest_kept),
+    BDD.step("the header of {string} in the fresh folder passes --check", &header_kept),
     BDD.step("the program argument {string} in the fresh folder", &argument_in_folder),
     BDD.step("the Agentica program {string} in the fresh folder", &program_in_folder),
     BDD.step("the C compiler builds as {string}", &compiler),
@@ -73,7 +75,27 @@ def manifest_step(ctx: BDD.Context, _args: List[String]) -> BDD.Context
 end
 
 def manifest_line(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  return file_written(ctx, "name = \"pkg\"\n#{args[0]}\n")
+  return file_written(ctx, line_manifest(args[0]))
+end
+
+def manifest_kept(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  text = File.read_text(in_folder(ctx, "agentica.toml")).unwrap_or("")
+  return BDD.assert(ctx, text == line_manifest(args[0]), "agentica.toml changed: #{text}")
+end
+
+# The agentica.toml of a package named pkg with `line` after its name.
+def line_manifest(line: String) -> String
+  return "name = \"pkg\"\n#{line}\n"
+end
+
+# What `--check` does for `NAME.agc` of the fresh folder and `native/NAME_native.h`: the header made from the file on
+# disk is the one written.
+def header_kept(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  file = args[0]
+  name = file.slice(0, file.length - ".agc".length)
+  made = NativeGen.header(in_folder(ctx, file))
+  written = File.read_text(in_folder(ctx, "native/#{name}_native.h"))
+  return BDD.assert(ctx, made.ok? and written.ok? and made.unwrap! == written.unwrap!, "the header is stale")
 end
 
 def file_written(ctx: BDD.Context, text: String) -> BDD.Context

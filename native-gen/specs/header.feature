@@ -207,6 +207,7 @@ Feature: The C header of an extern module block
     And the C compiler builds as "<language>"
     And a fresh folder
     And native new "demo" in the fresh folder
+    And the header of "demo.agc" in the fresh folder passes --check
     And the Agentica program "demo.agc" in the fresh folder
     Then the program exits with code 1 within 25000 milliseconds
     And stderr includes:
@@ -257,6 +258,8 @@ Feature: The C header of an extern module block
       [NATIVE-GEN-EXISTS]
       """
     And the fresh folder has no "demo.agc"
+    And the fresh folder has no "native"
+    And the agentica.toml of the fresh folder still has only the line "<form>"
 
     Examples:
       | form                                  |
