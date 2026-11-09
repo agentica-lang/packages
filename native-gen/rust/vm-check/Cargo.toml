@@ -9,4 +9,4 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-agentica-native = { path = ".." }
+agentica-native = { path = "../../native/agentica-native" }

@@ -16,4 +16,4 @@ kinds = []
 shapes2 = []
 
 [dependencies]
-agentica-native = { path = ".." }
+agentica-native = { path = "../../native/agentica-native" }
