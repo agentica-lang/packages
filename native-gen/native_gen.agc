@@ -9,8 +9,8 @@
 ##
 ## An error starts with its code in brackets: `[NATIVE-GEN-NAME] ...` when two names map to one C identifier,
 ## `[NATIVE-GEN-PREFIX]`, `[NATIVE-GEN-BLOCK]`, `[NATIVE-GEN-UNKNOWN]`, `[NATIVE-GEN-EXISTS]`, `[NATIVE-GEN-MANIFEST]`,
-## `[NATIVE-GEN-STALE]`, `[NATIVE-GEN-CARGO]`, `[NATIVE-GEN-IO]`, or the code of the diagnostic when the file does not
-## check.
+## `[NATIVE-GEN-STALE]`, `[NATIVE-GEN-CARGO]`, `[NATIVE-GEN-OS]`, `[NATIVE-GEN-IO]`, or the code of the diagnostic
+## when the file does not check.
 
 import Analysis from "std/analysis"
 import Toml from "std/toml"
@@ -23,6 +23,8 @@ import Scaffold from "src/scaffold"
 # How long cargo may build, and the bytes of one read of a copy.
 CARGO_MS = 3_600_000
 CHUNK = 1_048_576
+# The most bytes that `File.replace` writes.
+REPLACE_MAX = 16_777_216
 
 ## The header of the one `extern module` block of the file at `path`. Its C names start with `prefix`, by default the
 ## last part of the block's library name up to its first `.` (`stats` for "stats" and for "native/stats.so").
@@ -38,14 +40,15 @@ export def rust(path: String, prefix: String = "") -> Result[String]
   return rust_of(block, prefix, path)
 end
 
-## Builds the Rust module of the file at `path` (`FOLDER/NAME.agc`) from the crate `FOLDER/rust/`: writes its Rust file
-## `rust/src/LIBRARY_native.rs` when it changed, runs `cargo build --release`, copies the library to the file of the
-## `[native.LIBRARY]` entry of `FOLDER/agentica.toml` for this system, and adds that entry when it is missing
-## (`native/libLIBRARY.so` on linux). It gives one line per step, what it did or that it had nothing to do. With
-## `check`, it only fails (`[NATIVE-GEN-STALE]`) when the Rust file is not the one the `.agc` gives.
+## Builds the Rust module of the file at `path` from the crate `rust/` at the root of its package, the nearest folder
+## up from the file with an `agentica.toml`: writes its Rust file `rust/src/LIBRARY_native.rs` when it changed, runs
+## `cargo build --release`, copies the library to the file of the `[native.LIBRARY]` entry of the root's
+## `agentica.toml` for this system, and adds that entry when it is missing (`native/libLIBRARY.so` on linux). It gives
+## one line per step, what it did or that it had nothing to do. With `check`, it only fails (`[NATIVE-GEN-STALE]`) when
+## the Rust file is not the one the `.agc` gives.
 export def build(path: String, check: Bool = false) -> Result[List[String]]
-  folder = path.slice(0, path.length - last_part(path).length)
-  block = try block_in(Analysis.Workspace(version: 1, buffers: unbuilt(folder)), path)
+  root = try package_root(path)
+  block = try block_in(Analysis.Workspace(version: 1, buffers: unbuilt(root)), path)
   name = block.library
   problem = Scaffold.name_problem(name)
   if !problem.empty?
@@ -55,7 +58,7 @@ export def build(path: String, check: Bool = false) -> Result[List[String]]
   end
 
   text = try rust_of(block, "", path)
-  crate = "#{folder}rust"
+  crate = "#{root}rust"
   source = "#{crate}/src/#{name}_native.rs"
   if check
     case File.read_text(source)
@@ -66,12 +69,10 @@ export def build(path: String, check: Bool = false) -> Result[List[String]]
   end
 
   if !File.stat("#{crate}/Cargo.toml").ok?
-    return error(
-      "[NATIVE-GEN-IO] #{crate}/Cargo.toml: no Rust crate; build needs it in rust/ beside #{last_part(path)}",
-    )
+    return error("[NATIVE-GEN-IO] #{crate}/Cargo.toml: no Rust crate; build needs it in rust/ at the package root")
   end
 
-  manifest = "#{folder}agentica.toml"
+  manifest = "#{root}agentica.toml"
   toml = try io(manifest, File.read_text(manifest))
   os = System.os()
   plan = try Build.plan(manifest, toml, name, os)
@@ -86,19 +87,22 @@ export def build(path: String, check: Bool = false) -> Result[List[String]]
   end
 
   built = try cargo(crate, extension)
-  library = "#{folder}#{plan.file}"
+  library = "#{root}#{plan.file}"
   if try copy(built, library)
     done = done.push("copied #{built} to #{library}")
   else
     done = done.push("#{library} is current")
   end
 
+  # The manifest is read again: an edit made while cargo ran is kept, with the entry planned on it.
+  now = try io(manifest, File.read_text(manifest))
+  final = try Build.replan(manifest, toml, plan, now, name, os)
   key = "native.#{name}.#{os}"
-  if plan.manifest == toml
+  if final.manifest == now
     return ok(done.push("#{manifest} has #{key}"))
   end
 
-  try io(manifest, File.replace(manifest, plan.manifest.bytes))
+  try io(manifest, File.replace(manifest, final.manifest.bytes))
   return ok(done.push("added #{key} to #{manifest}"))
 end
 
@@ -146,6 +150,32 @@ export def scaffold(path: String) -> Result[Void]
   return io(manifest, File.write_text(manifest, toml))
 end
 
+# The root of the package of the file at `path`, ending in `/`: the nearest folder up from the file that has an
+# `agentica.toml`.
+def package_root(path: String) -> Result[String]
+  file = try io(path, Path.resolve(path))
+  folder = parent(file)
+  while !folder.empty?
+    if File.stat("#{folder}/agentica.toml").ok?
+      return ok("#{folder}/")
+    end
+
+    folder = parent(folder)
+  end
+
+  return error("[NATIVE-GEN-IO] #{path}: no agentica.toml in its folder or above; build needs the package root")
+end
+
+# `path` without its last part and the separator before it ("" for a path of one part).
+def parent(path: String) -> String
+  length = path.length - last_part(path).length - 1
+  if length <= 0
+    return ""
+  end
+
+  return path.slice(0, length)
+end
+
 # The folder's `agentica.toml` without its `native` table, as a buffer: a library that is not built yet, or not for
 # this system, then does not stop the check of the `.agc`. No buffer without a manifest, or for one that is not TOML,
 # which the check reports.
@@ -177,6 +207,8 @@ end
 
 # Runs `cargo build --release` on the crate in the folder `crate` and gives the library it built, the file ending in
 # `extension`, from the messages cargo writes on stdout. Its errors and progress go to stderr as cargo writes them.
+# cargo runs in the current folder: `Process.spawn` takes no folder, and `spawn_captured`, which does, would hold
+# back cargo's errors until it ends. So a `.cargo/config.toml` of `rust/` applies only when build runs from there.
 def cargo(crate: String, extension: String) -> Result[String]
   args = [
     "build",
@@ -209,12 +241,22 @@ def cargo(crate: String, extension: String) -> Result[String]
   end
 end
 
-# Copies the file `from` to `to` through a new file beside it, unless `to` has its bytes already; true when it copied.
+# Copies the file `from` to `to`, unless `to` has its bytes already; true when it copied. A new `to` is written beside
+# it and renamed into place. An existing one is replaced in one step with `File.replace`, so a program that loads it
+# meanwhile sees the old library or the new one; a library over the 16 MiB of `File.replace` is removed and renamed
+# into place instead, which leaves a moment with no file.
 def copy(from: String, to: String) -> Result[Bool]
   hash = try io(from, File.sha256(from))
   kept = File.sha256(to)
   if kept.ok? and kept.unwrap! == hash
     return ok(false)
+  end
+
+  info = try io(from, File.stat(from))
+  if File.stat(to).ok? and info.size_bytes <= REPLACE_MAX
+    bytes = try read_all(from)
+    try io(to, File.replace(to, bytes))
+    return ok(true)
   end
 
   folder = to.slice(0, to.length - last_part(to).length)
@@ -238,6 +280,21 @@ def copy(from: String, to: String) -> Result[Bool]
   end
 
   return ok(true)
+end
+
+# The bytes of the file `from`, read 1 MiB at a time.
+def read_all(from: String) -> Result[Bytes]
+  input = try io(from, File.open(from))
+  parts: List[Bytes] = []
+  chunk = io(from, File.read_bytes(input, CHUNK))
+  while chunk.ok? and !chunk.unwrap!.empty?
+    parts = parts.push(chunk.unwrap!)
+    chunk = io(from, File.read_bytes(input, CHUNK))
+  end
+
+  _ = File.close(input)
+  try chunk
+  return ok(Bytes.concat(parts))
 end
 
 # Writes the bytes of the file `from` to the new file `to`, 1 MiB at a time.

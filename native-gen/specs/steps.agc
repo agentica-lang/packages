@@ -37,6 +37,23 @@ def main() -> Void
     BDD.step("the C compiler builds as {string}", &compiler),
     BDD.step("the file {string} in the fresh folder is:", &file_in_folder),
     BDD.step("the library of {string} on {string} is {string}", &library_file),
+    BDD.step("a fresh package with the Rust module in {string}", &rust_package),
+    BDD.step("a fake cargo on PATH that exits with {int} and prints:", &fake_cargo),
+    BDD.step("the file {string} in the fresh folder is removed", &removed),
+    BDD.step("the fresh folder has {string}", &present),
+    BDD.step("the fresh folder has the library of {string}", &library_present),
+    BDD.step("the agentica.toml of the fresh folder has the entry of {string}", &entry_present),
+    BDD.step("the agentica.toml of the fresh folder is {string}", &manifest_text),
+    BDD.step("the agentica.toml of the fresh folder is {string} with CRLF lines", &manifest_crlf),
+    BDD.step("the entry of {string} on {string} cannot be added: {string}", &entry_refused),
+    BDD.step(
+      "the entry of {string} on {string} added to the agentica.toml of the fresh folder has only CRLF lines",
+      &entry_crlf,
+    ),
+    BDD.step(
+      "the entry of {string} on {string}, planned before agentica.toml became {string}, gives {string}",
+      &replanned,
+    ),
     BDD.step("the entry of {string} on {string} added to the agentica.toml of the fresh folder gives:", &entry_added),
   ])
 end
@@ -141,16 +158,143 @@ end
 
 # The doc string as the file `args[0]` of the fresh folder, in a folder made for it.
 def file_in_folder(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  path = in_folder(ctx, args[0])
-  parts = path.split("/")
-  made = Dir.mkdir(parts.take(parts.size - 1).join("/"))
-  done = File.write_text(path, "#{BDD.doc_string(ctx)}\n")
-  return BDD.assert(ctx, made.ok? and done.ok?, "cannot write #{path}: #{done.message}")
+  done = written_in(ctx, args[0], "#{BDD.doc_string(ctx)}\n")
+  return BDD.assert(ctx, done.ok?, "cannot write #{args[0]}: #{done.message}")
 end
 
+# Writes `text` as the file `name` of the fresh folder, in a folder made for it.
+def written_in(ctx: BDD.Context, name: String, text: String) -> Result[Void]
+  path = in_folder(ctx, name)
+  parts = path.split("/")
+  try Dir.mkdir(parts.take(parts.size - 1).join("/"))
+  return File.write_text(path, text)
+end
+
+# The library of `args[0]` on `args[1]`, or the code in brackets that starts its error.
 def library_file(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  made = Build.library_file(args[0], args[1])
-  return BDD.assert(ctx, made.ok? and made.unwrap! == args[2], "the library is #{made}")
+  case Build.library_file(args[0], args[1])
+    ok(file) -> return BDD.assert(ctx, file == args[2], "the library is #{file}")
+    error(message) -> return BDD.assert(ctx, message.start_with?(args[2]), message)
+  end
+end
+
+# A fresh folder with a package of one Rust module, demo: its `.agc` at `args[0]`, and at the root `agentica.toml`
+# with only a name and `rust/Cargo.toml`.
+def rust_package(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  kept = folder_step(ctx, [])
+  block = "extern module \"demo\"\n  def add(a: Int, b: Int) -> Int\nend\n"
+  files = {args[0]: block, "agentica.toml": line_manifest(""), "rust/Cargo.toml": "[package]\nname = \"demo\"\n"}
+  for name in files.keys
+    done = written_in(kept, name, files.get(name, ""))
+    if !done.ok?
+      return BDD.assert(kept, false, done.message)
+    end
+  end
+
+  return kept
+end
+
+# A `cargo` in the folder bin/ of the fresh folder, the only folder of the program's PATH, that prints the doc string
+# and exits with `args[0]`. FOLDER in it is the fresh folder and EXT the ending of a library on this system; the
+# files libdemoEXT and libtwoEXT are made there.
+def fake_cargo(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  folder = "#{JSON.string(BDD.get(ctx, SCAFFOLD).unwrap!).unwrap!}/"
+  ext = Build.extension(System.os()).unwrap_or(".so")
+  text = BDD.doc_string(ctx).replace("FOLDER", folder.slice(0, folder.length - 1)).replace("EXT", ext)
+  lines = text.split("\n").map do |line: String| "printf '%s\\n' '#{line}'" end
+  script = "#!/bin/sh\n#{lines.join("\n")}\nexit #{args[0]}\n"
+  made = [
+    written_in(ctx, "bin/cargo", script),
+    written_in(ctx, "libdemo#{ext}", "demo"),
+    written_in(ctx, "libtwo#{ext}", "two"),
+  ]
+
+  if !made.all? do |done: Result[Void]| done.ok? end
+    return BDD.assert(ctx, false, "cannot write the fake cargo")
+  end
+
+  chmod = Process.spawn("chmod", ["+x", in_folder(ctx, "bin/cargo")])
+  if !chmod.ok? or Process.wait(chmod.unwrap!, 10_000) != ok(0)
+    return BDD.assert(ctx, false, "cannot make the fake cargo executable")
+  end
+
+  return BDD.given_env(ctx, "PATH", in_folder(ctx, "bin"))
+end
+
+def removed(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  done = Path.remove(in_folder(ctx, args[0]))
+  return BDD.assert(ctx, done.ok?, "cannot remove #{args[0]}: #{done.message}")
+end
+
+def present(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  return BDD.assert(ctx, File.stat(in_folder(ctx, args[0])).ok?, "#{args[0]} was not written")
+end
+
+def library_present(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  file = Build.library_file(args[0], System.os()).unwrap_or("")
+  return BDD.assert(ctx, File.stat(in_folder(ctx, file)).ok?, "#{file} was not written")
+end
+
+# The entry of `args[0]` for this system names the library file of `args[0]`.
+def entry_present(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  os = System.os()
+  text = File.read_text(in_folder(ctx, "agentica.toml")).unwrap_or("")
+  file = Build.library_file(args[0], os).unwrap_or("")
+  return BDD.assert(ctx, text.include?("#{os} = { file = #{file.inspect} }"), "agentica.toml is: #{text}")
+end
+
+# The agentica.toml of the fresh folder: `args[0]`, whose `\n` the table cell made line ends.
+def manifest_text(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  return file_written(ctx, args[0])
+end
+
+def manifest_crlf(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  return file_written(ctx, "#{args[0].replace("\n", "\r\n")}\r\n")
+end
+
+def entry_refused(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  case planned(ctx, args[0], args[1])
+    ok(plan) -> return BDD.assert(ctx, false, "agentica.toml is: #{plan.manifest}")
+    error(message) -> return BDD.assert(ctx, message.start_with?(args[2]), message)
+  end
+end
+
+# Every line of the text that build writes ends with CRLF, the lines it added too.
+def entry_crlf(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  case planned(ctx, args[0], args[1])
+    ok(plan) ->
+      lines = plan.manifest.split("\n")
+      crlf = lines.take(lines.size - 1).all? do |line: String| line.end_with?("\r") end
+      return BDD.assert(ctx, crlf and plan.manifest.include?("linux = "), "agentica.toml is: #{plan.manifest.inspect}")
+    error(message) -> return BDD.assert(ctx, false, message)
+  end
+end
+
+# The plan made on the agentica.toml of the fresh folder, then made again on `args[2]`: its
+# manifest has the entry added, or is `args[2]` kept, or the code in brackets that starts its error.
+def replanned(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  path = in_folder(ctx, "agentica.toml")
+  before = File.read_text(path).unwrap_or("")
+  now = args[2]
+  case Build.plan(path, before, args[0], args[1])
+    ok(plan) -> return replan_matches(ctx, Build.replan(path, before, plan, now, args[0], args[1]), now, args[3])
+    error(message) -> return BDD.assert(ctx, false, message)
+  end
+end
+
+def replan_matches(ctx: BDD.Context, again: Result[Build.Plan], now: String, want: String) -> BDD.Context
+  case again
+    ok(plan) if want == "kept" -> return BDD.assert(ctx, plan.manifest == now, plan.manifest)
+    ok(plan) if want == "added" ->
+      return BDD.assert(ctx, plan.manifest.start_with?(now) and plan.manifest.include?("linux = "), plan.manifest)
+    ok(plan) -> return BDD.assert(ctx, false, "agentica.toml is: #{plan.manifest}")
+    error(message) -> return BDD.assert(ctx, message.start_with?(want), message)
+  end
+end
+
+def planned(ctx: BDD.Context, name: String, os: String) -> Result[Build.Plan]
+  path = in_folder(ctx, "agentica.toml")
+  return Build.plan(path, File.read_text(path).unwrap_or(""), name, os)
 end
 
 # The text that build writes to the agentica.toml of the fresh folder for the module `args[0]` on the system `args[1]`.

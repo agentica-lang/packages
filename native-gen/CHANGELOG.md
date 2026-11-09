@@ -7,9 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - `cli.agc FILE --lang rust --output FILE.rs` writes the Rust side of the block on the `agentica-native` crate: a type with its codecs per struct and enum, the trait `PREFIXNative` (`--prefix MyDb` keeps its case) with one method per function (each takes `env` and returns `Result<T, Raise>`; a resource is an associated type, held as `ResourceArc`), and `module::<Impl>()` for `agentica_native::export!`. A payload that leads back to its own type stays a term (`TreeTerm<'a>`).
-- `cli.agc build FILE` builds a Rust module from the crate `rust/` beside FILE: it writes `rust/src/NAME_native.rs`, runs `cargo build --release`, copies the library to `native/` (`libNAME.so`, `libNAME.dylib` or `NAME.dll`) and adds the `[native.NAME]` entry of the system to `agentica.toml` when it is missing. `build --check` fails (`NATIVE-GEN-STALE`) when the Rust file is stale; `NATIVE-GEN-CARGO` when cargo is missing or fails. The crate `agentica-native` is now in `native/agentica-native`, which `agentica install` copies into `deps/`.
+- `cli.agc build FILE` builds a Rust module from the crate `rust/` at the package root (the nearest folder up from FILE with an `agentica.toml`): it writes `rust/src/NAME_native.rs`, runs `cargo build --release`, copies the library to `native/` (`libNAME.so`, `libNAME.dylib` or `NAME.dll`) and adds the `[native.NAME]` entry of the system to `agentica.toml` when it is missing. `build --check` fails (`NATIVE-GEN-STALE`) when the Rust file is stale; `NATIVE-GEN-CARGO` when cargo is missing or fails.
 
 ### Changed
+
+- The crate `agentica-native` is in `native/agentica-native`, which `agentica install` copies into `deps/native-gen/`.
 
 - A bad item of a `List` or `Map` argument now fails the call with `argument N:` before its path, as a bad argument does (`argument 1: List[Int].2: expected Int`), also for a `List` or `Map` inside an item, an `Optional` or a `Result` of it. A cursor of `_open` keeps the plain path.
 

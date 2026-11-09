@@ -123,7 +123,7 @@ The name is the `[native.NAME]` of `agentica.toml`, the library of the block and
 
 ## A Rust module
 
-A module can be written in Rust instead, on the `agentica-native` crate that native-gen carries in `deps/native-gen/native/agentica-native`. The crate of the module is the folder `rust/` beside the `.agc`, and depends on it by path:
+A module can be written in Rust instead, on the `agentica-native` crate that native-gen carries in `deps/native-gen/native/agentica-native`. The crate of the module is the folder `rust/` at the package root, the nearest folder up from the `.agc` with an `agentica.toml`, and depends on it by path:
 
 ```toml
 [lib]
@@ -133,24 +133,26 @@ crate-type = ["cdylib"]
 agentica-native = { path = "../deps/native-gen/native/agentica-native" }
 ```
 
-`build` makes the module, from the folder of the package:
+`build` makes the module; paths are from the package root:
 
 ```sh
 agentica deps/native-gen/cli.agc build math.agc
 ```
 
 - It writes `rust/src/NAME_native.rs` (NAME is the library of the block, `math`) when it changed: the types of the block with their codecs, the trait `MathNative` that `src/lib.rs` implements, and `module::<Impl>()` for `agentica_native::export!`. Declare it in `src/lib.rs` with `#[rustfmt::skip] mod math_native;`.
-- It runs `cargo build --release` on the crate, and copies the library to `native/libmath.so` on Linux, `native/libmath.dylib` on macOS or `native/math.dll` on Windows.
-- It adds the entry of the system to `agentica.toml`, `linux = { file = "native/libmath.so" }` under `[native.math]` (or a new `[native.math]` at the end). An entry that is there already is kept, and the library goes to its `file`.
+- It runs `cargo build --release` on the crate (from the current folder, so a `.cargo/config.toml` is found from there, not from `rust/`), and copies the library to `native/libmath.so` on Linux, `native/libmath.dylib` on macOS or `native/math.dll` on Windows.
+- It adds the entry of the system to `agentica.toml`, `linux = { file = "native/libmath.so" }` under `[native.math]` (or a new `[native.math]` at the end). An entry that is there already is kept, and the library goes to its `file`, which must be in `native/`. `agentica.toml` is read again after cargo, so an edit made meanwhile is kept.
 - It prints one line per step: what it wrote, or that the file is current. A second run with nothing changed writes nothing.
 
-A package that others install does not build its Rust module: commit the library in `native/` for each system, and the entry of each, as you build them. Commit `rust/src/NAME_native.rs` too, and check in CI that it is current; `build --check` runs no cargo:
+A package that others install does not build its Rust module: commit the library in `native/` for each system, and the entry of each, as you build them on that system. `build` does not cross-build: the library cargo makes is copied as the entry of the system it runs on. Commit `rust/src/NAME_native.rs` too, and check in CI that it is current; `build --check` runs no cargo:
 
 ```sh
 agentica deps/native-gen/cli.agc build math.agc --check
 ```
 
-`build` needs `cargo` on `PATH` and an `agentica.toml` beside the `.agc`, and the library of the block must be a module name (the rule of `new`). The block is read without the `[native.NAME]` entries of the manifest, so a library that is not built yet does not stop it.
+`--check` covers only the generated Rust file, not the library or the manifest entry.
+
+`build` needs `cargo` on `PATH` and an `agentica.toml` at the package root, and the library of the block must be a module name (the rule of `new`). The block is read without the `[native.NAME]` entries of the manifest, so a library that is not built yet does not stop it.
 
 ## Errors
 
@@ -164,9 +166,10 @@ An error is one line on stderr, `native-gen: [CODE] message`, and the exit code 
 | `NATIVE-GEN-UNKNOWN` | `std/analysis` gives a function mode or a type kind that this version does not know |
 | `NATIVE-GEN-STALE` | `--check`: the file at `--output` is not the header that the `.agc` gives; `build --check`: `rust/src/NAME_native.rs` is not the one it gives |
 | `NATIVE-GEN-EXISTS` | `new`: a file it would write is there, or `agentica.toml` has `native.NAME` already |
-| `NATIVE-GEN-MANIFEST` | `new`: `agentica.toml`, with the entry added, is not TOML. `build`: `[native.NAME]` has a `build` table, its entry for the system has no `file`, or the table has no `[native.NAME]` line to add the entry under |
+| `NATIVE-GEN-MANIFEST` | `new`: `agentica.toml`, with the entry added, is not TOML. `build`: `[native.NAME]` has a `build` table, its entry for the system has no `file` or one outside `native/`, or the entry cannot be added (no `[native.NAME]` line to add it under, a `native` table written inline) |
+| `NATIVE-GEN-OS` | `build`: a system other than linux, macos and windows |
 | `NATIVE-GEN-CARGO` | `build`: `cargo` is not on `PATH`, fails, or builds no single cdylib |
-| `NATIVE-GEN-IO` | a file cannot be read or written; for `build`, also no `rust/Cargo.toml` |
+| `NATIVE-GEN-IO` | a file cannot be read or written; for `build`, also no `rust/Cargo.toml`, or no `agentica.toml` up from the file |
 | any other | the code of the diagnostic when the `.agc` does not check |
 
 ## Check in CI

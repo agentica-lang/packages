@@ -1,8 +1,8 @@
 ## The command line of native-gen: writes the C header of the `extern module` block of FILE (or with `--lang rust`
 ## its Rust file), or with `--check` fails when the file at `--output` is not the one FILE gives. `new PATH` writes a
 ## new module instead: `PATH.agc`, its C file and header in `native/`, and its entry in `agentica.toml`. `build FILE`
-## builds the Rust module of FILE from the crate in `rust/` beside it, into `native/` (with `--check`, it only fails
-## when the Rust file is stale).
+## builds the Rust module of FILE from the crate `rust/` at its package root, into `native/` (with `--check`, it only
+## fails when the Rust file is stale).
 ##
 ## ```sh
 ## agentica deps/native-gen/cli.agc stats.agc --output native/stats_native.h
@@ -105,7 +105,7 @@ end
 def build_options(args: List[String]) -> Result[BuildOptions]
   parser = OP.new(
     "#{PROGRAM} build",
-    "Builds the Rust module of FILE from the crate in rust/ beside it into native/, with cargo.",
+    "Builds the Rust module of FILE from the crate rust/ at its package root into native/, with cargo.",
     [Arg(name: "file", help: "the .agc file with the extern module block")],
     [Opt(name: "check", kind: Kind.Flag, help: "run no cargo; fail when the Rust file is not the one FILE gives")],
   )
