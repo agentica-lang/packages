@@ -1,4 +1,5 @@
 *.agc text eol=lf linguist-language=Ruby
 *.feature text eol=lf
+*.md text eol=lf
 # Generated C headers are compared byte for byte (native-gen --check).
 *_native.h text eol=lf
