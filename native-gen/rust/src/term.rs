@@ -15,7 +15,7 @@ use core::ptr;
 use crate::sys;
 
 /// The mode of a function: `def` is `Short` (it runs on the calling scheduler), `compute def` `Dirty` (on the
-/// compute pool, where the VM stages what it makes and a getter refuses a staged term).
+/// compute pool, where the VM stages what it makes and a getter gives `None` for a staged term).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Short,
@@ -65,7 +65,7 @@ impl<'a> Args<'a> {
 /// Runs `body` for one call of the VM and gives its result to the VM. The env and its terms are valid only inside
 /// `body`:
 ///
-/// ```compile_fail
+/// ```compile_fail,E0521
 /// # use agentica_native::*;
 /// let mut kept = None;
 /// unsafe {
@@ -76,7 +76,7 @@ impl<'a> Args<'a> {
 /// };
 /// ```
 ///
-/// ```compile_fail
+/// ```compile_fail,E0521
 /// # use agentica_native::*;
 /// thread_local! { static KEPT: std::cell::Cell<Option<Term<'static>>> = std::cell::Cell::new(None); }
 /// unsafe {
@@ -100,7 +100,7 @@ impl<'a> Args<'a> {
 /// };
 /// ```
 ///
-/// ```compile_fail
+/// ```compile_fail,E0277
 /// # use agentica_native::*;
 /// unsafe {
 ///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, |env, _| {
@@ -111,13 +111,20 @@ impl<'a> Args<'a> {
 /// };
 /// ```
 ///
-/// The same body without the escape compiles:
+/// Each case without its escape compiles: a Rust value leaves the call, a term stays in it, and a thread gets a
+/// Rust value (the case of two calls fails with no error code, so this twin is its check):
 ///
 /// ```no_run
 /// # use agentica_native::*;
+/// thread_local! { static KEPT: std::cell::Cell<Option<i64>> = std::cell::Cell::new(None); }
+/// let mut kept = None;
 /// unsafe {
 ///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, |outer, _| {
 ///         let one = outer.int(1);
+///         kept = one.get_int();
+///         KEPT.set(one.get_int());
+///         let n = one.get_int();
+///         std::thread::spawn(move || n);
 ///         call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, |inner, _| inner.list_of(&[inner.int(1)]));
 ///         outer.list_of(&[one])
 ///     })
@@ -156,15 +163,19 @@ pub unsafe fn call(
 }
 
 /// The table of the call.
-fn api<'a>(raw: *mut sys::an_env) -> &'a sys::an_api {
-    // SAFETY: the VM's env starts with a pointer to the table of the call (an_api_of in agentica_native.h), which
-    // outlives the call.
+///
+/// # Safety
+///
+/// `raw` is the env that the VM passed to the running call: it starts with a pointer to the table of the call
+/// (an_api_of in agentica_native.h), which outlives `'a`.
+unsafe fn api<'a>(raw: *mut sys::an_env) -> &'a sys::an_api {
     unsafe { &**(raw as *const *const sys::an_api) }
 }
 
 impl<'a> Env<'a> {
     fn api(self) -> &'a sys::an_api {
-        api(self.raw)
+        // SAFETY: only `call` makes an Env, from the env of the running call, and `'a` ends with that call.
+        unsafe { api(self.raw) }
     }
 
     /// A term that a getter gave: a part of an argument or of a made term.
@@ -272,8 +283,8 @@ fn with_raw<R>(terms: &[Term<'_>], f: impl FnOnce(&[sys::an_term]) -> R) -> R {
     }
 }
 
-/// The getters. Each gives `None` for a term of another type; in a dirty call, also for one that the call made and
-/// the VM staged (anything but a scalar).
+/// The getters. Each gives `None` for a term of another type, and in a dirty call for a term the VM staged. Which made
+/// terms are staged is the VM's choice, so a dirty call must not read back what it made.
 impl<'a> Term<'a> {
     pub fn as_raw(self) -> sys::an_term {
         self.raw

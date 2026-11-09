@@ -1,0 +1,5 @@
+target/
+Cargo.lock
+native/
+# Written by run.sh: a committed manifest would ask agentica check of native-gen for the built library.
+agentica.toml

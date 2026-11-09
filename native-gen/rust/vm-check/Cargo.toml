@@ -1,0 +1,12 @@
+# A module written on the crate with hand-made tables, built and run against the real VM by run.sh.
+[package]
+name = "vm-check"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+agentica-native = { path = ".." }

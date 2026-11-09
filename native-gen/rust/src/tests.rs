@@ -77,6 +77,8 @@ fn a_short_call_roots_each_term_it_makes_and_a_dirty_one_none() {
     let result = run(&mock, Mode::Dirty, vec![V::Int(7)], |env, args| {
         assert_eq!(env.mode(), Mode::Dirty);
         assert_eq!(args.get(0).unwrap().get_int(), Some(7));
+        // A scalar needs no memory, so the VM does not stage it; a String is staged.
+        assert_eq!(env.int(2).get_int(), Some(2));
         let made = env.string("staged");
         assert!(made.get_str().is_none());
         made

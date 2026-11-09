@@ -21,7 +21,8 @@ pub enum V {
 #[repr(C)]
 pub struct MockEnv {
     api: *const an_api,
-    // Each value, and whether a constructor of the call made it (the test's own values are arguments).
+    // Each value, and whether it is staged: a dirty call stages what its constructors make, except the values that
+    // need no memory (the test's own values are arguments).
     values: RefCell<Vec<(V, bool)>>,
     dirty: bool,
     pub failure: RefCell<Option<String>>,
@@ -50,9 +51,9 @@ impl MockEnv {
         self.push(v, false)
     }
 
-    fn push(&self, v: V, made: bool) -> an_term {
+    fn push(&self, v: V, staged: bool) -> an_term {
         let mut values = self.values.borrow_mut();
-        values.push((v, made));
+        values.push((v, staged));
         an_term { opaque: [values.len() as u64 - 1, 0] }
     }
 
@@ -60,7 +61,7 @@ impl MockEnv {
         self.values.borrow()[t.opaque[0] as usize].0.clone()
     }
 
-    /// Whether a getter may read `t`: a dirty call refuses the terms that it made.
+    /// Whether a getter may read `t`: a dirty call refuses the terms that it staged.
     fn readable(&self, t: an_term) -> bool {
         !(self.dirty && self.values.borrow()[t.opaque[0] as usize].1)
     }
@@ -84,9 +85,11 @@ fn fail(e: *mut an_env, message: String) -> an_term {
     made(e, V::Void)
 }
 
-/// A value that a constructor of the call made.
+/// A value that a constructor of the call made. As in the VM, a scalar and Void need no memory, so a dirty call does
+/// not stage them and its getters read them.
 fn made(e: *mut an_env, v: V) -> an_term {
-    me(e).push(v, true)
+    let staged = !matches!(v, V::Int(_) | V::Float(_) | V::Bool(_) | V::Void);
+    me(e).push(v, staged)
 }
 
 unsafe fn bytes<'b>(data: *const u8, len: usize) -> &'b [u8] {
@@ -109,8 +112,8 @@ fn read<X>(e: *mut an_env, t: an_term, out: *mut X, pick: impl FnOnce(V) -> Opti
 
 /// A part of `t` (an item, a field, a payload): readable when `t` is.
 fn part(e: *mut an_env, t: an_term, v: V) -> an_term {
-    let parent_made = me(e).values.borrow()[t.opaque[0] as usize].1;
-    me(e).push(v, parent_made)
+    let staged = me(e).values.borrow()[t.opaque[0] as usize].1;
+    me(e).push(v, staged)
 }
 
 /// The values of `n` terms at `at`.
