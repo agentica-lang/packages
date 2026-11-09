@@ -5,6 +5,7 @@
 
 import Analysis from "std/analysis"
 import Codecs from "codecs"
+import Collections from "collections"
 import Names from "names"
 
 # The table flags of the function modes and the kinds of the type rows that std/analysis gives.
@@ -67,7 +68,9 @@ export def render(block: Analysis.NativeBlock, names: Prefix, source: String) ->
   end
 
   codecs = Codecs.of(block, names.lower, names.upper)
-  try named(Names.distinct(global_names(block, names).concat(Codecs.global_names(codecs))))
+  shelf = Collections.of(block, codecs)
+  globals = global_names(block, names).concat(Codecs.global_names(codecs)).concat(Collections.global_names(shelf))
+  try named(Names.distinct(globals))
   for fields in Codecs.field_names(codecs)
     try named(Names.distinct(fields))
   end
@@ -76,8 +79,9 @@ export def render(block: Analysis.NativeBlock, names: Prefix, source: String) ->
     opening(block, names, source),
     constants(block, names),
     Codecs.declarations(codecs),
-    prototypes(block, names, codecs),
-    implementation(block, names, codecs),
+    Collections.declarations(shelf),
+    prototypes(block, names, shelf),
+    implementation(block, names, shelf),
   ])
 
   return ok("#{lines.join("\n")}\n")
@@ -242,11 +246,11 @@ def enum_rows(items: List[String]) -> String
 end
 
 # One prototype per function, each with the `##` doc of its declaration.
-def prototypes(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Plan) -> List[String]
+def prototypes(block: Analysis.NativeBlock, names: Prefix, shelf: Collections.Shelf) -> List[String]
   lines: List[String] = []
   for function in block.functions
     typed = function.parameters.map do |param: Analysis.NativeParameter|
-      "#{Codecs.c_type(codecs, "", param.type)} #{Names.parameter(param.name)}"
+      "#{Collections.c_type(shelf, param.type)} #{Names.parameter(param.name)}"
     end
 
     params = ["an_env *env"].concat(typed)
@@ -258,7 +262,7 @@ def prototypes(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Plan) 
 end
 
 # The wrappers, the tables and the module macro, for the one .c file that defines the module.
-def implementation(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Plan) -> List[String]
+def implementation(block: Analysis.NativeBlock, names: Prefix, shelf: Collections.Shelf) -> List[String]
   big = names.upper
   lines = [
     "",
@@ -276,24 +280,25 @@ def implementation(block: Analysis.NativeBlock, names: Prefix, codecs: Codecs.Pl
     "#endif",
   ]
 
-  lines = lines.concat(Codecs.definitions(codecs))
+  lines = joined([lines, Codecs.definitions(shelf.codecs, !shelf.read.empty?), Collections.definitions(shelf)])
   for function in block.functions
-    lines = joined([lines, [""], wrapper(function, names, codecs)])
+    lines = joined([lines, [""], wrapper(function, names, shelf)])
   end
 
   return joined([lines, tables(block, names), ["#endif"]])
 end
 
-# The function of the table: it decodes each argument that has a C type, fails the call at the first one that does
-# not decode, and calls the author's typed function.
-def wrapper(function: Analysis.NativeFunction, names: Prefix, codecs: Codecs.Plan) -> List[String]
+# The function of the table: it decodes each argument that has a C type (opens it, for a List or Map), fails the call
+# at the first one that does not decode, and calls the author's typed function.
+def wrapper(function: Analysis.NativeFunction, names: Prefix, shelf: Collections.Shelf) -> List[String]
+  codecs = shelf.codecs
   c = Names.identifier(function.name)
   lines = ["static an_term #{names.lower}_native_#{c}(an_env *env, int argc, const an_term *argv) {", "  (void)argc;"]
   if function.parameters.empty?
     lines = lines.push("  (void)argv;")
   end
 
-  if function.parameters.any? do |param: Analysis.NativeParameter| Codecs.embedded?(codecs, "", param.type) end
+  if function.parameters.any? do |param: Analysis.NativeParameter| failable?(shelf, param.type) end
     lines = lines.push("  ng_fail fail;")
   end
 
@@ -302,6 +307,10 @@ def wrapper(function: Analysis.NativeFunction, names: Prefix, codecs: Codecs.Pla
   for param in function.parameters
     local = "a#{at}"
     decoded = Codecs.decode_argument(codecs, param.type, local, at)
+    if Collections.cursor?(param.type)
+      decoded = Collections.decode_argument(shelf, param.type, local, at)
+    end
+
     if decoded.empty?
       passed = passed.push("argv[#{at}]")
     else
@@ -313,6 +322,11 @@ def wrapper(function: Analysis.NativeFunction, names: Prefix, codecs: Codecs.Pla
   end
 
   return lines.concat(["  return #{names.lower}_#{c}(#{passed.join(", ")});", "}"])
+end
+
+# Whether an argument of `type` fails the call with a path when it does not decode.
+def failable?(shelf: Collections.Shelf, type: String) -> Bool
+  return Codecs.embedded?(shelf.codecs, "", type) or Collections.cursor?(type)
 end
 
 # The function and type tables, and the macro that ends the module's file with the resource table, which needs the

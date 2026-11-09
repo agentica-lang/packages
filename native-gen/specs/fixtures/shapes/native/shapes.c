@@ -16,8 +16,8 @@ an_term shapes_circle(an_env *env, int64_t x, int64_t y, double radius) {
   return shapes_Shape_Circle(env, center, radius);
 }
 
-an_term shapes_misread(an_env *env, shapes_Point value, an_term values) {
-  if (!shapes_Point_get(env, values, &value)) return an_void(env);
+an_term shapes_misread(an_env *env, shapes_Point value, shapes_list_Int values) {
+  if (!shapes_Point_get(env, values.term, &value)) return an_void(env);
   return shapes_Point_make(env, &value);
 }
 

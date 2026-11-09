@@ -10,20 +10,17 @@
 #define MAX_COLUMNS 32
 #define ROW_ERROR "a row has another number of cells"
 
-an_term stats_summary(an_env *env, an_term values) {
-  an_list_cursor c;
-  an_term item;
-  size_t n;
+an_term stats_summary(an_env *env, stats_list_Float values) {
   double min = 0, max = 0, total = 0, x;
-  if (!an_list_cursor_begin(env, values, &c, &n)) return an_badarg(env, 0);
-  if (n == 0) return an_none(env);
-  for (size_t k = 0; an_list_next(env, &c, &item); k++) {
-    if (!an_get_float(env, item, &x)) return an_badarg(env, 0);
+  int more;
+  if (values.len == 0) return an_none(env);
+  for (size_t k = 0; (more = stats_list_Float_next(env, &values, &x)) == 1; k++) {
     min = k == 0 || x < min ? x : min;
     max = k == 0 || x > max ? x : max;
     total += x;
   }
-  stats_Summary summary = {(int64_t)n, min, max, total / (double)n};
+  if (more < 0) return an_void(env);
+  stats_Summary summary = {(int64_t)values.len, min, max, total / (double)values.len};
   return an_some(env, stats_Summary_make(env, &summary));
 }
 
