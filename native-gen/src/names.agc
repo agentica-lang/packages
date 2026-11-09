@@ -1,5 +1,8 @@
 ## The C names of an `extern module` block (pure): a function name as a C identifier, a parameter name that is a C or
-## C++ keyword, and the check that no two names of a header map to one identifier.
+## C++ keyword, and the check that no two names of a header map to one identifier. `validate` is what the header and
+## the Rust file both check of a block.
+
+import Analysis from "std/analysis"
 
 # The words a parameter name cannot be in C11 or C++ (the header compiles as both), `env`, the first parameter of
 # every prototype, and the names of the types and macros a prototype or the C file may use (`int64_t`, `errno`). Such
@@ -83,15 +86,48 @@ export def c_identifier?(text: String) -> Bool
   return true
 end
 
-## An error that names the first two names of `named` that map to one C identifier; ok when all are distinct.
-export def distinct(named: List[Named]) -> Result[Void]
+## An error `[NATIVE-GEN-NAME]` that names the first two names of `named` that map to one `target` (a C identifier,
+## a Rust name); ok when all are distinct.
+export def distinct(named: List[Named], target: String = "C identifier") -> Result[Void]
   seen: Map[String, String] = {}
   for name in named
     if seen.has_key?(name.c)
-      return error("#{seen[name.c]} and #{name.source} both map to the C identifier #{name.c}")
+      return error("[NATIVE-GEN-NAME] #{seen[name.c]} and #{name.source} both map to the #{target} #{name.c}")
     end
 
     seen = seen.put(name.c, name.source)
+  end
+
+  return ok()
+end
+
+## Whether `block` has only the modes and kinds this version knows (`[NATIVE-GEN-UNKNOWN]`), and no two parameters of a
+## function, or fields of a struct, that `rename` maps to one `target` (`[NATIVE-GEN-NAME]`).
+export def validate(block: Analysis.NativeBlock, target: String, rename: Fn[String, String]) -> Result[Void]
+  for function in block.functions
+    if function.mode != "short" and function.mode != "dirty"
+      return error("[NATIVE-GEN-UNKNOWN] #{function.name} has the mode #{function.mode.inspect}")
+    end
+
+    params = function.parameters.map do |param: Analysis.NativeParameter|
+      Named(c: rename.call(param.name), source: "#{function.name}(#{param.name})")
+    end
+
+    try distinct(params, target)
+  end
+
+  for type in block.types
+    if type.kind != "struct" and type.kind != "enum"
+      return error("[NATIVE-GEN-UNKNOWN] #{type.name} has the kind #{type.kind.inspect}")
+    end
+
+    if type.kind == "struct"
+      fields = type.members.map do |member: Analysis.NativeMember|
+        Named(c: rename.call(member.name), source: "#{type.name}.#{member.name}")
+      end
+
+      try distinct(fields, target)
+    end
   end
 
   return ok()

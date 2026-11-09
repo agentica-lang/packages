@@ -44,53 +44,22 @@ export def render(block: Analysis.NativeBlock, trait_name: String, source: Strin
     return error("[NATIVE-GEN-UNKNOWN] the block needs version #{block.api_major} of the native API")
   end
 
-  for function in block.functions
-    if function.mode != "short" and function.mode != "dirty"
-      return error("[NATIVE-GEN-UNKNOWN] #{function.name} has the mode #{function.mode.inspect}")
-    end
-
-    try named(
-      Names.distinct(
-        function.parameters.map do |param: Analysis.NativeParameter|
-          Names.Named(c: rust_name(param.name), source: "#{function.name}(#{param.name})")
-        end,
-      ),
-    )
-  end
-
+  try Names.validate(block, "Rust name", &rust_name)
   for type in block.types
-    if type.kind != "struct" and type.kind != "enum"
-      return error("[NATIVE-GEN-UNKNOWN] #{type.name} has the kind #{type.kind.inspect}")
-    end
-
     # `Self` is a keyword of Rust that no type or variant can be named.
-    if (
-      type.name == "Self" or
-      (type.kind == "enum" and type.members.any? do |member: Analysis.NativeMember| member.name == "Self" end)
-    )
+    variants = type.members.select do |member: Analysis.NativeMember| type.kind == "enum" and member.name == "Self" end
+    if type.name == "Self" or !variants.empty?
       return error("[NATIVE-GEN-NAME] #{type.name} is or has a variant named Self, a keyword of Rust")
-    end
-
-    if type.kind == "struct"
-      try named(
-        Names.distinct(
-          type.members.map do |member: Analysis.NativeMember|
-            Names.Named(c: rust_name(member.name), source: "#{type.name}.#{member.name}")
-          end,
-        ),
-      )
     end
   end
 
   plan = plan_of(block)
-  try named(Names.distinct(global_names(block, plan, trait_name)))
-  try named(
-    Names.distinct(
-      block.functions.map do |function: Analysis.NativeFunction|
-        Names.Named(c: rust_name(function.name), source: function.name)
-      end,
-    ),
-  )
+  try Names.distinct(global_names(block, plan, trait_name), "Rust name")
+  methods = block.functions.map do |function: Analysis.NativeFunction|
+    Names.Named(c: rust_name(function.name), source: function.name)
+  end
+
+  try Names.distinct(methods, "Rust name")
 
   lines = joined([
     opening(block, source),
@@ -109,15 +78,6 @@ export def trait_name(lower: String) -> String
   parts = lower.split("_").select do |part: String| !part.empty? end
   words = parts.map do |part: String| "#{part.slice(0, 1).upcase}#{part.slice(1, part.length - 1)}" end
   return "#{words.join("")}Native"
-end
-
-def named(distinct: Result[Void]) -> Result[Void]
-  if !distinct.ok?
-    # Names.distinct says what both map to in the words of the C header.
-    return error("[NATIVE-GEN-NAME] #{distinct.message.replace("the C identifier", "the Rust name")}")
-  end
-
-  return ok()
 end
 
 # A name of the block as a Rust name: `empty?` is `empty_p`, and a keyword or `env` gets a trailing `_`.
@@ -314,6 +274,12 @@ def type_lines(plan: Plan, type: Analysis.NativeType) -> List[String]
   name = type.name
   row = plan.rows[name]
   derives = "Clone, Debug, PartialEq"
+  # The lints that the names and types of the .agc, which the author chose, may trip.
+  allowed = "clippy::type_complexity, clippy::upper_case_acronyms"
+  if type.kind == "enum"
+    allowed = "#{allowed}, clippy::large_enum_variant, clippy::enum_variant_names"
+  end
+
   impl_decode = "impl<'a> Decoder<'a> for #{name}"
   impl_encode = "impl Encoder for #{name}"
   if plan.borrowing.include?(name)
@@ -323,7 +289,7 @@ def type_lines(plan: Plan, type: Analysis.NativeType) -> List[String]
     impl_encode = "impl Encoder for #{name}<'_>"
   end
 
-  lines = ["", "#[derive(#{derives})]"]
+  lines = ["", "#[derive(#{derives})]", "#[allow(#{allowed})]"]
   decode: List[String] = []
   encode: List[String] = []
   if type.kind == "struct"
@@ -373,9 +339,8 @@ def type_lines(plan: Plan, type: Analysis.NativeType) -> List[String]
         made = binds.map do |bind: String| "#{bind}.encode(env)" end
         lines = lines.push("    #{member.name}(#{payload.join(", ")}),")
         decode = decode.push("            Some(#{at}) => Ok(#{name}::#{member.name}(#{reads.join(", ")})),")
-        encode = encode.push(
-          "            #{name}::#{member.name}(#{binds.join(", ")}) => env.make_enum(#{row}, #{at}, &[#{made.join(", ")}]),",
-        )
+        made_enum = "env.make_enum(#{row}, #{at}, &[#{made.join(", ")}])"
+        encode = encode.push("            #{name}::#{member.name}(#{binds.join(", ")}) => #{made_enum},")
       end
 
       at += 1
@@ -404,25 +369,27 @@ end
 # The newtype of each type that stays a term: its decode checks that the term is one of its type.
 def term_lines(plan: Plan) -> List[String]
   lines: List[String] = []
+  kinds: Map[String, String] = {}
+  for type in plan.types
+    kinds = kinds.put(type.name, type.kind)
+  end
+
   for name in term_types(plan)
     row = plan.rows[name]
+    # A struct here has a field, the one that leads back to it.
     check = "term.get_variant(#{row}).is_some()"
-    for type in plan.types
-      if type.name == name and type.kind == "struct"
-        check = "term.get_field(#{row}, 0).is_some()"
-        if type.members.empty?
-          check = "true"
-        end
-      end
+    if kinds[name] == "struct"
+      check = "term.get_field(#{row}, 0).is_some()"
     end
 
     lines = joined([
       lines,
       [
         "",
-        "/// A #{name} that stays a term, as it leads back to the type that holds it: read it with `.0.decode()`. A dirty",
-        "/// call cannot read one that it made.",
+        "/// A #{name} that stays a term, as it leads back to the type that holds it: read it with",
+        "/// `.0.decode()`. A dirty call cannot read one that it made.",
         "#[derive(Clone, Copy, Debug)]",
+        "#[allow(clippy::upper_case_acronyms)]",
         "pub struct #{name}Term<'a>(pub Term<'a>);",
         "",
         "impl<'a> Decoder<'a> for #{name}Term<'a> {",
@@ -458,9 +425,9 @@ end
 def trait_lines(block: Analysis.NativeBlock, plan: Plan, trait: String) -> List[String]
   lines = [
     "",
-    "/// The functions of `extern module #{block.library.inspect}`, which the module implements. A method fails its call",
-    "/// with `Err(Raise)`; an Agentica `Result` is the value inside `Ok`.",
-    "#[allow(clippy::type_complexity)]",
+    "/// The functions of `extern module #{block.library.inspect}`, which the module implements. A method fails",
+    "/// its call with `Err(Raise)`; an Agentica `Result` is the value inside `Ok`.",
+    "#[allow(clippy::type_complexity, clippy::too_many_arguments, clippy::needless_lifetimes)]",
     "pub trait #{trait} {",
   ]
 
@@ -492,11 +459,6 @@ end
 
 # The C function of the table for `function`: decodes the arguments, calls the method, and encodes its value.
 def wrapper(function: Analysis.NativeFunction, trait: String) -> List[String]
-  mode = "Mode::Short"
-  if function.mode == "dirty"
-    mode = "Mode::Dirty"
-  end
-
   args: List[String] = ["env"]
   at = 0
   for _param in function.parameters
@@ -518,14 +480,24 @@ def wrapper(function: Analysis.NativeFunction, trait: String) -> List[String]
     "    argc: core::ffi::c_int,",
     "    argv: *const sys::an_term,",
     ") -> sys::an_term {",
-    "    // SAFETY: the VM calls it through the table of `module`, with its own env and arguments, in the row's mode.",
+    "    // SAFETY: the VM calls it through the table of `module`, with its own env and arguments, in the",
+    "    // row's mode.",
     "    unsafe {",
-    "        agentica_native::call(env, argc, argv, #{mode}, types(), |env, #{bound}| {",
+    "        agentica_native::call(env, argc, argv, #{mode_of(function)}, types(), |env, #{bound}| {",
     "            Ok(I::#{rust_name(function.name)}(#{args.join(", ")})?.encode(env))",
     "        })",
     "    }",
     "}",
   ]
+end
+
+# The mode of the row of `function`: `def` is short, `compute def` dirty.
+def mode_of(function: Analysis.NativeFunction) -> String
+  if function.mode == "dirty"
+    return "Mode::Dirty"
+  end
+
+  return "Mode::Short"
 end
 
 def module_lines(block: Analysis.NativeBlock, trait: String) -> List[String]
@@ -538,15 +510,10 @@ def module_lines(block: Analysis.NativeBlock, trait: String) -> List[String]
   ]
 
   for function in block.functions
-    mode = "Mode::Short"
-    if function.mode == "dirty"
-      mode = "Mode::Dirty"
-    end
-
+    name = rust_string(function.name)
+    signature = rust_string(function.signature)
     id = Names.identifier(function.name)
-    lines = lines.push(
-      "        .function(#{rust_string(function.name)}, #{rust_string(function.signature)}, native_#{id}::<I>, #{mode})",
-    )
+    lines = lines.push("        .function(#{name}, #{signature}, native_#{id}::<I>, #{mode_of(function)})")
   end
 
   for type in block.types
@@ -560,22 +527,48 @@ def module_lines(block: Analysis.NativeBlock, trait: String) -> List[String]
   return lines.push("}")
 end
 
-# `doc` as `///` lines at `indent`, with a code block of no language marked as text, so rustdoc does not run it.
+# `doc` as `///` lines at `indent`. A code block that rustdoc would run as Rust is marked text: a fence (``` or ~~~)
+# with no language, and lines indented by 4 spaces or a tab after a blank line, which get a fence of their own.
 def doc_lines(indent: String, doc: String) -> List[String]
   if doc.empty?
     return []
   end
 
   lines: List[String] = []
-  open = false
+  # The fence of the open fenced block ("" outside one), whether an indented block is open, and whether the line
+  # before was blank.
+  fence = ""
+  indented = false
+  blank = true
   for line in doc.replace("\r", "").split("\n")
+    trimmed = line.trim
     text = line
-    if line.trim.start_with?("```")
-      if !open and line.trim == "```"
-        text = line.replace("```", "```text")
-      end
+    deep = line.start_with?("    ") or line.start_with?("\t")
+    if fence.empty? and !indented and deep and blank and !trimmed.empty?
+      lines = lines.push("#{indent}/// ```text")
+      indented = true
+    elsif indented and !deep and !trimmed.empty?
+      lines = lines.push("#{indent}/// ```")
+      indented = false
+    end
 
-      open = !open
+    opener = ""
+    if trimmed.start_with?("```")
+      opener = "```"
+    elsif trimmed.start_with?("~~~")
+      opener = "~~~"
+    end
+
+    if !indented and !opener.empty?
+      if fence.empty?
+        if trimmed == opener
+          text = line.replace(opener, "#{opener}text")
+        end
+
+        fence = opener
+      elsif trimmed == fence
+        fence = ""
+      end
     end
 
     if text.empty?
@@ -583,6 +576,12 @@ def doc_lines(indent: String, doc: String) -> List[String]
     else
       lines = lines.push("#{indent}/// #{text}")
     end
+
+    blank = trimmed.empty?
+  end
+
+  if indented
+    lines = lines.push("#{indent}/// ```")
   end
 
   return lines

@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- `cli.agc FILE --lang rust --output FILE.rs` writes the Rust side of the block on the `agentica-native` crate: a type with its codecs per struct and enum, the trait `PREFIXNative` with one method per function (each takes `env` and returns `Result<T, Raise>`; a resource is an associated type, held as `ResourceArc`), and `module::<Impl>()` for `agentica_native::export!`. A payload that leads back to its own type stays a term (`TreeTerm<'a>`).
+- `cli.agc FILE --lang rust --output FILE.rs` writes the Rust side of the block on the `agentica-native` crate: a type with its codecs per struct and enum, the trait `PREFIXNative` (`--prefix MyDb` keeps its case) with one method per function (each takes `env` and returns `Result<T, Raise>`; a resource is an associated type, held as `ResourceArc`), and `module::<Impl>()` for `agentica_native::export!`. A payload that leads back to its own type stays a term (`TreeTerm<'a>`).
 
 ### Changed
 

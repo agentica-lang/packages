@@ -1,9 +1,6 @@
 //! The modules of the fixtures stats, shapes and kinds, each on the Rust file that native-gen makes from its `.agc`
 //! (run.sh makes them, and builds one feature at a time).
 
-// The signatures of the methods are those of the trait, nested as the .agc's types are.
-#![allow(clippy::type_complexity)]
-
 #[cfg(feature = "stats")]
 #[rustfmt::skip]
 mod stats_native;
@@ -28,6 +25,8 @@ mod stats {
             Ok(Some(Summary { count: values.len() as i64, min, max, mean }))
         }
 
+        // The signature of the trait, nested as the .agc's type is.
+        #[allow(clippy::type_complexity)]
         fn rows(_env: Env<'_>, text: String) -> Result<Result<Vec<Vec<(String, Cell)>>, String>, Raise> {
             let mut lines = text.lines();
             let names: Vec<&str> = lines.next().unwrap_or("").split(',').collect();
@@ -188,4 +187,102 @@ mod kinds {
     }
 
     agentica_native::export!(module::<Kinds>());
+}
+
+#[cfg(feature = "shapes2")]
+#[rustfmt::skip]
+mod shapes2_native;
+
+/// shapes2: the recursive and borrowing types, Maps of Int and Bytes keys, resources in results, and the names clippy
+/// would flag.
+#[cfg(feature = "shapes2")]
+mod shapes2 {
+    use agentica_native::{Encoder, Env, Raise, ResourceArc};
+
+    use crate::shapes2_native::{Call, Color, Expr, HTTP, Node, NodeTerm, Shapes2Native, Unit, module};
+
+    struct Shapes2;
+
+    /// The values of the chain at `node`, each node read from the term of the one before.
+    fn sum(node: Node<'_>) -> Result<i64, Raise> {
+        let rest = match node.next {
+            Some(next) => sum(next.0.decode()?)?,
+            None => 0,
+        };
+        Ok(node.value + rest)
+    }
+
+    /// An Int, or the sum of the arguments of a Call, each read from its term.
+    fn value(expr: Expr<'_>) -> Result<i64, Raise> {
+        match expr {
+            Expr::Num(n) => Ok(n),
+            Expr::Apply(call) => {
+                let call: Call = call.0.decode()?;
+                call.args.into_iter().map(|arg| value(arg.0.decode()?)).sum()
+            }
+        }
+    }
+
+    impl Shapes2Native for Shapes2 {
+        type Handle = i64;
+
+        fn chain<'a>(env: Env<'a>, n: i64) -> Result<Node<'a>, Raise> {
+            let mut node = Node { value: 1.min(n), next: None };
+            for value in 2..=n {
+                node = Node { value, next: Some(NodeTerm(node.encode(env))) };
+            }
+            Ok(node)
+        }
+
+        fn total<'a>(_env: Env<'a>, node: Node<'a>) -> Result<i64, Raise> {
+            sum(node)
+        }
+
+        fn eval<'a>(_env: Env<'a>, expr: Expr<'a>) -> Result<i64, Raise> {
+            value(expr)
+        }
+
+        fn lengths(_env: Env<'_>, words: Vec<(i64, String)>) -> Result<Vec<(i64, i64)>, Raise> {
+            Ok(words.into_iter().map(|(k, word)| (k, word.len() as i64)).collect())
+        }
+
+        fn sizes(_env: Env<'_>, blobs: Vec<(Vec<u8>, i64)>) -> Result<i64, Raise> {
+            Ok(blobs.iter().map(|(key, n)| key.len() as i64 + n).sum())
+        }
+
+        fn handles(_env: Env<'_>, n: i64) -> Result<Vec<ResourceArc<i64>>, Raise> {
+            Ok((0..n).map(ResourceArc::new).collect())
+        }
+
+        fn maybe(_env: Env<'_>, n: i64) -> Result<Option<ResourceArc<i64>>, Raise> {
+            Ok((n > 0).then(|| ResourceArc::new(n)))
+        }
+
+        fn handle_id(_env: Env<'_>, handle: ResourceArc<i64>) -> Result<i64, Raise> {
+            Ok(*handle)
+        }
+
+        fn unit(_env: Env<'_>, u: Unit) -> Result<Unit, Raise> {
+            Ok(u)
+        }
+
+        fn colors(_env: Env<'_>, color: Color) -> Result<Color, Raise> {
+            Ok(match color {
+                Color::RedColor => Color::BlueColor,
+                Color::BlueColor => Color::RedColor,
+            })
+        }
+
+        fn http(_env: Env<'_>, value: HTTP) -> Result<HTTP, Raise> {
+            Ok(value)
+        }
+
+        // The signature of the trait: seven Ints and the env.
+        #[allow(clippy::too_many_arguments)]
+        fn seven(_env: Env<'_>, a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64) -> Result<i64, Raise> {
+            Ok(a + b + c + d + e + f + g)
+        }
+    }
+
+    agentica_native::export!(module::<Shapes2>());
 }

@@ -41,25 +41,8 @@ end
 ## An error starts with its code: `[NATIVE-GEN-NAME]` when two of its names map to one C identifier,
 ## `[NATIVE-GEN-UNKNOWN]` for a mode or a type kind that this version does not know.
 export def render(block: Analysis.NativeBlock, names: Prefix, source: String) -> Result[String]
-  for function in block.functions
-    if !MODES.has_key?(function.mode)
-      return error("[NATIVE-GEN-UNKNOWN] #{function.name} has the mode #{function.mode.inspect}")
-    end
-
-    try named(
-      Names.distinct(
-        function.parameters.map do |param: Analysis.NativeParameter|
-          Names.Named(c: Names.parameter(param.name), source: "#{function.name}(#{param.name})")
-        end,
-      ),
-    )
-  end
-
+  try Names.validate(block, "C identifier", &Names.parameter)
   for type in block.types
-    if !KINDS.has_key?(type.kind)
-      return error("[NATIVE-GEN-UNKNOWN] #{type.name} has the kind #{type.kind.inspect}")
-    end
-
     for member in type.members
       if type.kind == "enum" and !member.types.empty? and Names.macro?(member.name)
         return error("[NATIVE-GEN-NAME] #{type.name}.#{member.name} is a C macro, which its payload cannot be named")
@@ -70,10 +53,7 @@ export def render(block: Analysis.NativeBlock, names: Prefix, source: String) ->
   codecs = Codecs.of(block, names.lower, names.upper)
   shelf = Collections.of(block, codecs)
   globals = global_names(block, names).concat(Codecs.global_names(codecs)).concat(Collections.global_names(shelf))
-  try named(Names.distinct(globals))
-  for fields in Codecs.field_names(codecs)
-    try named(Names.distinct(fields))
-  end
+  try Names.distinct(globals)
 
   lines = joined([
     opening(block, names, source),
@@ -85,14 +65,6 @@ export def render(block: Analysis.NativeBlock, names: Prefix, source: String) ->
   ])
 
   return ok("#{lines.join("\n")}\n")
-end
-
-def named(distinct: Result[Void]) -> Result[Void]
-  if !distinct.ok?
-    return error("[NATIVE-GEN-NAME] #{distinct.message}")
-  end
-
-  return ok()
 end
 
 # Every C name the header declares at file scope, with the name of the block it comes from.

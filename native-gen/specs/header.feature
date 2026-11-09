@@ -37,6 +37,46 @@ Feature: The C header of an extern module block
               .function("summary", "(List[Float]) -> Optional[Summary]", native_summary::<I>, Mode::Short)
       """
 
+  Scenario: --lang rust keeps the case of --prefix in the name of the trait
+    Given the program argument "fixtures/stats/stats.agc"
+    And the program argument "--lang"
+    And the program argument "rust"
+    And the program argument "--prefix"
+    And the program argument "MyDb"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout includes:
+      """
+      pub trait MyDbNative {
+      """
+
+  Scenario: --check --lang rust fails when the file is not the one the .agc gives
+    Given the program argument "fixtures/stats/stats.agc"
+    And the program argument "--lang"
+    And the program argument "rust"
+    And the program argument "--output"
+    And the program argument "fixtures/stats/native/stats.c"
+    And the program argument "--check"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-STALE]
+      """
+
+  Scenario: --lang rust refuses a prefix that is not an identifier
+    Given the program argument "fixtures/stats/stats.agc"
+    And the program argument "--lang"
+    And the program argument "rust"
+    And the program argument "--prefix"
+    And the program argument "my-db"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-PREFIX]
+      """
+
   Scenario Outline: A file the Rust file cannot be made for fails with <code>
     Given the program argument "fixtures/errors/<file>"
     And the program argument "--lang"
