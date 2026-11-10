@@ -184,6 +184,7 @@ def test_idle_timeout_and_a_flooded_client_dropped_at_the_cap() -> Result[Void]
   try Test.eq(report.recv(5000), ok("idle false"))
   flooder = try start_client(server.port, "flood")
   try Test.eq(report.recv(10000), ok("dropped true false"))
+  try Test.eq(Dock.stats(server).dropped, 1)
   # Others are served, and a stop does not wait for the stalled client.
   try Test.eq(exchange(server.port, "ping"), ok("pong"))
   started = Time.now_ms
@@ -286,8 +287,7 @@ def big(conn: Dock.Conn) -> Void
 end
 
 # With cap 100,000: "b" gets a reply of 1 MiB and then a short one, as a client that reads normally must; "s" gets
-# 1 MiB
-# in 1 KiB messages, 1,100,000 charged against the cap, so the writer must subtract what it wrote.
+# 1 MiB in 1 KiB messages, 1,100,000 charged against the cap, so the writer must subtract what it wrote.
 def reply(conn: Dock.Conn) -> Void
   case Dock.recv(conn, 1)
     error(_) -> return
@@ -334,6 +334,9 @@ def test_the_cap_and_the_config_are_checked() -> Result[Void]
   try Test.eq(Outbox.refused?(201, 100, cap), true)
   try Test.error?(Dock.start(Dock.Config(port: 0, max_outbox_bytes: Outbox.MIN_CAP - 1), &echo))
   try Test.error?(Dock.start(Dock.Config(port: 0, max_outbox_bytes: Outbox.MAX_CAP + 1), &echo))
+  try Test.error?(Dock.start(Dock.Config(port: 0, max_connections: 0), &echo))
+  try Test.error?(Dock.start(Dock.Config(port: 0, max_connections: 1_048_577), &echo))
+  try Test.error?(Dock.start(Dock.Config(port: 0, grace_ms: -1), &echo))
   # The largest cap needs the largest channel the VM allows.
   server = try Dock.start(Dock.Config(port: 0, max_outbox_bytes: Outbox.MAX_CAP), &echo)
   try Test.eq(exchange(server.port, "hi"), ok("hi"))
@@ -344,7 +347,18 @@ end
 def test_a_closed_listener_ends_the_loop_with_an_error() -> Result[Void]
   listener = try TCP.listen("127.0.0.1", 0)
   stop_signal: Channel[Bool] = Channel.new(1)
-  loop = Task.spawn do Serving.accept_loop(listener, Dock.Config(port: 0), &hold, stop_signal) end
+  watched: Channel[String] = Channel.new(1)
+  stats: ATS[Int, Int] = ATS.new()
+  boot = Serving.Boot(
+    config: Dock.Config(port: 0),
+    handler: &hold,
+    ready: Channel.new(1),
+    stop_signal: stop_signal,
+    stats: stats,
+    watched: watched,
+  )
+
+  loop = Task.spawn do Serving.accept_loop(listener, boot) end
 
   TCP.close_listener(listener)
   case Task.await(loop, 5000)
@@ -360,4 +374,173 @@ def test_a_port_in_use_is_an_error() -> Result[Void]
   result = Dock.start(Dock.Config(port: TCP.local_port(taken)), &echo)
   TCP.close_listener(taken)
   return Test.error?(result)
+end
+
+# Waits until `done` is true of the counters, up to a deadline.
+def await_stats(server: Dock.Server, done: Fn[Dock.Stats, Bool]) -> Result[Void]
+  deadline = Time.now_ms + 10_000
+  while not done.call(Dock.stats(server)) and Time.now_ms < deadline
+    Task.sleep(20)
+  end
+
+  return Test.assert(done.call(Dock.stats(server)), "the counters did not get there: #{Dock.stats(server)}")
+end
+
+# The handler of the limit and watch tests: it reads until the client leaves, or crashes at "boom".
+def sit(conn: Dock.Conn) -> Void
+  while true
+    case Dock.recv(conn, 16)
+      error(_) -> return
+      ok(chunk) ->
+        if chunk.empty?
+          return
+        end
+
+        if chunk == "boom".bytes
+          puts("crashing on purpose".to_i!)
+        end
+    end
+  end
+end
+
+# A config whose `on_close` sends the id of each connection that ended to `ids`.
+def noting(config: Dock.Config, ids: Channel[Int]) -> Dock.Config
+  return Dock.on_close(config) do |conn| _ = ids.send(conn.id, 5000) end
+end
+
+def test_a_connection_over_the_limit_is_closed_at_once_and_a_freed_slot_is_reused() -> Result[Void]
+  config = Dock.Config(port: 0, max_connections: 3)
+  server = try Dock.start(config, &sit)
+  clients: List[Socket] = []
+  for _ in 1..3
+    clients = clients.push(try TCP.connect("127.0.0.1", server.port, 5000))
+  end
+
+  try await_stats(server) do |s| s.open == 3 end
+  # The fourth is accepted and closed by the server: it reads the end, it does not wait.
+  over = try TCP.connect("127.0.0.1", server.port, 5000)
+  try Test.eq(TCP.recv_bytes(over, 1, 5000), ok("".bytes))
+  TCP.close(over)
+  try Test.eq(Dock.stats(server).refused, 1)
+  try Test.eq(Dock.stats(server).accepted, 3)
+  TCP.close(clients[0])
+  try await_stats(server) do |s| s.open == 2 end
+  again = try start_client(server.port, "hi")
+  try await_stats(server) do |s| s.accepted == 4 end
+  TCP.close(again)
+  for client in clients
+    TCP.close(client)
+  end
+
+  return Dock.stop(server)
+end
+
+# 100 handlers crash in the same moment, so 100 notices wait for one turn of the supervisor: each socket must be
+# closed, each counted, each given to on_close, and the descriptors come back.
+def test_many_connections_ending_at_once_are_all_closed_and_counted() -> Result[Void]
+  ids: Channel[Int] = Channel.new(200)
+  config = noting(Dock.Config(port: 0, max_connections: 100), ids)
+  server = try Dock.start(config, &sit)
+  before = open_files()
+  clients: List[Socket] = []
+  for _ in 1..100
+    clients = clients.push(try TCP.connect("127.0.0.1", server.port, 5000))
+  end
+
+  try await_stats(server) do |s| s.open == 100 end
+  for client in clients
+    try TCP.send(client, "boom", 5000)
+  end
+
+  for client in clients
+    try Test.eq(TCP.recv_bytes(client, 1, 10_000), ok("".bytes))
+    TCP.close(client)
+  end
+
+  try await_stats(server) do |s| s.open == 0 and s.crashed == 100 end
+  seen: List[Int] = []
+  for _ in 1..100
+    seen = seen.push(try ids.recv(10_000))
+  end
+
+  try Test.eq(seen.sort, (1..100).to_a)
+  try settles_at(before)
+  return Dock.stop(server)
+end
+
+def test_on_close_fires_for_a_return_a_crash_and_the_stop() -> Result[Void]
+  ids: Channel[Int] = Channel.new(8)
+  server = try Dock.start(noting(Dock.Config(port: 0), ids), &echo_or_crash)
+  try Test.eq(exchange(server.port, "hi"), ok("hi"))
+  # The client may see the end as a reset, so the answer is not checked, only that the handler crashed.
+  _ = exchange(server.port, "boom")
+  staying = try TCP.connect("127.0.0.1", server.port, 5000)
+  try await_stats(server) do |s| s.accepted == 3 end
+  try Dock.stop(server)
+  TCP.close(staying)
+  seen: List[Int] = []
+  for _ in 1..3
+    seen = seen.push(try ids.recv(5000))
+  end
+
+  try Test.eq(seen.sort, [1, 2, 3])
+  return ok()
+end
+
+def test_a_watched_task_that_crashes_stops_the_server_and_wait_says_why() -> Result[Void]
+  server = try Dock.start(Dock.Config(port: 0), &sit)
+  client = try TCP.connect("127.0.0.1", server.port, 5000)
+  central = Task.spawn do
+    Task.sleep(200)
+    puts("central task".to_i!)
+  end
+
+  Dock.watch(server, central)
+  waiter = Task.spawn do Dock.wait(server) end
+  case Task.await(waiter, 10_000)
+    Await.TimedOut -> return error("wait did not return after the watched task crashed")
+    Await.Done(result) -> try Test.assert(result.message.include?("the watched task crashed"), result.message)
+  end
+
+  try Test.eq(TCP.recv_bytes(client, 1, 5000), ok("".bytes))
+  TCP.close(client)
+  return Test.error?(TCP.connect("127.0.0.1", server.port, 1000))
+end
+
+# Sends 20 MiB and keeps reading, so the handler ends when its socket is closed.
+def deliver(conn: Dock.Conn) -> Void
+  _ = Dock.send(conn, mib(20))
+  while Dock.recv(conn, 16).ok?
+    nil
+  end
+end
+
+def test_stop_with_a_grace_lets_a_slow_client_get_what_was_queued() -> Result[Void]
+  server = try Dock.start(Dock.Config(port: 0, grace_ms: 10_000), &deliver)
+  client = try TCP.connect("127.0.0.1", server.port, 5000)
+  try Test.eq(TCP.recv_bytes(client, 1, 5000), ok("x".bytes))
+  started = Time.now_ms
+  stopper = Task.spawn do Dock.stop(server) end
+  # The client reads only after the stop began (it takes up to 100 ms to see it): the queue is what survives it.
+  Task.sleep(300)
+  got = try read_all(client)
+  TCP.close(client)
+  try Test.eq(got.size, 20 * 1_048_576 - 1)
+  case Task.await(stopper, 15_000)
+    Await.TimedOut -> return error("stop did not return")
+    Await.Done(result) -> try result
+  end
+
+  return Test.assert(Time.now_ms - started < 8000, "stop waited the whole grace for a client that was done")
+end
+
+def test_stop_closes_a_client_that_never_reads_when_the_grace_ends() -> Result[Void]
+  server = try Dock.start(Dock.Config(port: 0, grace_ms: 500), &hold)
+  client = try TCP.connect("127.0.0.1", server.port, 5000)
+  try Test.eq(TCP.recv_bytes(client, 1, 5000), ok("x".bytes))
+  started = Time.now_ms
+  try Dock.stop(server)
+  try Test.assert(Time.now_ms - started < 5000, "stop took more than the grace")
+  TCP.close(client)
+  return ok()
 end

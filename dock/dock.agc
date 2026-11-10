@@ -2,6 +2,7 @@
 
 import Connection from "src/connection"
 import Serving from "src/server"
+import Counters from "src/stats"
 import Types from "src/types"
 
 export Types.Config
@@ -10,6 +11,10 @@ export Types.Server
 export Serving.start
 export Serving.stop
 export Serving.wait
+export Serving.stats
+export Serving.on_close
+export Serving.watch
+export Counters.Stats
 export Connection.close
 export Connection.recv
 export Connection.send

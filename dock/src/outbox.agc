@@ -3,6 +3,8 @@
 ## Nobody waits for a client. `push` never blocks, and a client that does not read is dropped when its queued bytes
 ## pass the cap.
 
+import Counters from "stats"
+
 # Counted for each queued message besides its bytes, so a flood of tiny messages is bounded too.
 OVERHEAD = 64
 # What a message of one byte is charged: no message (an empty one is not queued) is charged less.
@@ -22,6 +24,8 @@ WRITE_MS = 5000
 # subtracts after each send, so it covers the send in progress too), and whether `finish` was called.
 BYTES_KEY = 0
 CLOSING_KEY = 1
+# Set when the client was counted as dropped, so two tasks that both see the cap passed count it once.
+DROPPED_KEY = 2
 
 export enum Out
   Data(Bytes)
@@ -32,6 +36,8 @@ export struct Outbox
   queue: Channel[Out]
   pending: ATS[Int, Int]
   cap: Int
+  # The counters of the server, where a drop at the cap is counted.
+  stats: ATS[Int, Int]
 end
 
 export struct Pipe
@@ -51,10 +57,10 @@ end
 ## drops a client. Proof: a message is let in when the charges before it are at most `cap`, and every charge is at
 ## least MIN_CAP, so at most `cap / MIN_CAP + 1` messages wait (the ones before the last add up to `cap` at most),
 ## and the `Close` marker is one more.
-export def build(cap: Int) -> Outbox
+export def build(cap: Int, stats: ATS[Int, Int]) -> Outbox
   queue: Channel[Out] = Channel.new(slots(cap))
   pending: ATS[Int, Int] = ATS.new()
-  return Outbox(queue: queue, pending: pending, cap: cap)
+  return Outbox(queue: queue, pending: pending, cap: cap, stats: stats)
 end
 
 ## What a message of `size` bytes is charged: its bytes and OVERHEAD, but never more than `cap`, so a message bigger
@@ -87,6 +93,10 @@ export def push(outbox: Outbox, socket: Socket, bytes: Bytes) -> Result[Void]
   size = charge(bytes.size, outbox.cap)
   total = outbox.pending.add(BYTES_KEY, size)
   if refused?(total, size, outbox.cap)
+    if outbox.pending.add(DROPPED_KEY, 1) == 1
+      _ = outbox.stats.add(Counters.DROPPED, 1)
+    end
+
     drop(outbox, socket)
     return error("dock: the client does not read: dropped at the outbox cap of #{outbox.cap} bytes")
   end
