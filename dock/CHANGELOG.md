@@ -11,3 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `Dock.send` is queued: it returns at once from any task, keeps the order of the calls, and drops a client whose
   queued bytes pass `max_outbox_bytes` (8 MiB by default, 65 to
   68,157,310). `Dock.close` closes after the queue is written.
+- `max_connections`: a connection over the limit is accepted and closed at once, and counted. `Dock.stats(server)`
+  reads open, accepted, refused, dropped and crashed.
+- `on_close` (`Dock.on_close(config) do |conn| ... end`) runs for each connection that ended: returned, crashed or
+  cancelled.
+- `grace_ms` (0 to one hour): `Dock.stop` lets the queued bytes of the clients be written before it closes them.
+- `Dock.watch(server, task)`: the server stops when the task ends (also when it returns, then `wait` returns ok), and
+  `wait` returns the crash.
