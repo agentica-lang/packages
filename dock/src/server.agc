@@ -28,8 +28,8 @@ LISTENER_CLOSED = "listener is closed"
 MAX_CONNECTIONS = 1_048_576
 # The channel of `watch` takes the end of a few tasks.
 WATCH_SLOTS = 16
-# The notices of ended callbacks wait for the loop to empty them; one that does not fit is dropped, which only lets a
-# crash of a callback print its diagnostic (an observed crash does not).
+# The notices of ended callbacks wait for the loop to empty them. A crashed callback prints its diagnostic either way;
+# a notice that does not fit is dropped, which only leaves that crash unobserved for the VM.
 HOOK_ENDS_SLOTS = 4096
 # One hour: a stop that waits longer is a mistake, and the sum with STOP_WAIT_MS must not overflow.
 MAX_GRACE_MS = 3_600_000
@@ -159,8 +159,7 @@ export def accept_loop(listener: Listener, boot: Boot) -> Result[Void]
     case TCP.accept(listener, ACCEPT_MS)
       ok(socket) ->
         # The notices are read first, so a slot that was freed a moment ago is not refused; at the limit, a notice
-        # that is
-        # about to arrive gets SLOT_WAIT_MS, unless the last wait found none.
+        # that is about to arrive gets SLOT_WAIT_MS, unless the last wait found none.
         live = reap(live, downs, boot)
         if live.size >= config.max_connections and Time.now_ms >= no_wait_until
           case downs.recv(SLOT_WAIT_MS)
