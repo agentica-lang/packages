@@ -1,25 +1,37 @@
 ## What runs in the task of one client, and what the handler calls.
 
+import Outbox from "outbox"
 import {ClientParts, Conn} from "types"
 
-# TCP.send_bytes takes at most 1 MiB.
-SEND_PIECE = 1_048_576
+# How long the queued bytes get to be written after the handler returned or called `close`.
+DRAIN_MS = 30_000
 
 export struct Link
   conn: Conn
   handler: Fn[Conn, Void]
 end
 
-## Runs the handler, then closes the socket. A crash or a cancel skips the close: the supervisor closes it when
-## the monitor tells it the task ended (the socket is owned by the supervisor, see server.agc).
+## Starts the writer, runs the handler, then lets the writer finish what is queued and closes the socket. A crash or
+## a cancel skips that: the writer is a task of this one, so it ends with it, and the supervisor closes the socket
+## when the monitor tells it the task ended (the socket is owned by the supervisor, see server.agc).
 export def run(link: Link) -> Void
-  link.handler(link.conn)
-  close(link.conn)
+  case link.conn.inside
+    ClientParts.Parts(socket, _, outbox) ->
+      writer = Task.spawn(&Outbox.run, Outbox.Pipe(socket: socket, outbox: outbox))
+      link.handler(link.conn)
+      Outbox.finish(outbox)
+      case Task.await(writer, DRAIN_MS)
+        Await.Done(_) -> nil
+        Await.TimedOut -> Task.cancel(writer)
+      end
+
+      TCP.close(socket)
+  end
 end
 
 export def close(conn: Conn) -> Void
   case conn.inside
-    ClientParts.Parts(socket, _, _) -> TCP.close(socket)
+    ClientParts.Parts(_, _, outbox) -> Outbox.finish(outbox)
   end
 end
 
@@ -31,13 +43,6 @@ end
 
 export def send(conn: Conn, bytes: Bytes) -> Result[Void]
   case conn.inside
-    ClientParts.Parts(socket, _, send_ms) ->
-      rest = bytes
-      while not rest.empty?
-        try TCP.send_bytes(socket, rest.take(SEND_PIECE), send_ms)
-        rest = rest.drop(SEND_PIECE)
-      end
-
-      return ok()
+    ClientParts.Parts(socket, _, outbox) -> return Outbox.push(outbox, socket, bytes)
   end
 end
