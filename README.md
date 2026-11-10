@@ -18,7 +18,7 @@ prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.1.0", 
 | `bond-channels` (`bond-channels-0.2.1`) | Action Cable (`actioncable-v1-json`) channels for Bond apps: one WebSocket per tab at `/cable`, channels and a pub/sub hub, with the frames, the connections and the Turbo Streams signing (`bond-channels/channels.agc`). [Docs](https://agentica-lang.github.io/packages/bond-channels/) |
 | `prop` (`prop-0.1.0`) | Property-based testing: generators, shrinking, `Prop.check`, which runs a law on generated inputs and reports the smallest counterexample with its seed, law helpers, `Prop.of` for your types and a bounded exhaustive check. [Docs](https://agentica-lang.github.io/packages/prop/) |
 | `native-gen` (`native-gen-0.2.0`) | The C header of an `extern module` block: typed prototypes, the argument checks, the codecs and the tables of the module, generated from the `.agc`, and `new` to start a module. [Docs](https://agentica-lang.github.io/packages/native-gen/) |
-| `dock` (not released) | A TCP server: an accept loop, a task per client that runs your handler, and the clean-up when a client ends or crashes (`dock/dock.agc`). [Docs](https://agentica-lang.github.io/packages/dock/) |
+| `dock` (`dock-0.1.0`) | A TCP server: an accept loop, a task per client that runs your handler, and the clean-up when a client ends or crashes (`dock/dock.agc`). [Docs](https://agentica-lang.github.io/packages/dock/) |
 | `cache` (planned) | Cache strategies (CLOCK, sampled LRU, TinyLFU) behind the `Cache` facade of `std/cache` |
 
 ## Tags

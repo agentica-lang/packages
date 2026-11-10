@@ -2,6 +2,7 @@ import Dock from "../dock"
 import Outbox from "../src/outbox"
 import Serving from "../src/server"
 import Counters from "../src/stats"
+import Types from "../src/types"
 
 # Real sockets on 127.0.0.1 and a port picked by the system: the handlers run in the tasks of the server.
 
@@ -561,6 +562,12 @@ def test_stop_closes_a_client_that_never_reads_when_the_grace_ends() -> Result[V
   return ok()
 end
 
+def running_callbacks(server: Dock.Server) -> Int
+  case server.inside
+    Types.ServerParts.Parts(_, _, table, _, _) -> return table.add(Counters.HOOKS, 0)
+  end
+end
+
 def test_a_callback_that_crashes_does_not_crash_the_stop() -> Result[Void]
   config = Dock.on_close(Dock.Config(port: 0)) do |_conn| puts("callback".to_i!) end
   server = try Dock.start(config, &echo_or_crash)
@@ -568,9 +575,10 @@ def test_a_callback_that_crashes_does_not_crash_the_stop() -> Result[Void]
   staying = try TCP.connect("127.0.0.1", server.port, 5000)
   try await_stats(server) do |s| s.accepted == 2 end
   started = Time.now_ms
-  try Dock.stop(server)
-  # The count of running callbacks went down for the ones that crashed: the stop did not wait for it to time out.
-  try Test.assert(Time.now_ms - started < 900, "the stop waited for callbacks that had ended")
+  try Test.eq(Dock.stop(server), ok())
+  try Test.assert(Time.now_ms - started < 5000, "the stop took too long")
+  # The count of running callbacks went down for the ones that crashed (it is what the stop waits on).
+  try Test.eq(running_callbacks(server), 0)
   TCP.close(staying)
   return Test.eq(Dock.wait(server), ok())
 end
