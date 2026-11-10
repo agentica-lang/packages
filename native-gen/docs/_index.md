@@ -10,14 +10,14 @@ description: The C header of an extern module block. Write plain C functions wit
 Needs Agentica 0.27.0 or later. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
 
 ```sh
-agentica add native-gen https://github.com/agentica-lang/packages --tag native-gen-0.1.0 --subdir native-gen
+agentica add native-gen https://github.com/agentica-lang/packages --tag native-gen-0.2.0 --subdir native-gen
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-native-gen = { git = "https://github.com/agentica-lang/packages", tag = "native-gen-0.1.0", subdir = "native-gen" }
+native-gen = { git = "https://github.com/agentica-lang/packages", tag = "native-gen-0.2.0", subdir = "native-gen" }
 ```
 
 The releases and their notes are in the [changelog](https://github.com/agentica-lang/packages/blob/main/native-gen/CHANGELOG.md).
