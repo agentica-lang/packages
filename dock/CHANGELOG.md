@@ -4,6 +4,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-10
+
 ### Added
 
 - `Dock.hand_over(conn)`: the handler may return and leave the connection to another task. It then ends at `Dock.close`,
