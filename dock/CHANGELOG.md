@@ -15,5 +15,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reads open, accepted, refused, dropped and crashed.
 - `on_close` (`Dock.on_close(config) do |conn| ... end`) runs for each connection that ended: returned, crashed or
   cancelled.
-- `grace_ms`: `Dock.stop` lets the queued bytes of the clients be written before it closes them.
-- `Dock.watch(server, task)`: the server stops when the task ends, and `wait` returns the crash.
+- `grace_ms` (0 to one hour): `Dock.stop` lets the queued bytes of the clients be written before it closes them.
+- `Dock.watch(server, task)`: the server stops when the task ends (also when it returns, then `wait` returns ok), and
+  `wait` returns the crash.

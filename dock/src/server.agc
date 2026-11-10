@@ -11,10 +11,15 @@ ACCEPT_MS = 100
 # How long `start` waits for the supervisor to listen, and `stop` for it to finish.
 START_WAIT_MS = 5000
 STOP_WAIT_MS = 5000
-# While the grace of a stop runs, how long to wait for a client to end before looking at the clock again; and how long
-# the callbacks `on_close` of the clients that a stop closed by force get, together.
+# While the grace of a stop runs, how long to wait for a client to end before looking at the clock again.
 DRAIN_POLL_MS = 50
+# How long a connection over the limit waits for a slot that a handler is just freeing (its notice may be on the way).
+# After a wait that found nothing the loop does not wait again for ACCEPT_MS, so a flood of refused connections is not
+# slowed down: the accept loop spends at most a third of its time waiting.
+SLOT_WAIT_MS = 50
+# How long a stop waits, at the end, for the `on_close` callbacks that are still running; it never cancels them.
 CALLBACKS_MS = 1000
+CALLBACKS_POLL_MS = 20
 # The one accept error that is not a pause: a closed listener answers at once for ever, so the loop must end. A
 # timeout is the normal quiet case and the others (no free descriptor, say) may pass.
 LISTENER_CLOSED = "listener is closed"
@@ -23,6 +28,11 @@ LISTENER_CLOSED = "listener is closed"
 MAX_CONNECTIONS = 1_048_576
 # The channel of `watch` takes the end of a few tasks.
 WATCH_SLOTS = 16
+# The notices of ended callbacks wait for the loop to empty them; one that does not fit is dropped, which only lets a
+# crash of a callback print its diagnostic (an observed crash does not).
+HOOK_ENDS_SLOTS = 4096
+# One hour: a stop that waits longer is a mistake, and the sum with STOP_WAIT_MS must not overflow.
+MAX_GRACE_MS = 3_600_000
 
 export struct Boot
   config: Config
@@ -31,18 +41,14 @@ export struct Boot
   stop_signal: Channel[Bool]
   stats: ATS[Int, Int]
   watched: Channel[String]
+  # Where the monitor of each `on_close` task sends its end; the loop only empties it (see `close_entry`).
+  hook_ends: Channel[Int]
 end
 
 struct Live
   conn: Conn
   socket: Socket
   task: Task[Void]
-end
-
-# What the loop keeps: the clients that run, and the `on_close` tasks that run (so a stop can wait for them).
-struct Table
-  live: Map[Int, Live]
-  hooks: List[Task[Void]]
 end
 
 # The end of a client task, as the monitor tells it.
@@ -69,15 +75,23 @@ export def start(config: Config, handler: Fn[Conn, Void]) -> Result[Server]
     return error("dock: max_connections must be 1 to #{MAX_CONNECTIONS}, got #{config.max_connections}")
   end
 
-  if config.grace_ms < 0
-    return error("dock: grace_ms must not be negative, got #{config.grace_ms}")
+  if config.grace_ms < 0 or config.grace_ms > MAX_GRACE_MS
+    return error("dock: grace_ms must be 0 to #{MAX_GRACE_MS}, got #{config.grace_ms}")
   end
 
   ready: Channel[Result[Int]] = Channel.new(1)
   stop_signal: Channel[Bool] = Channel.new(1)
   stats: ATS[Int, Int] = ATS.new()
   watched: Channel[String] = Channel.new(WATCH_SLOTS)
-  boot = Boot(config: config, handler: handler, ready: ready, stop_signal: stop_signal, stats: stats, watched: watched)
+  boot = Boot(
+    config: config,
+    handler: handler,
+    ready: ready,
+    stop_signal: stop_signal,
+    stats: stats,
+    watched: watched,
+    hook_ends: Channel.new(HOOK_ENDS_SLOTS),
+  )
 
   task = Task.spawn(&supervise, boot)
   answer = try ready.recv(START_WAIT_MS)
@@ -135,21 +149,33 @@ end
 export def accept_loop(listener: Listener, boot: Boot) -> Result[Void]
   config = boot.config
   downs: Channel[Ended] = Channel.new(config.max_connections)
-  table = Table(live: {}, hooks: [])
+  live: Map[Int, Live] = {}
   next_id = 1
+  no_wait_until = 0
   outcome: Result[Void] = ok()
   running = true
   while running and not boot.stop_signal.closed?
     started = Time.now_ms
     case TCP.accept(listener, ACCEPT_MS)
       ok(socket) ->
-        # The notices are read first, so a slot that was freed a moment ago is not refused.
-        table = reap(table, downs, boot)
-        if table.live.size >= config.max_connections
+        # The notices are read first, so a slot that was freed a moment ago is not refused; at the limit, a notice
+        # that is
+        # about to arrive gets SLOT_WAIT_MS, unless the last wait found none.
+        live = reap(live, downs, boot)
+        if live.size >= config.max_connections and Time.now_ms >= no_wait_until
+          case downs.recv(SLOT_WAIT_MS)
+            ok(ended) -> live = settle(live, ended, boot)
+            error(_) -> no_wait_until = Time.now_ms + ACCEPT_MS
+          end
+
+          live = reap(live, downs, boot)
+        end
+
+        if live.size >= config.max_connections
           TCP.close(socket)
           _ = boot.stats.add(Counters.REFUSED, 1)
         else
-          table = table.with(live: table.live.put(next_id, spawn_client(socket, next_id, boot, downs)))
+          live = live.put(next_id, spawn_client(socket, next_id, boot, downs))
           next_id += 1
         end
 
@@ -162,7 +188,11 @@ export def accept_loop(listener: Listener, boot: Boot) -> Result[Void]
         end
     end
 
-    table = reap(table, downs, boot).with(hooks: table.hooks.select do |hook| running?(hook) end)
+    live = reap(live, downs, boot)
+    while boot.hook_ends.recv(0).ok?
+      nil
+    end
+
     case boot.watched.recv(0)
       ok(reason) ->
         running = false
@@ -176,16 +206,17 @@ export def accept_loop(listener: Listener, boot: Boot) -> Result[Void]
 
   # The port is free from here on, also during the grace.
   TCP.close_listener(listener)
-  table = drain(table, downs, boot)
-  for entry in table.live.values
+  live = drain(live, downs, boot)
+  for entry in live.values
     Task.cancel(entry.task)
-    table = close_entry(table, entry, boot)
+    close_entry(entry, boot)
   end
 
-  # The callbacks get a moment, so a stop does not cut one that was just started.
+  # The callbacks get a moment, so a stop does not cut one that was just started; one that is still running after it is
+  # left as it is, and the count is what tells (a callback that crashed has ended too).
   deadline = Time.now_ms + CALLBACKS_MS
-  for hook in table.hooks
-    _ = Task.await(hook, at_least_1(deadline - Time.now_ms))
+  while boot.stats.add(Counters.HOOKS, 0) > 0 and Time.now_ms < deadline
+    Task.sleep(CALLBACKS_POLL_MS)
   end
 
   return outcome
@@ -247,8 +278,8 @@ end
 
 # The socket is closed whether the task returned (it closed it already: a second close does nothing), crashed or was
 # cancelled.
-def reap(table: Table, downs: Channel[Ended], boot: Boot) -> Table
-  left = table
+def reap(live: Map[Int, Live], downs: Channel[Ended], boot: Boot) -> Map[Int, Live]
+  left = live
   while true
     case downs.recv(0)
       error(_) -> return left
@@ -259,50 +290,49 @@ def reap(table: Table, downs: Channel[Ended], boot: Boot) -> Table
   return left
 end
 
-def settle(table: Table, ended: Ended, boot: Boot) -> Table
-  case table.live.get(ended.id)
-    none -> return table
+def settle(live: Map[Int, Live], ended: Ended, boot: Boot) -> Map[Int, Live]
+  case live.get(ended.id)
+    none -> return live
     some(entry) ->
       if ended.crashed
         _ = boot.stats.add(Counters.CRASHED, 1)
       end
 
-      return close_entry(table, entry, boot).with(live: table.live.delete(ended.id))
+      close_entry(entry, boot)
+      return live.delete(ended.id)
   end
 end
 
-# Closes the socket, counts the end and starts `on_close`, which nobody waits for.
-def close_entry(table: Table, entry: Live, boot: Boot) -> Table
+# Closes the socket, counts the end and starts `on_close`. Nobody awaits that task (a crash would raise in the
+# awaiter) and the loop does not look at it: a counter says how many run, and the monitor's block, which runs in a task
+# of its own when the callback ends in any way, lowers it. The channel it sends to is only emptied by the loop: a
+# crash whose notice went in counts as observed, so the callback's crash is not raised anywhere.
+def close_entry(entry: Live, boot: Boot) -> Void
   TCP.close(entry.socket)
   _ = boot.stats.add(Counters.OPEN, -1)
   case boot.config.on_close
-    none -> return table
+    none -> nil
     some(hook) ->
-      return table.with(hooks: table.hooks.push(Task.spawn(&run_hook, Callback(conn: entry.conn, run: hook))))
-  end
-end
-
-def running?(task: Task[Void]) -> Bool
-  case Task.await(task, 1)
-    Await.TimedOut -> return true
-    Await.Done(_) -> return false
+      _ = boot.stats.add(Counters.HOOKS, 1)
+      task = Task.spawn(&run_hook, Callback(conn: entry.conn, run: hook))
+      Task.monitor(task, boot.hook_ends) do |_down| boot.stats.add(Counters.HOOKS, -1) end
   end
 end
 
 # The stop with a grace: every client is closed as `Dock.close` does (what is queued is written, then the socket
 # closes, which ends a handler that is reading), and the loop waits for the tasks until the grace is over.
-def drain(table: Table, downs: Channel[Ended], boot: Boot) -> Table
-  left = table
+def drain(live: Map[Int, Live], downs: Channel[Ended], boot: Boot) -> Map[Int, Live]
+  left = live
   deadline = Time.now_ms + boot.config.grace_ms
   if boot.config.grace_ms <= 0
     return left
   end
 
-  for entry in table.live.values
+  for entry in live.values
     Connection.close(entry.conn)
   end
 
-  while not left.live.empty? and Time.now_ms < deadline
+  while not left.empty? and Time.now_ms < deadline
     case downs.recv(DRAIN_POLL_MS)
       ok(ended) -> left = settle(left, ended, boot)
       error(_) -> nil

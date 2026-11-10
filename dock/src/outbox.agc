@@ -25,7 +25,7 @@ WRITE_MS = 5000
 BYTES_KEY = 0
 CLOSING_KEY = 1
 # Set when the client was counted as dropped, so two tasks that both see the cap passed count it once.
-DROPPED_KEY = 2
+export DROPPED_KEY = 2
 
 export enum Out
   Data(Bytes)

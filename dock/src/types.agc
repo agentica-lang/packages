@@ -13,14 +13,18 @@ export struct Config
   ## dropped when more than this waits: 65 to 68,157,310.
   max_outbox_bytes: Int = 8_388_608
   ## The most connections open at once, 1 to 1,048,576. One that comes when that many are open is accepted and closed
-  ## at once (the accept loop never waits), and counted as `refused`.
+  ## at once, and counted as `refused`; first it waits up to 50 ms for a handler that is just ending to free its slot
+  ## (and not again for 100 ms after a wait that found none), so the accept loop never waits long.
   max_connections: Int = 65_536
   ## How long `stop` lets the queued bytes of the clients be written before it closes their sockets: each client is
-  ## closed as `Dock.close` does, and one that is still there after this long is cancelled. 0 closes at once.
+  ## closed as `Dock.close` does, and one that is still there after this long is cancelled. 0 closes at once; at most
+  ## 3,600,000 (one hour).
   grace_ms: Int = 0
-  ## `none` does nothing (a struct field cannot default to a function). Runs once for each connection that ended (the handler returned, crashed or was cancelled by `stop`), in a task of
-  ## its own after the socket is closed, so a slow callback never holds the accept loop. It is where a state task
-  ## learns that a client is gone (send `conn.id` to it).
+  ## `none` does nothing (a struct field cannot default to a function). Runs once for each connection that ended (the
+  ## handler returned, crashed or was cancelled by `stop`), in a task of its own after the socket is closed, so a slow
+  ## callback never holds the accept loop. It is where a state task learns that a client is gone (send `conn.id` to
+  ## it). A callback that crashes prints its diagnostic and nothing else; `stop` waits up to one second for the
+  ## callbacks that run and leaves the rest running.
   on_close: Optional[Fn[Conn, Void]] = none
 end
 

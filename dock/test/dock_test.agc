@@ -1,6 +1,7 @@
 import Dock from "../dock"
 import Outbox from "../src/outbox"
 import Serving from "../src/server"
+import Counters from "../src/stats"
 
 # Real sockets on 127.0.0.1 and a port picked by the system: the handlers run in the tasks of the server.
 
@@ -337,6 +338,20 @@ def test_the_cap_and_the_config_are_checked() -> Result[Void]
   try Test.error?(Dock.start(Dock.Config(port: 0, max_connections: 0), &echo))
   try Test.error?(Dock.start(Dock.Config(port: 0, max_connections: 1_048_577), &echo))
   try Test.error?(Dock.start(Dock.Config(port: 0, grace_ms: -1), &echo))
+  try Test.error?(Dock.start(Dock.Config(port: 0, grace_ms: 9_223_372_036_854_775_000), &echo))
+  # A drop that another task already counted is not counted again.
+  listener = try TCP.listen("127.0.0.1", 0)
+  socket = try TCP.connect("127.0.0.1", TCP.local_port(listener), 5000)
+  stats: ATS[Int, Int] = ATS.new()
+  outbox = Outbox.build(cap, stats)
+  outbox.pending.put(Outbox.DROPPED_KEY, 1)
+  big = ("x" * 500).bytes
+  try Outbox.push(outbox, socket, big)
+  try Outbox.push(outbox, socket, big)
+  try Test.error?(Outbox.push(outbox, socket, big))
+  try Test.eq(stats.add(Counters.DROPPED, 0), 0)
+  TCP.close(socket)
+  TCP.close_listener(listener)
   # The largest cap needs the largest channel the VM allows.
   server = try Dock.start(Dock.Config(port: 0, max_outbox_bytes: Outbox.MAX_CAP), &echo)
   try Test.eq(exchange(server.port, "hi"), ok("hi"))
@@ -356,6 +371,7 @@ def test_a_closed_listener_ends_the_loop_with_an_error() -> Result[Void]
     stop_signal: stop_signal,
     stats: stats,
     watched: watched,
+    hook_ends: Channel.new(1),
   )
 
   loop = Task.spawn do Serving.accept_loop(listener, boot) end
@@ -543,4 +559,57 @@ def test_stop_closes_a_client_that_never_reads_when_the_grace_ends() -> Result[V
   try Test.assert(Time.now_ms - started < 5000, "stop took more than the grace")
   TCP.close(client)
   return ok()
+end
+
+def test_a_callback_that_crashes_does_not_crash_the_stop() -> Result[Void]
+  config = Dock.on_close(Dock.Config(port: 0)) do |_conn| puts("callback".to_i!) end
+  server = try Dock.start(config, &echo_or_crash)
+  try Test.eq(exchange(server.port, "hi"), ok("hi"))
+  staying = try TCP.connect("127.0.0.1", server.port, 5000)
+  try await_stats(server) do |s| s.accepted == 2 end
+  started = Time.now_ms
+  try Dock.stop(server)
+  # The count of running callbacks went down for the ones that crashed: the stop did not wait for it to time out.
+  try Test.assert(Time.now_ms - started < 900, "the stop waited for callbacks that had ended")
+  TCP.close(staying)
+  return Test.eq(Dock.wait(server), ok())
+end
+
+# 100 callbacks that sleep: the accept loop must not pay for them, so a new client is served at once.
+def test_slow_callbacks_never_hold_the_accept_loop() -> Result[Void]
+  done: Channel[Int] = Channel.new(200)
+  config = Dock.on_close(Dock.Config(port: 0)) do |conn|
+    Task.sleep(1500)
+    _ = done.send(conn.id, 5000)
+  end
+
+  server = try Dock.start(config, &echo)
+  port = server.port
+  results = Task.map((1..100).to_a, 50, 20000) do |n|
+    got = try exchange(port, "client #{n}")
+    Test.eq(got, "client #{n}")
+  end
+
+  try Test.eq(results.select do |r| not r.ok? end.size, 0)
+  try await_stats(server) do |s| s.open == 0 end
+  started = Time.now_ms
+  try Test.eq(exchange(port, "fresh"), ok("fresh"))
+  try Test.assert(Time.now_ms - started < 1000, "a new client waited for the callbacks")
+  for _ in 1..101
+    _ = try done.recv(10_000)
+  end
+
+  return Dock.stop(server)
+end
+
+# At the limit, a slot that a handler is freeing is waited for a moment, so a client that comes right after another
+# left is not refused.
+def test_one_slot_serves_sequential_clients() -> Result[Void]
+  server = try Dock.start(Dock.Config(port: 0, max_connections: 1), &echo)
+  for n in 1..300
+    try Test.eq(exchange(server.port, "n#{n}"), ok("n#{n}"))
+  end
+
+  try Test.eq(Dock.stats(server).refused, 0)
+  return Dock.stop(server)
 end

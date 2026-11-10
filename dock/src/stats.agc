@@ -5,6 +5,8 @@ export ACCEPTED = 1
 export REFUSED = 2
 export DROPPED = 3
 export CRASHED = 4
+# Not in the snapshot: the `on_close` callbacks that run now.
+export HOOKS = 5
 
 ## A snapshot of the counters, read with `Dock.stats`.
 export struct Stats
