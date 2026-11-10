@@ -703,3 +703,18 @@ def test_stop_ends_a_handed_over_connection_nobody_closes() -> Result[Void]
   try Test.eq(Dock.stats(server).open, 0)
   return Test.error?(ids.recv(300))
 end
+
+def test_a_bad_max_bytes_does_not_close_a_handed_over_connection() -> Result[Void]
+  conns: Channel[Dock.Conn] = Channel.new(1)
+  server = try Dock.start(Dock.Config(port: 0)) do |conn| pass_on(conn, conns) end
+  client = try TCP.connect("127.0.0.1", server.port, 5000)
+  conn = try conns.recv(5000)
+  try Test.error?(Dock.recv(conn, 0))
+  try Test.error?(Dock.recv(conn, 2_000_000))
+  Task.sleep(200)
+  try Test.eq(Dock.stats(server).open, 1)
+  try Dock.send(conn, "still open".bytes)
+  try Test.eq(TCP.recv_bytes(client, 64, 5000), ok("still open".bytes))
+  TCP.close(client)
+  return Dock.stop(server)
+end

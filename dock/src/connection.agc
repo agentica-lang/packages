@@ -6,6 +6,9 @@ import {ClientParts, Conn} from "types"
 # How long the queued bytes get to be written after the handler returned or called `close`.
 DRAIN_MS = 30_000
 
+# TCP.recv_bytes takes at most 1 MiB.
+MAX_RECV = 1_048_576
+
 export struct Link
   conn: Conn
   handler: Fn[Conn, Void]
@@ -54,6 +57,11 @@ end
 export def recv(conn: Conn, max_bytes: Int = 65_536) -> Result[Bytes]
   case conn.inside
     ClientParts.Parts(socket, idle_ms, outbox) ->
+      # A bad argument is the caller's mistake, not the end of the client: it must not close a handed over connection.
+      if max_bytes < 1 or max_bytes > MAX_RECV
+        return error("dock: max_bytes must be 1 to #{MAX_RECV}, got #{max_bytes}")
+      end
+
       got = TCP.recv_bytes(socket, max_bytes, idle_ms)
       if Outbox.handed_over?(outbox)
         case got
