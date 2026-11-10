@@ -16,5 +16,6 @@ export Serving.on_close
 export Serving.watch
 export Counters.Stats
 export Connection.close
+export Connection.hand_over
 export Connection.recv
 export Connection.send

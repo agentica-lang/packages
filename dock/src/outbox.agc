@@ -26,6 +26,8 @@ BYTES_KEY = 0
 CLOSING_KEY = 1
 # Set when the client was counted as dropped, so two tasks that both see the cap passed count it once.
 export DROPPED_KEY = 2
+# Set by `hand_over`: the handler returning no longer closes the connection.
+HANDED_KEY = 3
 
 export enum Out
   Data(Bytes)
@@ -118,6 +120,16 @@ export def finish(outbox: Outbox, socket: Socket) -> Void
     ok(_) -> nil
     error(_) -> drop(outbox, socket)
   end
+end
+
+## Marks the connection as handed over: the task of the client keeps it open after the handler returns, until `finish`
+## or a drop ends the writer.
+export def hand_over(outbox: Outbox) -> Void
+  outbox.pending.put(HANDED_KEY, 1)
+end
+
+export def handed_over?(outbox: Outbox) -> Bool
+  return outbox.pending.has_key?(HANDED_KEY)
 end
 
 ## Runs as a task of the client. It ends when the queue is closed and empty, at a `Close`, or when a send fails; then

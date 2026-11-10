@@ -621,3 +621,100 @@ def test_one_slot_serves_sequential_clients() -> Result[Void]
   try Test.eq(Dock.stats(server).refused, 0)
   return Dock.stop(server)
 end
+
+# The store-task pattern: the handler gives the Conn away and returns at once. Whoever got it owns the connection.
+def pass_on(conn: Dock.Conn, conns: Channel[Dock.Conn]) -> Void
+  Dock.hand_over(conn)
+  _ = conns.send(conn, 5000)
+end
+
+# The handler has returned for a while when the reply is queued, and the client still gets it.
+def test_a_handed_over_connection_stays_open_for_a_reply_after_the_handler_returned() -> Result[Void]
+  conns: Channel[Dock.Conn] = Channel.new(1)
+  ids: Channel[Int] = Channel.new(8)
+  config = noting(Dock.Config(port: 0), ids)
+  server = try Dock.start(config) do |conn| pass_on(conn, conns) end
+  client = try TCP.connect("127.0.0.1", server.port, 5000)
+  conn = try conns.recv(5000)
+  Task.sleep(300)
+  try Test.eq(Dock.stats(server).open, 1)
+  try Dock.send(conn, "late reply".bytes)
+  try Test.eq(TCP.recv_bytes(client, 64, 5000), ok("late reply".bytes))
+  try Test.error?(ids.recv(100))
+  Dock.close(conn)
+  try Test.eq(read_all(client), ok("".bytes))
+  try Test.eq(ids.recv(5000), ok(1))
+  TCP.close(client)
+  try await_stats(server) do |s| s.open == 0 end
+  try Test.error?(ids.recv(300))
+  return Dock.stop(server)
+end
+
+# After the hand-over the client leaves: a task that reads sees it, and the connection ends once.
+def test_the_end_of_a_client_seen_by_a_reader_closes_a_handed_over_connection_once() -> Result[Void]
+  conns: Channel[Dock.Conn] = Channel.new(1)
+  ids: Channel[Int] = Channel.new(8)
+  config = noting(Dock.Config(port: 0), ids)
+  server = try Dock.start(config) do |conn| pass_on(conn, conns) end
+  client = try TCP.connect("127.0.0.1", server.port, 5000)
+  conn = try conns.recv(5000)
+  reader = Task.spawn do Dock.recv(conn, 16) end
+  Task.sleep(200)
+  try Test.eq(Dock.stats(server).open, 1)
+  TCP.close(client)
+  try Test.eq(ids.recv(5000), ok(1))
+  try await_stats(server) do |s| s.open == 0 end
+  try Test.eq(Dock.stats(server).accepted, 1)
+  try Test.error?(ids.recv(300))
+  try Test.error?(Dock.send(conn, "x".bytes))
+  Task.cancel(reader)
+  return Dock.stop(server)
+end
+
+def test_a_handed_over_client_that_does_not_read_is_dropped_at_the_cap() -> Result[Void]
+  conns: Channel[Dock.Conn] = Channel.new(1)
+  ids: Channel[Int] = Channel.new(8)
+  config = noting(Dock.Config(port: 0, max_outbox_bytes: 100_000), ids)
+  server = try Dock.start(config) do |conn| pass_on(conn, conns) end
+  client = try TCP.connect("127.0.0.1", server.port, 5000)
+  conn = try conns.recv(5000)
+  try Test.eq(flood(conn), "dropped true false")
+  try Test.eq(ids.recv(5000), ok(1))
+  try await_stats(server) do |s| s.open == 0 and s.dropped == 1 end
+  try Test.error?(ids.recv(300))
+  TCP.close(client)
+  return Dock.stop(server)
+end
+
+def test_stop_ends_a_handed_over_connection_nobody_closes() -> Result[Void]
+  conns: Channel[Dock.Conn] = Channel.new(1)
+  ids: Channel[Int] = Channel.new(8)
+  config = noting(Dock.Config(port: 0), ids)
+  server = try Dock.start(config) do |conn| pass_on(conn, conns) end
+  client = try TCP.connect("127.0.0.1", server.port, 5000)
+  _ = try conns.recv(5000)
+  Task.sleep(200)
+  started = Time.now_ms
+  try Dock.stop(server)
+  try Test.assert(Time.now_ms - started < 5000, "stop waited for a handed over connection")
+  try Test.eq(TCP.recv_bytes(client, 1, 5000), ok("".bytes))
+  TCP.close(client)
+  try Test.eq(ids.recv(5000), ok(1))
+  try Test.eq(Dock.stats(server).open, 0)
+  return Test.error?(ids.recv(300))
+end
+
+def test_a_bad_max_bytes_does_not_close_a_handed_over_connection() -> Result[Void]
+  conns: Channel[Dock.Conn] = Channel.new(1)
+  server = try Dock.start(Dock.Config(port: 0)) do |conn| pass_on(conn, conns) end
+  client = try TCP.connect("127.0.0.1", server.port, 5000)
+  conn = try conns.recv(5000)
+  try Test.error?(Dock.recv(conn, 0))
+  try Test.error?(Dock.recv(conn, 2_000_000))
+  Task.sleep(200)
+  try Test.eq(Dock.stats(server).open, 1)
+  try Dock.send(conn, "still open".bytes)
+  try Test.eq(TCP.recv_bytes(client, 64, 5000), ok("still open".bytes))
+  TCP.close(client)
+  return Dock.stop(server)
+end
