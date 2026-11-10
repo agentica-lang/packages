@@ -54,8 +54,7 @@ Dock.stats(server: Server) -> Stats
 Dock.watch(server: Server, task: Task[R]) -> Void
 Dock.on_close(config: Config, hook: Fn[Conn, Void]) -> Config
 
-Config(port: Int, host: String = "127.0.0.1", idle_ms: Int = 31536000000, max_outbox_bytes: Int = 8388608,
-  max_connections: Int = 65536, grace_ms: Int = 0, on_close: Optional[Fn[Conn, Void]] = none)
+Config(port: Int, host: String = "127.0.0.1", idle_ms: Int = 31536000000, max_outbox_bytes: Int = 8388608, max_connections: Int = 65536, grace_ms: Int = 0, on_close: Optional[Fn[Conn, Void]] = none)
 Conn(id: Int, peer: String)
 Server(port: Int)
 Stats(open: Int, accepted: Int, refused: Int, dropped: Int, crashed: Int)
