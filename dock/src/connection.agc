@@ -19,10 +19,16 @@ export def run(link: Link) -> Void
     ClientParts.Parts(socket, _, outbox) ->
       writer = Task.spawn(&Outbox.run, Outbox.Pipe(socket: socket, outbox: outbox))
       link.handler(link.conn)
-      Outbox.finish(outbox, socket)
-      case Task.await(writer, DRAIN_MS)
-        Await.Done(_) -> nil
-        Await.TimedOut -> Task.cancel(writer)
+      if Outbox.handed_over?(outbox)
+        # Another task owns the connection now. The writer ends at `close`, a drop, a failed send or a read that saw
+        # the end; a cancel (the stop) ends this task and the writer with it.
+        Task.await(writer)
+      else
+        Outbox.finish(outbox, socket)
+        case Task.await(writer, DRAIN_MS)
+          Await.Done(_) -> nil
+          Await.TimedOut -> Task.cancel(writer)
+        end
       end
 
       TCP.close(socket)
@@ -35,9 +41,32 @@ export def close(conn: Conn) -> Void
   end
 end
 
+## Tells dock that another task owns the connection, so the handler may return without closing it. Call it in the
+## handler, before the connection is given away and before returning.
+export def hand_over(conn: Conn) -> Void
+  case conn.inside
+    ClientParts.Parts(_, _, outbox) -> Outbox.hand_over(outbox)
+  end
+end
+
+## After a hand-over, nobody reads the socket unless a task calls `recv`: a `recv` that gets the end of the client (empty
+## bytes) or fails (the idle time passed, say) then closes the connection as `close` does, since no handler is left to.
 export def recv(conn: Conn, max_bytes: Int = 65_536) -> Result[Bytes]
   case conn.inside
-    ClientParts.Parts(socket, idle_ms, _) -> return TCP.recv_bytes(socket, max_bytes, idle_ms)
+    ClientParts.Parts(socket, idle_ms, outbox) ->
+      got = TCP.recv_bytes(socket, max_bytes, idle_ms)
+      if Outbox.handed_over?(outbox)
+        case got
+          ok(chunk) ->
+            if chunk.empty?
+              Outbox.finish(outbox, socket)
+            end
+
+          error(_) -> Outbox.finish(outbox, socket)
+        end
+      end
+
+      return got
   end
 end
 

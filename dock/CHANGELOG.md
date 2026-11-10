@@ -4,6 +4,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `Dock.hand_over(conn)`: the handler may return and leave the connection to another task. It then ends at `Dock.close`,
+  when a `Dock.recv` sees the end of the client or fails, at the outbox cap, or at `stop`; `on_close` runs once at that
+  end. The docs show the store task pattern and how an `on_close` callback retries its notice.
+
 ## [0.1.0] - 2026-11-10
 
 ### Added
