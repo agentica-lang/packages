@@ -1,4 +1,5 @@
 import Dock from "../dock"
+import Outbox from "../src/outbox"
 import Serving from "../src/server"
 
 # Real sockets on 127.0.0.1 and a port picked by the system: the handlers run in the tasks of the server.
@@ -39,8 +40,10 @@ def echo_or_crash(conn: Dock.Conn) -> Void
   end
 end
 
-# Ignores its socket for good: only a cancel from the server can end it.
-def hold(_conn: Dock.Conn) -> Void
+# Queues 20 MiB for a client that never reads, so its writer is stuck, then ignores its socket for good: only a
+# cancel from the server can end it.
+def hold(conn: Dock.Conn) -> Void
+  _ = Dock.send(conn, mib(20))
   while true
     Task.sleep(20)
   end
@@ -123,13 +126,9 @@ def test_stop_ends_a_handler_that_never_returns_and_frees_the_port() -> Result[V
   server = try serve(&hold)
   port = server.port
   client = try TCP.connect("127.0.0.1", port, 5000)
+  # The first byte shows the handler runs and its writer is sending; the client reads no more, so 20 MiB stay queued.
+  try Test.eq(TCP.recv_bytes(client, 1, 5000), ok("x".bytes))
   try Dock.stop(server)
-  # The server closed its side: the client reads the end, or a reset.
-  case TCP.recv_bytes(client, 1, 5000)
-    ok(bytes) -> try Test.assert(bytes.empty?, "the stream ended")
-    error(_) -> nil
-  end
-
   TCP.close(client)
   try Test.error?(TCP.connect("127.0.0.1", port, 1000))
   # A second stop and a wait after it give the same result, and the port can serve again.
@@ -140,7 +139,12 @@ def test_stop_ends_a_handler_that_never_returns_and_frees_the_port() -> Result[V
   return Dock.stop(again)
 end
 
-# One server with a short idle time and send time. Each client asks for a case by its first word; the handler
+def mib(count: Int) -> Bytes
+  piece = ("x" * 1_048_576).bytes
+  return Bytes.concat((1..count).to_a.map do |_| piece end)
+end
+
+# One server with a short idle time and a small outbox. Each client asks for a case by its first word; the handler
 # reports what happened on `report`, which the test reads.
 def probe(conn: Dock.Conn, report: Channel[String]) -> Void
   case Dock.recv(conn, 16)
@@ -150,16 +154,44 @@ def probe(conn: Dock.Conn, report: Channel[String]) -> Void
         # Nothing more comes: this receive times out.
         _ = report.send("idle #{Dock.recv(conn, 16).ok?}", 5000)
       elsif command == "flood".bytes
-        # The client never reads, so the buffers fill and a send times out; the socket is then closed.
-        mib = ("x" * 1_048_576).bytes
-        first = Dock.send(conn, Bytes.concat((1..64).to_a.map do |_| mib end))
-        again = Dock.send(conn, "more".bytes)
-        _ = report.send("flood #{first.ok?} #{again.ok?}", 5000)
+        _ = report.send(flood(conn), 5000)
       else
-        _ = report.send("blocked", 5000)
-        _ = Dock.recv(conn, 16)
+        _ = Dock.send(conn, "pong".bytes)
       end
   end
+end
+
+# The client never reads. The writer fills the socket buffers, the queue passes the cap, and the send that does is
+# refused. The messages are 1 MiB, so the 1,564 that the channel holds for this cap are never what stops it: the
+# bytes are. The loop is bounded so a missing drop fails instead of hanging.
+def flood(conn: Dock.Conn) -> String
+  piece = mib(1)
+  for n in 1..200
+    case Dock.send(conn, piece)
+      error(_) -> return "dropped #{n < 100} #{Dock.send(conn, piece).ok?}"
+      ok(_) -> nil
+    end
+  end
+
+  return "never dropped"
+end
+
+def test_idle_timeout_and_a_flooded_client_dropped_at_the_cap() -> Result[Void]
+  report: Channel[String] = Channel.new(8)
+  config = Dock.Config(port: 0, idle_ms: 500, max_outbox_bytes: 100_000)
+  server = try Dock.start(config) do |conn| probe(conn, report) end
+  idler = try start_client(server.port, "idle")
+  try Test.eq(report.recv(5000), ok("idle false"))
+  flooder = try start_client(server.port, "flood")
+  try Test.eq(report.recv(10000), ok("dropped true false"))
+  # Others are served, and a stop does not wait for the stalled client.
+  try Test.eq(exchange(server.port, "ping"), ok("pong"))
+  started = Time.now_ms
+  try Dock.stop(server)
+  try Test.assert(Time.now_ms - started < 5000, "stop waited for the full outbox")
+  TCP.close(idler)
+  TCP.close(flooder)
+  return ok()
 end
 
 def start_client(port: Int, word: String) -> Result[Socket]
@@ -168,24 +200,144 @@ def start_client(port: Int, word: String) -> Result[Socket]
   return ok(socket)
 end
 
-def test_idle_and_send_timeouts_and_a_stop_with_a_blocked_handler() -> Result[Void]
-  report: Channel[String] = Channel.new(8)
-  config = Dock.Config(port: 0, idle_ms: 1200, send_ms: 300)
-  server = try Dock.start(config) do |conn| probe(conn, report) end
-  idler = try start_client(server.port, "idle")
-  try Test.eq(report.recv(5000), ok("idle false"))
-  flooder = try start_client(server.port, "flood")
-  try Test.eq(report.recv(10000), ok("flood false false"))
-  blocked = try start_client(server.port, "block")
-  try Test.eq(report.recv(5000), ok("blocked"))
-  started = Time.now_ms
-  try Dock.stop(server)
-  # The cancel ended the receive: it did not wait for its 1200 ms.
-  try Test.assert(Time.now_ms - started < 1000, "stop waited for the handler")
-  TCP.close(idler)
-  TCP.close(flooder)
-  TCP.close(blocked)
-  return ok()
+# Reads until the server closes.
+def read_all(socket: Socket) -> Result[Bytes]
+  got = "".bytes
+  while true
+    chunk = try TCP.recv_bytes(socket, 65_536, 10_000)
+    if chunk.empty?
+      return ok(got)
+    end
+
+    got = got + chunk
+  end
+
+  return ok(got)
+end
+
+# 10 tasks send 100 messages each to a connection they got over a channel; `close` then ends it after the last.
+def test_send_from_other_tasks_keeps_each_message_whole_and_in_order() -> Result[Void]
+  conns: Channel[Dock.Conn] = Channel.new(1)
+  server = try Dock.start(Dock.Config(port: 0)) do |conn| keep(conn, conns) end
+  client = try start_client(server.port, "go")
+  conn = try conns.recv(5000)
+  results = Task.map((1..10).to_a, 10, 20000) do |task|
+    for n in 1..100
+      try Dock.send(conn, "#{task}:#{n};".bytes)
+    end
+
+    ok(task)
+  end
+
+  try Test.eq(results.select do |r| not r.ok? end.size, 0)
+  Dock.close(conn)
+  # The close is in the queue: a send after it fails now, not only once the client read the end.
+  try Test.eq(Dock.send(conn, "late".bytes).ok?, false)
+  got = String.from_bytes(try read_all(client)).unwrap!
+  TCP.close(client)
+  messages = got.split(";").select do |m| not m.empty? end
+  try Test.eq(messages.size, 1000)
+  for task in 1..10
+    mine = messages.select do |m| m.start_with?("#{task}:") end
+    try Test.eq(mine, (1..100).to_a.map do |n| "#{task}:#{n}" end)
+  end
+
+  return Dock.stop(server)
+end
+
+# Hands the Conn to the test, then reads until the connection ends.
+def keep(conn: Dock.Conn, conns: Channel[Dock.Conn]) -> Void
+  _ = Dock.recv(conn, 16)
+  _ = conns.send(conn, 5000)
+  while Dock.recv(conn, 16).ok?
+    nil
+  end
+end
+
+def test_send_after_the_client_left_is_an_error() -> Result[Void]
+  conns: Channel[Dock.Conn] = Channel.new(1)
+  server = try Dock.start(Dock.Config(port: 0)) do |conn| keep(conn, conns) end
+  client = try start_client(server.port, "go")
+  conn = try conns.recv(5000)
+  TCP.close(client)
+  deadline = Time.now_ms + 5000
+  while Dock.send(conn, "x".bytes).ok? and Time.now_ms < deadline
+    Task.sleep(20)
+  end
+
+  try Test.eq(Dock.send(conn, "x".bytes).ok?, false)
+  return Dock.stop(server)
+end
+
+def test_one_message_over_the_cap_arrives_whole_for_a_slow_reader() -> Result[Void]
+  server = try Dock.start(Dock.Config(port: 0)) do |conn| big(conn) end
+  client = try TCP.connect("127.0.0.1", server.port, 5000)
+  Task.sleep(300)
+  got = try read_all(client)
+  TCP.close(client)
+  try Test.eq(got.size, 20 * 1_048_576)
+  return Dock.stop(server)
+end
+
+def big(conn: Dock.Conn) -> Void
+  _ = Dock.send(conn, mib(20))
+  Dock.close(conn)
+  _ = Dock.recv(conn, 16)
+end
+
+# With cap 100,000: "b" gets a reply of 1 MiB and then a short one, as a client that reads normally must; "s" gets
+# 1 MiB
+# in 1 KiB messages, 1,100,000 charged against the cap, so the writer must subtract what it wrote.
+def reply(conn: Dock.Conn) -> Void
+  case Dock.recv(conn, 1)
+    error(_) -> return
+    ok(command) ->
+      if command == "b".bytes
+        _ = Dock.send(conn, mib(1))
+        _ = Dock.send(conn, "OK\r\n".bytes)
+      else
+        piece = ("x" * 1024).bytes
+        for n in 1..1024
+          _ = Dock.send(conn, piece)
+          # Paced, so a client that reads is never more than a few KiB behind.
+          if n % 8 == 0
+            Task.sleep(1)
+          end
+        end
+      end
+
+      Dock.close(conn)
+      _ = Dock.recv(conn, 16)
+  end
+end
+
+def test_a_client_that_reads_is_never_dropped_for_the_size_of_what_it_got() -> Result[Void]
+  server = try Dock.start(Dock.Config(port: 0, max_outbox_bytes: 100_000)) do |conn| reply(conn) end
+  big = try start_client(server.port, "b")
+  got = try read_all(big)
+  try Test.eq(got.size, 1_048_576 + 4)
+  TCP.close(big)
+  small = try start_client(server.port, "s")
+  got_small = try read_all(small)
+  try Test.eq(got_small.size, 1_048_576)
+  TCP.close(small)
+  return Dock.stop(server)
+end
+
+def test_the_cap_and_the_config_are_checked() -> Result[Void]
+  cap = 100
+  # The charge is capped, and a message is refused when the charges waiting before it pass the cap.
+  try Test.eq(Outbox.charge(10, cap), 74)
+  try Test.eq(Outbox.charge(1_000_000, cap), cap)
+  try Test.eq(Outbox.refused?(100, 100, cap), false)
+  try Test.eq(Outbox.refused?(200, 100, cap), false)
+  try Test.eq(Outbox.refused?(201, 100, cap), true)
+  try Test.error?(Dock.start(Dock.Config(port: 0, max_outbox_bytes: Outbox.MIN_CAP - 1), &echo))
+  try Test.error?(Dock.start(Dock.Config(port: 0, max_outbox_bytes: Outbox.MAX_CAP + 1), &echo))
+  # The largest cap needs the largest channel the VM allows.
+  server = try Dock.start(Dock.Config(port: 0, max_outbox_bytes: Outbox.MAX_CAP), &echo)
+  try Test.eq(exchange(server.port, "hi"), ok("hi"))
+  return Dock.stop(server)
 end
 
 # The loop of the supervisor on a listener that the test closes under it.
@@ -197,7 +349,9 @@ def test_a_closed_listener_ends_the_loop_with_an_error() -> Result[Void]
   TCP.close_listener(listener)
   case Task.await(loop, 5000)
     Await.Done(result) -> return Test.error?(result)
-    Await.TimedOut -> return error("the loop did not end")
+    Await.TimedOut ->
+      Task.cancel(loop)
+      return error("the loop did not end")
   end
 end
 

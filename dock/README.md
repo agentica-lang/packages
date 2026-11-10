@@ -4,7 +4,7 @@ A TCP server for Agentica: an accept loop, one task per client that runs your ha
 ends or its handler crashes. The socket is closed once, whichever way the handler ends, and a client never makes the
 server wait.
 
-Add it in a project with an `agentica.toml`:
+Not released yet. Add it in a project with an `agentica.toml`:
 
 ```sh
 agentica add dock https://github.com/agentica-lang/packages --tag dock-0.1.0 --subdir dock

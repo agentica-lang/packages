@@ -1,6 +1,7 @@
 ## The supervisor: one task that listens, accepts, starts a task per client and closes what ended.
 
 import Connection from "connection"
+import Outbox from "outbox"
 import {ClientParts, Config, Conn, Server, ServerParts} from "types"
 
 # How long one accept waits. It is also the longest a stop, or the close of the socket of a crashed handler, can
@@ -30,6 +31,12 @@ end
 
 ## Listens and returns once the port is open; `handler` runs in a task of its own for each client.
 export def start(config: Config, handler: Fn[Conn, Void]) -> Result[Server]
+  if config.max_outbox_bytes < Outbox.MIN_CAP or config.max_outbox_bytes > Outbox.MAX_CAP
+    return error(
+      "dock: max_outbox_bytes must be #{Outbox.MIN_CAP} to #{Outbox.MAX_CAP}, got #{config.max_outbox_bytes}",
+    )
+  end
+
   ready: Channel[Result[Int]] = Channel.new(1)
   stop_signal: Channel[Bool] = Channel.new(1)
   task = Task.spawn(&supervise, Boot(config: config, handler: handler, ready: ready, stop_signal: stop_signal))
@@ -113,11 +120,14 @@ def supervise(boot: Boot) -> Result[Void]
   end
 end
 
+# An error here ends the whole server, so nothing may raise for a config that `start` accepted. The one call that
+# checks its argument is Channel.new in Outbox.build, and `start` keeps its size in range. Task.spawn failing for
+# lack of memory is the only other way, and `wait` and `stop` then report the crash.
 def spawn_client(socket: Socket, id: Int, config: Config, handler: Fn[Conn, Void], downs: Channel[Int]) -> Live
   conn = Conn(
     id: id,
     peer: TCP.remote_address(socket),
-    inside: ClientParts.Parts(socket, config.idle_ms, config.send_ms),
+    inside: ClientParts.Parts(socket, config.idle_ms, Outbox.build(config.max_outbox_bytes)),
   )
 
   task = Task.spawn(&Connection.run, Connection.Link(conn: conn, handler: handler))
