@@ -231,6 +231,8 @@ def test_send_from_other_tasks_keeps_each_message_whole_and_in_order() -> Result
 
   try Test.eq(results.select do |r| not r.ok? end.size, 0)
   Dock.close(conn)
+  # The close is in the queue: a send after it fails now, not only once the client read the end.
+  try Test.eq(Dock.send(conn, "late".bytes).ok?, false)
   got = String.from_bytes(try read_all(client)).unwrap!
   TCP.close(client)
   messages = got.split(";").select do |m| not m.empty? end
@@ -240,7 +242,6 @@ def test_send_from_other_tasks_keeps_each_message_whole_and_in_order() -> Result
     try Test.eq(mine, (1..100).to_a.map do |n| "#{task}:#{n}" end)
   end
 
-  try Test.eq(Dock.send(conn, "late".bytes).ok?, false)
   return Dock.stop(server)
 end
 
@@ -284,13 +285,59 @@ def big(conn: Dock.Conn) -> Void
   _ = Dock.recv(conn, 16)
 end
 
+# With cap 100,000: "b" gets a reply of 1 MiB and then a short one, as a client that reads normally must; "s" gets
+# 1 MiB
+# in 1 KiB messages, 1,100,000 charged against the cap, so the writer must subtract what it wrote.
+def reply(conn: Dock.Conn) -> Void
+  case Dock.recv(conn, 1)
+    error(_) -> return
+    ok(command) ->
+      if command == "b".bytes
+        _ = Dock.send(conn, mib(1))
+        _ = Dock.send(conn, "OK\r\n".bytes)
+      else
+        piece = ("x" * 1024).bytes
+        for n in 1..1024
+          _ = Dock.send(conn, piece)
+          # Paced, so a client that reads is never more than a few KiB behind.
+          if n % 8 == 0
+            Task.sleep(1)
+          end
+        end
+      end
+
+      Dock.close(conn)
+      _ = Dock.recv(conn, 16)
+  end
+end
+
+def test_a_client_that_reads_is_never_dropped_for_the_size_of_what_it_got() -> Result[Void]
+  server = try Dock.start(Dock.Config(port: 0, max_outbox_bytes: 100_000)) do |conn| reply(conn) end
+  big = try start_client(server.port, "b")
+  got = try read_all(big)
+  try Test.eq(got.size, 1_048_576 + 4)
+  TCP.close(big)
+  small = try start_client(server.port, "s")
+  got_small = try read_all(small)
+  try Test.eq(got_small.size, 1_048_576)
+  TCP.close(small)
+  return Dock.stop(server)
+end
+
 def test_the_cap_and_the_config_are_checked() -> Result[Void]
-  # With nothing pending a message is never refused; with a backlog it is when the total passes the cap.
-  try Test.eq(Outbox.refused?(1_000_064, 1_000_064, 100), false)
-  try Test.eq(Outbox.refused?(100, 40, 100), false)
-  try Test.eq(Outbox.refused?(101, 40, 100), true)
-  try Test.error?(Dock.start(Dock.Config(port: 0, max_outbox_bytes: 0), &echo))
-  return Test.error?(Dock.start(Dock.Config(port: 0, max_outbox_bytes: Outbox.MAX_CAP + 1), &echo))
+  cap = 100
+  # The charge is capped, and a message is refused when the charges waiting before it pass the cap.
+  try Test.eq(Outbox.charge(10, cap), 74)
+  try Test.eq(Outbox.charge(1_000_000, cap), cap)
+  try Test.eq(Outbox.refused?(100, 100, cap), false)
+  try Test.eq(Outbox.refused?(200, 100, cap), false)
+  try Test.eq(Outbox.refused?(201, 100, cap), true)
+  try Test.error?(Dock.start(Dock.Config(port: 0, max_outbox_bytes: Outbox.MIN_CAP - 1), &echo))
+  try Test.error?(Dock.start(Dock.Config(port: 0, max_outbox_bytes: Outbox.MAX_CAP + 1), &echo))
+  # The largest cap needs the largest channel the VM allows.
+  server = try Dock.start(Dock.Config(port: 0, max_outbox_bytes: Outbox.MAX_CAP), &echo)
+  try Test.eq(exchange(server.port, "hi"), ok("hi"))
+  return Dock.stop(server)
 end
 
 # The loop of the supervisor on a listener that the test closes under it.

@@ -31,8 +31,10 @@ end
 
 ## Listens and returns once the port is open; `handler` runs in a task of its own for each client.
 export def start(config: Config, handler: Fn[Conn, Void]) -> Result[Server]
-  if config.max_outbox_bytes < 1 or config.max_outbox_bytes > Outbox.MAX_CAP
-    return error("dock: max_outbox_bytes must be 1 to #{Outbox.MAX_CAP}, got #{config.max_outbox_bytes}")
+  if config.max_outbox_bytes < Outbox.MIN_CAP or config.max_outbox_bytes > Outbox.MAX_CAP
+    return error(
+      "dock: max_outbox_bytes must be #{Outbox.MIN_CAP} to #{Outbox.MAX_CAP}, got #{config.max_outbox_bytes}",
+    )
   end
 
   ready: Channel[Result[Int]] = Channel.new(1)
@@ -118,6 +120,9 @@ def supervise(boot: Boot) -> Result[Void]
   end
 end
 
+# An error here ends the whole server, so nothing may raise for a config that `start` accepted. The one call that
+# checks its argument is Channel.new in Outbox.build, and `start` keeps its size in range. Task.spawn failing for
+# lack of memory is the only other way, and `wait` and `stop` then report the crash.
 def spawn_client(socket: Socket, id: Int, config: Config, handler: Fn[Conn, Void], downs: Channel[Int]) -> Live
   conn = Conn(
     id: id,

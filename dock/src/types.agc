@@ -10,7 +10,7 @@ export struct Config
   ## form, so the default is one year.
   idle_ms: Int = 31_536_000_000
   ## The bytes that may wait in the outbox of a client, 64 more for each message. A client that does not read is
-  ## dropped when `Dock.send` would pass it: 1 to 67,108,864.
+  ## dropped when more than this waits: 65 to 68,157,310.
   max_outbox_bytes: Int = 8_388_608
 end
 

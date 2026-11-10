@@ -19,7 +19,7 @@ export def run(link: Link) -> Void
     ClientParts.Parts(socket, _, outbox) ->
       writer = Task.spawn(&Outbox.run, Outbox.Pipe(socket: socket, outbox: outbox))
       link.handler(link.conn)
-      Outbox.finish(outbox)
+      Outbox.finish(outbox, socket)
       case Task.await(writer, DRAIN_MS)
         Await.Done(_) -> nil
         Await.TimedOut -> Task.cancel(writer)
@@ -31,7 +31,7 @@ end
 
 export def close(conn: Conn) -> Void
   case conn.inside
-    ClientParts.Parts(_, _, outbox) -> Outbox.finish(outbox)
+    ClientParts.Parts(socket, _, outbox) -> Outbox.finish(outbox, socket)
   end
 end
 
