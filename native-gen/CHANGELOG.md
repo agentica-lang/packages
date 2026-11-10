@@ -4,16 +4,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-10
+
+Needs Agentica 0.27.0 or later.
+
 ### Added
 
 - `cli.agc FILE --lang rust --output FILE.rs` writes the Rust side of the block on the `agentica-native` crate: a type with its codecs per struct and enum, the trait `PREFIXNative` (`--prefix MyDb` keeps its case) with one method per function (each takes `env` and returns `Result<T, Raise>`; a resource is an associated type, held as `ResourceArc`), and `module::<Impl>()` for `agentica_native::export!`. A payload that leads back to its own type stays a term (`TreeTerm<'a>`).
-- `cli.agc build FILE` builds a Rust module from the crate `rust/` at the package root (the nearest folder up from FILE with an `agentica.toml`): it writes `rust/src/NAME_native.rs`, runs `cargo build --release`, copies the library to `native/` (`libNAME.so`, `libNAME.dylib` or `NAME.dll`) and adds the `[native.NAME]` entry of the system to `agentica.toml` when it is missing. Paths below the current folder are printed relative to it. `build --check` fails (`NATIVE-GEN-STALE`) when the Rust file is stale; `NATIVE-GEN-CARGO` when cargo is missing or fails.
-- `cli.agc new --lang rust NAME` starts a Rust module: `NAME.agc`, and the crate `rust/` (`Cargo.toml`, `.gitignore`, `src/lib.rs` with one method per function that fails the call until it is written, and the Rust file). `build` then builds it and adds its `agentica.toml` entry.
+- `cli.agc build FILE` builds a Rust module from the crate `rust/` at the package root (the nearest folder up from FILE with an `agentica.toml`): it writes `rust/src/NAME_native.rs`, runs `cargo build --release`, copies the library to `native/` and adds the `[native.NAME]` entry to `agentica.toml` when it is missing. `build --check` fails (`NATIVE-GEN-STALE`) when the Rust file is stale; `NATIVE-GEN-CARGO` when cargo is missing or fails.
+- `cli.agc new --lang rust NAME` starts a Rust module: `NAME.agc` and the crate `rust/`, with one method per function that fails the call until you write it. `build` then builds it.
 
 ### Changed
 
 - The crate `agentica-native` is in `native/agentica-native`, which `agentica install` copies into `deps/native-gen/`.
-- A bad item of a `List` or `Map` argument now fails the call with `argument N:` before its path, as a bad argument does (`argument 1: List[Int].2: expected Int`), also for a `List` or `Map` inside an item, an `Optional` or a `Result` of it. A cursor of `_open` keeps the plain path.
+- A bad item of a `List` or `Map` argument now fails the call with `argument N:` before its path, as a bad argument does (`argument 1: List[Int].2: expected Int`), also inside an item, an `Optional` or a `Result`. A cursor of `_open` keeps the plain path.
 
 ## [0.1.0] - 2026-11-09
 
