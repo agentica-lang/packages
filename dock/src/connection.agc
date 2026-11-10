@@ -1,6 +1,6 @@
-## What runs in the task of one client.
+## What runs in the task of one client, and what the handler calls.
 
-import {Conn} from "types"
+import {ClientParts, Conn} from "types"
 
 # TCP.send_bytes takes at most 1 MiB.
 SEND_PIECE = 1_048_576
@@ -14,19 +14,30 @@ end
 ## the monitor tells it the task ended (the socket is owned by the supervisor, see server.agc).
 export def run(link: Link) -> Void
   link.handler(link.conn)
-  TCP.close(link.conn.socket)
+  close(link.conn)
 end
 
-export def recv(conn: Conn, max_bytes: Int) -> Result[Bytes]
-  return TCP.recv_bytes(conn.socket, max_bytes, conn.idle_ms)
+export def close(conn: Conn) -> Void
+  case conn.inside
+    ClientParts.Parts(socket, _, _) -> TCP.close(socket)
+  end
+end
+
+export def recv(conn: Conn, max_bytes: Int = 65_536) -> Result[Bytes]
+  case conn.inside
+    ClientParts.Parts(socket, idle_ms, _) -> return TCP.recv_bytes(socket, max_bytes, idle_ms)
+  end
 end
 
 export def send(conn: Conn, bytes: Bytes) -> Result[Void]
-  rest = bytes
-  while not rest.empty?
-    try TCP.send_bytes(conn.socket, rest.take(SEND_PIECE), conn.send_ms)
-    rest = rest.drop(SEND_PIECE)
-  end
+  case conn.inside
+    ClientParts.Parts(socket, _, send_ms) ->
+      rest = bytes
+      while not rest.empty?
+        try TCP.send_bytes(socket, rest.take(SEND_PIECE), send_ms)
+        rest = rest.drop(SEND_PIECE)
+      end
 
-  return ok()
+      return ok()
+  end
 end

@@ -10,5 +10,6 @@ export Types.Server
 export Serving.start
 export Serving.stop
 export Serving.wait
+export Connection.close
 export Connection.recv
 export Connection.send
