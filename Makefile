@@ -1,4 +1,4 @@
-# Needs Agentica 0.27.0 or later on PATH (CI pins it). Every target runs in each folder that has an agentica.toml.
+# Needs Agentica 0.30.0 or later on PATH (CI pins it). Every target runs in each folder that has an agentica.toml.
 AGENTICA ?= agentica
 # CI passes the changed packages: make test PACKAGES="prop native-gen" (a command line value wins over this line).
 PACKAGES := $(patsubst %/agentica.toml,%,$(wildcard */agentica.toml))

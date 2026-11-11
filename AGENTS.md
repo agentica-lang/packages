@@ -55,7 +55,7 @@ prop/                property-based testing: prop.agc is the API (check, eq, ass
 
 ## Commands
 
-- Agentica 0.27.0 on PATH (CI pins it with its sha256 in `ci.yml`; `AGENTICA=/path/agentica make ...` works too).
+- Agentica 0.30.0 on PATH (CI pins it with its sha256 in `ci.yml`; `AGENTICA=/path/agentica make ...` works too).
 - `make install` fetches `deps/` from each lock (git ignores `deps/`). `make check`, `make fmt-check`, `make test`
   run in each package folder; to work on one package, `cd` into it and run `agentica check`, `agentica fmt --check`
   and `agentica test`.
