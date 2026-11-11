@@ -4,8 +4,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-11
+
+Needs Agentica 0.30.0 or later and Bond 0.10.1.
+
 ### Changed
 
+- The hub is an actor of `std/actor`: its receive loop and its start are the actor's, with the same behaviour and the same API (`Hub`, `Channels.start_hub`, `Channels.stop_hub`, `hub.task`).
 - **Breaking:** needs Agentica 0.30.0 or later: the sources handle the new `HTTP.Message.Prepared` variant and are formatted with `agentica fmt` of 0.30.0, which uses its syntax (implicit returns, guards, one-line defs). CI tests with Agentica 0.30.0.
 
 ## [0.2.1] - 2026-11-08

@@ -2,6 +2,7 @@
 ## schedulers. Everything else talks to it over its inbox, in FIFO order, through the functions of this module (the
 ## messages are private). A connection is a `Channel[Event]`.
 
+import Actor from "std/actor"
 import HTTP from "std/http"
 import Protocol from "protocol"
 import {HubOptions, Stats} from "types"
@@ -17,8 +18,6 @@ BEAT_PENDING = "beat_pending"
 # connection whose inbox was too full to take the `Away` event.
 AWAY_PREFIX = "away:"
 HUB_INBOX = 4_096
-# The hub task wakes up at least this often only to look again at its inbox.
-IDLE_MS = 60_000
 
 ## What a connection task receives: a frame to write, a message of the client (from the pump), a WebSocket ping to
 ## write, and `Away` (`reconnect`): the connection ends on purpose, with the `disconnect` frame that says whether the
@@ -123,11 +122,6 @@ struct Ticker
   beat_ms: Int
 end
 
-struct Launch
-  inbox: Channel[HubMessage]
-  counters: ATS[String, Int]
-end
-
 ## Starts the hub task and its ticker; an `error` for options that cannot work (`beat_ms` under 1 would divide the
 ## ping interval by zero, a negative `broadcast_wait_ms` is no wait). The inbox belongs to the hub task, so when the
 ## hub ends or crashes every send fails at once with "closed" instead of waiting for room.
@@ -138,11 +132,13 @@ export def start(options: HubOptions) -> Result[Hub]
     return error("broadcast_wait_ms must be 0 or more, it is #{options.broadcast_wait_ms}")
   end
 
-  inbox: Channel[HubMessage] = Channel.new(HUB_INBOX)
   counters: ATS[String, Int] = ATS.new()
-  task = Task.spawn_owning(&run, Launch(inbox: inbox, counters: counters))
-  ticker = Task.spawn(&ticking, Ticker(inbox: inbox, counters: counters, beat_ms: options.beat_ms))
-  ok(Hub(inbox: inbox, task: task, ticker: ticker, counters: counters, options: options))
+  handler = handling() do |state, message| handle(state, message, counters) end
+  actor = Actor.start(Actor.Behaviour(init: &empty_state, handle: handler), Actor.Options(capacity: HUB_INBOX))
+  # The hub and its ticker send through the channel itself, not `Actor.cast`, so a send keeps its "closed" and
+  # "timed out" errors.
+  ticker = Task.spawn(&ticking, Ticker(inbox: actor.inbox, counters: counters, beat_ms: options.beat_ms))
+  ok(Hub(inbox: actor.inbox, task: actor.task, ticker: ticker, counters: counters, options: options))
 end
 
 ## Asks the hub to end; its task returns and later sends fail. The ticker is cancelled with it, so that no task is left
@@ -257,32 +253,20 @@ def ticking(ticker: Ticker) -> Result[Void]
   ok()
 end
 
-def run(launch: Launch) -> Result[Void]
+def empty_state() -> State
   empty_entries: Map[Int, Entry] = {}
   empty_topics: Map[String, Topic] = {}
-  # The state is only fed back to `step`: its effects are the sends to the connections.
-  _state = State(entries: empty_entries, topics: empty_topics, beats: 0)
-  while true
-    received = launch.inbox.recv(IDLE_MS)
-    if not received.ok?
-      return ok() if launch.inbox.closed?
-
-      next
-    end
-
-    message = received.unwrap!
-    return ok() if stop?(message)
-
-    _state = step(_state, message, launch.counters)
-  end
-
-  ok()
+  State(entries: empty_entries, topics: empty_topics, beats: 0)
 end
 
-def stop?(message: HubMessage) -> Bool
+# A block can only follow a call, so this turns the block that holds the counters into the `Fn` of the behaviour.
+def handling(f: Fn[State, HubMessage, Actor.Step[State]]) -> Fn[State, HubMessage, Actor.Step[State]] = f
+
+# `Stop` ends the actor at once: the messages still queued behind it are dropped, as before.
+def handle(state: State, message: HubMessage, counters: ATS[String, Int]) -> Actor.Step[State]
   case message
-    HubMessage.Stop -> true
-    _ -> false
+    HubMessage.Stop -> Actor.done(state)
+    _ -> Actor.continue(step(state, message, counters))
   end
 end
 
