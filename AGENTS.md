@@ -19,7 +19,7 @@ site/                the Hugo site: hugo.toml, content/_index.md (the home), lay
                      highlighter come from themes/docs-theme (the submodule agentica-lang/docs-theme)
 PACKAGE/             one package: agentica.toml, agentica.lock (when it has dependencies), src/, specs/, test/, docs/
 bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub, broadcast, stats); src/protocol.agc the frames
-                     (pure), src/hub.agc the hub task, src/connection.agc one connection, src/types.agc the records;
+                     (pure), src/hub.agc the hub (an actor), src/connection.agc one connection, src/types.agc the records;
                      turbo_streams, stream_key and signed_stream_name are in channels.agc too: src/signing.agc the
                      Rails-format signed names (pure), src/turbo.agc the channel; specs/ has the frames, the cable
                      and the Turbo features (fixtures/cable_peer.py is a raw-socket peer, it needs python3;
