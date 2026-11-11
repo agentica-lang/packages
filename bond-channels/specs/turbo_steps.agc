@@ -9,7 +9,7 @@ import Signing from "../src/signing"
 VECTORS = "specs/fixtures/turbo_vectors.json"
 
 export def steps() -> List[BDD.Step]
-  return [
+  [
     BDD.step("the stream key of the secret of the vectors is the key of Rails", &key_is_rails_key),
     BDD.step("an empty secret makes no stream key", &empty_secret_has_no_key),
     BDD.step("every name that Rails signed is signed the same here and read back", &generates_as_rails),
@@ -17,37 +17,27 @@ export def steps() -> List[BDD.Step]
   ]
 end
 
-def vectors() -> Json
-  return JSON.parse(File.read_text(VECTORS).unwrap!).unwrap!
-end
+def vectors() -> Json = JSON.parse(File.read_text(VECTORS).unwrap!).unwrap!
 
-def field(value: Json, name: String) -> Json
-  return JSON.get(value, name).unwrap!
-end
+def field(value: Json, name: String) -> Json = JSON.get(value, name).unwrap!
 
-def text(value: Json, name: String) -> String
-  return JSON.string(field(value, name)).unwrap!
-end
+def text(value: Json, name: String) -> String = JSON.string(field(value, name)).unwrap!
 
-def rows(name: String) -> List[Json]
-  return JSON.list(field(vectors(), name)).unwrap!
-end
+def rows(name: String) -> List[Json] = JSON.list(field(vectors(), name)).unwrap!
 
-def key() -> Bytes
-  return Signing.stream_key(text(vectors(), "secret_key_base")).unwrap!
-end
+def key() -> Bytes = Signing.stream_key(text(vectors(), "secret_key_base")).unwrap!
 
 # A vector whose `expected` is not a string (null, or the number that Rails reads back as 42) is refused here.
 def expected_name(row: Json) -> Optional[String]
   case JSON.string(field(row, "expected"))
-    ok(name) -> return some(name)
-    error(_) -> return none
+    ok(name) -> some(name)
+    error(_) -> none
   end
 end
 
 def key_is_rails_key(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   expected = OpenSSL.Digest.hexdecode(text(vectors(), "key_hex")).unwrap!
-  return BDD.assert(
+  BDD.assert(
     ctx,
     key() == expected,
     "the key is #{OpenSSL.Digest.hexencode(key())}, expected #{OpenSSL.Digest.hexencode(expected)}",
@@ -55,7 +45,7 @@ def key_is_rails_key(ctx: BDD.Context, _args: List[String]) -> BDD.Context
 end
 
 def empty_secret_has_no_key(ctx: BDD.Context, _args: List[String]) -> BDD.Context
-  return BDD.assert(ctx, not Signing.stream_key("").ok?, "an empty secret made a key")
+  BDD.assert(ctx, not Signing.stream_key("").ok?, "an empty secret made a key")
 end
 
 # Every generated name is also read back, so that what `signed_stream_name` writes is what
@@ -74,7 +64,7 @@ def generates_as_rails(ctx: BDD.Context, _args: List[String]) -> BDD.Context
     result = BDD.assert(result, Signing.verified_stream_name(key(), signed) == some(name), "#{name} did not read back")
   end
 
-  return result
+  result
 end
 
 def verifies_as_rails(ctx: BDD.Context, _args: List[String]) -> BDD.Context
@@ -88,5 +78,5 @@ def verifies_as_rails(ctx: BDD.Context, _args: List[String]) -> BDD.Context
     )
   end
 
-  return result
+  result
 end

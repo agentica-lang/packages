@@ -86,33 +86,29 @@ def summary(made: List[String]) -> String
     at += 1
   end
 
-  return "#{made.size} #{whole}"
+  "#{made.size} #{whole}"
 end
 
 # Whether `map` has the keys 0 to n - 1 in order, each with its square.
 def squared?(map: Map[Int, Int], n: Int) -> Bool
   at = 0
   for key in map.keys
-    if key != at or map[key] != at * at
-      return false
-    end
+    return false if key != at or map[key] != at * at
 
     at += 1
   end
 
-  return at == n
+  at == n
 end
 
 # Whether `map` has "label K" for K from 0 to n - 1 in order, each with K.
 def labeled?(map: Map[String, Int], n: Int) -> Bool
   at = 0
   for key in map.keys
-    if key != "label #{at}" or map[key] != at
-      return false
-    end
+    return false if key != "label #{at}" or map[key] != at
 
     at += 1
   end
 
-  return at == n
+  at == n
 end

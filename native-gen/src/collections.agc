@@ -42,21 +42,17 @@ export def of(block: Analysis.NativeBlock, codecs: Codecs.Plan) -> Shelf
     end
   end
 
-  return Shelf(codecs: codecs, read: collections(read), made: collections(made))
+  Shelf(codecs: codecs, read: collections(read), made: collections(made))
 end
 
 ## Whether a parameter of `type` arrives as a cursor (a List or Map) or a C struct (an Optional or Result).
-export def typed?(type: String) -> Bool
-  return held?(Types.parse(type))
-end
+export def typed?(type: String) -> Bool = held?(Types.parse(type))
 
 ## The C type of a parameter of `type`: its cursor or struct, or what the codecs give.
 export def c_type(shelf: Shelf, type: String) -> String
-  if typed?(type)
-    return name(shelf, Types.parse(type))
-  end
+  return name(shelf, Types.parse(type)) if typed?(type)
 
-  return Codecs.c_type(shelf.codecs, "", type)
+  Codecs.c_type(shelf.codecs, "", type)
 end
 
 ## The C names the Lists, Maps, Optionals and Results declare.
@@ -101,14 +97,12 @@ export def global_names(shelf: Shelf) -> List[Names.Named]
     ])
   end
 
-  return named
+  named
 end
 
 ## The cursor and builder types and the prototypes of their functions.
 export def declarations(shelf: Shelf) -> List[String]
-  if shelf.read.empty? and shelf.made.empty?
-    return []
-  end
+  return [] if shelf.read.empty? and shelf.made.empty?
 
   lines = [
     "",
@@ -139,7 +133,7 @@ export def declarations(shelf: Shelf) -> List[String]
     end
   end
 
-  return lines
+  lines
 end
 
 ## The definitions of the cursors and builders, for the implementation part of the header.
@@ -170,7 +164,7 @@ export def definitions(shelf: Shelf) -> List[String]
     end
   end
 
-  return lines
+  lines
 end
 
 ## The statements of a wrapper that open or decode argument `at`, a List, Map, Optional or Result, into `local`.
@@ -187,7 +181,7 @@ export def decode_argument(shelf: Shelf, type: String, local: String, at: Int) -
     lines = lines.push("  #{local}#{path}.argument = #{at + 1};")
   end
 
-  return lines
+  lines
 end
 
 # The Lists, Maps, Optionals and Results inside `types`, each once, each after the ones it holds.
@@ -203,58 +197,52 @@ def collections(types: List[String]) -> List[Types.Type]
     end
   end
 
-  return out
+  out
 end
 
 # Whether `type` is a List, Map, Optional or Result.
 def held?(type: Types.Type) -> Bool
   case type
-    Types.Type.Named(_) -> return false
-    _ -> return true
+    Types.Type.Named(_) -> false
+    _ -> true
   end
 end
 
 def collection?(type: Types.Type) -> Bool
   case type
-    Types.Type.ListOf(_) -> return true
-    Types.Type.MapOf(_, _) -> return true
-    _ -> return false
+    Types.Type.ListOf(_) -> true
+    Types.Type.MapOf(_, _) -> true
+    _ -> false
   end
 end
 
-def name(shelf: Shelf, type: Types.Type) -> String
-  return "#{shelf.codecs.lower}_#{Types.mangled(type)}"
-end
+def name(shelf: Shelf, type: Types.Type) -> String = "#{shelf.codecs.lower}_#{Types.mangled(type)}"
 
 # The static function that opens a List or Map, or decodes an Optional or Result, with the path of a failure.
 def reader(shelf: Shelf, type: Types.Type) -> String
-  if collection?(type)
-    return "#{shelf.codecs.lower}_native_open_#{Types.mangled(type)}"
-  end
+  return "#{shelf.codecs.lower}_native_open_#{Types.mangled(type)}" if collection?(type)
 
-  return "#{shelf.codecs.lower}_native_get_#{Types.mangled(type)}"
+  "#{shelf.codecs.lower}_native_get_#{Types.mangled(type)}"
 end
 
 # The constructor of an Optional or Result that is made.
 def maker(type: Types.Type) -> String
   case type
-    Types.Type.OptionalOf(_) -> return "some"
-    _ -> return "ok"
+    Types.Type.OptionalOf(_) -> "some"
+    _ -> "ok"
   end
 end
 
 def adder(type: Types.Type) -> String
-  if map?(type)
-    return "put"
-  end
+  return "put" if map?(type)
 
-  return "push"
+  "push"
 end
 
 def map?(type: Types.Type) -> Bool
   case type
-    Types.Type.MapOf(_, _) -> return true
-    _ -> return false
+    Types.Type.MapOf(_, _) -> true
+    _ -> false
   end
 end
 
@@ -271,38 +259,34 @@ def held_items(shelf: Shelf) -> List[Types.Type]
     end
   end
 
-  return out
+  out
 end
 
 # The item types of a List, the key and value types of a Map, or the value type of an Optional or Result.
 def items(type: Types.Type) -> List[Types.Type]
   case type
-    Types.Type.ListOf(item) -> return [item]
-    Types.Type.MapOf(key, value) -> return [key, value]
-    Types.Type.OptionalOf(item) -> return [item]
-    Types.Type.ResultOf(item) -> return [item]
-    _ -> return []
+    Types.Type.ListOf(item) -> [item]
+    Types.Type.MapOf(key, value) -> [key, value]
+    Types.Type.OptionalOf(item) -> [item]
+    Types.Type.ResultOf(item) -> [item]
+    _ -> []
   end
 end
 
 # The C type of an item that is read: a cursor for a List or Map, a struct for an Optional or Result, else what the
 # codecs give.
 def item_type(shelf: Shelf, type: Types.Type) -> String
-  if held?(type)
-    return name(shelf, type)
-  end
+  return name(shelf, type) if held?(type)
 
-  return Codecs.c_type(shelf.codecs, "", Types.text(type))
+  Codecs.c_type(shelf.codecs, "", Types.text(type))
 end
 
 # The C type of an item that is made: a C value as in the codecs, or a term (a List or Map made by its builder, an
 # Optional or Result by its constructor).
 def made_type(shelf: Shelf, type: Types.Type) -> String
-  if held?(type)
-    return "an_term"
-  end
+  return "an_term" if held?(type)
 
-  return Codecs.c_type(shelf.codecs, "", Types.text(type))
+  Codecs.c_type(shelf.codecs, "", Types.text(type))
 end
 
 def cursor_declaration(shelf: Shelf, type: Types.Type) -> List[String]
@@ -314,7 +298,7 @@ def cursor_declaration(shelf: Shelf, type: Types.Type) -> List[String]
     outs = "#{item_type(shelf, items(type)[0])} *key, #{item_type(shelf, items(type)[1])} *value"
   end
 
-  return [
+  [
     "typedef struct {",
     "  an_term term;",
     "  an_#{kind}_cursor cursor;",
@@ -343,7 +327,7 @@ def builder_declaration(shelf: Shelf, type: Types.Type) -> List[String]
     ]
   end
 
-  return [
+  [
     "typedef struct {",
     "  an_list_builder builder;",
     "} #{c}_builder;",
@@ -363,37 +347,33 @@ def item_decoder(shelf: Shelf, type: Types.Type) -> List[String]
     body = "  return #{reader(shelf, type)}(env, x, out, fail);"
   end
 
-  return ["#{head} ng_fail *fail) {", body, "}"]
+  ["#{head} ng_fail *fail) {", body, "}"]
 end
 
 # The lines that give the cursors in an item (the pointer `item`) the argument of the cursor it came from, so their own
 # items fail with the same "argument N:" prefix; nothing for an item with no cursor in it.
 def inherit(type: Types.Type, item: String, cursor: String) -> List[String]
-  return cursor_paths(type).map do |path| "#{item}->#{member(path)}argument = #{cursor}->argument;" end
+  cursor_paths(type).map do |path| "#{item}->#{member(path)}argument = #{cursor}->argument;" end
 end
 
 # `path` without its first dot, ready for `->`: ".value.value" is "value.value.", and "" stays "".
 def member(path: String) -> String
-  if path.empty?
-    return ""
-  end
+  return "" if path.empty?
 
-  return "#{path.slice(1, path.length - 1)}."
+  "#{path.slice(1, path.length - 1)}."
 end
 
 # Where the cursors are in the C value of `type`: "" for a List or Map itself, ".value" (repeated) inside an Optional
 # or Result; none in another type, and none inside a cursor, whose items are read later.
 def cursor_paths(type: Types.Type) -> List[String]
-  if collection?(type)
-    return [""]
-  end
+  return [""] if collection?(type)
 
   if !held?(type)
     none_found: List[String] = []
     return none_found
   end
 
-  return cursor_paths(items(type)[0]).map do |path| ".value#{path}" end
+  cursor_paths(items(type)[0]).map do |path| ".value#{path}" end
 end
 
 def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
@@ -448,7 +428,7 @@ def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
   value = "#{p}_native_item_#{Types.mangled(items(type)[1])}"
   outs = "#{item_type(shelf, items(type)[0])} *key, #{item_type(shelf, items(type)[1])} *value"
   inherited = inherit(items(type)[0], "key", "map").concat(inherit(items(type)[1], "value", "map"))
-  return joined([
+  joined([
     lines,
     [
       "int #{c}_next(an_env *env, #{c} *map, #{outs}) {",
@@ -474,12 +454,10 @@ end
 
 # `if (TAKEN) return 1;` at `indent`, with the `inherited` lines run first when there are any.
 def took(taken: String, indent: String, inherited: List[String]) -> List[String]
-  if inherited.empty?
-    return ["#{indent}if (#{taken}) return 1;"]
-  end
+  return ["#{indent}if (#{taken}) return 1;"] if inherited.empty?
 
   body = inherited.map do |line| "#{indent}  #{line}" end
-  return joined([["#{indent}if (#{taken}) {"], body, ["#{indent}  return 1;", "#{indent}}"]])
+  joined([["#{indent}if (#{taken}) {"], body, ["#{indent}  return 1;", "#{indent}}"]])
 end
 
 def builder_definition(shelf: Shelf, type: Types.Type) -> List[String]
@@ -502,7 +480,7 @@ def builder_definition(shelf: Shelf, type: Types.Type) -> List[String]
   end
 
   item = items(type)[0]
-  return [
+  [
     "void #{c}_begin(an_env *env, #{c}_builder *b, size_t hint) { an_list_begin(env, &b->builder, hint); }",
     "",
     "void #{c}_push(an_env *env, #{c}_builder *b, #{made_type(shelf, item)} value) {",
@@ -518,11 +496,9 @@ def struct_declaration(shelf: Shelf, type: Types.Type) -> List[String]
   c = name(shelf, type)
   value = "  #{item_type(shelf, items(type)[0])} value;"
   getter = "bool #{c}_get(an_env *env, an_term t, #{c} *out);"
-  if maker(type) == "some"
-    return ["typedef struct {", "  bool some;", value, "} #{c};", getter]
-  end
+  return ["typedef struct {", "  bool some;", value, "} #{c};", getter] if maker(type) == "some"
 
-  return ["typedef struct {", "  bool ok;", value, "  ng_str error;", "} #{c};", getter]
+  ["typedef struct {", "  bool ok;", value, "  ng_str error;", "} #{c};", getter]
 end
 
 # The decoder of an Optional or Result into its struct: the value is decoded only when there is one, and the error of a
@@ -548,7 +524,7 @@ def struct_definition(shelf: Shelf, type: Types.Type) -> List[String]
     )
   end
 
-  return (
+  (
     lines.concat([
       "  if (!an_get_result(env, x, &out->ok, &v)) return ng_expected(fail, \"#{text}\");",
       "  if (!out->ok)",
@@ -563,7 +539,7 @@ end
 # `_get`, which reads an Optional or Result that the C code holds as a term, such as a field of a struct.
 def public_get(shelf: Shelf, type: Types.Type) -> List[String]
   c = name(shelf, type)
-  return [
+  [
     "",
     "bool #{c}_get(an_env *env, an_term t, #{c} *out) {",
     "  ng_fail fail;",
@@ -574,26 +550,18 @@ end
 
 def maker_head(shelf: Shelf, type: Types.Type) -> String
   value = made_type(shelf, items(type)[0])
-  return "an_term #{name(shelf, type)}_#{maker(type)}(an_env *env, #{value} value)"
+  "an_term #{name(shelf, type)}_#{maker(type)}(an_env *env, #{value} value)"
 end
 
 def maker_definition(shelf: Shelf, type: Types.Type) -> List[String]
-  return [
-    "#{maker_head(shelf, type)} {",
-    "  return an_#{maker(type)}(env, #{made(shelf, items(type)[0], "value")});",
-    "}",
-  ]
+  ["#{maker_head(shelf, type)} {", "  return an_#{maker(type)}(env, #{made(shelf, items(type)[0], "value")});", "}"]
 end
 
 # The term of the item `source` of `type`.
 def made(shelf: Shelf, type: Types.Type, source: String) -> String
-  if held?(type)
-    return source
-  end
+  return source if held?(type)
 
-  return Codecs.encoded(shelf.codecs, "", Types.text(type), source)
+  Codecs.encoded(shelf.codecs, "", Types.text(type), source)
 end
 
-def joined(parts: List[List[String]]) -> List[String]
-  return parts.flat_map do |part: List[String]| part end
-end
+def joined(parts: List[List[String]]) -> List[String] = parts.flat_map do |part: List[String]| part end

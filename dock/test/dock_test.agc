@@ -11,9 +11,7 @@ def echo(conn: Dock.Conn) -> Void
     case Dock.recv(conn, 4096)
       error(_) -> return
       ok(chunk) ->
-        if chunk.empty?
-          return
-        end
+        return if chunk.empty?
 
         case Dock.send(conn, chunk)
           error(_) -> return
@@ -29,9 +27,7 @@ def echo_or_crash(conn: Dock.Conn) -> Void
   case Dock.recv(conn, 4096)
     error(_) -> return
     ok(chunk) ->
-      if chunk.empty?
-        return
-      end
+      return if chunk.empty?
 
       if chunk == "boom".bytes
         Task.sleep(100)
@@ -51,9 +47,7 @@ def hold(conn: Dock.Conn) -> Void
   end
 end
 
-def serve(handler: Fn[Dock.Conn, Void]) -> Result[Dock.Server]
-  return Dock.start(Dock.Config(port: 0), handler)
-end
+def serve(handler: Fn[Dock.Conn, Void]) -> Result[Dock.Server] = Dock.start(Dock.Config(port: 0), handler)
 
 # Sends `text` and reads until all of it came back, or the server closed.
 def exchange(port: Int, text: String) -> Result[String]
@@ -62,22 +56,20 @@ def exchange(port: Int, text: String) -> Result[String]
   got = "".bytes
   while got.size < text.bytes.size
     chunk = try TCP.recv_bytes(socket, 4096, 5000)
-    if chunk.empty?
-      break
-    end
+    break if chunk.empty?
 
     got = got + chunk
   end
 
   TCP.close(socket)
-  return String.from_bytes(got)
+  String.from_bytes(got)
 end
 
 # The open files of this process, so a socket the server forgot to close shows. `none` when the system has no /proc.
 def open_files() -> Optional[Int]
   case Dir.list("/proc/self/fd")
-    ok(names) -> return some(names.size)
-    error(_) -> return none
+    ok(names) -> some(names.size)
+    error(_) -> none
   end
 end
 
@@ -85,14 +77,14 @@ end
 # up to a deadline instead of sleeping a fixed time.
 def settles_at(before: Optional[Int]) -> Result[Void]
   case before
-    none -> return ok()
+    none -> ok()
     some(count) ->
       deadline = Time.now_ms + 5000
       while open_files() != some(count) and Time.now_ms < deadline
         Task.sleep(20)
       end
 
-      return Test.eq(open_files(), some(count))
+      Test.eq(open_files(), some(count))
   end
 end
 
@@ -107,7 +99,7 @@ def test_clients_get_their_own_bytes_back() -> Result[Void]
   end
 
   try Test.eq(results.select do |r| not r.ok? end.size, 0)
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 def test_a_client_that_leaves_and_a_crashing_handler_leak_nothing() -> Result[Void]
@@ -121,7 +113,7 @@ def test_a_client_that_leaves_and_a_crashing_handler_leak_nothing() -> Result[Vo
   try Test.eq(exchange(server.port, "boom"), ok(""))
   try Test.eq(exchange(server.port, "still here"), ok("still here"))
   try settles_at(before)
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 def test_stop_ends_a_handler_that_never_returns_and_frees_the_port() -> Result[Void]
@@ -138,12 +130,12 @@ def test_stop_ends_a_handler_that_never_returns_and_frees_the_port() -> Result[V
   try Test.eq(Dock.wait(server), ok())
   again = try Dock.start(Dock.Config(port: port), &echo)
   try Test.eq(exchange(port, "back"), ok("back"))
-  return Dock.stop(again)
+  Dock.stop(again)
 end
 
 def mib(count: Int) -> Bytes
   piece = ("x" * 1_048_576).bytes
-  return Bytes.concat((1..count).to_a.map do |_| piece end)
+  Bytes.concat((1..count).to_a.map do |_| piece end)
 end
 
 # One server with a short idle time and a small outbox. Each client asks for a case by its first word; the handler
@@ -175,7 +167,7 @@ def flood(conn: Dock.Conn) -> String
     end
   end
 
-  return "never dropped"
+  "never dropped"
 end
 
 def test_idle_timeout_and_a_flooded_client_dropped_at_the_cap() -> Result[Void]
@@ -194,13 +186,13 @@ def test_idle_timeout_and_a_flooded_client_dropped_at_the_cap() -> Result[Void]
   try Test.assert(Time.now_ms - started < 5000, "stop waited for the full outbox")
   TCP.close(idler)
   TCP.close(flooder)
-  return ok()
+  ok()
 end
 
 def start_client(port: Int, word: String) -> Result[Socket]
   socket = try TCP.connect("127.0.0.1", port, 5000)
   try TCP.send(socket, word, 5000)
-  return ok(socket)
+  ok(socket)
 end
 
 # Reads until the server closes.
@@ -208,14 +200,12 @@ def read_all(socket: Socket) -> Result[Bytes]
   got = "".bytes
   while true
     chunk = try TCP.recv_bytes(socket, 65_536, 10_000)
-    if chunk.empty?
-      return ok(got)
-    end
+    return ok(got) if chunk.empty?
 
     got = got + chunk
   end
 
-  return ok(got)
+  ok(got)
 end
 
 # 10 tasks send 100 messages each to a connection they got over a channel; `close` then ends it after the last.
@@ -245,7 +235,7 @@ def test_send_from_other_tasks_keeps_each_message_whole_and_in_order() -> Result
     try Test.eq(mine, (1..100).to_a.map do |n| "#{task}:#{n}" end)
   end
 
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 # Hands the Conn to the test, then reads until the connection ends.
@@ -269,7 +259,7 @@ def test_send_after_the_client_left_is_an_error() -> Result[Void]
   end
 
   try Test.eq(Dock.send(conn, "x".bytes).ok?, false)
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 def test_one_message_over_the_cap_arrives_whole_for_a_slow_reader() -> Result[Void]
@@ -279,7 +269,7 @@ def test_one_message_over_the_cap_arrives_whole_for_a_slow_reader() -> Result[Vo
   got = try read_all(client)
   TCP.close(client)
   try Test.eq(got.size, 20 * 1_048_576)
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 def big(conn: Dock.Conn) -> Void
@@ -323,7 +313,7 @@ def test_a_client_that_reads_is_never_dropped_for_the_size_of_what_it_got() -> R
   got_small = try read_all(small)
   try Test.eq(got_small.size, 1_048_576)
   TCP.close(small)
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 def test_the_cap_and_the_config_are_checked() -> Result[Void]
@@ -356,7 +346,7 @@ def test_the_cap_and_the_config_are_checked() -> Result[Void]
   # The largest cap needs the largest channel the VM allows.
   server = try Dock.start(Dock.Config(port: 0, max_outbox_bytes: Outbox.MAX_CAP), &echo)
   try Test.eq(exchange(server.port, "hi"), ok("hi"))
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 # The loop of the supervisor on a listener that the test closes under it.
@@ -379,10 +369,10 @@ def test_a_closed_listener_ends_the_loop_with_an_error() -> Result[Void]
 
   TCP.close_listener(listener)
   case Task.await(loop, 5000)
-    Await.Done(result) -> return Test.error?(result)
+    Await.Done(result) -> Test.error?(result)
     Await.TimedOut ->
       Task.cancel(loop)
-      return error("the loop did not end")
+      error("the loop did not end")
   end
 end
 
@@ -390,7 +380,7 @@ def test_a_port_in_use_is_an_error() -> Result[Void]
   taken = try TCP.listen("127.0.0.1", 0)
   result = Dock.start(Dock.Config(port: TCP.local_port(taken)), &echo)
   TCP.close_listener(taken)
-  return Test.error?(result)
+  Test.error?(result)
 end
 
 # Waits until `done` is true of the counters, up to a deadline.
@@ -400,7 +390,7 @@ def await_stats(server: Dock.Server, done: Fn[Dock.Stats, Bool]) -> Result[Void]
     Task.sleep(20)
   end
 
-  return Test.assert(done.call(Dock.stats(server)), "the counters did not get there: #{Dock.stats(server)}")
+  Test.assert(done.call(Dock.stats(server)), "the counters did not get there: #{Dock.stats(server)}")
 end
 
 # The handler of the limit and watch tests: it reads until the client leaves, or crashes at "boom".
@@ -409,9 +399,7 @@ def sit(conn: Dock.Conn) -> Void
     case Dock.recv(conn, 16)
       error(_) -> return
       ok(chunk) ->
-        if chunk.empty?
-          return
-        end
+        return if chunk.empty?
 
         if chunk == "boom".bytes
           puts("crashing on purpose".to_i!)
@@ -422,7 +410,7 @@ end
 
 # A config whose `on_close` sends the id of each connection that ended to `ids`.
 def noting(config: Dock.Config, ids: Channel[Int]) -> Dock.Config
-  return Dock.on_close(config) do |conn| _ = ids.send(conn.id, 5000) end
+  Dock.on_close(config) do |conn| _ = ids.send(conn.id, 5000) end
 end
 
 def test_a_connection_over_the_limit_is_closed_at_once_and_a_freed_slot_is_reused() -> Result[Void]
@@ -449,7 +437,7 @@ def test_a_connection_over_the_limit_is_closed_at_once_and_a_freed_slot_is_reuse
     TCP.close(client)
   end
 
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 # 100 handlers crash in the same moment, so 100 notices wait for one turn of the supervisor: each socket must be
@@ -482,7 +470,7 @@ def test_many_connections_ending_at_once_are_all_closed_and_counted() -> Result[
 
   try Test.eq(seen.sort, (1..100).to_a)
   try settles_at(before)
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 def test_on_close_fires_for_a_return_a_crash_and_the_stop() -> Result[Void]
@@ -501,7 +489,7 @@ def test_on_close_fires_for_a_return_a_crash_and_the_stop() -> Result[Void]
   end
 
   try Test.eq(seen.sort, [1, 2, 3])
-  return ok()
+  ok()
 end
 
 def test_a_watched_task_that_crashes_stops_the_server_and_wait_says_why() -> Result[Void]
@@ -521,7 +509,7 @@ def test_a_watched_task_that_crashes_stops_the_server_and_wait_says_why() -> Res
 
   try Test.eq(TCP.recv_bytes(client, 1, 5000), ok("".bytes))
   TCP.close(client)
-  return Test.error?(TCP.connect("127.0.0.1", server.port, 1000))
+  Test.error?(TCP.connect("127.0.0.1", server.port, 1000))
 end
 
 # Sends 20 MiB and keeps reading, so the handler ends when its socket is closed.
@@ -548,7 +536,7 @@ def test_stop_with_a_grace_lets_a_slow_client_get_what_was_queued() -> Result[Vo
     Await.Done(result) -> try result
   end
 
-  return Test.assert(Time.now_ms - started < 8000, "stop waited the whole grace for a client that was done")
+  Test.assert(Time.now_ms - started < 8000, "stop waited the whole grace for a client that was done")
 end
 
 def test_stop_closes_a_client_that_never_reads_when_the_grace_ends() -> Result[Void]
@@ -559,12 +547,12 @@ def test_stop_closes_a_client_that_never_reads_when_the_grace_ends() -> Result[V
   try Dock.stop(server)
   try Test.assert(Time.now_ms - started < 5000, "stop took more than the grace")
   TCP.close(client)
-  return ok()
+  ok()
 end
 
 def running_callbacks(server: Dock.Server) -> Int
   case server.inside
-    Types.ServerParts.Parts(_, _, table, _, _) -> return table.add(Counters.HOOKS, 0)
+    Types.ServerParts.Parts(_, _, table, _, _) -> table.add(Counters.HOOKS, 0)
   end
 end
 
@@ -580,7 +568,7 @@ def test_a_callback_that_crashes_does_not_crash_the_stop() -> Result[Void]
   # The count of running callbacks went down for the ones that crashed (it is what the stop waits on).
   try Test.eq(running_callbacks(server), 0)
   TCP.close(staying)
-  return Test.eq(Dock.wait(server), ok())
+  Test.eq(Dock.wait(server), ok())
 end
 
 # 100 callbacks that sleep: the accept loop must not pay for them, so a new client is served at once.
@@ -607,7 +595,7 @@ def test_slow_callbacks_never_hold_the_accept_loop() -> Result[Void]
     _ = try done.recv(10_000)
   end
 
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 # At the limit, a slot that a handler is freeing is waited for a moment, so a client that comes right after another
@@ -619,7 +607,7 @@ def test_one_slot_serves_sequential_clients() -> Result[Void]
   end
 
   try Test.eq(Dock.stats(server).refused, 0)
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 # The store-task pattern: the handler gives the Conn away and returns at once. Whoever got it owns the connection.
@@ -647,7 +635,7 @@ def test_a_handed_over_connection_stays_open_for_a_reply_after_the_handler_retur
   TCP.close(client)
   try await_stats(server) do |s| s.open == 0 end
   try Test.error?(ids.recv(300))
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 # After the hand-over the client leaves: a task that reads sees it, and the connection ends once.
@@ -668,7 +656,7 @@ def test_the_end_of_a_client_seen_by_a_reader_closes_a_handed_over_connection_on
   try Test.error?(ids.recv(300))
   try Test.error?(Dock.send(conn, "x".bytes))
   Task.cancel(reader)
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 def test_a_handed_over_client_that_does_not_read_is_dropped_at_the_cap() -> Result[Void]
@@ -683,7 +671,7 @@ def test_a_handed_over_client_that_does_not_read_is_dropped_at_the_cap() -> Resu
   try await_stats(server) do |s| s.open == 0 and s.dropped == 1 end
   try Test.error?(ids.recv(300))
   TCP.close(client)
-  return Dock.stop(server)
+  Dock.stop(server)
 end
 
 def test_stop_ends_a_handed_over_connection_nobody_closes() -> Result[Void]
@@ -701,7 +689,7 @@ def test_stop_ends_a_handed_over_connection_nobody_closes() -> Result[Void]
   TCP.close(client)
   try Test.eq(ids.recv(5000), ok(1))
   try Test.eq(Dock.stats(server).open, 0)
-  return Test.error?(ids.recv(300))
+  Test.error?(ids.recv(300))
 end
 
 def test_a_bad_max_bytes_does_not_close_a_handed_over_connection() -> Result[Void]
@@ -716,5 +704,5 @@ def test_a_bad_max_bytes_does_not_close_a_handed_over_connection() -> Result[Voi
   try Dock.send(conn, "still open".bytes)
   try Test.eq(TCP.recv_bytes(client, 64, 5000), ok("still open".bytes))
   TCP.close(client)
-  return Dock.stop(server)
+  Dock.stop(server)
 end

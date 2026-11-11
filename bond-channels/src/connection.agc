@@ -41,7 +41,7 @@ end
 
 ## The handler of the Bond route.
 export def handler_of(mount: Mount) -> Bond.WebSocketHandler
-  return wrapping() do |conn, socket| serve(mount, conn, socket) end
+  wrapping() do |conn, socket| serve(mount, conn, socket) end
 end
 
 # Serves one WebSocket until it ends, then runs `unsubscribed` for every subscription it still holds.
@@ -52,43 +52,37 @@ def serve(mount: Mount, conn: Bond.Conn, socket: HTTP.WebSocket) -> Result[Void]
   end
 
   case mount.options.connect.call(conn)
-    ok(identity) -> return open(mount, socket, identity)
+    ok(identity) -> open(mount, socket, identity)
     error(reason) ->
       IO.warn("bond-channels: connection refused: #{reason}")
-      return socket.outgoing.send(HTTP.Message.Text(Protocol.disconnect_unauthorized()), WRITE_MS)
+      socket.outgoing.send(HTTP.Message.Text(Protocol.disconnect_unauthorized()), WRITE_MS)
   end
 end
 
-def wrapping(handler: Bond.WebSocketHandler) -> Bond.WebSocketHandler
-  return handler
-end
+def wrapping(handler: Bond.WebSocketHandler) -> Bond.WebSocketHandler = handler
 
 def write_close(socket: HTTP.WebSocket, code: Int, reason: String) -> Result[Void]
-  return socket.outgoing.send(HTTP.Message.Close(code, reason), WRITE_MS)
+  socket.outgoing.send(HTTP.Message.Close(code, reason), WRITE_MS)
 end
 
 # A hub that is gone (stopped or crashed) hears nothing: the client is told to reconnect and is closed, as when a
 # server restarts, instead of being welcomed into a connection that no broadcast could reach.
-def hub_gone(socket: HTTP.WebSocket) -> Result[Void]
-  return send_away(socket, GOING_AWAY, "the hub is gone")
-end
+def hub_gone(socket: HTTP.WebSocket) -> Result[Void] = send_away(socket, GOING_AWAY, "the hub is gone")
 
 # 1013: try again later. The hub is there but its inbox stayed full for `broadcast_wait_ms`: the client reconnects too.
 def hub_busy(socket: HTTP.WebSocket) -> Result[Void]
   IO.warn("bond-channels: the hub inbox is full, a connection was refused")
-  return send_away(socket, TRY_LATER, "the hub is busy")
+  send_away(socket, TRY_LATER, "the hub is busy")
 end
 
 def send_away(socket: HTTP.WebSocket, code: Int, reason: String) -> Result[Void]
   try socket.outgoing.send(HTTP.Message.Text(Protocol.disconnect_reconnect()), WRITE_MS)
-  return write_close(socket, code, reason)
+  write_close(socket, code, reason)
 end
 
 def open(mount: Mount, socket: HTTP.WebSocket, identity: Types.Identity) -> Result[Void]
   hub = mount.hub
-  if Hub.gone?(hub)
-    return hub_gone(socket)
-  end
+  return hub_gone(socket) if Hub.gone?(hub)
 
   connection = Hub.next_connection(hub)
   subscriptions: ATS[String, String] = ATS.new()
@@ -97,9 +91,7 @@ def open(mount: Mount, socket: HTTP.WebSocket, identity: Types.Identity) -> Resu
   # Before any command is handled: the browser waits for it, and the loadgen subscribes right after the handshake.
   try socket.outgoing.send(HTTP.Message.Text(Protocol.welcome()), WRITE_MS)
   if not Hub.register(hub, connection, identity.id, inbox, ping_every(mount.options, hub)).ok?
-    if Hub.gone?(hub)
-      return hub_gone(socket)
-    end
+    return hub_gone(socket) if Hub.gone?(hub)
 
     return hub_busy(socket)
   end
@@ -118,14 +110,12 @@ def open(mount: Mount, socket: HTTP.WebSocket, identity: Types.Identity) -> Resu
   Hub.count(hub, Hub.CONNECTIONS, -1)
   # It forgets every subscription of the connection at once. A hub that is gone has nothing left to forget.
   _ = Hub.disconnect(hub, connection)
-  return ok()
+  ok()
 end
 
 # A block cannot be assigned to a name: this gives it a typed parameter first, so that it is a function that takes
 # the inbox, which `Task.spawn_owning` hands over.
-def looping(body: Fn[Channel[Hub.Event], Result[Void]]) -> Fn[Channel[Hub.Event], Result[Void]]
-  return body
-end
+def looping(body: Fn[Channel[Hub.Event], Result[Void]]) -> Fn[Channel[Hub.Event], Result[Void]] = body
 
 # The hub also pings the WebSocket, so that the pong of a quiet peer resets the idle clock of std/http: the Action
 # Cable ping is always something to write, so std/http would never ping by itself.
@@ -137,11 +127,9 @@ def ping_every(options: Types.MountOptions, hub: Hub.Hub) -> Int
 
   # `start_hub` refuses a `beat_ms` under 1.
   every = interval / hub.options.beat_ms
-  if every < 1
-    return 1
-  end
+  return 1 if every < 1
 
-  return every
+  every
 end
 
 # There is no `select`: this moves the messages of the client into the inbox, next to the frames of the hub. It ends
@@ -149,10 +137,7 @@ end
 def pump(socket: HTTP.WebSocket, inbox: Channel[Hub.Event]) -> Result[Void]
   while true
     case socket.incoming.recv(PUMP_MS)
-      ok(message) ->
-        if not deliver(inbox, Hub.Event.Client(message)) or closing?(message)
-          return ok()
-        end
+      ok(message) -> return ok() if not deliver(inbox, Hub.Event.Client(message)) or closing?(message)
 
       error(_) ->
         if socket.incoming.closed? and socket.incoming.empty?
@@ -162,56 +147,46 @@ def pump(socket: HTTP.WebSocket, inbox: Channel[Hub.Event]) -> Result[Void]
     end
   end
 
-  return ok()
+  ok()
 end
 
 # A loop that is busy (a slow handler) holds the pump here, and so the client: the backlog stays in the socket, not
 # in memory. False when the inbox is closed.
 def deliver(inbox: Channel[Hub.Event], event: Hub.Event) -> Bool
   while true
-    if inbox.send(event, WRITE_MS).ok?
-      return true
-    end
+    return true if inbox.send(event, WRITE_MS).ok?
 
-    if inbox.closed?
-      return false
-    end
+    return false if inbox.closed?
   end
 
-  return false
+  false
 end
 
 def closing?(message: HTTP.Message) -> Bool
   case message
-    HTTP.Message.Close(_, _) -> return true
-    HTTP.Message.Text(_) -> return false
-    HTTP.Message.Binary(_) -> return false
-    HTTP.Message.Ping(_) -> return false
-    HTTP.Message.Pong(_) -> return false
+    HTTP.Message.Close(_, _) -> true
+    HTTP.Message.Text(_) -> false
+    HTTP.Message.Binary(_) -> false
+    HTTP.Message.Ping(_) -> false
+    HTTP.Message.Pong(_) -> false
+    HTTP.Message.Prepared(_) -> false
   end
 end
 
 def loop(line: Line, inbox: Channel[Hub.Event]) -> Result[Void]
   while true
     case inbox.recv(HUB_CHECK_MS)
-      ok(event) ->
-        if not try handle(line, event)
-          return ok()
-        end
+      ok(event) -> return ok() if not try handle(line, event)
 
       error(_) ->
         # The hub closes an inbox that is full; what was queued has been written by now. The browser reconnects.
-        if inbox.closed? and inbox.empty?
-          return closed_inbox(line)
-        end
+        return closed_inbox(line) if inbox.closed? and inbox.empty?
 
-        if Hub.gone?(line.mount.hub)
-          return hub_gone(line.socket)
-        end
+        return hub_gone(line.socket) if Hub.gone?(line.mount.hub)
     end
   end
 
-  return ok()
+  ok()
 end
 
 # The hub closed the inbox: because it was full, or because `Channels.disconnect` found it full and left the reason in
@@ -220,8 +195,8 @@ def closed_inbox(line: Line) -> Result[Void]
   case Hub.away_reason(line.mount.hub, line.connection)
     some(reconnect) ->
       try away(line, reconnect)
-      return ok()
-    none -> return write(line, HTTP.Message.Text(Protocol.disconnect_reconnect()))
+      ok()
+    none -> write(line, HTTP.Message.Text(Protocol.disconnect_reconnect()))
   end
 end
 
@@ -230,12 +205,12 @@ def handle(line: Line, event: Hub.Event) -> Result[Bool]
   case event
     Hub.Event.Frame(text) ->
       try write(line, HTTP.Message.Text(text))
-      return ok(true)
+      ok(true)
     Hub.Event.Ping ->
       try write(line, HTTP.Message.Ping("".bytes))
-      return ok(true)
-    Hub.Event.Client(message) -> return client(line, message)
-    Hub.Event.Away(reconnect) -> return away(line, reconnect)
+      ok(true)
+    Hub.Event.Client(message) -> client(line, message)
+    Hub.Event.Away(reconnect) -> away(line, reconnect)
   end
 end
 
@@ -244,31 +219,30 @@ end
 def away(line: Line, reconnect: Bool) -> Result[Bool]
   try write(line, HTTP.Message.Text(Protocol.disconnect_remote(reconnect)))
   try write(line, HTTP.Message.Close(NORMAL_CLOSE, "disconnected"))
-  return ok(false)
+  ok(false)
 end
 
 def client(line: Line, message: HTTP.Message) -> Result[Bool]
   case message
     HTTP.Message.Text(text) ->
       try command(line, text)
-      return ok(true)
-    HTTP.Message.Close(_, _) -> return ok(false)
-    HTTP.Message.Binary(_) -> return ok(true)
-    HTTP.Message.Ping(_) -> return ok(true)
-    HTTP.Message.Pong(_) -> return ok(true)
+      ok(true)
+    HTTP.Message.Close(_, _) -> ok(false)
+    HTTP.Message.Binary(_) -> ok(true)
+    HTTP.Message.Ping(_) -> ok(true)
+    HTTP.Message.Pong(_) -> ok(true)
+    HTTP.Message.Prepared(_) -> ok(true)
   end
 end
 
-def write(line: Line, message: HTTP.Message) -> Result[Void]
-  return line.socket.outgoing.send(message, WRITE_MS)
-end
+def write(line: Line, message: HTTP.Message) -> Result[Void] = line.socket.outgoing.send(message, WRITE_MS)
 
 def transmit(line: Line, identifier: String, payloads: List[Json]) -> Result[Void]
   for payload in payloads
     try write(line, HTTP.Message.Text(Protocol.message(identifier, Protocol.json_payload(payload))))
   end
 
-  return ok()
+  ok()
 end
 
 # What Action Cable only logs (a bad frame, an unknown channel or subscription) is logged and the connection stays.
@@ -276,24 +250,22 @@ def command(line: Line, text: String) -> Result[Void]
   case Protocol.decode_command(text)
     error(reason) ->
       IO.warn("bond-channels: ignored a frame: #{reason}")
-      return ok()
+      ok()
     ok(decoded) ->
       case decoded
-        Protocol.Command.Subscribe(join) -> return subscribe(line, join)
-        Protocol.Command.Unsubscribe(identifier) -> return unsubscribe(line, identifier)
-        Protocol.Command.Perform(action) -> return perform(line, action)
+        Protocol.Command.Subscribe(join) -> subscribe(line, join)
+        Protocol.Command.Unsubscribe(identifier) -> unsubscribe(line, identifier)
+        Protocol.Command.Perform(action) -> perform(line, action)
       end
   end
 end
 
 def session(line: Line) -> Types.Session
-  return Types.Session(connection: line.connection, identity: line.identity, subscriptions: line.subscriptions.keys)
+  Types.Session(connection: line.connection, identity: line.identity, subscriptions: line.subscriptions.keys)
 end
 
 def subscribe(line: Line, join: Protocol.Join) -> Result[Void]
-  if line.subscriptions.has_key?(join.identifier)
-    return ok()
-  end
+  return ok() if line.subscriptions.has_key?(join.identifier)
 
   if line.subscriptions.size >= MAX_SUBSCRIPTIONS
     IO.warn("bond-channels: more than #{MAX_SUBSCRIPTIONS} subscriptions on connection #{line.connection}")
@@ -303,8 +275,8 @@ def subscribe(line: Line, join: Protocol.Join) -> Result[Void]
   case line.mount.options.handlers.get(join.channel)
     none ->
       IO.warn("bond-channels: no channel #{join.channel}")
-      return ok()
-    some(handler) -> return subscribe_to(line, handler, join)
+      ok()
+    some(handler) -> subscribe_to(line, handler, join)
   end
 end
 
@@ -315,35 +287,31 @@ def subscribe_to(line: Line, handler: Types.Handler, join: Protocol.Join) -> Res
   case handler.subscribed.call(session(line), join.params)
     error(reason) ->
       IO.warn("bond-channels: subscribing to #{join.channel} failed: #{reason}")
-      return refuse(line, handler, join)
-    ok(decision) -> return decide(line, handler, join, decision)
+      refuse(line, handler, join)
+    ok(decision) -> decide(line, handler, join, decision)
   end
 end
 
 def decide(line: Line, handler: Types.Handler, join: Protocol.Join, decision: Types.Subscription) -> Result[Void]
   try transmit(line, join.identifier, decision.transmit)
-  if decision.rejected or not attached?(line, join.identifier, decision.streams)
-    return refuse(line, handler, join)
-  end
+  return refuse(line, handler, join) if decision.rejected or not attached?(line, join.identifier, decision.streams)
 
-  return write(line, HTTP.Message.Text(Protocol.confirm_subscription(join.identifier)))
+  write(line, HTTP.Message.Text(Protocol.confirm_subscription(join.identifier)))
 end
 
 # The client is told, and the subscription is forgotten: the hub never heard of it (an attach that failed was not
 # queued), so only the table and `unsubscribed` need it.
 def refuse(line: Line, handler: Types.Handler, join: Protocol.Join) -> Result[Void]
   try forget(line, handler, join.identifier, join.params)
-  return write(line, HTTP.Message.Text(Protocol.reject_subscription(join.identifier)))
+  write(line, HTTP.Message.Text(Protocol.reject_subscription(join.identifier)))
 end
 
 # The hub queue is FIFO, so a broadcast sent after this one reaches the inbox after the confirmation is written. A
 # hub that does not take the message rejects the subscription: it could never hear a broadcast.
 def attached?(line: Line, identifier: String, streams: List[String]) -> Bool
-  if streams.empty?
-    return true
-  end
+  return true if streams.empty?
 
-  return Hub.attach(line.mount.hub, line.connection, identifier, streams).ok?
+  Hub.attach(line.mount.hub, line.connection, identifier, streams).ok?
 end
 
 # A subscription that ends: out of the table, and `unsubscribed` runs. The hub is not told here: `leave` does it for a
@@ -356,7 +324,7 @@ def forget(line: Line, handler: Types.Handler, identifier: String, params: Json)
     ok(_) -> return ok()
   end
 
-  return ok()
+  ok()
 end
 
 def unsubscribe(line: Line, identifier: String) -> Result[Void]
@@ -374,15 +342,15 @@ def unsubscribe(line: Line, identifier: String) -> Result[Void]
     IO.warn("bond-channels: the hub did not take the unsubscribe of #{identifier}: #{detached.message}")
   end
 
-  return release(line, channel.unwrap!, identifier)
+  release(line, channel.unwrap!, identifier)
 end
 
 # `unsubscribed` for a subscription that is in the table, and out of it.
 def release(line: Line, channel: String, identifier: String) -> Result[Void]
   params = try Protocol.identifier_params(identifier)
   case line.mount.options.handlers.get(channel)
-    none -> return ok()
-    some(handler) -> return forget(line, handler, identifier, params)
+    none -> ok()
+    some(handler) -> forget(line, handler, identifier, params)
   end
 end
 
@@ -395,13 +363,13 @@ def perform(line: Line, action: Protocol.Action) -> Result[Void]
 
   params = try Protocol.identifier_params(action.identifier)
   case line.mount.options.handlers.get(channel.unwrap!)
-    none -> return ok()
+    none -> ok()
     some(handler) ->
       case handler.perform.call(session(line), params, action.name, action.data)
-        ok(payloads) -> return transmit(line, action.identifier, payloads)
+        ok(payloads) -> transmit(line, action.identifier, payloads)
         error(reason) ->
           IO.warn("bond-channels: #{channel.unwrap!} #{action.name} failed: #{reason}")
-          return ok()
+          ok()
       end
   end
 end

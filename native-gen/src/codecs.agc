@@ -51,27 +51,23 @@ export def of(block: Analysis.NativeBlock, lower: String, upper: String) -> Plan
     edges = edges.put(type.name, named)
   end
 
-  return Plan(lower: lower, upper: upper, types: block.types, read: read, made: made, edges: edges)
+  Plan(lower: lower, upper: upper, types: block.types, read: read, made: made, edges: edges)
 end
 
 ## The C type of a parameter, field or payload of type `type` in `owner` ("" for a parameter): a scalar, an embedded
 ## struct or enum, or a term.
 export def c_type(codecs: Plan, owner: String, type: String) -> String
-  if SCALARS.has_key?(type)
-    return SCALARS[type]
-  end
+  return SCALARS[type] if SCALARS.has_key?(type)
 
-  if embedded?(codecs, owner, type)
-    return "#{codecs.lower}_#{type}"
-  end
+  return "#{codecs.lower}_#{type}" if embedded?(codecs, owner, type)
 
-  return "an_term"
+  "an_term"
 end
 
 ## Whether a value of `type` in `owner` ("" for a parameter) is a C struct of the block, not a term: a struct or enum
 ## of the block that does not lead back to `owner`.
 export def embedded?(codecs: Plan, owner: String, type: String) -> Bool
-  return codecs.edges.has_key?(type) and !reaches?(codecs, type, owner)
+  codecs.edges.has_key?(type) and !reaches?(codecs, type, owner)
 end
 
 ## The C names the codecs declare, with the names they come from, and the fields of each struct, which must differ
@@ -103,14 +99,12 @@ export def global_names(codecs: Plan) -> List[Names.Named]
     end
   end
 
-  return named
+  named
 end
 
 ## The typedefs, in an order where each comes after the types it embeds, and the prototypes of the codecs.
 export def declarations(codecs: Plan) -> List[String]
-  if codecs.types.empty?
-    return []
-  end
+  return [] if codecs.types.empty?
 
   lines = [
     "",
@@ -124,7 +118,7 @@ export def declarations(codecs: Plan) -> List[String]
     lines = joined([lines, [""], typedef(codecs, type), prototypes(codecs, type)])
   end
 
-  return lines
+  lines
 end
 
 ## The definitions of the codecs, for the implementation part of the header, after the helpers of a failed decode when
@@ -148,7 +142,7 @@ export def definitions(codecs: Plan, failing: Bool) -> List[String]
     end
   end
 
-  return lines
+  lines
 end
 
 ## The statements of a wrapper that decode argument `at` of `type` into `local`: a scalar answers an_badarg when it
@@ -172,7 +166,7 @@ export def decode_argument(codecs: Plan, type: String, local: String, at: Int) -
     ]
   end
 
-  return []
+  []
 end
 
 ## The C expression that reads the term `x` of `type` into `target` and is false, with `fail` set, when it does not
@@ -182,32 +176,22 @@ export def decode_value(codecs: Plan, type: String, target: String) -> String
     return "#{GETTERS[type]}(env, x, &#{target}.data, &#{target}.len) || ng_expected(fail, \"#{type}\")"
   end
 
-  if GETTERS.has_key?(type)
-    return "#{GETTERS[type]}(env, x, &#{target}) || ng_expected(fail, \"#{type}\")"
-  end
+  return "#{GETTERS[type]}(env, x, &#{target}) || ng_expected(fail, \"#{type}\")" if GETTERS.has_key?(type)
 
-  if embedded?(codecs, "", type)
-    return "#{codecs.lower}_native_get_#{type}(env, x, &#{target}, fail)"
-  end
+  return "#{codecs.lower}_native_get_#{type}(env, x, &#{target}, fail)" if embedded?(codecs, "", type)
 
-  return "((void)env, (void)fail, (#{target} = x), true)"
+  "((void)env, (void)fail, (#{target} = x), true)"
 end
 
 ## The term of the C value `source` of `type` in `owner` ("" for an item of a List or Map).
 export def encoded(codecs: Plan, owner: String, type: String, source: String) -> String
-  if SLICES.include?(type)
-    return "#{MAKERS[type]}(env, #{source}.data, #{source}.len)"
-  end
+  return "#{MAKERS[type]}(env, #{source}.data, #{source}.len)" if SLICES.include?(type)
 
-  if MAKERS.has_key?(type)
-    return "#{MAKERS[type]}(env, #{source})"
-  end
+  return "#{MAKERS[type]}(env, #{source})" if MAKERS.has_key?(type)
 
-  if embedded?(codecs, owner, type)
-    return "#{codecs.lower}_#{type}_make(env, &#{source})"
-  end
+  return "#{codecs.lower}_#{type}_make(env, &#{source})" if embedded?(codecs, owner, type)
 
-  return source
+  source
 end
 
 # Whether `to` is `from` or a type that `from` names in a field or payload, at any depth.
@@ -217,9 +201,7 @@ def reaches?(codecs: Plan, from: String, to: String) -> Bool
   while !pending.empty?
     at = pending[pending.size - 1]
     pending = pending.take(pending.size - 1)
-    if at == to
-      return true
-    end
+    return true if at == to
 
     if !seen.include?(at)
       seen = seen.add(at)
@@ -227,7 +209,7 @@ def reaches?(codecs: Plan, from: String, to: String) -> Bool
     end
   end
 
-  return false
+  false
 end
 
 # The types, each after those it embeds, else in the order of the block.
@@ -241,14 +223,12 @@ def ordered(codecs: Plan) -> List[Analysis.NativeType]
     end
   end
 
-  return out
+  out
 end
 
 # The names to emit for `name`, those it embeds first, leaving out those in `done`.
 def emit_order(codecs: Plan, name: String, done: Set[String]) -> List[String]
-  if done.include?(name)
-    return []
-  end
+  return [] if done.include?(name)
 
   out: List[String] = []
   emitted = done
@@ -261,7 +241,7 @@ def emit_order(codecs: Plan, name: String, done: Set[String]) -> List[String]
     end
   end
 
-  return out.push(name)
+  out.push(name)
 end
 
 def typedef(codecs: Plan, type: Analysis.NativeType) -> List[String]
@@ -290,7 +270,7 @@ def typedef(codecs: Plan, type: Analysis.NativeType) -> List[String]
     lines = joined([lines, ["  union {"], cases, ["  } as;"]])
   end
 
-  return lines.push("} #{p}_#{type.name};")
+  lines.push("} #{p}_#{type.name};")
 end
 
 def payload_fields(codecs: Plan, type: Analysis.NativeType, member: Analysis.NativeMember) -> List[String]
@@ -301,7 +281,7 @@ def payload_fields(codecs: Plan, type: Analysis.NativeType, member: Analysis.Nat
     at += 1
   end
 
-  return out
+  out
 end
 
 def prototypes(codecs: Plan, type: Analysis.NativeType) -> List[String]
@@ -321,7 +301,7 @@ def prototypes(codecs: Plan, type: Analysis.NativeType) -> List[String]
     end
   end
 
-  return lines
+  lines
 end
 
 def constructor_head(codecs: Plan, type: Analysis.NativeType, member: Analysis.NativeMember) -> String
@@ -332,13 +312,13 @@ def constructor_head(codecs: Plan, type: Analysis.NativeType, member: Analysis.N
     at += 1
   end
 
-  return "an_term #{codecs.lower}_#{type.name}_#{member.name}(#{params.join(", ")})"
+  "an_term #{codecs.lower}_#{type.name}_#{member.name}(#{params.join(", ")})"
 end
 
 # The helpers of a failed decode, shared by every header of this version of native-gen. The path is made only when a
 # decode fails, from the inside out, so a decode that succeeds pays nothing for it.
 def failures() -> List[String]
-  return [
+  [
     "",
     "#ifndef NATIVE_GEN_FAIL_1",
     "#define NATIVE_GEN_FAIL_1",
@@ -486,7 +466,7 @@ def decoder(codecs: Plan, type: Analysis.NativeType) -> List[String]
     lines = lines.push("      return true;")
   end
 
-  return lines.concat(["  }", "  return ng_expected(fail, \"#{name}\");", "}"])
+  lines.concat(["  }", "  return ng_expected(fail, \"#{name}\");", "}"])
 end
 
 # The statement that reads the term `x` of `type` into `target`, or fails at `segment`.
@@ -505,13 +485,13 @@ def decode_part(codecs: Plan, owner: String, type: String, target: String, segme
     return ["  if (!#{getter}(env, x, &#{target}, fail)) return ng_at(fail, \"#{segment}\");"]
   end
 
-  return ["  #{target} = x;"]
+  ["  #{target} = x;"]
 end
 
 def public_get(codecs: Plan, type: Analysis.NativeType) -> List[String]
   p = codecs.lower
   name = type.name
-  return [
+  [
     "bool #{p}_#{name}_get(an_env *env, an_term t, #{p}_#{name} *out) {",
     "  ng_fail fail;",
     "  return #{p}_native_get_#{name}(env, t, out, &fail) || ng_raise(env, \"\", \"#{name}\", &fail);",
@@ -527,9 +507,7 @@ def maker(codecs: Plan, type: Analysis.NativeType) -> List[String]
   head = "an_term #{p}_#{name}_make(an_env *env, const #{p}_#{name} *value) {"
   row = "#{big}_TYPE_#{name}"
   if type.kind == "struct"
-    if type.members.empty?
-      return [head, "  (void)value;", "  return an_struct(env, #{row}, NULL);", "}"]
-    end
+    return [head, "  (void)value;", "  return an_struct(env, #{row}, NULL);", "}"] if type.members.empty?
 
     lines = [head, "  an_term fields[#{type.members.size}];"]
     at = 0
@@ -555,7 +533,7 @@ def maker(codecs: Plan, type: Analysis.NativeType) -> List[String]
     ])
   end
 
-  return lines.concat(["  }", "  return an_raise(env, \"#{name}: the tag is not one of its variants\");", "}"])
+  lines.concat(["  }", "  return an_raise(env, \"#{name}: the tag is not one of its variants\");", "}"])
 end
 
 def constructors(codecs: Plan, type: Analysis.NativeType) -> List[String]
@@ -581,9 +559,7 @@ def constructors(codecs: Plan, type: Analysis.NativeType) -> List[String]
     lines = lines.push("}")
   end
 
-  return lines
+  lines
 end
 
-def joined(parts: List[List[String]]) -> List[String]
-  return parts.flat_map do |part: List[String]| part end
-end
+def joined(parts: List[List[String]]) -> List[String] = parts.flat_map do |part: List[String]| part end

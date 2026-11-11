@@ -132,9 +132,7 @@ end
 ## ping interval by zero, a negative `broadcast_wait_ms` is no wait). The inbox belongs to the hub task, so when the
 ## hub ends or crashes every send fails at once with "closed" instead of waiting for room.
 export def start(options: HubOptions) -> Result[Hub]
-  if options.beat_ms < 1
-    return error("beat_ms must be 1 or more, it is #{options.beat_ms}")
-  end
+  return error("beat_ms must be 1 or more, it is #{options.beat_ms}") if options.beat_ms < 1
 
   if options.broadcast_wait_ms < 0
     return error("broadcast_wait_ms must be 0 or more, it is #{options.broadcast_wait_ms}")
@@ -144,7 +142,7 @@ export def start(options: HubOptions) -> Result[Hub]
   counters: ATS[String, Int] = ATS.new()
   task = Task.spawn_owning(&run, Launch(inbox: inbox, counters: counters))
   ticker = Task.spawn(&ticking, Ticker(inbox: inbox, counters: counters, beat_ms: options.beat_ms))
-  return ok(Hub(inbox: inbox, task: task, ticker: ticker, counters: counters, options: options))
+  ok(Hub(inbox: inbox, task: task, ticker: ticker, counters: counters, options: options))
 end
 
 ## Asks the hub to end; its task returns and later sends fail. The ticker is cancelled with it, so that no task is left
@@ -156,13 +154,11 @@ export def stop(hub: Hub) -> Result[Void]
     Task.cancel(hub.ticker)
   end
 
-  return sent
+  sent
 end
 
 ## True once the hub has ended or crashed: its inbox is closed, so nothing sent to it is ever heard.
-export def gone?(hub: Hub) -> Bool
-  return hub.inbox.closed?
-end
+export def gone?(hub: Hub) -> Bool = hub.inbox.closed?
 
 ## Queues a broadcast of an encoded payload; a failure is counted as lost.
 export def broadcast(hub: Hub, topic: String, payload: String) -> Result[Void]
@@ -171,32 +167,30 @@ export def broadcast(hub: Hub, topic: String, payload: String) -> Result[Void]
     _ = hub.counters.add(LOST, 1)
   end
 
-  return sent
+  sent
 end
 
 ## A connection of the person `identity` (`Identity.id`) joins: it gets the frames and pings sent to `inbox`, and a
 ## WebSocket ping every `every` beats.
 export def register(hub: Hub, connection: Int, identity: String, inbox: Channel[Event], every: Int) -> Result[Void]
   registration = Registration(connection: connection, identity: identity, inbox: inbox, every: every)
-  return send(hub, HubMessage.Register(registration))
+  send(hub, HubMessage.Register(registration))
 end
 
 ## The broadcasts of `topics` reach the subscription `identifier` of the connection. Hub messages are FIFO, so a
 ## broadcast queued after this call reaches the inbox of the connection after what the connection wrote before it.
 export def attach(hub: Hub, connection: Int, identifier: String, topics: List[String]) -> Result[Void]
-  return send(hub, HubMessage.Subscribe(Attach(connection: connection, identifier: identifier, topics: topics)))
+  send(hub, HubMessage.Subscribe(Attach(connection: connection, identifier: identifier, topics: topics)))
 end
 
 ## The subscription `identifier` of the connection hears no more broadcasts. A failure is a hub that keeps routing to
 ## it until the connection ends (which `disconnect` settles).
 export def detach(hub: Hub, connection: Int, identifier: String) -> Result[Void]
-  return send(hub, HubMessage.Unsubscribe(Detach(connection: connection, identifier: identifier)))
+  send(hub, HubMessage.Unsubscribe(Detach(connection: connection, identifier: identifier)))
 end
 
 ## The connection ends: the hub forgets all its subscriptions at once.
-export def disconnect(hub: Hub, connection: Int) -> Result[Void]
-  return send(hub, HubMessage.Disconnect(connection))
-end
+export def disconnect(hub: Hub, connection: Int) -> Result[Void] = send(hub, HubMessage.Disconnect(connection))
 
 ## Ends every connection whose identity is `identity`: each is sent `Event.Away(reconnect)`, and the hub stops routing
 ## to it at once, so a broadcast queued after this call is not delivered to it. A connection whose inbox is full has it
@@ -204,18 +198,16 @@ end
 ## is not ended (the hub processes its inbox in order: a `Register` queued before it is). A failure is a hub that did
 ## not take the message (full for `broadcast_wait_ms`, or gone).
 export def remove(hub: Hub, identity: String, reconnect: Bool) -> Result[Void]
-  return send(hub, HubMessage.Remove(Removal(identity: identity, reconnect: reconnect)))
+  send(hub, HubMessage.Remove(Removal(identity: identity, reconnect: reconnect)))
 end
 
 ## What `remove` asked of the connection: `some(reconnect)` once it did, `none` before. A connection whose inbox is
 ## closed reads it, to tell a connection that was ended on purpose from one that was dropped.
 export def away_reason(hub: Hub, connection: Int) -> Optional[Bool]
   asked = hub.counters.get(away_key(connection))
-  if not asked.ok?
-    return none
-  end
+  return none if not asked.ok?
 
-  return some(asked.unwrap! == 1)
+  some(asked.unwrap! == 1)
 end
 
 ## Adds `delta` to a counter of `stats` (the connections do their own counting).
@@ -224,12 +216,10 @@ export def count(hub: Hub, name: String, delta: Int) -> Void
 end
 
 ## A number for a new connection.
-export def next_connection(hub: Hub) -> Int
-  return hub.counters.add(NEXT_CONNECTION, 1)
-end
+export def next_connection(hub: Hub) -> Int = hub.counters.add(NEXT_CONNECTION, 1)
 
 export def stats(hub: Hub) -> Stats
-  return Stats(
+  Stats(
     connections: counted(hub, CONNECTIONS),
     subscriptions: counted(hub, SUBSCRIPTIONS),
     drops: counted(hub, DROPS),
@@ -239,17 +229,11 @@ end
 
 # Every send of a caller waits as long as a broadcast does: a hub inbox that is full is the normal back-pressure, and
 # a message that is lost (an unsubscribe, a disconnect) leaves the hub routing to a connection that is gone.
-def send(hub: Hub, message: HubMessage) -> Result[Void]
-  return hub.inbox.send(message, hub.options.broadcast_wait_ms)
-end
+def send(hub: Hub, message: HubMessage) -> Result[Void] = hub.inbox.send(message, hub.options.broadcast_wait_ms)
 
-def away_key(connection: Int) -> String
-  return "#{AWAY_PREFIX}#{connection}"
-end
+def away_key(connection: Int) -> String = "#{AWAY_PREFIX}#{connection}"
 
-def counted(hub: Hub, name: String) -> Int
-  return hub.counters.get(name).unwrap_or(0)
-end
+def counted(hub: Hub, name: String) -> Int = hub.counters.get(name).unwrap_or(0)
 
 # A beat in the inbox keeps its place among the broadcasts, and a receive timeout would never fire while the inbox
 # stays busy: the Rails client calls a connection stale after 6 s without a ping. Only a closed inbox (the hub is
@@ -259,9 +243,7 @@ end
 def ticking(ticker: Ticker) -> Result[Void]
   while true
     Task.sleep(ticker.beat_ms)
-    if ticker.inbox.closed?
-      return ok()
-    end
+    return ok() if ticker.inbox.closed?
 
     if ticker.counters.get(BEAT_PENDING).unwrap_or(0) == 0
       ticker.counters.put(BEAT_PENDING, 1)
@@ -272,7 +254,7 @@ def ticking(ticker: Ticker) -> Result[Void]
     end
   end
 
-  return ok()
+  ok()
 end
 
 def run(launch: Launch) -> Result[Void]
@@ -283,55 +265,51 @@ def run(launch: Launch) -> Result[Void]
   while true
     received = launch.inbox.recv(IDLE_MS)
     if not received.ok?
-      if launch.inbox.closed?
-        return ok()
-      end
+      return ok() if launch.inbox.closed?
 
       next
     end
 
     message = received.unwrap!
-    if stop?(message)
-      return ok()
-    end
+    return ok() if stop?(message)
 
     _state = step(_state, message, launch.counters)
   end
 
-  return ok()
+  ok()
 end
 
 def stop?(message: HubMessage) -> Bool
   case message
-    HubMessage.Stop -> return true
-    _ -> return false
+    HubMessage.Stop -> true
+    _ -> false
   end
 end
 
 def step(state: State, message: HubMessage, counters: ATS[String, Int]) -> State
   case message
-    HubMessage.Register(registration) -> return admit(state, registration)
-    HubMessage.Subscribe(attach) -> return subscribe(state, attach)
-    HubMessage.Unsubscribe(detach) -> return unsubscribe(state, detach.connection, detach.identifier)
+    HubMessage.Register(registration) -> admit(state, registration)
+    HubMessage.Subscribe(attach) -> subscribe(state, attach)
+    HubMessage.Unsubscribe(detach) -> unsubscribe(state, detach.connection, detach.identifier)
     HubMessage.Disconnect(connection) ->
       counters.delete(away_key(connection))
-      return remove_connection(state, connection)
-    HubMessage.Remove(removal) -> return remove_identity(state, removal, counters)
-    HubMessage.Broadcast(cast) -> return fan_out(state, cast, counters)
-    HubMessage.Beat -> return beat(state, counters)
-    HubMessage.Stop -> return state
+      remove_connection(state, connection)
+    HubMessage.Remove(removal) -> remove_identity(state, removal, counters)
+    HubMessage.Broadcast(cast) -> fan_out(state, cast, counters)
+    HubMessage.Beat -> beat(state, counters)
+    HubMessage.Stop -> state
   end
 end
 
 def admit(state: State, registration: Registration) -> State
   keys: List[Key] = []
   entry = Entry(identity: registration.identity, inbox: registration.inbox, every: registration.every, keys: keys)
-  return state.with(entries: state.entries.put(registration.connection, entry))
+  state.with(entries: state.entries.put(registration.connection, entry))
 end
 
 def subscribe(state: State, attach: Attach) -> State
   case state.entries.get(attach.connection)
-    none -> return state
+    none -> state
     some(entry) ->
       topics = state.topics
       keys = entry.keys
@@ -341,13 +319,13 @@ def subscribe(state: State, attach: Attach) -> State
       end
 
       entries = state.entries.put(attach.connection, entry.with(keys: keys))
-      return state.with(entries: entries, topics: topics)
+      state.with(entries: entries, topics: topics)
   end
 end
 
 def unsubscribe(state: State, connection: Int, identifier: String) -> State
   case state.entries.get(connection)
-    none -> return state
+    none -> state
     some(entry) ->
       topics = state.topics
       leaving = entry.keys.select do |key| key.identifier == identifier end
@@ -357,20 +335,20 @@ def unsubscribe(state: State, connection: Int, identifier: String) -> State
 
       kept = entry.keys.select do |key| key.identifier != identifier end
       entries = state.entries.put(connection, entry.with(keys: kept))
-      return state.with(entries: entries, topics: topics)
+      state.with(entries: entries, topics: topics)
   end
 end
 
 def remove_connection(state: State, connection: Int) -> State
   case state.entries.get(connection)
-    none -> return state
+    none -> state
     some(entry) ->
       topics = state.topics
       for key in entry.keys
         topics = without_member(topics, key.topic, key.identifier, connection)
       end
 
-      return state.with(entries: state.entries.delete(connection), topics: topics)
+      state.with(entries: state.entries.delete(connection), topics: topics)
   end
 end
 
@@ -399,7 +377,7 @@ def remove_identity(state: State, removal: Removal, counters: ATS[String, Int]) 
     end
   end
 
-  return forget(state, gone)
+  forget(state, gone)
 end
 
 def with_member(
@@ -414,7 +392,7 @@ def with_member(
   routes = topics.get(topic, empty_topic)
   route = routes.get(identifier, Route(identifier: identifier, members: empty_members))
   joined = route.with(members: route.members.put(connection, Member(connection: connection, inbox: inbox)))
-  return topics.put(topic, routes.put(identifier, joined))
+  topics.put(topic, routes.put(identifier, joined))
 end
 
 # A topic or an identifier with no member left leaves the map, so a long run does not keep every name it ever saw.
@@ -435,22 +413,18 @@ def without_member(
     routes = routes.put(identifier, route.with(members: members))
   end
 
-  if routes.empty?
-    return topics.delete(topic)
-  end
+  return topics.delete(topic) if routes.empty?
 
-  return topics.put(topic, routes)
+  topics.put(topic, routes)
 end
 
 # Sends without waiting. True when the connection must leave the hub: its inbox is closed already, or it is full
 # (a client too slow for the traffic) and is closed now, so that its task drains what is queued and says goodbye.
 def leaves?(counters: ATS[String, Int], inbox: Channel[Event], event: Event) -> Bool
-  if inbox.send(event, 0).ok?
-    return false
-  end
+  return false if inbox.send(event, 0).ok?
 
   cut_off(counters, inbox)
-  return true
+  true
 end
 
 # A failed send is a closed inbox (nothing to do) or a full one (a drop).
@@ -475,7 +449,7 @@ def fan_out(state: State, cast: Cast, counters: ATS[String, Int]) -> State
     end
   end
 
-  return forget(state, gone)
+  forget(state, gone)
 end
 
 # The Action Cable ping goes to every connection, and the WebSocket ping to those whose turn it is.
@@ -493,7 +467,7 @@ def beat(state: State, counters: ATS[String, Int]) -> State
     end
   end
 
-  return forget(state.with(beats: beats), gone)
+  forget(state.with(beats: beats), gone)
 end
 
 def forget(state: State, gone: List[Int]) -> State
@@ -502,5 +476,5 @@ def forget(state: State, gone: List[Int]) -> State
     result = remove_connection(result, connection)
   end
 
-  return result
+  result
 end

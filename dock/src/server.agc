@@ -96,14 +96,12 @@ export def start(config: Config, handler: Fn[Conn, Void]) -> Result[Server]
   task = Task.spawn(&supervise, boot)
   answer = try ready.recv(START_WAIT_MS)
   port = try answer
-  return ok(Server(port: port, inside: ServerParts.Parts(stop_signal, task, stats, watched, config.grace_ms)))
+  ok(Server(port: port, inside: ServerParts.Parts(stop_signal, task, stats, watched, config.grace_ms)))
 end
 
 ## `config` with `on_close` set. It takes a block, which captures what it needs (a struct field cannot hold a block
 ## otherwise): `Dock.on_close(config) do |conn| gone.send(conn.id, 0) end`.
-export def on_close(config: Config, hook: Fn[Conn, Void]) -> Config
-  return config.with(on_close: some(hook))
-end
+export def on_close(config: Config, hook: Fn[Conn, Void]) -> Config = config.with(on_close: some(hook))
 
 ## Stops accepting, closes every client and frees the port. With a `grace_ms` the clients first get that long to have
 ## their queued bytes written. It can be called again: it gives the same result.
@@ -113,10 +111,10 @@ export def stop(server: Server) -> Result[Void]
       stop_signal.close
       wait_ms = STOP_WAIT_MS + grace_ms + CALLBACKS_MS
       case Task.await(task, wait_ms)
-        Await.Done(result) -> return result
+        Await.Done(result) -> result
         Await.TimedOut ->
           Task.cancel(task)
-          return error("dock: the server did not stop in #{wait_ms} ms")
+          error("dock: the server did not stop in #{wait_ms} ms")
       end
   end
 end
@@ -124,14 +122,14 @@ end
 ## Waits until the server ends, with the error that ended it, if any.
 export def wait(server: Server) -> Result[Void]
   case server.inside
-    ServerParts.Parts(_, task, _, _, _) -> return Task.await(task)
+    ServerParts.Parts(_, task, _, _, _) -> Task.await(task)
   end
 end
 
 ## The counters now: open connections, accepted, refused, dropped and crashed. Safe from any task.
 export def stats(server: Server) -> Counters.Stats
   case server.inside
-    ServerParts.Parts(_, _, table, _, _) -> return Counters.snapshot(table)
+    ServerParts.Parts(_, _, table, _, _) -> Counters.snapshot(table)
   end
 end
 
@@ -218,7 +216,7 @@ export def accept_loop(listener: Listener, boot: Boot) -> Result[Void]
     Task.sleep(CALLBACKS_POLL_MS)
   end
 
-  return outcome
+  outcome
 end
 
 # The listener belongs to this task, so it closes whatever way the task ends.
@@ -226,10 +224,10 @@ def supervise(boot: Boot) -> Result[Void]
   case TCP.listen(boot.config.host, boot.config.port)
     error(message) ->
       _ = boot.ready.send(error(message), 0)
-      return error(message)
+      error(message)
     ok(listener) ->
       _ = boot.ready.send(ok(TCP.local_port(listener)), 0)
-      return accept_loop(listener, boot)
+      accept_loop(listener, boot)
   end
 end
 
@@ -248,7 +246,7 @@ def spawn_client(socket: Socket, id: Int, boot: Boot, downs: Channel[Ended]) -> 
   Task.monitor(task, downs) do |down| Ended(id: id, crashed: down.reason == TaskExit.Crashed) end
   _ = boot.stats.add(Counters.OPEN, 1)
   _ = boot.stats.add(Counters.ACCEPTED, 1)
-  return Live(conn: conn, socket: socket, task: task)
+  Live(conn: conn, socket: socket, task: task)
 end
 
 # A timeout already waited ACCEPT_MS, so it adds no delay; an error that came sooner waits the rest.
@@ -260,18 +258,16 @@ def pause(started: Int) -> Void
 end
 
 def at_least_1(ms: Int) -> Int
-  if ms < 1
-    return 1
-  end
+  return 1 if ms < 1
 
-  return ms
+  ms
 end
 
 def describe(down: TaskDown) -> String
   case down.reason
-    TaskExit.Ok -> return "returned"
-    TaskExit.Cancelled -> return "was cancelled"
-    TaskExit.Crashed -> return "crashed: #{down.code} #{down.message}"
+    TaskExit.Ok -> "returned"
+    TaskExit.Cancelled -> "was cancelled"
+    TaskExit.Crashed -> "crashed: #{down.code} #{down.message}"
   end
 end
 
@@ -286,19 +282,19 @@ def reap(live: Map[Int, Live], downs: Channel[Ended], boot: Boot) -> Map[Int, Li
     end
   end
 
-  return left
+  left
 end
 
 def settle(live: Map[Int, Live], ended: Ended, boot: Boot) -> Map[Int, Live]
   case live.get(ended.id)
-    none -> return live
+    none -> live
     some(entry) ->
       if ended.crashed
         _ = boot.stats.add(Counters.CRASHED, 1)
       end
 
       close_entry(entry, boot)
-      return live.delete(ended.id)
+      live.delete(ended.id)
   end
 end
 
@@ -323,9 +319,7 @@ end
 def drain(live: Map[Int, Live], downs: Channel[Ended], boot: Boot) -> Map[Int, Live]
   left = live
   deadline = Time.now_ms + boot.config.grace_ms
-  if boot.config.grace_ms <= 0
-    return left
-  end
+  return left if boot.config.grace_ms <= 0
 
   for entry in live.values
     Connection.close(entry.conn)
@@ -338,5 +332,5 @@ def drain(live: Map[Int, Live], downs: Channel[Ended], boot: Boot) -> Map[Int, L
     end
   end
 
-  return left
+  left
 end

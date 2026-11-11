@@ -22,45 +22,35 @@ export def scramble(value: Int) -> Int
   x = x.bit_and(MASK)
   x = x.shift_right(16).bit_xor(x) * MULTIPLIER
   x = x.bit_and(MASK)
-  return x.shift_right(16).bit_xor(x)
+  x.shift_right(16).bit_xor(x)
 end
 
 ## The seed of part `index` of the value that `seed` makes.
-export def split(seed: Int, index: Int) -> Int
-  return scramble(seed.bit_and(MASK) + (index + 1) * STRIDE)
-end
+export def split(seed: Int, index: Int) -> Int = scramble(seed.bit_and(MASK) + (index + 1) * STRIDE)
 
 ## An Int in 0 ... bound, for a `bound` of 1 up to 2^62. Without bias: a draw in the incomplete last multiple of
 ## `bound` is made again from another seed.
 export def draw(seed: Int, bound: Int) -> Int
   # Masked first, so that the additions of the retries cannot overflow.
   masked = seed.bit_and(MASK)
-  if bound <= NARROW
-    return narrow(masked, bound, NARROW - NARROW % bound)
-  end
+  return narrow(masked, bound, NARROW - NARROW % bound) if bound <= NARROW
 
-  return wide(masked, bound, WIDE - WIDE % bound)
+  wide(masked, bound, WIDE - WIDE % bound)
 end
 
 ## A Float in 0.0 up to, not including, 1.0.
-export def unit(seed: Int) -> Float
-  return scramble(seed).shift_right(2).to_f / 1073741824.0
-end
+export def unit(seed: Int) -> Float = scramble(seed).shift_right(2).to_f / 1073741824.0
 
 def narrow(seed: Int, bound: Int, limit: Int) -> Int
   x = scramble(seed)
-  if x < limit
-    return x % bound
-  end
+  return x % bound if x < limit
 
-  return narrow(seed + RETRY, bound, limit)
+  narrow(seed + RETRY, bound, limit)
 end
 
 def wide(seed: Int, bound: Int, limit: Int) -> Int
   x = scramble(seed).shift_left(30).bit_or(scramble(seed + RETRY).bit_and(0x3FFFFFFF))
-  if x < limit
-    return x % bound
-  end
+  return x % bound if x < limit
 
-  return wide(seed + 2 * RETRY, bound, limit)
+  wide(seed + 2 * RETRY, bound, limit)
 end

@@ -303,7 +303,7 @@ end
 
 # Runs `command` in `dir` to the end; the process is closed on every path.
 def captured(command: String, args: List[String], dir: String) -> Result[Finished]
-  p = try Process.spawn_captured(command, args, dir, TIMEOUT_MS)
+  p = try Process.spawn_captured(command, args, Process.Options(timeout_ms: TIMEOUT_MS, chdir: dir))
   finished = finish(p)
   Process.close(p)
   return finished

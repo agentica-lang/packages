@@ -70,24 +70,22 @@ export def render(block: Analysis.NativeBlock, trait_name: String, source: Strin
     module_lines(block, trait_name),
   ])
 
-  return ok("#{lines.join("\n")}\n")
+  ok("#{lines.join("\n")}\n")
 end
 
 ## The name of the trait of the prefix `lower`: `stats` is `StatsNative`, `my_db` is `MyDbNative`.
 export def trait_name(lower: String) -> String
   parts = lower.split("_").select do |part: String| !part.empty? end
   words = parts.map do |part: String| "#{part.slice(0, 1).upcase}#{part.slice(1, part.length - 1)}" end
-  return "#{words.join("")}Native"
+  "#{words.join("")}Native"
 end
 
 # A name of the block as a Rust name: `empty?` is `empty_p`, and a keyword or `env` gets a trailing `_`.
 def rust_name(name: String) -> String
   id = Names.identifier(name)
-  if KEYWORDS.include?(id)
-    return "#{id}_"
-  end
+  return "#{id}_" if KEYWORDS.include?(id)
 
-  return id
+  id
 end
 
 # Every name the file declares or imports at its top level, with the name of the block it comes from.
@@ -110,7 +108,7 @@ def global_names(block: Analysis.NativeBlock, plan: Plan, trait: String) -> List
     )
   end
 
-  return named
+  named
 end
 
 def plan_of(block: Analysis.NativeBlock) -> Plan
@@ -154,49 +152,43 @@ def plan_of(block: Analysis.NativeBlock) -> Plan
     end
   end
 
-  return plan
+  plan
 end
 
 def holds_borrow?(plan: Plan, type: Analysis.NativeType) -> Bool
   for member in type.members
     for text in member.types
       for name in leaves(Types.parse(text))
-        if term?(plan, type.name, name) or plan.borrowing.include?(name)
-          return true
-        end
+        return true if term?(plan, type.name, name) or plan.borrowing.include?(name)
       end
     end
   end
 
-  return false
+  false
 end
 
 # The names a type is made of: `Map[String, List[Point]]` is String and Point.
 def leaves(type: Types.Type) -> List[String]
   case type
-    Types.Type.Named(name) -> return [name]
-    Types.Type.ListOf(item) -> return leaves(item)
-    Types.Type.MapOf(key, value) -> return leaves(key).concat(leaves(value))
-    Types.Type.OptionalOf(item) -> return leaves(item)
-    Types.Type.ResultOf(item) -> return leaves(item)
+    Types.Type.Named(name) -> [name]
+    Types.Type.ListOf(item) -> leaves(item)
+    Types.Type.MapOf(key, value) -> leaves(key).concat(leaves(value))
+    Types.Type.OptionalOf(item) -> leaves(item)
+    Types.Type.ResultOf(item) -> leaves(item)
   end
 end
 
 # Whether `name` in a field or payload of `owner` stays a term: it leads back to `owner`. Never in a parameter or
 # result (`owner` "").
 def term?(plan: Plan, owner: String, name: String) -> Bool
-  if owner.empty? or !plan.rows.has_key?(name)
-    return false
-  end
+  return false if owner.empty? or !plan.rows.has_key?(name)
 
   seen: Set[String] = Set.new([])
   pending = [name]
   while !pending.empty?
     at = pending[pending.size - 1]
     pending = pending.take(pending.size - 1)
-    if at == owner
-      return true
-    end
+    return true if at == owner
 
     if !seen.include?(at)
       seen = seen.add(at)
@@ -204,7 +196,7 @@ def term?(plan: Plan, owner: String, name: String) -> Bool
     end
   end
 
-  return false
+  false
 end
 
 # The types that stay a term in some field or payload, in the order of the block.
@@ -218,7 +210,7 @@ def term_types(plan: Plan) -> List[String]
     end
   end
 
-  return plan.types.map do |type: Analysis.NativeType| type.name end.select do |name: String| found.include?(name) end
+  plan.types.map do |type: Analysis.NativeType| type.name end.select do |name: String| found.include?(name) end
 end
 
 # The Rust type of the canonical type `type` in a field or payload of `owner` ("" for a parameter or result), with
@@ -226,33 +218,24 @@ end
 def rust_type(plan: Plan, owner: String, type: Types.Type, own: String) -> String
   case type
     Types.Type.Named(name) ->
-      if SCALARS.has_key?(name)
-        return SCALARS[name]
-      end
+      return SCALARS[name] if SCALARS.has_key?(name)
 
-      if plan.resources.include?(name)
-        return "ResourceArc<#{own}::#{name}>"
-      end
+      return "ResourceArc<#{own}::#{name}>" if plan.resources.include?(name)
 
-      if term?(plan, owner, name)
-        return "#{name}Term<'a>"
-      end
+      return "#{name}Term<'a>" if term?(plan, owner, name)
 
-      if plan.borrowing.include?(name)
-        return "#{name}<'a>"
-      end
+      return "#{name}<'a>" if plan.borrowing.include?(name)
 
-      return name
-    Types.Type.ListOf(item) -> return "Vec<#{rust_type(plan, owner, item, own)}>"
-    Types.Type.MapOf(key, value) ->
-      return "Vec<(#{rust_type(plan, owner, key, own)}, #{rust_type(plan, owner, value, own)})>"
-    Types.Type.OptionalOf(item) -> return "Option<#{rust_type(plan, owner, item, own)}>"
-    Types.Type.ResultOf(item) -> return "Result<#{rust_type(plan, owner, item, own)}, String>"
+      name
+    Types.Type.ListOf(item) -> "Vec<#{rust_type(plan, owner, item, own)}>"
+    Types.Type.MapOf(key, value) -> "Vec<(#{rust_type(plan, owner, key, own)}, #{rust_type(plan, owner, value, own)})>"
+    Types.Type.OptionalOf(item) -> "Option<#{rust_type(plan, owner, item, own)}>"
+    Types.Type.ResultOf(item) -> "Result<#{rust_type(plan, owner, item, own)}, String>"
   end
 end
 
 def opening(block: Analysis.NativeBlock, source: String) -> List[String]
-  return [
+  [
     "// The Rust side of `extern module #{block.library.inspect}` in #{source}, made by native-gen.",
     "// Do not edit it: change the .agc and make it again.",
     "",
@@ -263,11 +246,9 @@ end
 
 # The type `name` with its lifetime when it borrows the call.
 def generic(plan: Plan, name: String) -> String
-  if plan.borrowing.include?(name)
-    return "#{name}<'a>"
-  end
+  return "#{name}<'a>" if plan.borrowing.include?(name)
 
-  return name
+  name
 end
 
 def type_lines(plan: Plan, type: Analysis.NativeType) -> List[String]
@@ -350,7 +331,7 @@ def type_lines(plan: Plan, type: Analysis.NativeType) -> List[String]
     encode = encode.push("        }")
   end
 
-  return joined([
+  joined([
     lines,
     ["}", "", "#{impl_decode} {"],
     type_name(name),
@@ -363,7 +344,7 @@ def type_lines(plan: Plan, type: Analysis.NativeType) -> List[String]
 end
 
 def type_name(name: String) -> List[String]
-  return ["    fn type_name() -> String {", "        #{rust_string(name)}.to_string()", "    }"]
+  ["    fn type_name() -> String {", "        #{rust_string(name)}.to_string()", "    }"]
 end
 
 # The newtype of each type that stays a term: its decode checks that the term is one of its type.
@@ -410,15 +391,13 @@ def term_lines(plan: Plan) -> List[String]
     ])
   end
 
-  return lines
+  lines
 end
 
 # Whether the parameters or the result of `function` borrow the call.
 def borrows?(plan: Plan, function: Analysis.NativeFunction) -> Bool
   texts = function.parameters.map do |param: Analysis.NativeParameter| param.type end.push(function.result)
-  return texts.any? do |text: String|
-    leaves(Types.parse(text)).any? do |name: String| plan.borrowing.include?(name) end
-  end
+  texts.any? do |text: String| leaves(Types.parse(text)).any? do |name: String| plan.borrowing.include?(name) end end
 end
 
 def trait_lines(block: Analysis.NativeBlock, plan: Plan, trait: String) -> List[String]
@@ -453,7 +432,7 @@ def trait_lines(block: Analysis.NativeBlock, plan: Plan, trait: String) -> List[
     lines = joined([lines, doc_lines("    ", function.doc), ["    #{signature}"]])
   end
 
-  return lines.push("}")
+  lines.push("}")
 end
 
 # The C function of the table for `function`: decodes the arguments, calls the method, and encodes its value.
@@ -472,7 +451,7 @@ def wrapper(function: Analysis.NativeFunction, trait: String) -> List[String]
     bound = "_args"
   end
 
-  return [
+  [
     "",
     "unsafe extern \"C\" fn native_#{id}<I: #{trait}>(",
     "    env: *mut sys::an_env,",
@@ -492,11 +471,9 @@ end
 
 # The mode of the row of `function`: `def` is short, `compute def` dirty.
 def mode_of(function: Analysis.NativeFunction) -> String
-  if function.mode == "dirty"
-    return "Mode::Dirty"
-  end
+  return "Mode::Dirty" if function.mode == "dirty"
 
-  return "Mode::Short"
+  "Mode::Short"
 end
 
 def module_lines(block: Analysis.NativeBlock, trait: String) -> List[String]
@@ -523,16 +500,14 @@ def module_lines(block: Analysis.NativeBlock, trait: String) -> List[String]
     lines = lines.push("        .resource::<I::#{resource.name}>(#{rust_string(resource.name)})")
   end
 
-  return lines.push("}")
+  lines.push("}")
 end
 
 # `doc` as `///` lines at `indent`. A code block that rustdoc would run as Rust is marked text: a fence of 3 or more
 # ` or ~ with nothing after it, and lines indented to column 4 after a blank line (not in a list item), which get a
 # fence of their own.
 def doc_lines(indent: String, doc: String) -> List[String]
-  if doc.empty?
-    return []
-  end
+  return [] if doc.empty?
 
   lines: List[String] = []
   # The opening run of the open fenced block ("" outside one), whether an indented block is open, whether the line
@@ -579,7 +554,7 @@ def doc_lines(indent: String, doc: String) -> List[String]
     lines = lines.push("#{indent}/// ```")
   end
 
-  return lines
+  lines
 end
 
 # The column where the text of `line` starts, a tab moving to the next multiple of 4.
@@ -595,51 +570,39 @@ def column(line: String) -> Int
     end
   end
 
-  return at
+  at
 end
 
 # The run of ` or ~ that `text` starts with ("" for none).
 def fence_run(text: String) -> String
-  if !text.start_with?("`") and !text.start_with?("~")
-    return ""
-  end
+  return "" if !text.start_with?("`") and !text.start_with?("~")
 
   mark = text.slice(0, 1)
   length = 0
   for c in text.split("")
-    if c != mark
-      return text.slice(0, length)
-    end
+    return text.slice(0, length) if c != mark
 
     length += 1
   end
 
-  return text
+  text
 end
 
 # Whether `text` starts a Markdown list item: `- `, `* `, `+ ` or `N. `.
 def list_item?(text: String) -> Bool
-  if text.start_with?("- ") or text.start_with?("* ") or text.start_with?("+ ")
-    return true
-  end
+  return true if text.start_with?("- ") or text.start_with?("* ") or text.start_with?("+ ")
 
   digits = 0
   for c in text.split("")
-    if c.code < 48 or c.code > 57
-      return digits > 0 and text.slice(digits, 2) == ". "
-    end
+    return digits > 0 and text.slice(digits, 2) == ". " if c.code < 48 or c.code > 57
 
     digits += 1
   end
 
-  return false
+  false
 end
 
 # `text` as a Rust string literal.
-def rust_string(text: String) -> String
-  return "\"#{text.replace("\\", "\\\\").replace("\"", "\\\"")}\""
-end
+def rust_string(text: String) -> String = "\"#{text.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
-def joined(parts: List[List[String]]) -> List[String]
-  return parts.flat_map do |part: List[String]| part end
-end
+def joined(parts: List[List[String]]) -> List[String] = parts.flat_map do |part: List[String]| part end

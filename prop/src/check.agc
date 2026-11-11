@@ -44,9 +44,7 @@ end
 ## # error("falsified after 3 runs, shrunk to 50, seed 7: expected true, got false")
 ## ```
 export def check[T](gen: Gens.Gen[T], config: Config = Config(), law: Fn[T, Result[Void]]) -> Result[Void]
-  if config.runs < 1
-    return error("Prop.check: runs must be at least 1, got #{config.runs}")
-  end
+  return error("Prop.check: runs must be at least 1, got #{config.runs}") if config.runs < 1
 
   seed = config.seed.unwrap_or(Random.int(0, MAX_SEED))
   passed = 0
@@ -71,7 +69,7 @@ export def check[T](gen: Gens.Gen[T], config: Config = Config(), law: Fn[T, Resu
     end
   end
 
-  return ok()
+  ok()
 end
 
 ## Discards the case when `condition` is false. Use it first in a law, for the inputs it does not cover.
@@ -83,11 +81,9 @@ end
 ## end # ok()
 ## ```
 export def assume(condition: Bool) -> Result[Void]
-  if condition
-    return ok()
-  end
+  return ok() if condition
 
-  return error(DISCARD)
+  error(DISCARD)
 end
 
 ## `ok()` when both values encode to the same JSON, else an `error` with both. Unlike `Test.eq` a failure here is a
@@ -100,24 +96,18 @@ end
 export def eq[T](actual: T, expected: T) -> Result[Void]
   got = JSON.encode(actual)
   want = JSON.encode(expected)
-  if got == want
-    return ok()
-  end
+  return ok() if got == want
 
-  return error("expected #{want}, got #{got}")
+  error("expected #{want}, got #{got}")
 end
 
 ## Whether `verdict` is the result of `Prop.assume` on a case it does not cover.
-export def discarded?(verdict: Result[Void]) -> Bool
-  return not verdict.ok? and verdict.message == DISCARD
-end
+export def discarded?(verdict: Result[Void]) -> Bool = not verdict.ok? and verdict.message == DISCARD
 
 def count(n: Int, noun: String) -> String
-  if n == 1
-    return "#{n} #{noun}"
-  end
+  return "#{n} #{noun}" if n == 1
 
-  return "#{n} #{noun}s"
+  "#{n} #{noun}s"
 end
 
 # Walks down the tree: at each step takes the first candidate that still falsifies the law, until none does or `limit`
@@ -142,7 +132,7 @@ def shrink[T](tree: Trees.Tree[T], message: String, law: Fn[T, Result[Void]], li
     end
   end
 
-  return Shrunk(value: current.value, message: current_message)
+  Shrunk(value: current.value, message: current_message)
 end
 
 def first_failure[T](
@@ -152,21 +142,15 @@ def first_failure[T](
   used: Int,
 ) -> Probe[T]
   case candidates
-    none -> return Probe(tree: none, message: "", used: used, cut: false)
+    none -> Probe(tree: none, message: "", used: used, cut: false)
     some(next) ->
-      if left <= 0
-        return Probe(tree: none, message: "", used: used, cut: true)
-      end
+      return Probe(tree: none, message: "", used: used, cut: true) if left <= 0
 
       verdict = law.call(next.first.value)
-      if failed?(verdict)
-        return Probe(tree: some(next.first), message: verdict.message, used: used + 1, cut: false)
-      end
+      return Probe(tree: some(next.first), message: verdict.message, used: used + 1, cut: false) if failed?(verdict)
 
-      return first_failure(next.rest(), law, left - 1, used + 1)
+      first_failure(next.rest(), law, left - 1, used + 1)
   end
 end
 
-def failed?(verdict: Result[Void]) -> Bool
-  return not verdict.ok? and not discarded?(verdict)
-end
+def failed?(verdict: Result[Void]) -> Bool = not verdict.ok? and not discarded?(verdict)

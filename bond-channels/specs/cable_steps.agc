@@ -31,7 +31,7 @@ struct Order
 end
 
 export def steps() -> List[BDD.Step]
-  return [
+  [
     BDD.step("the cable server listens on a free port", &listens),
     BDD.step("client {string} connects with:", &connects),
     BDD.step("the handshake of {string} is answered {int}", &handshake_is),
@@ -62,12 +62,10 @@ end
 def ask(process: Process, request: Json) -> Result[Json]
   try Process.send(process, JSON.encode(request) + "\n", ANSWER_MS)
   line = try Process.read_line(process, ANSWER_MS)
-  return JSON.parse(line)
+  JSON.parse(line)
 end
 
-def serving(f: Fn[Json, Result[Json]]) -> Fn[Json, Result[Json]]
-  return f
-end
+def serving(f: Fn[Json, Result[Json]]) -> Fn[Json, Result[Json]] = f
 
 def listens(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   started = BDD.given_program(ctx, SERVER)
@@ -75,28 +73,20 @@ def listens(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   port = line.split(" ").last.to_i!
   process = Process.spawn_captured("python3", [PEER_PROGRAM, "#{port}"]).unwrap!
   service = serving() do |request| ask(process, request) end
-  return BDD.set(BDD.keep(started, PEER, service), PORT, JSON.from(port))
+  BDD.set(BDD.keep(started, PEER, service), PORT, JSON.from(port))
 end
 
-def port_of(ctx: BDD.Context) -> Int
-  return JSON.int(BDD.get(ctx, PORT).unwrap!).unwrap!
-end
+def port_of(ctx: BDD.Context) -> Int = JSON.int(BDD.get(ctx, PORT).unwrap!).unwrap!
 
-def peer(ctx: BDD.Context, order: Order) -> Json
-  return BDD.call(ctx, PEER, JSON.from(order)).unwrap!
-end
+def peer(ctx: BDD.Context, order: Order) -> Json = BDD.call(ctx, PEER, JSON.from(order)).unwrap!
 
 def text_of(answer: Json, name: String) -> String
-  return JSON.string(JSON.get(answer, name).unwrap_or(JSON.from(""))).unwrap_or("")
+  JSON.string(JSON.get(answer, name).unwrap_or(JSON.from(""))).unwrap_or("")
 end
 
-def int_of(answer: Json, name: String) -> Int
-  return JSON.int(JSON.get(answer, name).unwrap_or(JSON.from(0))).unwrap_or(0)
-end
+def int_of(answer: Json, name: String) -> Int = JSON.int(JSON.get(answer, name).unwrap_or(JSON.from(0))).unwrap_or(0)
 
-def has?(answer: Json, name: String) -> Bool
-  return JSON.get(answer, name).ok?
-end
+def has?(answer: Json, name: String) -> Bool = JSON.get(answer, name).ok?
 
 # The rows of the table are `| header | value |` after a title row; PORT in a value is the port of the server.
 def connects(ctx: BDD.Context, args: List[String]) -> BDD.Context
@@ -112,57 +102,53 @@ def connects(ctx: BDD.Context, args: List[String]) -> BDD.Context
   end
 
   answer = peer(ctx, Order(op: "connect", id: args[0], path: "/cable", headers: headers, protocols: protocols))
-  return BDD.set(ctx, "status #{args[0]}", JSON.get(answer, "status").unwrap!)
+  BDD.set(ctx, "status #{args[0]}", JSON.get(answer, "status").unwrap!)
 end
 
 def handshake_is(ctx: BDD.Context, args: List[String]) -> BDD.Context
   status = JSON.int(BDD.get(ctx, "status #{args[0]}").unwrap!).unwrap!
-  return BDD.assert(ctx, status == args[1].to_i!, "the handshake of #{args[0]} was answered #{status}")
+  BDD.assert(ctx, status == args[1].to_i!, "the handshake of #{args[0]} was answered #{status}")
 end
 
 def sends(ctx: BDD.Context, args: List[String]) -> BDD.Context
   _ = peer(ctx, Order(op: "send", id: args[0], text: BDD.doc_string(ctx)))
-  return ctx
+  ctx
 end
 
 def sends_bytes(ctx: BDD.Context, args: List[String]) -> BDD.Context
   _ = peer(ctx, Order(op: "send", id: args[0], text: "x" * args[1].to_i!))
-  return ctx
+  ctx
 end
 
-def room_identifier(room: String) -> String
-  return "{\"channel\":\"RoomChannel\",\"room\":\"#{room}\"}"
-end
+def room_identifier(room: String) -> String = "{\"channel\":\"RoomChannel\",\"room\":\"#{room}\"}"
 
 def send_command(ctx: BDD.Context, id: String, command: Json) -> BDD.Context
   _ = peer(ctx, Order(op: "send", id: id, text: JSON.encode(command)))
-  return ctx
+  ctx
 end
 
 def subscribes(ctx: BDD.Context, args: List[String]) -> BDD.Context
   command = JSON.from({"command": JSON.from("subscribe"), "identifier": JSON.from(room_identifier(args[1]))})
-  return send_command(ctx, args[0], command)
+  send_command(ctx, args[0], command)
 end
 
 # The page of the app would carry the signed name: here the server signs it, as `GET /signed` of the fixture.
 def subscribes_to_turbo(ctx: BDD.Context, args: List[String]) -> BDD.Context
   answer = HTTP.get_response("http://127.0.0.1:#{port_of(ctx)}/signed?name=#{args[1]}").unwrap!
-  return subscribe_to_signed(ctx, args[0], answer.body.decode("utf-8").unwrap!)
+  subscribe_to_signed(ctx, args[0], answer.body.decode("utf-8").unwrap!)
 end
 
-def subscribes_signed(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  return subscribe_to_signed(ctx, args[0], args[1])
-end
+def subscribes_signed(ctx: BDD.Context, args: List[String]) -> BDD.Context = subscribe_to_signed(ctx, args[0], args[1])
 
 # The identifier that `<turbo-cable-stream-source>` makes for the Rails client.
 def subscribe_to_signed(ctx: BDD.Context, id: String, signed: String) -> BDD.Context
   identifier = JSON.encode({"channel": "Turbo::StreamsChannel", "signed_stream_name": signed})
   command = JSON.from({"command": JSON.from("subscribe"), "identifier": JSON.from(identifier)})
-  return send_command(ctx, id, command)
+  send_command(ctx, id, command)
 end
 
 def message_command(room: String, data: Json) -> Json
-  return JSON.from({
+  JSON.from({
     "command": JSON.from("message"),
     "identifier": JSON.from(room_identifier(room)),
     "data": JSON.from(JSON.encode(data)),
@@ -171,38 +157,34 @@ end
 
 def performs(ctx: BDD.Context, args: List[String]) -> BDD.Context
   data = JSON.from({"action": JSON.from(args[1])})
-  return send_command(ctx, args[0], message_command(args[2], data))
+  send_command(ctx, args[0], message_command(args[2], data))
 end
 
 def says(ctx: BDD.Context, args: List[String]) -> BDD.Context
   data = JSON.from({"action": JSON.from("say"), "text": JSON.from(args[1])})
-  return send_command(ctx, args[0], message_command(args[2], data))
+  send_command(ctx, args[0], message_command(args[2], data))
 end
 
 def next_frame(ctx: BDD.Context, id: String, timeout_ms: Int) -> Json
-  return peer(ctx, Order(op: "recv", id: id, timeout_ms: timeout_ms))
+  peer(ctx, Order(op: "recv", id: id, timeout_ms: timeout_ms))
 end
 
 def receives(ctx: BDD.Context, args: List[String]) -> BDD.Context
   frame = next_frame(ctx, args[0], RECEIVE_MS)
   expected = BDD.doc_string(ctx)
-  return BDD.assert(ctx, text_of(frame, "text") == expected, "#{args[0]} got #{frame}, expected #{expected}")
+  BDD.assert(ctx, text_of(frame, "text") == expected, "#{args[0]} got #{frame}, expected #{expected}")
 end
 
 # Skips what comes before (a ping, a frame of another scenario step): a scenario states what it must hear.
 def eventually_receives(ctx: BDD.Context, args: List[String]) -> BDD.Context
   for _skipped in 1..SKIPPED_FRAMES
     frame = next_frame(ctx, args[0], RECEIVE_MS)
-    if text_of(frame, "text").include?(args[1])
-      return BDD.assert(ctx, true, "")
-    end
+    return BDD.assert(ctx, true, "") if text_of(frame, "text").include?(args[1])
 
-    if not has?(frame, "text")
-      return BDD.assert(ctx, false, "#{args[0]} got #{frame} before a frame with #{args[1]}")
-    end
+    return BDD.assert(ctx, false, "#{args[0]} got #{frame} before a frame with #{args[1]}") if not has?(frame, "text")
   end
 
-  return BDD.assert(ctx, false, "#{args[0]} heard no frame with #{args[1]} in #{SKIPPED_FRAMES} frames")
+  BDD.assert(ctx, false, "#{args[0]} heard no frame with #{args[1]} in #{SKIPPED_FRAMES} frames")
 end
 
 # Only a frame with an identifier counts as a broadcast (a ping has none). A broadcast that the hub handles before the
@@ -212,21 +194,19 @@ def confirmed_first(ctx: BDD.Context, args: List[String]) -> BDD.Context
   for _skipped in 1..SKIPPED_FRAMES
     frame = next_frame(ctx, args[0], RECEIVE_MS)
     text = text_of(frame, "text")
-    if text.include?("confirm_subscription")
-      return BDD.assert(ctx, true, "")
-    end
+    return BDD.assert(ctx, true, "") if text.include?("confirm_subscription")
 
     if text.include?("\"identifier\"") or not has?(frame, "text")
       return BDD.assert(ctx, false, "#{args[0]} got #{frame} before the confirmation")
     end
   end
 
-  return BDD.assert(ctx, false, "#{args[0]} heard no confirmation in #{SKIPPED_FRAMES} frames")
+  BDD.assert(ctx, false, "#{args[0]} heard no confirmation in #{SKIPPED_FRAMES} frames")
 end
 
 def receives_nothing(ctx: BDD.Context, args: List[String]) -> BDD.Context
   frame = next_frame(ctx, args[0], args[1].to_i!)
-  return BDD.assert(ctx, has?(frame, "timeout"), "#{args[0]} got #{frame}, expected nothing")
+  BDD.assert(ctx, has?(frame, "timeout"), "#{args[0]} got #{frame}, expected nothing")
 end
 
 def closed_with(ctx: BDD.Context, args: List[String]) -> BDD.Context
@@ -238,23 +218,23 @@ def closed_with(ctx: BDD.Context, args: List[String]) -> BDD.Context
     end
   end
 
-  return BDD.assert(ctx, false, "#{args[0]} was not closed")
+  BDD.assert(ctx, false, "#{args[0]} was not closed")
 end
 
 def closes(ctx: BDD.Context, args: List[String]) -> BDD.Context
   _ = peer(ctx, Order(op: "close", id: args[0]))
-  return ctx
+  ctx
 end
 
 def drops(ctx: BDD.Context, args: List[String]) -> BDD.Context
   _ = peer(ctx, Order(op: "drop", id: args[0]))
-  return ctx
+  ctx
 end
 
 def broadcasts(ctx: BDD.Context, args: List[String]) -> BDD.Context
   url = "http://127.0.0.1:#{port_of(ctx)}/say?topic=#{args[1]}&text=#{args[0]}"
   answer = HTTP.get_response(url).unwrap!
-  return BDD.assert(ctx, answer.status == 200, "the broadcast was answered #{answer.status}")
+  BDD.assert(ctx, answer.status == 200, "the broadcast was answered #{answer.status}")
 end
 
 # One after the other, each answered before the next: the first may reach the hub before the subscriptions do.
@@ -262,40 +242,36 @@ def broadcasts_often(ctx: BDD.Context, args: List[String]) -> BDD.Context
   url = "http://127.0.0.1:#{port_of(ctx)}/say?topic=#{args[1]}&text=#{args[0]}"
   for _ in 1..args[2].to_i!
     answer = HTTP.get_response(url).unwrap!
-    if answer.status != 200
-      return BDD.assert(ctx, false, "the broadcast was answered #{answer.status}")
-    end
+    return BDD.assert(ctx, false, "the broadcast was answered #{answer.status}") if answer.status != 200
   end
 
-  return BDD.assert(ctx, true, "")
+  BDD.assert(ctx, true, "")
 end
 
 # A broadcast to a hub that is gone is an `error`, which the HTTP handler turns into a 500.
 def cannot_broadcast(ctx: BDD.Context, args: List[String]) -> BDD.Context
   url = "http://127.0.0.1:#{port_of(ctx)}/say?topic=#{args[1]}&text=#{args[0]}"
   answer = HTTP.get_response(url).unwrap!
-  return BDD.assert(ctx, answer.status == 500, "the broadcast was answered #{answer.status}, expected 500")
+  BDD.assert(ctx, answer.status == 500, "the broadcast was answered #{answer.status}, expected 500")
 end
 
 def disconnects(ctx: BDD.Context, args: List[String]) -> BDD.Context
   url = "http://127.0.0.1:#{port_of(ctx)}/disconnect?user=#{args[0]}&reconnect=#{args[1]}"
   answer = HTTP.get_response(url).unwrap!
-  return BDD.assert(ctx, answer.status == 200, "the disconnect was answered #{answer.status}")
+  BDD.assert(ctx, answer.status == 200, "the disconnect was answered #{answer.status}")
 end
 
 def stops_hub(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   answer = HTTP.get_response("http://127.0.0.1:#{port_of(ctx)}/stop").unwrap!
-  return BDD.assert(ctx, answer.status == 200, "the stop was answered #{answer.status}")
+  BDD.assert(ctx, answer.status == 200, "the stop was answered #{answer.status}")
 end
 
 def waits(ctx: BDD.Context, args: List[String]) -> BDD.Context
   Task.sleep(args[0].to_i!)
-  return BDD.assert(ctx, true, "")
+  BDD.assert(ctx, true, "")
 end
 
-def canonical(text: String) -> String
-  return JSON.encode(JSON.parse(text).unwrap!)
-end
+def canonical(text: String) -> String = JSON.encode(JSON.parse(text).unwrap!)
 
 # The counters are written by other tasks a moment after the frames that cause them, so it polls.
 def stats_become(ctx: BDD.Context, _args: List[String]) -> BDD.Context
@@ -306,12 +282,10 @@ def stats_become(ctx: BDD.Context, _args: List[String]) -> BDD.Context
       HTTP.get_response("http://127.0.0.1:#{port_of(ctx)}/stats").unwrap!.body.decode("utf-8").unwrap!,
     )
 
-    if actual == expected
-      return BDD.assert(ctx, true, "")
-    end
+    return BDD.assert(ctx, true, "") if actual == expected
 
     Task.sleep(STATS_WAIT_MS)
   end
 
-  return BDD.assert(ctx, false, "the stats are #{actual}, expected #{expected}")
+  BDD.assert(ctx, false, "the stats are #{actual}, expected #{expected}")
 end

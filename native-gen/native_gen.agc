@@ -28,16 +28,14 @@ REPLACE_MAX = 16_777_216
 
 ## The header of the one `extern module` block of the file at `path`. Its C names start with `prefix`, by default the
 ## last part of the block's library name up to its first `.` (`stats` for "stats" and for "native/stats.so").
-export def header(path: String, prefix: String = "") -> Result[String]
-  return header_in(Analysis.workspace(), path, prefix)
-end
+export def header(path: String, prefix: String = "") -> Result[String] = header_in(Analysis.workspace(), path, prefix)
 
 ## The Rust file of the one `extern module` block of the file at `path`, on the `agentica-native` crate: its types
 ## with their codecs, the trait the module implements and its tables. `prefix` names the trait, with its case kept
 ## (`StatsNative` for "stats", `MyDbNative` for "MyDb" or "my_db"); by default the one of `header`.
 export def rust(path: String, prefix: String = "") -> Result[String]
   block = try block_in(Analysis.workspace(), path)
-  return rust_of(block, prefix, path)
+  rust_of(block, prefix, path)
 end
 
 ## Builds the Rust module of the file at `path` from the crate `rust/` at the root of its package, the nearest folder
@@ -101,12 +99,10 @@ export def build(path: String, check: Bool = false) -> Result[List[String]]
   now = try io(manifest, File.read_text(manifest))
   final = try Build.replan(manifest, toml, plan, now, name, os)
   key = "native.#{name}.#{os}"
-  if final.manifest == now
-    return ok(done.push("#{shown(manifest)} has #{key}"))
-  end
+  return ok(done.push("#{shown(manifest)} has #{key}")) if final.manifest == now
 
   try io(manifest, File.replace(manifest, final.manifest.bytes))
-  return ok(done.push("added #{key} to #{shown(manifest)}"))
+  ok(done.push("added #{key} to #{shown(manifest)}"))
 end
 
 ## A new native module at `path` (`demo`, or `pkg/demo` in the folder `pkg`): writes `NAME.agc` with an `extern
@@ -122,9 +118,7 @@ export def scaffold(path: String, rust: Bool = false) -> Result[Void]
     folder = "./"
   end
 
-  if rust
-    return scaffold_rust(folder, name)
-  end
+  return scaffold_rust(folder, name) if rust
 
   problem = Scaffold.name_problem(name)
   prefix = CHeader.prefix(name)
@@ -156,7 +150,7 @@ export def scaffold(path: String, rust: Bool = false) -> Result[Void]
   try io(program, File.write_text(program, text))
   try io(source, File.write_text(source, Scaffold.source(name, names)))
   try io(header_path, File.write_text(header_path, made))
-  return io(manifest, File.write_text(manifest, toml))
+  io(manifest, File.write_text(manifest, toml))
 end
 
 # The Rust module `name` in `folder`: `NAME.agc` there, and the crate `rust/` at the package root, with the Rust file
@@ -200,29 +194,25 @@ def scaffold_rust(folder: String, name: String) -> Result[Void]
     try io(files[at], File.write_text(files[at], texts[at]))
   end
 
-  if kept_manifest
-    return ok()
-  end
+  return ok() if kept_manifest
 
-  return io(manifest, File.write_text(manifest, toml))
+  io(manifest, File.write_text(manifest, toml))
 end
 
 # `path` from the current folder when it is below it, as build prints it; otherwise `path` as it is.
 def shown(path: String) -> String
   current = "#{Path.cwd().unwrap_or("")}/"
-  if current != "/" and path.start_with?(current)
-    return path.slice(current.length, path.length - current.length)
-  end
+  return path.slice(current.length, path.length - current.length) if current != "/" and path.start_with?(current)
 
-  return path
+  path
 end
 
 # The root of the package of the file at `path`, ending in `/`: the nearest folder up from the file that has an
 # `agentica.toml`.
 def package_root(path: String) -> Result[String]
   case try nearest_root(path)
-    some(root) -> return ok(root)
-    none -> return error("[NATIVE-GEN-IO] #{path}: no agentica.toml in its folder or above; build needs a package")
+    some(root) -> ok(root)
+    none -> error("[NATIVE-GEN-IO] #{path}: no agentica.toml in its folder or above; build needs a package")
   end
 end
 
@@ -232,24 +222,20 @@ def nearest_root(path: String) -> Result[Optional[String]]
   file = try io(path, Path.resolve(path))
   folder = parent(file)
   while !folder.empty?
-    if File.stat("#{folder}/agentica.toml").ok?
-      return ok(some("#{folder}/"))
-    end
+    return ok(some("#{folder}/")) if File.stat("#{folder}/agentica.toml").ok?
 
     folder = parent(folder)
   end
 
-  return ok(none)
+  ok(none)
 end
 
 # `path` without its last part and the separator before it ("" for a path of one part).
 def parent(path: String) -> String
   length = path.length - last_part(path).length - 1
-  if length <= 0
-    return ""
-  end
+  return "" if length <= 0
 
-  return path.slice(0, length)
+  path.slice(0, length)
 end
 
 # The folder's `agentica.toml` without its `native` table, as a buffer: a library that is not built yet, or not for
@@ -260,8 +246,8 @@ def unbuilt(folder: String) -> Map[String, String]
   buffers: Map[String, String] = {}
   kept = File.read_text(path).unwrap_or("")
   case Build.without_native(kept)
-    ok(text) if File.stat(path).ok? -> return buffers.put(Path.resolve(path).unwrap_or(path), text)
-    _ -> return buffers
+    ok(text) if File.stat(path).ok? -> buffers.put(Path.resolve(path).unwrap_or(path), text)
+    _ -> buffers
   end
 end
 
@@ -278,7 +264,7 @@ def rust_of(block: Analysis.NativeBlock, prefix: String, path: String) -> Result
     )
   end
 
-  return RustSide.render(block, RustSide.trait_name(name), last_part(path))
+  RustSide.render(block, RustSide.trait_name(name), last_part(path))
 end
 
 # Runs `cargo build --release` on the crate in the folder `crate` and gives the library it built, the file ending in
@@ -311,9 +297,9 @@ def cargo(crate: String, extension: String) -> Result[String]
   ended = Process.wait(process, CARGO_MS)
   Process.close(process)
   case ended
-    ok(0) -> return Build.library_in(lines, extension)
-    ok(code) -> return error("[NATIVE-GEN-CARGO] cargo build failed with exit code #{code}")
-    error(message) -> return error("[NATIVE-GEN-CARGO] cargo build did not end: #{message}")
+    ok(0) -> Build.library_in(lines, extension)
+    ok(code) -> error("[NATIVE-GEN-CARGO] cargo build failed with exit code #{code}")
+    error(message) -> error("[NATIVE-GEN-CARGO] cargo build did not end: #{message}")
   end
 end
 
@@ -324,9 +310,7 @@ end
 def copy(from: String, to: String) -> Result[Bool]
   hash = try io(from, File.sha256(from))
   kept = File.sha256(to)
-  if kept.ok? and kept.unwrap! == hash
-    return ok(false)
-  end
+  return ok(false) if kept.ok? and kept.unwrap! == hash
 
   info = try io(from, File.stat(from))
   if File.stat(to).ok? and info.size_bytes <= REPLACE_MAX
@@ -355,7 +339,7 @@ def copy(from: String, to: String) -> Result[Bool]
     return error(written.message)
   end
 
-  return ok(true)
+  ok(true)
 end
 
 # The bytes of the file `from`, read 1 MiB at a time.
@@ -370,7 +354,7 @@ def read_all(from: String) -> Result[Bytes]
 
   _ = File.close(input)
   try chunk
-  return ok(Bytes.concat(parts))
+  ok(Bytes.concat(parts))
 end
 
 # Writes the bytes of the file `from` to the new file `to`, 1 MiB at a time.
@@ -390,21 +374,21 @@ def copied(from: String, to: String) -> Result[Void]
   _ = File.close(input)
   closed = io(to, File.close(output))
   try chunk
-  return closed
+  closed
 end
 
 # The header of the file at `path` as `files` has it: the disk, or a buffer in place of the file.
 def header_in(files: Analysis.Workspace, path: String, prefix: String) -> Result[String]
   block = try block_in(files, path)
   names = try prefix_of(block, prefix)
-  return CHeader.render(block, names, last_part(path))
+  CHeader.render(block, names, last_part(path))
 end
 
 # The one `extern module` block of the file at `path` as `files` has it.
 def block_in(files: Analysis.Workspace, path: String) -> Result[Analysis.NativeBlock]
   case Analysis.native_modules(Analysis.open(files), path)
-    ok(found) -> return one_block(found.blocks, path)
-    error(message) -> return error(diagnostic_text(message))
+    ok(found) -> one_block(found.blocks, path)
+    error(message) -> error(diagnostic_text(message))
   end
 end
 
@@ -415,9 +399,7 @@ def manifest_with(path: String, name: String, entry: String) -> Result[String]
   if File.stat(path).ok?
     toml = try io(path, File.read_text(path))
     doc = try manifest_parsed(path, toml)
-    if Toml.get(doc, "native.#{name}").ok?
-      return error("[NATIVE-GEN-EXISTS] #{path} has native.#{name} already")
-    end
+    return error("[NATIVE-GEN-EXISTS] #{path} has native.#{name} already") if Toml.get(doc, "native.#{name}").ok?
   end
 
   if !toml.empty? and !toml.end_with?("\n")
@@ -426,21 +408,21 @@ def manifest_with(path: String, name: String, entry: String) -> Result[String]
 
   joined = "#{toml}#{entry}"
   try manifest_parsed(path, joined)
-  return ok(joined)
+  ok(joined)
 end
 
 def manifest_parsed(path: String, text: String) -> Result[Toml.Value]
   case Toml.parse(text)
-    ok(doc) -> return ok(doc)
-    error(message) -> return error("[NATIVE-GEN-MANIFEST] #{path} with [native.NAME] added is not TOML: #{message}")
+    ok(doc) -> ok(doc)
+    error(message) -> error("[NATIVE-GEN-MANIFEST] #{path} with [native.NAME] added is not TOML: #{message}")
   end
 end
 
 # `done`, with an error of it as `[NATIVE-GEN-IO] PATH: message`.
 def io[T](path: String, done: Result[T]) -> Result[T]
   case done
-    ok(_) -> return done
-    error(message) -> return error("[NATIVE-GEN-IO] #{path}: #{message}")
+    ok(_) -> done
+    error(message) -> error("[NATIVE-GEN-IO] #{path}: #{message}")
   end
 end
 
@@ -449,7 +431,7 @@ def one_block(blocks: List[Analysis.NativeBlock], path: String) -> Result[Analys
     return error("[NATIVE-GEN-BLOCK] #{path} has #{blocks.size} extern module blocks; native-gen makes a file for one")
   end
 
-  return ok(blocks[0])
+  ok(blocks[0])
 end
 
 # The prefix `prefix` of the C names, or the default one of the block's library when it is empty.
@@ -460,8 +442,8 @@ def prefix_of(block: Analysis.NativeBlock, prefix: String) -> Result[CHeader.Pre
   end
 
   case CHeader.prefix(name)
-    ok(names) -> return ok(names)
-    error(message) -> return error("[NATIVE-GEN-PREFIX] #{message}; choose another with --prefix")
+    ok(names) -> ok(names)
+    error(message) -> error("[NATIVE-GEN-PREFIX] #{message}; choose another with --prefix")
   end
 end
 
@@ -470,21 +452,21 @@ def diagnostic_text(message: String) -> String
   case Analysis.diagnostic(message)
     ok(found) ->
       start = found.range.start
-      return "[#{found.code}] #{found.file}:#{start.line}:#{start.column} #{found.message}"
-    error(_) -> return message
+      "[#{found.code}] #{found.file}:#{start.line}:#{start.column} #{found.message}"
+    error(_) -> message
   end
 end
 
 def default_prefix(library: String) -> String
   name = last_part(library)
   case name.index_of(".")
-    some(at) -> return name.slice(0, at)
-    none -> return name
+    some(at) -> name.slice(0, at)
+    none -> name
   end
 end
 
 # The part of `path` after its last `/` or `\`.
 def last_part(path: String) -> String
   parts = path.replace("\\", "/").split("/")
-  return parts[parts.size - 1]
+  parts[parts.size - 1]
 end

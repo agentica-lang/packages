@@ -62,35 +62,27 @@ end
 export def build(cap: Int, stats: ATS[Int, Int]) -> Outbox
   queue: Channel[Out] = Channel.new(slots(cap))
   pending: ATS[Int, Int] = ATS.new()
-  return Outbox(queue: queue, pending: pending, cap: cap, stats: stats)
+  Outbox(queue: queue, pending: pending, cap: cap, stats: stats)
 end
 
 ## What a message of `size` bytes is charged: its bytes and OVERHEAD, but never more than `cap`, so a message bigger
 ## than the cap does not block the small ones after it for ever.
 export def charge(size: Int, cap: Int) -> Int
-  if size + OVERHEAD > cap
-    return cap
-  end
+  return cap if size + OVERHEAD > cap
 
-  return size + OVERHEAD
+  size + OVERHEAD
 end
 
 ## Whether a message charged `size`, which made the pending charges `total` with it, must be refused: when the
 ## charges waiting before it pass `cap`. So at most `cap` (or one message bigger than it) plus the message being
 ## queued is in memory, and a client that reads is not dropped for one big reply followed by a short one.
-export def refused?(total: Int, size: Int, cap: Int) -> Bool
-  return total - size > cap
-end
+export def refused?(total: Int, size: Int, cap: Int) -> Bool = total - size > cap
 
 ## Queues `bytes`; the error says the client is gone or was dropped (its socket is closed then).
 export def push(outbox: Outbox, socket: Socket, bytes: Bytes) -> Result[Void]
-  if outbox.queue.closed? or outbox.pending.has_key?(CLOSING_KEY)
-    return error("dock: the connection is closed")
-  end
+  return error("dock: the connection is closed") if outbox.queue.closed? or outbox.pending.has_key?(CLOSING_KEY)
 
-  if bytes.empty?
-    return ok()
-  end
+  return ok() if bytes.empty?
 
   size = charge(bytes.size, outbox.cap)
   total = outbox.pending.add(BYTES_KEY, size)
@@ -104,10 +96,10 @@ export def push(outbox: Outbox, socket: Socket, bytes: Bytes) -> Result[Void]
   end
 
   case outbox.queue.send(Out.Data(bytes), 0)
-    ok(_) -> return ok()
+    ok(_) -> ok()
     error(_) ->
       drop(outbox, socket)
-      return error("dock: the connection is closed")
+      error("dock: the connection is closed")
   end
 end
 
@@ -128,9 +120,7 @@ export def hand_over(outbox: Outbox) -> Void
   outbox.pending.put(HANDED_KEY, 1)
 end
 
-export def handed_over?(outbox: Outbox) -> Bool
-  return outbox.pending.has_key?(HANDED_KEY)
-end
+export def handed_over?(outbox: Outbox) -> Bool = outbox.pending.has_key?(HANDED_KEY)
 
 ## Runs as a task of the client. It ends when the queue is closed and empty, at a `Close`, or when a send fails; then
 ## it closes the socket, which also ends the receive of the handler.
@@ -142,14 +132,9 @@ export def run(pipe: Pipe) -> Void
         batch = collect(pipe.outbox, first)
         sent = send_all(pipe.socket, Bytes.concat(batch.pieces))
         _ = pipe.outbox.pending.add(BYTES_KEY, -batch.counted)
-        if not sent or batch.closing
-          break
-        end
+        break if not sent or batch.closing
 
-      error(_) ->
-        if queue.closed? and queue.empty?
-          break
-        end
+      error(_) -> break if queue.closed? and queue.empty?
     end
   end
 
@@ -158,9 +143,7 @@ export def run(pipe: Pipe) -> Void
 end
 
 # The channel holds this many messages.
-def slots(cap: Int) -> Int
-  return cap / MIN_CAP + 2
-end
+def slots(cap: Int) -> Int = cap / MIN_CAP + 2
 
 # A dropped client: the closed queue refuses later pushes, the closed socket wakes the writer and the handler.
 def drop(outbox: Outbox, socket: Socket) -> Void
@@ -181,15 +164,14 @@ def collect(outbox: Outbox, first: Out) -> Batch
     taken += 1
   end
 
-  return batch
+  batch
 end
 
 # `counted` is what `push` charged, so the writer subtracts exactly that.
 def add(batch: Batch, out: Out, cap: Int) -> Batch
   case out
-    Out.Data(bytes) ->
-      return batch.with(pieces: batch.pieces.push(bytes), counted: batch.counted + charge(bytes.size, cap))
-    Out.Close -> return batch.with(closing: true)
+    Out.Data(bytes) -> batch.with(pieces: batch.pieces.push(bytes), counted: batch.counted + charge(bytes.size, cap))
+    Out.Close -> batch.with(closing: true)
   end
 end
 
@@ -202,5 +184,5 @@ def send_all(socket: Socket, bytes: Bytes) -> Bool
     end
   end
 
-  return true
+  true
 end

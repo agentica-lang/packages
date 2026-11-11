@@ -22,11 +22,9 @@ DIGEST_LENGTH = 64
 ## empty secret is an `error`: a key from it would sign anything. The secret must be strong, as the `SECRET_KEY_BASE`
 ## of an app is: the key is only as hard to guess as it is, and no length is checked here, as in Rails.
 export def stream_key(secret_key_base: String) -> Result[Bytes]
-  if secret_key_base.empty?
-    return error("stream key: the secret is empty")
-  end
+  return error("stream key: the secret is empty") if secret_key_base.empty?
 
-  return OpenSSL.KDF.pbkdf2_hmac_sha256(secret_key_base.bytes, SALT.bytes, ITERATIONS, KEY_BYTES)
+  OpenSSL.KDF.pbkdf2_hmac_sha256(secret_key_base.bytes, SALT.bytes, ITERATIONS, KEY_BYTES)
 end
 
 ## The signed form of `name`, for `<turbo-cable-stream-source signed-stream-name="...">`. `name` is what Rails'
@@ -37,7 +35,7 @@ end
 ## either side verifies on both.
 export def signed_stream_name(key: Bytes, name: String) -> String
   encoded = Base64.strict_encode64(JSON.encode(JSON.from(name)).bytes)
-  return "#{encoded}#{SEPARATOR}#{OpenSSL.HMAC.sha256_hexdigest(key, encoded.bytes)}"
+  "#{encoded}#{SEPARATOR}#{OpenSSL.HMAC.sha256_hexdigest(key, encoded.bytes)}"
 end
 
 ## The name in `signed` when it was signed with `key`; `none` for anything else (a bad signature, a bad encoding, a
@@ -46,43 +44,29 @@ end
 ## constant time.
 export def verified_stream_name(key: Bytes, signed: String) -> Optional[String]
   cut = signed.length - DIGEST_LENGTH - SEPARATOR.length
-  if cut <= 0 or signed.slice(cut, SEPARATOR.length) != SEPARATOR
-    return none
-  end
+  return none if cut <= 0 or signed.slice(cut, SEPARATOR.length) != SEPARATOR
 
   encoded = signed.slice(0, cut)
   digest = signed.slice(cut + SEPARATOR.length, DIGEST_LENGTH)
-  if not OpenSSL.HMAC.secure_compare(OpenSSL.HMAC.sha256_hexdigest(key, encoded.bytes).bytes, digest.bytes)
-    return none
-  end
+  return none if not OpenSSL.HMAC.secure_compare(OpenSSL.HMAC.sha256_hexdigest(key, encoded.bytes).bytes, digest.bytes)
 
-  return name_of(encoded)
+  name_of(encoded)
 end
 
 def name_of(encoded: String) -> Optional[String]
   bytes = Base64.strict_decode64(encoded)
-  if not bytes.ok?
-    return none
-  end
+  return none if not bytes.ok?
 
   text = String.from_bytes(bytes.unwrap!)
-  if not text.ok?
-    return none
-  end
+  return none if not text.ok?
 
   parsed = JSON.parse(text.unwrap!)
-  if not parsed.ok?
-    return none
-  end
+  return none if not parsed.ok?
 
   name = JSON.string(parsed.unwrap!)
-  if not name.ok?
-    return none
-  end
+  return none if not name.ok?
 
-  if name.unwrap!.empty?
-    return none
-  end
+  return none if name.unwrap!.empty?
 
-  return some(name.unwrap!)
+  some(name.unwrap!)
 end
