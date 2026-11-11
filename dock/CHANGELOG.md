@@ -10,7 +10,7 @@ Needs Agentica 0.30.0 or later.
 
 ### Changed
 
-- **Breaking:** needs Agentica 0.30.0 or later: the sources are formatted with `agentica fmt` of 0.30.0, which uses its syntax (implicit returns, guards, one-line defs). CI tests with Agentica 0.30.0. Nothing else changes.
+- **Breaking:** needs Agentica 0.30.0 or later: the sources are formatted with `agentica fmt` of 0.30.0, which uses its syntax (implicit returns, guards, one-line defs). CI tests with Agentica 0.30.0.
 
 ## [0.1.1] - 2026-11-10
 

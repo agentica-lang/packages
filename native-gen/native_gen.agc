@@ -269,8 +269,8 @@ end
 
 # Runs `cargo build --release` on the crate in the folder `crate` and gives the library it built, the file ending in
 # `extension`, from the messages cargo writes on stdout. Its errors and progress go to stderr as cargo writes them.
-# cargo runs in the current folder: `Process.spawn` takes no folder, and `spawn_captured`, which does, would hold
-# back cargo's errors until it ends. So a `.cargo/config.toml` of `rust/` applies only when build runs from there.
+# cargo runs in the current folder, started with `Process.spawn` because `spawn_captured` would hold back cargo's
+# errors until it ends. So a `.cargo/config.toml` of `rust/` applies only when build runs from there.
 def cargo(crate: String, extension: String) -> Result[String]
   args = [
     "build",
