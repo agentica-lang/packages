@@ -47,7 +47,7 @@ export def int(min: Int, max: Int) -> Gen[Int]
   low = min.clamp(-BOUND, BOUND)
   high = max.clamp(-BOUND, BOUND)
   origin = 0.clamp(low, high)
-  return Gen(
+  Gen(
     make: making() do |seed| Trees.int_tree(low + Seeds.draw(seed, high - low + 1), origin) end,
     count: counting() do |size| reach(high - origin, origin - low, size) end,
     all: listing() do |size| offsets(high - origin, origin - low, size).map do |step| origin + step end end,
@@ -71,7 +71,7 @@ export def float(min: Float, max: Float) -> Gen[Float]
   origin = 0.0.clamp(low, high)
   up = (high - origin).floor
   down = (origin - low).floor
-  return Gen(
+  Gen(
     make: making() do |seed| Trees.float_tree(low + Seeds.unit(seed) * (high - low), origin) end,
     count: counting() do |size| reach(up, down, size) end,
     all: listing() do |size| offsets(up, down, size).map do |step| origin + step.to_f end end,
@@ -83,9 +83,7 @@ end
 ## ```ruby
 ## Prop.sample(Prop.bool(), 1) # [false, false, false, true, true]
 ## ```
-export def bool() -> Gen[Bool]
-  return one_of([false, true])
-end
+export def bool() -> Gen[Bool] = one_of([false, true])
 
 ## A String of up to `max_size` characters from a mix of ASCII, accented, CJK and emoji ones, a tab and a newline. It
 ## shrinks to a shorter string, then toward "a". At size k it has the strings of up to k characters from the first
@@ -96,7 +94,7 @@ end
 ## ```
 export def string(max_size: Int = 10) -> Gen[String]
   indexes = list(int(0, ALPHABET.size - 1), max_size)
-  return map(indexes) do |chosen| chosen.map do |i| ALPHABET.at(i) end.join("") end
+  map(indexes) do |chosen| chosen.map do |i| ALPHABET.at(i) end.join("") end
 end
 
 ## A List of up to `max_size` (at most 1000) items of `gen`. It shrinks to a shorter list (the empty one first), then
@@ -107,7 +105,7 @@ end
 ## ```
 export def list[T](gen: Gen[T], max_size: Int = 10) -> Gen[List[T]]
   limit = max_size.clamp(0, MAX_SIZE)
-  return Gen(
+  Gen(
     make: making() do |seed|
       count = Seeds.draw(Seeds.split(seed, 0), limit + 1)
       trees = (0...count).to_a.map do |i| gen.make(Seeds.split(seed, i + 1)) end
@@ -124,7 +122,7 @@ end
 ## Prop.sample(Prop.optional(Prop.int(0, 3)), 1, 6) # [none, none, none, none, some(3), some(0)]
 ## ```
 export def optional[T](gen: Gen[T]) -> Gen[Optional[T]]
-  return Gen(
+  Gen(
     make: making() do |seed|
       if Seeds.draw(Seeds.split(seed, 0), 2) == 0
         absent: Trees.Tree[Optional[T]] = Trees.leaf(none)
@@ -153,7 +151,7 @@ export def one_of[T](items: List[T]) -> Gen[T]
   end
 
   chosen = map(int(0, items.size - 1)) do |i| items.at(i) end
-  return Gen(make: chosen.make, count: counting() do |_| items.size end, all: listing() do |_| items end)
+  Gen(make: chosen.make, count: counting() do |_| items.size end, all: listing() do |_| items end)
 end
 
 ## The values of `gen` through `f`. They shrink as the values of `gen` do.
@@ -162,7 +160,7 @@ end
 ## Prop.sample(Prop.map(Prop.int(1, 5)) do |n| n * 10 end, 1) # [30, 20, 50, 40, 10]
 ## ```
 export def map[A, B](gen: Gen[A], f: Fn[A, B]) -> Gen[B]
-  return Gen(
+  Gen(
     make: making() do |seed| Trees.map_tree(gen.make(seed), f) end,
     count: gen.count,
     all: listing() do |size| gen.all(size).map do |value| f.call(value) end end,
@@ -176,7 +174,7 @@ end
 ## # [Pair(first: 6, second: true), Pair(first: 6, second: false)]
 ## ```
 export def pair[A, B](a: Gen[A], b: Gen[B]) -> Gen[Pair[A, B]]
-  return Gen(
+  Gen(
     make: making() do |seed|
       Trees.zip_trees(a.make(Seeds.split(seed, 0)), b.make(Seeds.split(seed, 1))) do |x, y|
         Pair(first: x, second: y)
@@ -193,26 +191,20 @@ end
 ## Prop.sample(Prop.int(0, 9), 1234) # [6, 6, 0, 4, 2]
 ## ```
 export def sample[T](gen: Gen[T], seed: Int, count: Int = 5) -> List[T]
-  return (0...count).to_a.map do |i| gen.make(Seeds.split(seed, i)).value end
+  (0...count).to_a.map do |i| gen.make(Seeds.split(seed, i)).value end
 end
 
 ## Whether a count stopped growing at its cap, so it is a lower bound.
-export def capped?(count: Int) -> Bool
-  return count >= CAP
-end
+export def capped?(count: Int) -> Bool = count >= CAP
 
 ## `value`, always.
 export def just[T](value: T) -> Gen[T]
-  return Gen(
-    make: making() do |_| Trees.leaf(value) end,
-    count: counting() do |_| 1 end,
-    all: listing() do |_| [value] end,
-  )
+  Gen(make: making() do |_| Trees.leaf(value) end, count: counting() do |_| 1 end, all: listing() do |_| [value] end)
 end
 
 ## One value of each of `gens`, in order: a list as long as `gens`, which shrinks only through its items.
 export def sequence[T](gens: List[Gen[T]]) -> Gen[List[T]]
-  return Gen(
+  Gen(
     make: making() do |seed|
       Trees.fixed_tree((0...gens.size).to_a.map do |i| gens.at(i).make(Seeds.split(seed, i)) end)
     end,
@@ -228,7 +220,7 @@ export def choose[T](gens: List[Gen[T]]) -> Gen[T]
     return bad.unwrap!
   end
 
-  return Gen(
+  Gen(
     make: making() do |seed|
       index = Seeds.draw(Seeds.split(seed, 0), gens.size)
       Trees.choice_tree(index) do |i| gens.at(i).make(Seeds.split(seed, i + 1)) end
@@ -239,25 +231,17 @@ export def choose[T](gens: List[Gen[T]]) -> Gen[T]
 end
 
 # The three functions of a `Gen` are blocks: these hand a block back as the `Fn` value a field holds.
-def making[T](make: Fn[Int, Trees.Tree[T]]) -> Fn[Int, Trees.Tree[T]]
-  return make
-end
+def making[T](make: Fn[Int, Trees.Tree[T]]) -> Fn[Int, Trees.Tree[T]] = make
 
-def counting(count: Fn[Int, Int]) -> Fn[Int, Int]
-  return count
-end
+def counting(count: Fn[Int, Int]) -> Fn[Int, Int] = count
 
-def listing[T](all: Fn[Int, List[T]]) -> Fn[Int, List[T]]
-  return all
-end
+def listing[T](all: Fn[Int, List[T]]) -> Fn[Int, List[T]] = all
 
-def saturate(n: Int) -> Int
-  return n.clamp(0, CAP)
-end
+def saturate(n: Int) -> Int = n.clamp(0, CAP)
 
 # How many values lie up to `size` away from the origin, with `up` of room above it and `down` below.
 def reach(up: Int, down: Int, size: Int) -> Int
-  return saturate(1 + saturate(size.clamp(0, up)) + saturate(size.clamp(0, down)))
+  saturate(1 + saturate(size.clamp(0, up)) + saturate(size.clamp(0, down)))
 end
 
 # The distances from the origin, simplest first: 0, 1, -1, 2, -2, ...
@@ -276,7 +260,7 @@ def offsets(up: Int, down: Int, size: Int) -> List[Int]
     step += 1
   end
 
-  return out
+  out
 end
 
 # 1 + n + n^2 + ... + n^longest, stopping at CAP.
@@ -290,7 +274,7 @@ def lists_count(items: Int, longest: Int) -> Int
     length += 1
   end
 
-  return total
+  total
 end
 
 # The lists of 0 up to `longest` items, the shorter first.
@@ -300,14 +284,12 @@ def lists_up_to[T](items: List[T], longest: Int) -> List[List[T]]
     out = out.concat(sequences(items, length))
   end
 
-  return out
+  out
 end
 
 def sequences[T](items: List[T], length: Int) -> List[List[T]]
   out: List[List[T]] = []
-  if length == 0
-    return out.push([])
-  end
+  return out.push([]) if length == 0
 
   tails = sequences(items, length - 1)
   for item in items
@@ -316,7 +298,7 @@ def sequences[T](items: List[T], length: Int) -> List[List[T]]
     end
   end
 
-  return out
+  out
 end
 
 def pairs[A, B](as: List[A], bs: List[B]) -> List[Pair[A, B]]
@@ -327,7 +309,7 @@ def pairs[A, B](as: List[A], bs: List[B]) -> List[Pair[A, B]]
     end
   end
 
-  return out
+  out
 end
 
 # Every list with one item from each of `choices`, the first list changing slowest.
@@ -345,5 +327,5 @@ def product[T](choices: List[List[T]]) -> List[List[T]]
     out = next_out
   end
 
-  return out
+  out
 end

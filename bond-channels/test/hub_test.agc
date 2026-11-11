@@ -5,26 +5,22 @@ import {HubOptions} from "../src/types"
 # True when the next event of the inbox is `Away(reconnect)`.
 def away?(inbox: Channel[Hubs.Event], reconnect: Bool) -> Bool
   got = inbox.recv(2_000)
-  if not got.ok?
-    return false
-  end
+  return false if not got.ok?
 
   case got.unwrap!
-    Hubs.Event.Away(again) -> return again == reconnect
-    _ -> return false
+    Hubs.Event.Away(again) -> again == reconnect
+    _ -> false
   end
 end
 
 def wait_closed(inbox: Channel[Hubs.Event]) -> Bool
   for _ in 1..200
-    if inbox.closed?
-      return true
-    end
+    return true if inbox.closed?
 
     Task.sleep(10)
   end
 
-  return false
+  false
 end
 
 # What the inbox holds, once the hub has handled every message queued before it was stopped.
@@ -32,9 +28,7 @@ def frames(inbox: Channel[Hubs.Event]) -> List[String]
   texts: List[String] = []
   while true
     got = inbox.recv(100)
-    if not got.ok?
-      return texts
-    end
+    return texts if not got.ok?
 
     case got.unwrap!
       Hubs.Event.Frame(text) -> texts = texts.push(text)
@@ -42,12 +36,12 @@ def frames(inbox: Channel[Hubs.Event]) -> List[String]
     end
   end
 
-  return texts
+  texts
 end
 
 def finish(hub: Hubs.Hub) -> Result[Void]
   try Hubs.stop(hub)
-  return Task.await(hub.task)
+  Task.await(hub.task)
 end
 
 def main() -> Void

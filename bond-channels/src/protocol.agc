@@ -59,56 +59,48 @@ export enum Command
 end
 
 ## `{"type":"welcome"}`, the first frame after the upgrade.
-export def welcome() -> String
-  return JSON.encode(Typed(type: "welcome"))
-end
+export def welcome() -> String = JSON.encode(Typed(type: "welcome"))
 
 ## `{"type":"ping","message":SECONDS}`, with the Unix time in seconds.
-export def ping(unix_seconds: Int) -> String
-  return JSON.encode(Ping(type: "ping", message: unix_seconds))
-end
+export def ping(unix_seconds: Int) -> String = JSON.encode(Ping(type: "ping", message: unix_seconds))
 
 ## The frame of a `connect` that refuses: the client must not reconnect.
 export def disconnect_unauthorized() -> String
-  return JSON.encode(Disconnect(type: "disconnect", reason: some(UNAUTHORIZED), reconnect: false))
+  JSON.encode(Disconnect(type: "disconnect", reason: some(UNAUTHORIZED), reconnect: false))
 end
 
 ## The frame of a server that drops a connection: the client may reconnect.
 export def disconnect_reconnect() -> String
-  return JSON.encode(Disconnect(type: "disconnect", reason: none, reconnect: true))
+  JSON.encode(Disconnect(type: "disconnect", reason: none, reconnect: true))
 end
 
 ## The frame of a server that ends the connections of a person on purpose (`Channels.disconnect`, the
 ## `remote_connections.disconnect` of Rails): the client reconnects only when `reconnect` is true.
 export def disconnect_remote(reconnect: Bool) -> String
-  return JSON.encode(Disconnect(type: "disconnect", reason: some(REMOTE), reconnect: reconnect))
+  JSON.encode(Disconnect(type: "disconnect", reason: some(REMOTE), reconnect: reconnect))
 end
 
 ## `{"identifier":ID,"type":"confirm_subscription"}`.
 export def confirm_subscription(identifier: String) -> String
-  return JSON.encode(Confirmation(identifier: identifier, type: "confirm_subscription"))
+  JSON.encode(Confirmation(identifier: identifier, type: "confirm_subscription"))
 end
 
 ## `{"identifier":ID,"type":"reject_subscription"}`.
 export def reject_subscription(identifier: String) -> String
-  return JSON.encode(Confirmation(identifier: identifier, type: "reject_subscription"))
+  JSON.encode(Confirmation(identifier: identifier, type: "reject_subscription"))
 end
 
 ## The JSON text of a payload that is a string (a Turbo Stream), to give to `message` once per broadcast.
-export def text_payload(text: String) -> String
-  return JSON.encode(text)
-end
+export def text_payload(text: String) -> String = JSON.encode(text)
 
 ## The JSON text of a payload that is an object (a notice), to give to `message` once per broadcast. A parsed object
 ## comes out with its keys sorted, and one made by `JSON.object` or `JSON.from` in no fixed order.
-export def json_payload(value: Json) -> String
-  return JSON.encode(value)
-end
+export def json_payload(value: Json) -> String = JSON.encode(value)
 
 ## `{"identifier":ID,"message":PAYLOAD}`, where `payload` is the text that `text_payload` or `json_payload` made. The
 ## payload is spliced in, not encoded again: a broadcast to many subscribers encodes it once.
 export def message(identifier: String, payload: String) -> String
-  return "{\"identifier\":#{JSON.encode(identifier)},\"message\":#{payload}}"
+  "{\"identifier\":#{JSON.encode(identifier)},\"message\":#{payload}}"
 end
 
 ## Reads a text frame of a client. An `error` is the reason to log: Action Cable ignores such a frame and the
@@ -118,17 +110,15 @@ export def decode_command(text: String) -> Result[Command]
   name = try string_field(frame, "command")
   identifier = try string_field(frame, "identifier")
   case name
-    "subscribe" -> return decode_subscribe(identifier)
-    "unsubscribe" -> return ok(Command.Unsubscribe(identifier))
-    "message" -> return decode_perform(frame, identifier)
-    _ -> return error("unrecognized command #{name}")
+    "subscribe" -> decode_subscribe(identifier)
+    "unsubscribe" -> ok(Command.Unsubscribe(identifier))
+    "message" -> decode_perform(frame, identifier)
+    _ -> error("unrecognized command #{name}")
   end
 end
 
 ## The parsed identifier of a subscription that `decode_command` accepted.
-export def identifier_params(identifier: String) -> Result[Json]
-  return parsed_object(identifier, "the identifier")
-end
+export def identifier_params(identifier: String) -> Result[Json] = parsed_object(identifier, "the identifier")
 
 def decode_subscribe(identifier: String) -> Result[Command]
   if identifier.bytes.length > MAX_IDENTIFIER_BYTES
@@ -138,7 +128,7 @@ def decode_subscribe(identifier: String) -> Result[Command]
   params = try identifier_params(identifier)
   # Rails finds no class for a missing channel and logs it, so a missing or odd one is "" and the hub logs it.
   channel = string_field(params, "channel").unwrap_or("")
-  return ok(Command.Subscribe(Join(identifier: identifier, channel: channel, params: params)))
+  ok(Command.Subscribe(Join(identifier: identifier, channel: channel, params: params)))
 end
 
 # `data` is a JSON string that holds the object (the client encodes it twice).
@@ -146,7 +136,7 @@ def decode_perform(frame: Json, identifier: String) -> Result[Command]
   text = try string_field(frame, "data")
   data = try parsed_object(text, "data")
   name = try action_name(data)
-  return ok(Command.Perform(Action(identifier: identifier, name: name, data: data)))
+  ok(Command.Perform(Action(identifier: identifier, name: name, data: data)))
 end
 
 # A missing, null or blank action (Unicode spaces count as blank) is `receive`; any other kind is refused, as the Rust
@@ -154,46 +144,40 @@ end
 def action_name(data: Json) -> Result[String]
   field = JSON.get(data, "action")
   case field
-    ok(value) -> return named_action(value)
-    error(_) -> return ok(RECEIVE)
+    ok(value) -> named_action(value)
+    error(_) -> ok(RECEIVE)
   end
 end
 
 def named_action(value: Json) -> Result[String]
   case JSON.kind(value)
-    "null" -> return ok(RECEIVE)
+    "null" -> ok(RECEIVE)
     "string" ->
       name = try JSON.string(value)
-      if blank?(name)
-        return ok(RECEIVE)
-      end
+      return ok(RECEIVE) if blank?(name)
 
-      return ok(name)
-    _ -> return error("action is not a string")
+      ok(name)
+    _ -> error("action is not a string")
   end
 end
 
 def blank?(text: String) -> Bool
   for char in text.split("")
     code = char.code
-    if not SPACE_CODES.include?(code) and not EN_SPACES.include?(code)
-      return false
-    end
+    return false if not SPACE_CODES.include?(code) and not EN_SPACES.include?(code)
   end
 
-  return true
+  true
 end
 
 # `what` names the text in the reason that the caller logs.
 def parsed_object(text: String, what: String) -> Result[Json]
   case JSON.parse(text)
     ok(value) ->
-      if JSON.kind(value) != "object"
-        return error("#{what} is not a JSON object")
-      end
+      return error("#{what} is not a JSON object") if JSON.kind(value) != "object"
 
-      return ok(value)
-    error(_) -> return error("#{what} is not JSON")
+      ok(value)
+    error(_) -> error("#{what} is not JSON")
   end
 end
 
@@ -202,10 +186,10 @@ def string_field(frame: Json, key: String) -> Result[String]
   case field
     ok(value) ->
       case JSON.string(value)
-        ok(text) -> return ok(text)
-        error(_) -> return error("#{key} is not a string")
+        ok(text) -> ok(text)
+        error(_) -> error("#{key} is not a string")
       end
 
-    error(_) -> return error("the frame has no #{key}")
+    error(_) -> error("the frame has no #{key}")
   end
 end

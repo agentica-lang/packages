@@ -38,32 +38,30 @@ end
 
 def setting(name: String, fallback: Int) -> Int
   case System.env(name)
-    ok(text) -> return text.to_i.unwrap_or(fallback)
-    error(_) -> return fallback
+    ok(text) -> text.to_i.unwrap_or(fallback)
+    error(_) -> fallback
   end
 end
 
 def connect(conn: Bond.Conn) -> Result[Channels.Identity]
   user = try Bond.cookie(conn, "user")
-  return ok(Channels.Identity(id: user, data: JSON.from(user)))
+  ok(Channels.Identity(id: user, data: JSON.from(user)))
 end
 
 def text_field(data: Json, name: String) -> Result[String]
   field = try JSON.get(data, name)
-  return JSON.string(field)
+  JSON.string(field)
 end
 
-def room_of(params: Json) -> String
-  return text_field(params, "room").unwrap_or("lobby")
-end
+def room_of(params: Json) -> String = text_field(params, "room").unwrap_or("lobby")
 
 def room_subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
-  return ok(Channels.Subscription(streams: ["room:#{room_of(params)}"]))
+  ok(Channels.Subscription(streams: ["room:#{room_of(params)}"]))
 end
 
 def room_left(hub: Channels.Hub, session: Channels.Session, params: Json) -> Result[Void]
   notice = JSON.from(Notice(left: session.identity.id, room: room_of(params)))
-  return Channels.broadcast_json(hub, "left", notice)
+  Channels.broadcast_json(hub, "left", notice)
 end
 
 def room_acted(
@@ -77,52 +75,48 @@ def room_acted(
     "say" ->
       text = try text_field(data, "text")
       try Channels.broadcast_text(hub, "room:#{room_of(params)}", "#{session.identity.id}: #{text}")
-      return ok([])
+      ok([])
     "slow" ->
       # The announcement tells a step that this handler is running, so that it needs no fixed wait.
       try Channels.broadcast_json(hub, "left", JSON.from(Started(started: session.identity.id)))
       Task.sleep(setting("SLOW_MS", DEFAULT_SLOW_MS))
-      return ok([])
-    "crash" -> return ok([JSON.from(1 / (action.length - 5))])
-    _ -> return ok([JSON.from({"action": JSON.from(action)})])
+      ok([])
+    "crash" -> ok([JSON.from(1 / (action.length - 5))])
+    _ -> ok([JSON.from({"action": JSON.from(action)})])
   end
 end
 
 def watch_subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
-  return ok(Channels.Subscription(streams: ["left"]))
+  ok(Channels.Subscription(streams: ["left"]))
 end
 
 def greet_subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
-  return ok(Channels.Subscription(transmit: [JSON.from("hello #{session.identity.id}")]))
+  ok(Channels.Subscription(transmit: [JSON.from("hello #{session.identity.id}")]))
 end
 
 def failing_subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
-  return error("the channel is broken")
+  error("the channel is broken")
 end
 
 def refused_subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
-  return ok(Channels.Subscription(rejected: true))
+  ok(Channels.Subscription(rejected: true))
 end
 
 # A block follows a call, so these give the blocks of `handlers` a typed name first.
-def leaving(f: Fn[Channels.Session, Json, Result[Void]]) -> Fn[Channels.Session, Json, Result[Void]]
-  return f
-end
+def leaving(f: Fn[Channels.Session, Json, Result[Void]]) -> Fn[Channels.Session, Json, Result[Void]] = f
 
 def acting(
   f: Fn[Channels.Session, Json, String, Json, Result[List[Json]]],
 ) -> Fn[Channels.Session, Json, String, Json, Result[List[Json]]]
-  return f
+  f
 end
 
-def readable?(session: Channels.Session, name: String) -> Bool
-  return not name.start_with?("secret:")
-end
+def readable?(session: Channels.Session, name: String) -> Bool = not name.start_with?("secret:")
 
 def handlers(hub: Channels.Hub, key: Bytes) -> Map[String, Channels.Handler]
   left = leaving() do |session, params| room_left(hub, session, params) end
   acted = acting() do |session, params, action, data| room_acted(hub, session, params, action, data) end
-  return {
+  {
     "RoomChannel": Channels.handler(&room_subscribed).with(unsubscribed: left, perform: acted),
     "WatchChannel": Channels.handler(&watch_subscribed),
     "GreetChannel": Channels.handler(&greet_subscribed),
@@ -136,7 +130,7 @@ def say(hub: Channels.Hub, conn: Bond.Conn) -> Result[Bond.Conn]
   topic = try Bond.query(conn, "topic")
   text = try Bond.query(conn, "text")
   try Channels.broadcast_text(hub, topic, text)
-  return ok(Bond.text(conn, 200, "sent"))
+  ok(Bond.text(conn, 200, "sent"))
 end
 
 def counts(hub: Channels.Hub, conn: Bond.Conn) -> Result[Bond.Conn]
@@ -148,29 +142,27 @@ def counts(hub: Channels.Hub, conn: Bond.Conn) -> Result[Bond.Conn]
     lost: stats.lost,
   )
 
-  return ok(Bond.json(conn, 200, JSON.from(body)))
+  ok(Bond.json(conn, 200, JSON.from(body)))
 end
 
 def signed(key: Bytes, conn: Bond.Conn) -> Result[Bond.Conn]
   name = try Bond.query(conn, "name")
-  return ok(Bond.text(conn, 200, Channels.signed_stream_name(key, name)))
+  ok(Bond.text(conn, 200, Channels.signed_stream_name(key, name)))
 end
 
 def disconnect(hub: Channels.Hub, conn: Bond.Conn) -> Result[Bond.Conn]
   user = try Bond.query(conn, "user")
   again = try Bond.query(conn, "reconnect")
   try Channels.disconnect(hub, user, again == "true")
-  return ok(Bond.text(conn, 200, "disconnected"))
+  ok(Bond.text(conn, 200, "disconnected"))
 end
 
 def stop(hub: Channels.Hub, conn: Bond.Conn) -> Result[Bond.Conn]
   try Channels.stop_hub(hub)
-  return ok(Bond.text(conn, 200, "stopped"))
+  ok(Bond.text(conn, 200, "stopped"))
 end
 
-def serving(handler: Fn[Bond.Conn, Result[Bond.Conn]]) -> Fn[Bond.Conn, Result[Bond.Conn]]
-  return handler
-end
+def serving(handler: Fn[Bond.Conn, Result[Bond.Conn]]) -> Fn[Bond.Conn, Result[Bond.Conn]] = handler
 
 def main() -> Void
   hub = Channels.start_hub(Channels.HubOptions(beat_ms: setting("BEAT_MS", DEFAULT_BEAT_MS))).unwrap!

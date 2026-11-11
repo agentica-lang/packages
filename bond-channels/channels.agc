@@ -38,14 +38,10 @@ export Hubs.Hub
 
 ## Starts the hub: its task (which `main` awaits with `Task.await(hub.task)`) and the ticker. An `error` for a
 ## `beat_ms` under 1 or a negative `broadcast_wait_ms`.
-export def start_hub(options: Types.HubOptions = Types.HubOptions()) -> Result[Hubs.Hub]
-  return Hubs.start(options)
-end
+export def start_hub(options: Types.HubOptions = Types.HubOptions()) -> Result[Hubs.Hub] = Hubs.start(options)
 
 ## Ends the hub. Every broadcast after it fails with "closed", and its connections are told to reconnect and closed.
-export def stop_hub(hub: Hubs.Hub) -> Result[Void]
-  return Hubs.stop(hub)
-end
+export def stop_hub(hub: Hubs.Hub) -> Result[Void] = Hubs.stop(hub)
 
 ## Ends every connection of the person whose `Identity.id` is `identity`, as `remote_connections.where(...).disconnect`
 ## of Rails does: each gets `{"type":"disconnect","reason":"remote","reconnect":RECONNECT}` and is closed, running
@@ -56,54 +52,48 @@ end
 ## after the hub handled the call is not ended (one that registered before is, as the hub works in order). An `error` is
 ## a hub that did not take the request in `broadcast_wait_ms` or is gone (a gone hub has no connection left to end).
 export def disconnect(hub: Hubs.Hub, identity: String, reconnect: Bool) -> Result[Void]
-  return Hubs.remove(hub, identity, reconnect)
+  Hubs.remove(hub, identity, reconnect)
 end
 
 ## A handler of a channel that has no `unsubscribed` and takes no actions; replace those with `handler.with(...)`.
 export def handler(subscribed: Fn[Types.Session, Json, Result[Types.Subscription]]) -> Types.Handler
-  return Types.Handler(subscribed: subscribed, unsubscribed: &nothing_to_leave, perform: &no_actions)
+  Types.Handler(subscribed: subscribed, unsubscribed: &nothing_to_leave, perform: &no_actions)
 end
 
 ## The key that signs and verifies the stream names of the pages (`signed_stream_name`), from the secret of the app (a
 ## Rails secret too: a name that Rails signed with it verifies). Make it once at start-up; an empty secret is an
 ## `error`.
-export def stream_key(secret_key_base: String) -> Result[Bytes]
-  return Signing.stream_key(secret_key_base)
-end
+export def stream_key(secret_key_base: String) -> Result[Bytes] = Signing.stream_key(secret_key_base)
 
 ## The stream name that a page puts in `<turbo-cable-stream-source channel="..." signed-stream-name="...">`. `name` is
 ## the parts of the stream joined with `:`, as `Turbo::StreamsChannel.broadcast_*_to` joins them.
-export def signed_stream_name(key: Bytes, name: String) -> String
-  return Signing.signed_stream_name(key, name)
-end
+export def signed_stream_name(key: Bytes, name: String) -> String = Signing.signed_stream_name(key, name)
 
 ## The name in `signed` if `key` signed it, `none` for anything else (a bad signature or a message that is not a name).
 export def verified_stream_name(key: Bytes, signed: String) -> Optional[String]
-  return Signing.verified_stream_name(key, signed)
+  Signing.verified_stream_name(key, signed)
 end
 
 ## A handler for `<turbo-cable-stream-source>`: it verifies the `signed_stream_name` of the client and streams from the
 ## name in it, or rejects the subscription when it does not verify or `authorize(session, name)` is false. Register it
 ## under the channel names that the page uses (`Turbo::StreamsChannel`, or one of your own).
 export def turbo_streams(key: Bytes, authorize: Fn[Types.Session, String, Bool]) -> Types.Handler
-  return handler(Turbo.subscribing(key, authorize))
+  handler(Turbo.subscribing(key, authorize))
 end
 
 ## Sends `text` (Turbo Stream HTML) to the subscribers of `topic`, as a JSON string. A broadcast that cannot be queued
 ## in `broadcast_wait_ms` is an `error`, and counted as lost in `stats`; an HTTP handler may ignore it.
 export def broadcast_text(hub: Hubs.Hub, topic: String, text: String) -> Result[Void]
-  return Hubs.broadcast(hub, topic, Protocol.text_payload(text))
+  Hubs.broadcast(hub, topic, Protocol.text_payload(text))
 end
 
 ## Sends `value` to the subscribers of `topic`, as a JSON value (an object for a notice).
 export def broadcast_json(hub: Hubs.Hub, topic: String, value: Json) -> Result[Void]
-  return Hubs.broadcast(hub, topic, Protocol.json_payload(value))
+  Hubs.broadcast(hub, topic, Protocol.json_payload(value))
 end
 
 ## The connections and subscriptions now, the connections dropped for a full inbox, and the broadcasts lost.
-export def stats(hub: Hubs.Hub) -> Types.Stats
-  return Hubs.stats(hub)
-end
+export def stats(hub: Hubs.Hub) -> Types.Stats = Hubs.stats(hub)
 
 ## Adds the cable WebSocket at `path` (`"/cable"` for the clients that expect it); `options.connect` and
 ## `options.handlers` are described at `MountOptions`. An origin is checked as in `Bond.websocket`. An `error` for
@@ -120,34 +110,28 @@ export def mount(app: Bond.App, path: String, hub: Hubs.Hub, options: Types.Moun
     protocols: [Protocol.SUBPROTOCOL],
   )
 
-  return ok(Bond.websocket(app, path, serving, options.allowed_origins, some(websocket)))
+  ok(Bond.websocket(app, path, serving, options.allowed_origins, some(websocket)))
 end
 
 def checked(hub: Hubs.Hub, options: Types.MountOptions) -> Result[Void]
-  if options.inbox < 1
-    return error("inbox must be 1 or more, it is #{options.inbox}")
-  end
+  return error("inbox must be 1 or more, it is #{options.inbox}") if options.inbox < 1
 
   if options.max_message_bytes < 1
     return error("max_message_bytes must be 1 or more, it is #{options.max_message_bytes}")
   end
 
-  if options.idle_ms < 0
-    return error("idle_ms must be 0 (no limit) or more, it is #{options.idle_ms}")
-  end
+  return error("idle_ms must be 0 (no limit) or more, it is #{options.idle_ms}") if options.idle_ms < 0
 
   if options.idle_ms > 0 and options.idle_ms <= hub.options.beat_ms
     return error("idle_ms (#{options.idle_ms}) must be more than the beat_ms of the hub (#{hub.options.beat_ms})")
   end
 
-  return ok()
+  ok()
 end
 
-def nothing_to_leave(session: Types.Session, params: Json) -> Result[Void]
-  return ok()
-end
+def nothing_to_leave(session: Types.Session, params: Json) -> Result[Void] = ok()
 
 def no_actions(session: Types.Session, params: Json, action: String, data: Json) -> Result[List[Json]]
   payloads: List[Json] = []
-  return ok(payloads)
+  ok(payloads)
 end

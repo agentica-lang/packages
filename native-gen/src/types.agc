@@ -11,63 +11,55 @@ end
 
 ## The tree of the canonical type `text`.
 export def parse(text: String) -> Type
-  if text.start_with?("List[")
-    return Type.ListOf(parse(inner(text, "List[")))
-  end
+  return Type.ListOf(parse(inner(text, "List["))) if text.start_with?("List[")
 
-  if text.start_with?("Optional[")
-    return Type.OptionalOf(parse(inner(text, "Optional[")))
-  end
+  return Type.OptionalOf(parse(inner(text, "Optional["))) if text.start_with?("Optional[")
 
-  if text.start_with?("Result[")
-    return Type.ResultOf(parse(inner(text, "Result[")))
-  end
+  return Type.ResultOf(parse(inner(text, "Result["))) if text.start_with?("Result[")
 
   if text.start_with?("Map[")
     parts = split_pair(inner(text, "Map["))
     return Type.MapOf(parse(parts[0]), parse(parts[1]))
   end
 
-  return Type.Named(text)
+  Type.Named(text)
 end
 
 ## The canonical text of `type`, as std/analysis writes it.
 export def text(type: Type) -> String
   case type
-    Type.Named(name) -> return name
-    Type.ListOf(item) -> return "List[#{text(item)}]"
-    Type.MapOf(key, value) -> return "Map[#{text(key)}, #{text(value)}]"
-    Type.OptionalOf(item) -> return "Optional[#{text(item)}]"
-    Type.ResultOf(item) -> return "Result[#{text(item)}]"
+    Type.Named(name) -> name
+    Type.ListOf(item) -> "List[#{text(item)}]"
+    Type.MapOf(key, value) -> "Map[#{text(key)}, #{text(value)}]"
+    Type.OptionalOf(item) -> "Optional[#{text(item)}]"
+    Type.ResultOf(item) -> "Result[#{text(item)}]"
   end
 end
 
 ## `type` as a part of a C name: `list_Float`, `map_String_list_Int`, `optional_Point`.
 export def mangled(type: Type) -> String
   case type
-    Type.Named(name) -> return name
-    Type.ListOf(item) -> return "list_#{mangled(item)}"
-    Type.MapOf(key, value) -> return "map_#{mangled(key)}_#{mangled(value)}"
-    Type.OptionalOf(item) -> return "optional_#{mangled(item)}"
-    Type.ResultOf(item) -> return "result_#{mangled(item)}"
+    Type.Named(name) -> name
+    Type.ListOf(item) -> "list_#{mangled(item)}"
+    Type.MapOf(key, value) -> "map_#{mangled(key)}_#{mangled(value)}"
+    Type.OptionalOf(item) -> "optional_#{mangled(item)}"
+    Type.ResultOf(item) -> "result_#{mangled(item)}"
   end
 end
 
 ## The types inside `type`, `type` included, each after the ones it holds.
 export def inside_out(type: Type) -> List[Type]
   case type
-    Type.Named(_) -> return [type]
-    Type.ListOf(item) -> return inside_out(item).push(type)
-    Type.MapOf(key, value) -> return inside_out(key).concat(inside_out(value)).push(type)
-    Type.OptionalOf(item) -> return inside_out(item).push(type)
-    Type.ResultOf(item) -> return inside_out(item).push(type)
+    Type.Named(_) -> [type]
+    Type.ListOf(item) -> inside_out(item).push(type)
+    Type.MapOf(key, value) -> inside_out(key).concat(inside_out(value)).push(type)
+    Type.OptionalOf(item) -> inside_out(item).push(type)
+    Type.ResultOf(item) -> inside_out(item).push(type)
   end
 end
 
 # The text between `start` and the last `]` of `text`.
-def inner(text: String, start: String) -> String
-  return text.slice(start.length, text.length - start.length - 1)
-end
+def inner(text: String, start: String) -> String = text.slice(start.length, text.length - start.length - 1)
 
 # The key and value of `Map[K, V]`: split at the `, ` outside brackets.
 def split_pair(text: String) -> List[String]
@@ -85,5 +77,5 @@ def split_pair(text: String) -> List[String]
     at += 1
   end
 
-  return [text, ""]
+  [text, ""]
 end

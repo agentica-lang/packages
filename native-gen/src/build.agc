@@ -25,20 +25,18 @@ end
 ## linux, `native/libNAME.dylib` on macos, `native/NAME.dll` on windows.
 export def library_file(name: String, os: String) -> Result[String]
   ending = try extension(os)
-  if os == "windows"
-    return ok("native/#{name}#{ending}")
-  end
+  return ok("native/#{name}#{ending}") if os == "windows"
 
-  return ok("native/lib#{name}#{ending}")
+  ok("native/lib#{name}#{ending}")
 end
 
 ## The ending of a cdylib on `os`: `.so`, `.dylib` or `.dll`.
 export def extension(os: String) -> Result[String]
   case os
-    "linux" -> return ok(".so")
-    "macos" -> return ok(".dylib")
-    "windows" -> return ok(".dll")
-    _ -> return error("[NATIVE-GEN-OS] build knows the libraries of linux, macos and windows, not of #{os.inspect}")
+    "linux" -> ok(".so")
+    "macos" -> ok(".dylib")
+    "windows" -> ok(".dll")
+    _ -> error("[NATIVE-GEN-OS] build knows the libraries of linux, macos and windows, not of #{os.inspect}")
   end
 end
 
@@ -46,9 +44,9 @@ end
 ## of the file is then a bare name, which a check does not open.
 export def without_native(text: String) -> Result[String]
   case Toml.parse(text)
-    ok(Toml.Value.Table(entries)) -> return Toml.encode(Toml.Value.Table(entries.delete("native")))
-    ok(_) -> return error("not a table")
-    error(message) -> return error(message)
+    ok(Toml.Value.Table(entries)) -> Toml.encode(Toml.Value.Table(entries.delete("native")))
+    ok(_) -> error("not a table")
+    error(message) -> error(message)
   end
 end
 
@@ -94,25 +92,22 @@ export def plan(path: String, text: String, name: String, os: String) -> Result[
   # The text is checked again: a header line inside a multi-line string, or a `native` table written inline, gives
   # a text that is not TOML or that lacks the entry.
   case Toml.parse(joined)
-    ok(done) if Toml.get(done, "#{key}.file") == ok(Toml.Value.Str(file)) ->
-      return ok(Plan(manifest: joined, file: file))
-    _ -> return error(by_hand)
+    ok(done) if Toml.get(done, "#{key}.file") == ok(Toml.Value.Str(file)) -> ok(Plan(manifest: joined, file: file))
+    _ -> error(by_hand)
   end
 end
 
 ## The plan for the manifest `now`, read again before it is written: `planned`, made on the text `before`, when the
 ## file did not change meanwhile (cargo ran in between), or a new plan on `now`, which must name the same library file.
 export def replan(path: String, before: String, planned: Plan, now: String, name: String, os: String) -> Result[Plan]
-  if now == before
-    return ok(planned)
-  end
+  return ok(planned) if now == before
 
   again = try plan(path, now, name, os)
   if again.file != planned.file
     return error("[NATIVE-GEN-MANIFEST] #{path} changed during the build: it names #{again.file} now; run build again")
   end
 
-  return ok(again)
+  ok(again)
 end
 
 ## The library that cargo built, from the lines it wrote with `--message-format=json-render-diagnostics`: the one file
@@ -125,21 +120,19 @@ export def library_in(lines: List[String], extension: String) -> Result[String]
     )
   end
 
-  return ok(found[0])
+  ok(found[0])
 end
 
 # The files ending in `extension` of a message about a `cdylib` target; none for any other line.
 def cdylib_files(line: String, extension: String) -> List[String]
   case JSON.decode(line, Message)
     ok(message) if message.reason == "compiler-artifact" and message.target.map(&cdylib?).unwrap_or(false) ->
-      return message.filenames.unwrap_or([]).select do |file: String| file.end_with?(extension) end
-    _ -> return []
+      message.filenames.unwrap_or([]).select do |file: String| file.end_with?(extension) end
+    _ -> []
   end
 end
 
-def cdylib?(target: Target) -> Bool
-  return target.kind.include?("cdylib")
-end
+def cdylib?(target: Target) -> Bool = target.kind.include?("cdylib")
 
 # `text` with `entry` on the line after its `[table]` line, which may end with a comment; none when the table, written
 # as dotted keys or inline, has no such line. `newline` is "\r\n" for a text with CRLF lines.
@@ -147,38 +140,32 @@ def under_header(text: String, table: String, entry: String, newline: String) ->
   lines = text.split("\n")
   header = "[#{table}]"
   before = lines.take_while do |line: String| !header_line?(line, header) end
-  if before.size == lines.size
-    return none
-  end
+  return none if before.size == lines.size
 
   at = before.size + 1
   added = "#{entry}#{newline.slice(0, newline.length - 1)}"
-  return some(lines.take(at).push(added).concat(lines.drop(at)).join("\n"))
+  some(lines.take(at).push(added).concat(lines.drop(at)).join("\n"))
 end
 
 # Whether the library file `file` of an entry is a file in `native/`: no empty, `.` or `..` part.
 def in_native?(file: String) -> Bool
   parts = file.replace("\\", "/").split("/")
   plain = parts.all? do |part: String| part != "" and part != "." and part != ".." end
-  return parts.size > 1 and parts[0] == "native" and plain
+  parts.size > 1 and parts[0] == "native" and plain
 end
 
 # Whether `line` is the table header `header`, with a comment after it or not.
-def header_line?(line: String, header: String) -> Bool
-  return line.split("#")[0].trim == header
-end
+def header_line?(line: String, header: String) -> Bool = line.split("#")[0].trim == header
 
 def ended(text: String, newline: String) -> String
-  if text.empty? or text.end_with?("\n")
-    return text
-  end
+  return text if text.empty? or text.end_with?("\n")
 
-  return "#{text}#{newline}"
+  "#{text}#{newline}"
 end
 
 def parsed(path: String, text: String) -> Result[Toml.Value]
   case Toml.parse(text)
-    ok(doc) -> return ok(doc)
-    error(message) -> return error("[NATIVE-GEN-MANIFEST] #{path} is not TOML: #{message}")
+    ok(doc) -> ok(doc)
+    error(message) -> error("[NATIVE-GEN-MANIFEST] #{path} is not TOML: #{message}")
   end
 end

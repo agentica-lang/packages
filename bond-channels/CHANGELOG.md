@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** needs Agentica 0.30.0 or later: the sources handle the new `HTTP.Message.Prepared` variant and are formatted with `agentica fmt` of 0.30.0, which uses its syntax (implicit returns, guards, one-line defs). CI tests with Agentica 0.30.0.
+
 ## [0.2.1] - 2026-11-08
 
 Needs Bond 0.10.1 (faster static files and headers). Nothing else changes.

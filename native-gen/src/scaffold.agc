@@ -23,19 +23,15 @@ DEVICES = Set.new([
 ## and the start of its C names.
 export def name_problem(name: String) -> String
   letters = name.split("")
-  if letters.empty? or letters.size > MAX_NAME
-    return "a module name has 1 to #{MAX_NAME} characters"
-  end
+  return "a module name has 1 to #{MAX_NAME} characters" if letters.empty? or letters.size > MAX_NAME
 
   if !FIRST.include?(letters[0]) or !letters.all? do |letter: String| REST.include?(letter) end
     return "a module name starts with a lowercase letter and holds only lowercase letters, digits and _"
   end
 
-  if DEVICES.include?(name)
-    return "a module name cannot be a device name of Windows (con, nul, com1 and the like)"
-  end
+  return "a module name cannot be a device name of Windows (con, nul, com1 and the like)" if DEVICES.include?(name)
 
-  return ""
+  ""
 end
 
 ## Why `name` cannot be a new Rust module, or "": the rule of `name_problem`, and a name that cargo refuses for a crate.
@@ -50,12 +46,12 @@ export def rust_name_problem(name: String) -> String
     return "a Rust module name does not end with _ or hold __, so NAME_native is snake case"
   end
 
-  return problem
+  problem
 end
 
 ## The `.agc` of the module `name`: the block, with one function to replace, and a `main` that calls it.
 export def program(name: String) -> String
-  return block_program(
+  block_program(
     [
       "## The native module #{name}: its functions are written in C, in native/#{name}.c, on the header",
       "## native/#{name}_native.h that native-gen makes from this block. Make the header again after a change to it.",
@@ -66,7 +62,7 @@ end
 
 ## The `.agc` of the Rust module `name`: the block of `program`, its functions written in `rust/src/lib.rs`.
 export def rust_program(name: String) -> String
-  return block_program(
+  block_program(
     [
       "## The native module #{name}: its functions are written in Rust, in rust/src/lib.rs, on the file",
       "## rust/src/#{name}_native.rs that native-gen makes from this block. `cli.agc build #{name}.agc` makes",
@@ -78,7 +74,7 @@ end
 
 ## The `Cargo.toml` of the Rust module `name`, on the `agentica-native` crate that native-gen puts in `deps/`.
 export def cargo_toml(name: String) -> String
-  return [
+  [
     "[package]",
     "name = #{name.inspect}",
     "version = \"0.1.0\"",
@@ -96,9 +92,7 @@ export def cargo_toml(name: String) -> String
 end
 
 ## The `.gitignore` of the crate: what cargo makes.
-export def gitignore() -> String
-  return "target/\nCargo.lock\n"
-end
+export def gitignore() -> String = "target/\nCargo.lock\n"
 
 ## The `src/lib.rs` of the Rust module `name`: the method of the example function fails the call until it is written.
 ## The type that implements the trait is `Functions` whatever the name, so no name (`raise`, `result`) makes a type
@@ -106,7 +100,7 @@ end
 ## can be, so the module `agentica_native` of the name `agentica` does not shadow it. No list of names is kept.
 export def lib_rs(name: String) -> String
   trait_name = RustSide.trait_name(name)
-  return [
+  [
     "//! The Rust side of #{name}.agc, on the file `src/#{name}_native.rs` that native-gen makes from its block. Each",
     "//! function fails the call until it is written.",
     "",
@@ -132,7 +126,7 @@ end
 
 ## The C file of the module `name`, on its header: the body of each function fails the call until it is written.
 export def source(name: String, names: CHeader.Prefix) -> String
-  return [
+  [
     "/* The C side of #{name}.agc, on the header that native-gen makes from it. Each function fails the call until",
     "   it is written. */",
     "#define #{names.upper}_NATIVE_IMPLEMENTATION",
@@ -152,7 +146,7 @@ end
 ## The `[native.NAME]` entry of `agentica.toml`, with the commands that make and check the header.
 export def entry(name: String, names: CHeader.Prefix) -> String
   header = "native/#{names.lower}_native.h"
-  return [
+  [
     "",
     "# native/#{name}.c is written on #{header}, which native-gen makes from #{name}.agc. Make it again after a",
     "# change to the block, and check it in CI, from this folder:",
@@ -165,7 +159,7 @@ export def entry(name: String, names: CHeader.Prefix) -> String
 end
 
 def block_program(doc: List[String], name: String) -> String
-  return (
+  (
     doc.concat([
       "",
       "extern module #{name.inspect}",

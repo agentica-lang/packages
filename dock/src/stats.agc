@@ -23,7 +23,7 @@ export struct Stats
 end
 
 export def snapshot(table: ATS[Int, Int]) -> Stats
-  return Stats(
+  Stats(
     open: table.add(OPEN, 0),
     accepted: table.add(ACCEPTED, 0),
     refused: table.add(REFUSED, 0),

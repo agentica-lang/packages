@@ -43,52 +43,40 @@ end
 
 ## Whether `name` is a macro of the C or C++ standard library that a variant with a payload cannot be named after: the
 ## payload is a member of a union, which the macro would replace.
-export def macro?(name: String) -> Bool
-  return MACROS.include?(name)
-end
+export def macro?(name: String) -> Bool = MACROS.include?(name)
 
 ## A name of the block as a C identifier: `empty?` is `empty_p` and `save!` is `save_bang`.
 export def identifier(name: String) -> String
-  if name.end_with?("?")
-    return "#{name.slice(0, name.length - 1)}_p"
-  end
+  return "#{name.slice(0, name.length - 1)}_p" if name.end_with?("?")
 
-  if name.end_with?("!")
-    return "#{name.slice(0, name.length - 1)}_bang"
-  end
+  return "#{name.slice(0, name.length - 1)}_bang" if name.end_with?("!")
 
-  return name
+  name
 end
 
 ## A parameter name as a C identifier, with a trailing `_` when it is a keyword of C or C++, `env`, a type or macro a
 ## prototype may use, or starts with `an_` or `ng_`.
 export def parameter(name: String) -> String
-  if RESERVED.include?(name) or RESERVED_STARTS.any? do |start: String| name.start_with?(start) end
-    return "#{name}_"
-  end
+  return "#{name}_" if RESERVED.include?(name) or RESERVED_STARTS.any? do |start: String| name.start_with?(start) end
 
-  return name
+  name
 end
 
 ## Whether `text` is a C identifier: a letter or `_`, then letters, digits and `_`, ASCII only.
 export def c_identifier?(text: String) -> Bool
-  if text.empty?
-    return false
-  end
+  return false if text.empty?
 
   at = 0
   for c in text.split("")
     code = c.code
     letter = (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or code == 95
     digit = code >= 48 and code <= 57
-    if !letter and !(digit and at > 0)
-      return false
-    end
+    return false if !letter and !(digit and at > 0)
 
     at += 1
   end
 
-  return true
+  true
 end
 
 ## An error `[NATIVE-GEN-NAME]` that names the first two names of `named` that map to one `target` (a C identifier,
@@ -103,7 +91,7 @@ export def distinct(named: List[Named], target: String = "C identifier") -> Resu
     seen = seen.put(name.c, name.source)
   end
 
-  return ok()
+  ok()
 end
 
 ## Whether `block` has only the modes and kinds this version knows (`[NATIVE-GEN-UNKNOWN]`), and no two parameters of a
@@ -122,9 +110,7 @@ export def validate(block: Analysis.NativeBlock, target: String, rename: Fn[Stri
   end
 
   for type in block.types
-    if !KINDS.has_key?(type.kind)
-      return error("[NATIVE-GEN-UNKNOWN] #{type.name} has the kind #{type.kind.inspect}")
-    end
+    return error("[NATIVE-GEN-UNKNOWN] #{type.name} has the kind #{type.kind.inspect}") if !KINDS.has_key?(type.kind)
 
     if type.kind == "struct"
       fields = type.members.map do |member: Analysis.NativeMember|
@@ -135,5 +121,5 @@ export def validate(block: Analysis.NativeBlock, target: String, rename: Fn[Stri
     end
   end
 
-  return ok()
+  ok()
 end

@@ -15,14 +15,12 @@ TOPIC = "room:1"
 
 def setting(name: String, fallback: Int) -> Int
   case System.env(name)
-    ok(text) -> return text.to_i.unwrap_or(fallback)
-    error(_) -> return fallback
+    ok(text) -> text.to_i.unwrap_or(fallback)
+    error(_) -> fallback
   end
 end
 
-def identifier(index: Int) -> String
-  return "{\"channel\":\"RoomChannel\",\"room\":\"#{index}\"}"
-end
+def identifier(index: Int) -> String = "{\"channel\":\"RoomChannel\",\"room\":\"#{index}\"}"
 
 # The frames wait in the inboxes of the connections, so each holds every message of every identifier.
 def join(hub: Hubs.Hub, connection: Int, identifiers: Int, capacity: Int) -> Result[Channel[Hubs.Event]]
@@ -32,7 +30,7 @@ def join(hub: Hubs.Hub, connection: Int, identifiers: Int, capacity: Int) -> Res
     try Hubs.attach(hub, connection, identifier(index), [TOPIC])
   end
 
-  return ok(inbox)
+  ok(inbox)
 end
 
 def run(clients: Int, messages: Int, identifiers: Int, payload: Int) -> Result[Void]
@@ -59,7 +57,7 @@ def run(clients: Int, messages: Int, identifiers: Int, payload: Int) -> Result[V
   puts("clients=#{clients} messages=#{messages} identifiers=#{identifiers} payload=#{payload} wall_ms=#{elapsed}")
   puts("frames=#{frames} frames_per_s=#{frames * 1_000 / (elapsed + 1)}")
   try Hubs.stop(hub)
-  return Task.await(hub.task)
+  Task.await(hub.task)
 end
 
 def main() -> Void

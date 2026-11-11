@@ -11,14 +11,14 @@ export def subscribing(
   key: Bytes,
   authorize: Fn[Types.Session, String, Bool],
 ) -> Fn[Types.Session, Json, Result[Types.Subscription]]
-  return signed() do |session, params| subscribe(key, authorize, session, params) end
+  signed() do |session, params| subscribe(key, authorize, session, params) end
 end
 
 # A block cannot be assigned to a name: this gives it a typed parameter first.
 def signed(
   f: Fn[Types.Session, Json, Result[Types.Subscription]],
 ) -> Fn[Types.Session, Json, Result[Types.Subscription]]
-  return f
+  f
 end
 
 def subscribe(
@@ -28,23 +28,17 @@ def subscribe(
   params: Json,
 ) -> Result[Types.Subscription]
   name = verified(key, params)
-  if name.none? or not authorize.call(session, name.unwrap!)
-    return ok(Types.Subscription(rejected: true))
-  end
+  return ok(Types.Subscription(rejected: true)) if name.none? or not authorize.call(session, name.unwrap!)
 
-  return ok(Types.Subscription(streams: [name.unwrap!]))
+  ok(Types.Subscription(streams: [name.unwrap!]))
 end
 
 def verified(key: Bytes, params: Json) -> Optional[String]
   field = JSON.get(params, "signed_stream_name")
-  if not field.ok?
-    return none
-  end
+  return none if not field.ok?
 
   signed_name = JSON.string(field.unwrap!)
-  if not signed_name.ok?
-    return none
-  end
+  return none if not signed_name.ok?
 
-  return Signing.verified_stream_name(key, signed_name.unwrap!)
+  Signing.verified_stream_name(key, signed_name.unwrap!)
 end

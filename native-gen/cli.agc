@@ -92,7 +92,7 @@ def parsed(args: List[String]) -> Result[Options]
     return error("#{PROGRAM}: --check needs --output\nTry '#{PROGRAM} --help'")
   end
 
-  return ok(options)
+  ok(options)
 end
 
 # The PATH and --lang of `new PATH`.
@@ -110,7 +110,7 @@ def new_options(args: List[String]) -> Result[NewOptions]
     return error("#{PROGRAM} new: --lang is c or rust, not #{lang.inspect}\nTry '#{PROGRAM} new --help'")
   end
 
-  return ok(NewOptions(path: OP.string(p, "path"), lang: lang))
+  ok(NewOptions(path: OP.string(p, "path"), lang: lang))
 end
 
 # The FILE and --check of `build FILE`.
@@ -123,13 +123,13 @@ def build_options(args: List[String]) -> Result[BuildOptions]
   )
 
   p = try OP.parse(parser, args)
-  return ok(BuildOptions(file: OP.string(p, "file"), check: OP.flag(p, "check")))
+  ok(BuildOptions(file: OP.string(p, "file"), check: OP.flag(p, "check")))
 end
 
 def built(options: BuildOptions) -> Result[Void]
   lines = try NativeGen.build(options.file, options.check)
   lines.each do |line| puts(line) end
-  return ok()
+  ok()
 end
 
 def run(options: Options) -> Result[Void]
@@ -145,21 +145,17 @@ def run(options: Options) -> Result[Void]
     return ok()
   end
 
-  if !options.check
-    return written(options.output, File.write_text(options.output, text))
-  end
+  return written(options.output, File.write_text(options.output, text)) if !options.check
 
   case File.read_text(options.output)
-    ok(kept) if kept == text -> return ok()
-    ok(_) -> return error("[NATIVE-GEN-STALE] #{options.output} is not the one #{options.file} gives; make it again")
-    error(message) -> return error("[NATIVE-GEN-IO] #{options.output}: #{message}")
+    ok(kept) if kept == text -> ok()
+    ok(_) -> error("[NATIVE-GEN-STALE] #{options.output} is not the one #{options.file} gives; make it again")
+    error(message) -> error("[NATIVE-GEN-IO] #{options.output}: #{message}")
   end
 end
 
 def written(path: String, done: Result[Void]) -> Result[Void]
-  if !done.ok?
-    return error("[NATIVE-GEN-IO] #{path}: #{done.message}")
-  end
+  return error("[NATIVE-GEN-IO] #{path}: #{done.message}") if !done.ok?
 
-  return ok()
+  ok()
 end

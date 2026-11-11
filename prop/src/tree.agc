@@ -19,23 +19,19 @@ export struct Candidates[T]
 end
 
 ## The tree of `value` whose candidates `shrinks` computes on demand.
-export def grow[T](value: T, shrinks: Fn[Optional[Candidates[T]]]) -> Tree[T]
-  return Tree(value: value, shrinks: shrinks)
-end
+export def grow[T](value: T, shrinks: Fn[Optional[Candidates[T]]]) -> Tree[T] = Tree(value: value, shrinks: shrinks)
 
 ## A value that does not shrink.
-export def leaf[T](value: T) -> Tree[T]
-  return grow(value) do none end
-end
+export def leaf[T](value: T) -> Tree[T] = grow(value) do none end
 
 ## The tree of `f` applied to every value of `tree`.
 export def map_tree[A, B](tree: Tree[A], f: Fn[A, B]) -> Tree[B]
-  return grow(f.call(tree.value)) do map_candidates(tree.shrinks()) do |child| map_tree(child, f) end end
+  grow(f.call(tree.value)) do map_candidates(tree.shrinks()) do |child| map_tree(child, f) end end
 end
 
 ## The tree of `f(a, b)`: it shrinks `a` first, then `b`.
 export def zip_trees[A, B, C](a: Tree[A], b: Tree[B], f: Fn[A, B, C]) -> Tree[C]
-  return grow(f.call(a.value, b.value)) do
+  grow(f.call(a.value, b.value)) do
     append(map_candidates(a.shrinks()) do |child| zip_trees(child, b, f) end) do
       map_candidates(b.shrinks()) do |child| zip_trees(a, child, f) end
     end
@@ -45,73 +41,61 @@ end
 ## The tree of `some(value)`, which shrinks to `none` first, then as the tree of the value does.
 export def some_tree[T](tree: Tree[T]) -> Tree[Optional[T]]
   absent: Tree[Optional[T]] = leaf(none)
-  return grow(some(tree.value)) do
-    cons(absent) do map_candidates(tree.shrinks()) do |child| some_tree(child) end end
-  end
+  grow(some(tree.value)) do cons(absent) do map_candidates(tree.shrinks()) do |child| some_tree(child) end end end
 end
 
 ## An Int that shrinks toward `origin`: to it first, then by halving the distance.
-export def int_tree(n: Int, origin: Int) -> Tree[Int]
-  return grow(n) do from_list(int_shrinks(n, origin), 0) end
-end
+export def int_tree(n: Int, origin: Int) -> Tree[Int] = grow(n) do from_list(int_shrinks(n, origin), 0) end
 
 ## A Float that shrinks toward `origin`: to it, to the whole number toward it, then by half the distance, a quarter,
 ## and so on. Every candidate is strictly closer to `origin` and between it and `x`, so it never goes back and never
 ## leaves the range of `x` and `origin`.
-export def float_tree(x: Float, origin: Float) -> Tree[Float]
-  return grow(x) do from_list(float_shrinks(x, origin), 0) end
-end
+export def float_tree(x: Float, origin: Float) -> Tree[Float] = grow(x) do from_list(float_shrinks(x, origin), 0) end
 
 ## The tree of the list of values. It shrinks by dropping items (all of them, a half, one), then by shrinking one item.
-export def list_tree[T](trees: List[Tree[T]]) -> Tree[List[T]]
-  return shaped(trees, false, 0)
-end
+export def list_tree[T](trees: List[Tree[T]]) -> Tree[List[T]] = shaped(trees, false, 0)
 
 ## The tree of the list of values, with as many items as `trees`: it shrinks only through the items.
 export def fixed_tree[T](trees: List[Tree[T]]) -> Tree[List[T]]
-  return grow(trees.map do |tree| tree.value end) do fixed_candidates(trees, 0) end
+  grow(trees.map do |tree| tree.value end) do fixed_candidates(trees, 0) end
 end
 
 ## The tree of the alternative `index` (`make(index)` builds the tree of alternative `index`): it shrinks to the
 ## earlier alternatives first, as the simplest ones, then through its own shrinks.
 export def choice_tree[T](index: Int, make: Fn[Int, Tree[T]]) -> Tree[T]
   chosen = make.call(index)
-  return grow(chosen.value) do append(earlier(make, 0, index)) do chosen.shrinks() end end
+  grow(chosen.value) do append(earlier(make, 0, index)) do chosen.shrinks() end end
 end
 
 # The candidates that follow `first`, once asked: the one place where a lazy list is made lazy.
 def cons[T](first: Tree[T], rest: Fn[Optional[Candidates[T]]]) -> Optional[Candidates[T]]
-  return some(Candidates(first: first, rest: rest))
+  some(Candidates(first: first, rest: rest))
 end
 
 def append[T](head: Optional[Candidates[T]], tail: Fn[Optional[Candidates[T]]]) -> Optional[Candidates[T]]
   case head
-    some(candidates) -> return cons(candidates.first) do append(candidates.rest(), tail) end
-    none -> return tail.call()
+    some(candidates) -> cons(candidates.first) do append(candidates.rest(), tail) end
+    none -> tail.call()
   end
 end
 
 def map_candidates[A, B](head: Optional[Candidates[A]], f: Fn[Tree[A], Tree[B]]) -> Optional[Candidates[B]]
   case head
-    some(candidates) -> return cons(f.call(candidates.first)) do map_candidates(candidates.rest(), f) end
-    none -> return none
+    some(candidates) -> cons(f.call(candidates.first)) do map_candidates(candidates.rest(), f) end
+    none -> none
   end
 end
 
 def from_list[T](trees: List[Tree[T]], index: Int) -> Optional[Candidates[T]]
-  if index >= trees.size
-    return none
-  end
+  return none if index >= trees.size
 
-  return cons(trees[index]) do from_list(trees, index + 1) end
+  cons(trees[index]) do from_list(trees, index + 1) end
 end
 
 def int_shrinks(n: Int, origin: Int) -> List[Tree[Int]]
   out: List[Tree[Int]] = []
   distance = n - origin
-  if distance == 0
-    return out
-  end
+  return out if distance == 0
 
   out = out.push(int_tree(origin, origin))
   step = distance / 2
@@ -120,20 +104,16 @@ def int_shrinks(n: Int, origin: Int) -> List[Tree[Int]]
     step = step / 2
   end
 
-  return out
+  out
 end
 
 def float_shrinks(x: Float, origin: Float) -> List[Tree[Float]]
   out: List[Tree[Float]] = []
   distance = (x - origin).abs
-  if distance == 0.0
-    return out
-  end
+  return out if distance == 0.0
 
   out = out.push(float_tree(origin, origin))
-  if distance <= CLOSE
-    return out
-  end
+  return out if distance <= CLOSE
 
   # Only a whole number between the origin and x: with a fractional origin, rounding could cross it and leave
   # the range.
@@ -147,60 +127,48 @@ def float_shrinks(x: Float, origin: Float) -> List[Tree[Float]]
   step = distance / 2.0
   while step > CLOSE
     moved = toward_by(x, origin, step)
-    if moved == x or moved == origin
-      break
-    end
+    break if moved == x or moved == origin
 
     out = out.push(float_tree(moved, origin))
     step = step / 2.0
   end
 
-  return out
+  out
 end
 
 # Whether `y` is on the segment from `x` to `origin`.
 def between?(y: Float, x: Float, origin: Float) -> Bool
-  if x > origin
-    return y >= origin and y <= x
-  end
+  return y >= origin and y <= x if x > origin
 
-  return y <= origin and y >= x
+  y <= origin and y >= x
 end
 
 def toward_by(x: Float, origin: Float, step: Float) -> Float
-  if x > origin
-    return x - step
-  end
+  return x - step if x > origin
 
-  return x + step
+  x + step
 end
 
 # `x` rounded to a whole number on the side of `origin`.
 def toward(x: Float, origin: Float) -> Float
-  if x > origin
-    return x.floor.to_f
-  end
+  return x.floor.to_f if x > origin
 
-  return x.ceil.to_f
+  x.ceil.to_f
 end
 
 # A list tree. After an item shrank (`items_first`), the next candidates are the shrinks of that item and the ones
 # after it, because a shrink that worked tends to work again; after a drop, the drops go on from the same position.
 # The rest follows, so the shrinking still ends only when no candidate falsifies the law.
 def shaped[T](trees: List[Tree[T]], items_first: Bool, start: Int) -> Tree[List[T]]
-  return grow(trees.map do |tree| tree.value end) do list_candidates(trees, items_first, start) end
+  grow(trees.map do |tree| tree.value end) do list_candidates(trees, items_first, start) end
 end
 
 def list_candidates[T](trees: List[Tree[T]], items_first: Bool, start: Int) -> Optional[Candidates[List[T]]]
-  if trees.empty?
-    return none
-  end
+  return none if trees.empty?
 
-  if items_first
-    return append(item_shrinks(trees, start, 0)) do append(halves(trees, 0)) do drops(trees, 0, 0) end end
-  end
+  return append(item_shrinks(trees, start, 0)) do append(halves(trees, 0)) do drops(trees, 0, 0) end end if items_first
 
-  return append(halves(trees, 0)) do append(drops(trees, start, 0)) do item_shrinks(trees, 0, 0) end end
+  append(halves(trees, 0)) do append(drops(trees, start, 0)) do item_shrinks(trees, 0, 0) end end
 end
 
 # The empty list, then (from 4 items) each half.
@@ -214,47 +182,39 @@ def halves[T](trees: List[Tree[T]], step: Int) -> Optional[Candidates[List[T]]]
     return cons(shaped(trees.take(half), false, 0)) do halves(trees, 3) end
   end
 
-  return none
+  none
 end
 
 # Each list with one item less, from position `start` and around (`count` of them done).
 def drops[T](trees: List[Tree[T]], start: Int, count: Int) -> Optional[Candidates[List[T]]]
   size = trees.size
-  if size < 2 or count >= size
-    return none
-  end
+  return none if size < 2 or count >= size
 
   index = (start + count) % size
   fewer = trees.take(index).concat(trees.drop(index + 1))
-  return cons(shaped(fewer, false, index)) do drops(trees, start, count + 1) end
+  cons(shaped(fewer, false, index)) do drops(trees, start, count + 1) end
 end
 
 # The shrinks of each item, from item `start` and around (`count` of them done).
 def item_shrinks[T](trees: List[Tree[T]], start: Int, count: Int) -> Optional[Candidates[List[T]]]
-  if count >= trees.size
-    return none
-  end
+  return none if count >= trees.size
 
   index = (start + count) % trees.size
-  return append(map_candidates(trees[index].shrinks()) do |child| shaped(trees.set(index, child), true, index) end) do
+  append(map_candidates(trees[index].shrinks()) do |child| shaped(trees.set(index, child), true, index) end) do
     item_shrinks(trees, start, count + 1)
   end
 end
 
 def fixed_candidates[T](trees: List[Tree[T]], index: Int) -> Optional[Candidates[List[T]]]
-  if index >= trees.size
-    return none
-  end
+  return none if index >= trees.size
 
-  return append(map_candidates(trees[index].shrinks()) do |child| fixed_tree(trees.set(index, child)) end) do
+  append(map_candidates(trees[index].shrinks()) do |child| fixed_tree(trees.set(index, child)) end) do
     fixed_candidates(trees, index + 1)
   end
 end
 
 def earlier[T](make: Fn[Int, Tree[T]], index: Int, limit: Int) -> Optional[Candidates[T]]
-  if index >= limit
-    return none
-  end
+  return none if index >= limit
 
-  return cons(make.call(index)) do earlier(make, index + 1, limit) end
+  cons(make.call(index)) do earlier(make, index + 1, limit) end
 end

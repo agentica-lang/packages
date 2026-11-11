@@ -20,9 +20,7 @@ end
 
 ## The prefix `text` for C names, or an error when it is not a C identifier or is one of the C API's.
 export def prefix(text: String) -> Result[Prefix]
-  if !Names.c_identifier?(text)
-    return error("the prefix #{text.inspect} is not a C identifier")
-  end
+  return error("the prefix #{text.inspect} is not a C identifier") if !Names.c_identifier?(text)
 
   lower = text.downcase
   if RESERVED_PREFIXES.include?(lower) or lower.start_with?("an_") or lower.start_with?("ng_")
@@ -31,7 +29,7 @@ export def prefix(text: String) -> Result[Prefix]
 
   # Functions take the prefix in lower case and constants in capitals, so `GL` cannot make a function and a constant
   # of one name.
-  return ok(Prefix(lower: lower, upper: text.upcase))
+  ok(Prefix(lower: lower, upper: text.upcase))
 end
 
 ## The header of `block`, declared in the file `source` (its name only, so the text does not depend on where it ran).
@@ -61,7 +59,7 @@ export def render(block: Analysis.NativeBlock, names: Prefix, source: String) ->
     implementation(block, names, shelf),
   ])
 
-  return ok("#{lines.join("\n")}\n")
+  ok("#{lines.join("\n")}\n")
 end
 
 # Every C name the header declares at file scope, with the name of the block it comes from.
@@ -99,7 +97,7 @@ def global_names(block: Analysis.NativeBlock, names: Prefix) -> List[Names.Named
     named = named.push(Names.Named(c: "#{p}_#{resource.name}_get", source: "the get of #{resource.name}"))
   end
 
-  return named
+  named
 end
 
 # The guard of the file and of the API version, and the borrowed String and Bytes of the arguments.
@@ -127,7 +125,7 @@ def opening(block: Analysis.NativeBlock, names: Prefix, source: String) -> List[
     ])
   end
 
-  return lines.concat([
+  lines.concat([
     "",
     "#ifdef __cplusplus",
     "extern \"C\" {",
@@ -195,7 +193,7 @@ def constants(block: Analysis.NativeBlock, names: Prefix) -> List[String]
     lines = joined([lines, [""], doc_comment(note), state_functions(names, resource.name)])
   end
 
-  return lines
+  lines
 end
 
 # The state struct of resource `name`, declared for the author to define, and its two functions: `_new` makes one, and
@@ -205,7 +203,7 @@ end
 def state_functions(names: Prefix, name: String) -> List[String]
   state = state_struct(names, name)
   row = "#{names.upper}_RESOURCE_#{name}"
-  return [
+  [
     "#{state};",
     "static inline #{state} *#{names.lower}_#{name}_new(an_env *env, an_term *out) {",
     "  return (#{state} *)an_resource_new(env, #{row}, out);",
@@ -218,14 +216,10 @@ def state_functions(names: Prefix, name: String) -> List[String]
 end
 
 # One enum of `items`, numbered from 0 in their order.
-def numbered(items: List[String]) -> String
-  return "enum { #{enum_rows(items)} };"
-end
+def numbered(items: List[String]) -> String = "enum { #{enum_rows(items)} };"
 
 # The same enum as the type `name`.
-def numbered_type(items: List[String], name: String) -> String
-  return "typedef enum { #{enum_rows(items)} } #{name};"
-end
+def numbered_type(items: List[String], name: String) -> String = "typedef enum { #{enum_rows(items)} } #{name};"
 
 def enum_rows(items: List[String]) -> String
   at = 0
@@ -235,13 +229,11 @@ def enum_rows(items: List[String]) -> String
     at += 1
   end
 
-  return rows.join(", ")
+  rows.join(", ")
 end
 
 # The C type of the state of resource `name`.
-def state_struct(names: Prefix, name: String) -> String
-  return "struct #{names.lower}_#{name}_state"
-end
+def state_struct(names: Prefix, name: String) -> String = "struct #{names.lower}_#{name}_state"
 
 # One prototype per function, each with the `##` doc of its declaration.
 def prototypes(block: Analysis.NativeBlock, names: Prefix, shelf: Collections.Shelf) -> List[String]
@@ -257,7 +249,7 @@ def prototypes(block: Analysis.NativeBlock, names: Prefix, shelf: Collections.Sh
     lines = joined([lines, [""], doc_comment(function.doc), ["an_term #{name}(#{params.join(", ")});"]])
   end
 
-  return lines.concat(["", "#ifdef __cplusplus", "}", "#endif", "", "#endif"])
+  lines.concat(["", "#ifdef __cplusplus", "}", "#endif", "", "#endif"])
 end
 
 # The C type and name of `param` in a prototype: the state of a resource, or what the Lists and codecs give.
@@ -267,11 +259,9 @@ def parameter_text(
   shelf: Collections.Shelf,
   resources: Set[String],
 ) -> String
-  if resources.include?(param.type)
-    return "#{state_struct(names, param.type)} *#{Names.parameter(param.name)}"
-  end
+  return "#{state_struct(names, param.type)} *#{Names.parameter(param.name)}" if resources.include?(param.type)
 
-  return "#{Collections.c_type(shelf, param.type)} #{Names.parameter(param.name)}"
+  "#{Collections.c_type(shelf, param.type)} #{Names.parameter(param.name)}"
 end
 
 # The wrappers, the tables and the module macro, for the one .c file that defines the module.
@@ -299,7 +289,7 @@ def implementation(block: Analysis.NativeBlock, names: Prefix, shelf: Collection
     lines = joined([lines, [""], wrapper(function, names, shelf, resources)])
   end
 
-  return joined([lines, tables(block, names), ["#endif"]])
+  joined([lines, tables(block, names), ["#endif"]])
 end
 
 # The function of the table: it decodes each argument that has a C type (opens it, for a List or Map; gives its state,
@@ -347,16 +337,16 @@ def wrapper(
     at += 1
   end
 
-  return lines.concat(["  return #{names.lower}_#{c}(#{passed.join(", ")});", "}"])
+  lines.concat(["  return #{names.lower}_#{c}(#{passed.join(", ")});", "}"])
 end
 
 def resource_names(block: Analysis.NativeBlock) -> Set[String]
-  return Set.new(block.resources.map do |resource: Analysis.NativeResource| resource.name end)
+  Set.new(block.resources.map do |resource: Analysis.NativeResource| resource.name end)
 end
 
 # Whether an argument of `type` fails the call with a path when it does not decode.
 def failable?(shelf: Collections.Shelf, type: String) -> Bool
-  return Codecs.embedded?(shelf.codecs, "", type) or Collections.typed?(type)
+  Codecs.embedded?(shelf.codecs, "", type) or Collections.typed?(type)
 end
 
 # The function and type tables, and the macro that ends the module's file with the resource table, which needs the
@@ -390,7 +380,7 @@ def tables(block: Analysis.NativeBlock, names: Prefix) -> List[String]
     types = "#{p}_native_types, #{block.types.size}"
   end
 
-  return lines.concat(module_macro(block, names, functions, types))
+  lines.concat(module_macro(block, names, functions, types))
 end
 
 def module_macro(block: Analysis.NativeBlock, names: Prefix, functions: String, types: String) -> List[String]
@@ -420,19 +410,15 @@ def module_macro(block: Analysis.NativeBlock, names: Prefix, functions: String, 
   end
 
   resources = "#{p}_native_resources, #{block.resources.size}"
-  return lines.concat(["  }; \\", "  AN_MODULE_TABLES(#{library}, #{functions}, #{types}, #{resources}, LOAD)"])
+  lines.concat(["  }; \\", "  AN_MODULE_TABLES(#{library}, #{functions}, #{types}, #{resources}, LOAD)"])
 end
 
 # The lines of `parts`, in order.
-def joined(parts: List[List[String]]) -> List[String]
-  return parts.flat_map do |part: List[String]| part end
-end
+def joined(parts: List[List[String]]) -> List[String] = parts.flat_map do |part: List[String]| part end
 
 # `doc` as a C comment above a declaration; nothing for no doc.
 def doc_comment(doc: String) -> List[String]
-  if doc.empty?
-    return []
-  end
+  return [] if doc.empty?
 
   lines = comment_safe(doc).split("\n")
   last = lines.size - 1
@@ -457,14 +443,12 @@ def doc_comment(doc: String) -> List[String]
     at += 1
   end
 
-  return out
+  out
 end
 
 # `text` with no `*/`, which would end the comment that holds it, no `/*`, which -Wcomment refuses inside one, and no
 # `??`, which starts a trigraph (`-std=c11` reads them).
-def comment_safe(text: String) -> String
-  return text.replace("*/", "* /").replace("/*", "/ *").replace("??", "? ?")
-end
+def comment_safe(text: String) -> String = text.replace("*/", "* /").replace("/*", "/ *").replace("??", "? ?")
 
 # `text` as a C string literal: a quote, a backslash, a control character and the second `?` of `??` (a trigraph)
 # escaped, the control characters in octal, three digits, so the next character never joins the escape.
@@ -484,10 +468,8 @@ def c_string(text: String) -> String
     previous = c
   end
 
-  return "\"#{out.join("")}\""
+  "\"#{out.join("")}\""
 end
 
 # `code` (0 to 127) in three octal digits.
-def octal(code: Int) -> String
-  return "#{code / 64}#{code / 8 % 8}#{code % 8}"
-end
+def octal(code: Int) -> String = "#{code / 64}#{code / 8 % 8}#{code % 8}"

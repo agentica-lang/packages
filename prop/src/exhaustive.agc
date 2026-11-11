@@ -8,9 +8,7 @@ import Gens from "gen"
 ## ```ruby
 ## Prop.cases(Prop.list(Prop.bool()), 3) # 15
 ## ```
-export def cases[T](gen: Gens.Gen[T], size: Int) -> Int
-  return gen.count(size)
-end
+export def cases[T](gen: Gens.Gen[T], size: Int) -> Int = gen.count(size)
 
 ## Runs `law` on every value of `gen` up to `size` and returns `ok()` when all of them hold: "all N cases up to size k"
 ## (`Prop.cases` gives N), not that the law is proved, because a bigger size may still falsify it. A false law is an
@@ -28,9 +26,7 @@ export def exhaustive[T](
   max_cases: Int = 10_000,
   law: Fn[T, Result[Void]],
 ) -> Result[Void]
-  if size < 0
-    return error("Prop.exhaustive: size must be at least 0, got #{size}")
-  end
+  return error("Prop.exhaustive: size must be at least 0, got #{size}") if size < 0
 
   total = gen.count(size)
   if total > max_cases
@@ -48,11 +44,9 @@ export def exhaustive[T](
     end
   end
 
-  if skipped == total
-    return error("gave up: all #{total} cases up to size #{size} were discarded")
-  end
+  return error("gave up: all #{total} cases up to size #{size} were discarded") if skipped == total
 
-  return ok()
+  ok()
 end
 
 # The case that failed is not the simplest one, as the cases of a size are not in order of size: the smaller sizes
@@ -67,14 +61,12 @@ def smallest[T](gen: Gens.Gen[T], size: Int, law: Fn[T, Result[Void]]) -> Result
     end
   end
 
-  return error("Prop.exhaustive: the law passed on the rerun up to size #{size}, so it is not deterministic")
+  error("Prop.exhaustive: the law passed on the rerun up to size #{size}, so it is not deterministic")
 end
 
 # A count that reached the cap is a lower bound, not the number of cases.
 def counted(total: Int) -> String
-  if Gens.capped?(total)
-    return "at least #{total}"
-  end
+  return "at least #{total}" if Gens.capped?(total)
 
-  return total.to_s
+  total.to_s
 end

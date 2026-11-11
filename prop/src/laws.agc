@@ -33,7 +33,7 @@ export def roundtrip[T, E](
   config: Checks.Config = Checks.Config(),
   decode: Fn[E, Result[T]],
 ) -> Result[Void]
-  return Checks.check(gen, config) do |value| round_trips(value, encode, decode) end
+  Checks.check(gen, config) do |value| round_trips(value, encode, decode) end
 end
 
 ## `f(f(x))` is `f(x)`.
@@ -42,7 +42,7 @@ end
 ## Prop.idempotent(Prop.list(Prop.int(-9, 9))) do |xs| xs.sort end # ok()
 ## ```
 export def idempotent[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), f: Fn[T, T]) -> Result[Void]
-  return Checks.check(gen, config) do |value| settles(value, f) end
+  Checks.check(gen, config) do |value| settles(value, f) end
 end
 
 ## `fast(x)` is `slow(x)`: the fast version against a simple one that is obviously right.
@@ -60,7 +60,7 @@ export def oracle[A, B](
   config: Checks.Config = Checks.Config(),
   slow: Fn[A, B],
 ) -> Result[Void]
-  return Checks.check(gen, config) do |value| agrees(value, fast, slow) end
+  Checks.check(gen, config) do |value| agrees(value, fast, slow) end
 end
 
 ## `op(op(a, b), c)` is `op(a, op(b, c))`.
@@ -70,7 +70,7 @@ end
 ## ```
 export def associative[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), op: Fn[T, T, T]) -> Result[Void]
   triples = Gens.map(Gens.pair(gen, Gens.pair(gen, gen))) do |p| triple(p) end
-  return Checks.check(triples, config) do |t| groups_the_same(t, op) end
+  Checks.check(triples, config) do |t| groups_the_same(t, op) end
 end
 
 ## `op(a, b)` is `op(b, a)`.
@@ -80,7 +80,7 @@ end
 ## ```
 export def commutative[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), op: Fn[T, T, T]) -> Result[Void]
   couples = Gens.map(Gens.pair(gen, gen)) do |p| Couple(a: p.first, b: p.second) end
-  return Checks.check(couples, config) do |c| orders_the_same(c, op) end
+  Checks.check(couples, config) do |c| orders_the_same(c, op) end
 end
 
 ## `measure(f(x))` is `measure(x)`: `f` keeps the size, the sum, the sortedness or whatever `measure` reads.
@@ -98,49 +98,45 @@ export def preserves[T, M](
   config: Checks.Config = Checks.Config(),
   measure: Fn[T, M],
 ) -> Result[Void]
-  return Checks.check(gen, config) do |value| keeps(value, f, measure) end
+  Checks.check(gen, config) do |value| keeps(value, f, measure) end
 end
 
 def round_trips[T, E](value: T, encode: Fn[T, E], decode: Fn[E, Result[T]]) -> Result[Void]
   back = decode.call(encode.call(value))
-  if not back.ok?
-    return error("decode(encode(x)) failed: #{back.message}")
-  end
+  return error("decode(encode(x)) failed: #{back.message}") if not back.ok?
 
-  return labelled("decode(encode(x)) differs from x", Checks.eq(back.unwrap!, value))
+  labelled("decode(encode(x)) differs from x", Checks.eq(back.unwrap!, value))
 end
 
 def settles[T](value: T, f: Fn[T, T]) -> Result[Void]
-  return labelled("f(f(x)) differs from f(x)", Checks.eq(f.call(f.call(value)), f.call(value)))
+  labelled("f(f(x)) differs from f(x)", Checks.eq(f.call(f.call(value)), f.call(value)))
 end
 
 def agrees[A, B](value: A, fast: Fn[A, B], slow: Fn[A, B]) -> Result[Void]
-  return labelled("fast(x) differs from slow(x)", Checks.eq(fast.call(value), slow.call(value)))
+  labelled("fast(x) differs from slow(x)", Checks.eq(fast.call(value), slow.call(value)))
 end
 
 def triple[T](p: Gens.Pair[T, Gens.Pair[T, T]]) -> Triple[T]
-  return Triple(a: p.first, b: p.second.first, c: p.second.second)
+  Triple(a: p.first, b: p.second.first, c: p.second.second)
 end
 
 def groups_the_same[T](t: Triple[T], op: Fn[T, T, T]) -> Result[Void]
   left = op.call(op.call(t.a, t.b), t.c)
   right = op.call(t.a, op.call(t.b, t.c))
-  return labelled("op(op(a, b), c) differs from op(a, op(b, c))", Checks.eq(left, right))
+  labelled("op(op(a, b), c) differs from op(a, op(b, c))", Checks.eq(left, right))
 end
 
 def orders_the_same[T](c: Couple[T], op: Fn[T, T, T]) -> Result[Void]
-  return labelled("op(a, b) differs from op(b, a)", Checks.eq(op.call(c.a, c.b), op.call(c.b, c.a)))
+  labelled("op(a, b) differs from op(b, a)", Checks.eq(op.call(c.a, c.b), op.call(c.b, c.a)))
 end
 
 def keeps[T, M](value: T, f: Fn[T, T], measure: Fn[T, M]) -> Result[Void]
-  return labelled("measure(f(x)) differs from measure(x)", Checks.eq(measure.call(f.call(value)), measure.call(value)))
+  labelled("measure(f(x)) differs from measure(x)", Checks.eq(measure.call(f.call(value)), measure.call(value)))
 end
 
 # The reason first, then what `Prop.eq` saw: `fast(x) differs from slow(x): expected 3, got 4`.
 def labelled(reason: String, verdict: Result[Void]) -> Result[Void]
-  if verdict.ok?
-    return verdict
-  end
+  return verdict if verdict.ok?
 
-  return error("#{reason}: #{verdict.message}")
+  error("#{reason}: #{verdict.message}")
 end

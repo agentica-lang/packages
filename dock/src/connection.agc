@@ -74,12 +74,12 @@ export def recv(conn: Conn, max_bytes: Int = 65_536) -> Result[Bytes]
         end
       end
 
-      return got
+      got
   end
 end
 
 export def send(conn: Conn, bytes: Bytes) -> Result[Void]
   case conn.inside
-    ClientParts.Parts(socket, _, outbox) -> return Outbox.push(outbox, socket, bytes)
+    ClientParts.Parts(socket, _, outbox) -> Outbox.push(outbox, socket, bytes)
   end
 end
