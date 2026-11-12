@@ -1,3 +1,4 @@
+import HTTP from "std/http"
 import Handshake from "../src/handshake"
 
 # RFC 6455 4.2.2 and 1.3: the key of the example and the accept it gets.
@@ -35,7 +36,7 @@ def test_a_url_that_is_not_a_websocket_url_is_refused() -> Result[Void]
   ok()
 end
 
-def header(name: String, value: String) -> Header = Header(name: name, value: value)
+def header(name: String, value: String) -> HTTP.Header = HTTP.Header(name: name, value: value)
 
 def test_the_request_is_an_upgrade_with_the_key_and_the_extra_headers() -> Result[Void]
   text = Handshake.request(target("ws://example.com:81/cable"), KEY, ["chat", "v2"], [header("Cookie", "a=b")]).unwrap!
@@ -54,7 +55,7 @@ def test_the_request_is_an_upgrade_with_the_key_and_the_extra_headers() -> Resul
     ],
   )
 
-  Test.assert(text.ends_with?("\r\n\r\n"), "the head ends with an empty line")
+  Test.assert(text.end_with?("\r\n\r\n"), "the head ends with an empty line")
 end
 
 def test_a_header_that_the_handshake_owns_or_that_injects_is_refused() -> Result[Void]
@@ -126,17 +127,17 @@ end
 def test_the_headers_of_an_answer_keep_their_names_and_lose_the_spaces() -> Result[Void]
   headers = Handshake.headers_of(["UPGRADE:  WebSocket ", "X-Url: http://a:80", "no colon", "Content-Length: 12"])
   try Test.eq(headers.size, 3)
-  try Test.eq(headers[0], Header(name: "UPGRADE", value: "WebSocket"))
-  try Test.eq(headers[1], Header(name: "X-Url", value: "http://a:80"))
+  try Test.eq(headers[0], HTTP.Header(name: "UPGRADE", value: "WebSocket"))
+  try Test.eq(headers[1], HTTP.Header(name: "X-Url", value: "http://a:80"))
   try Test.eq(Handshake.content_length(headers, 100), 12)
   try Test.eq(Handshake.content_length(headers, 5), 5)
-  try Test.eq(Handshake.content_length([Header(name: "content-length", value: "x")], 100), 0)
-  try Test.eq(Handshake.content_length([Header(name: "Content-Length", value: "99999999999999999999")], 100), 100)
-  try Test.eq(Handshake.content_length([Header(name: "Content-Length", value: "-3")], 100), 0)
+  try Test.eq(Handshake.content_length([HTTP.Header(name: "content-length", value: "x")], 100), 0)
+  try Test.eq(Handshake.content_length([HTTP.Header(name: "Content-Length", value: "99999999999999999999")], 100), 100)
+  try Test.eq(Handshake.content_length([HTTP.Header(name: "Content-Length", value: "-3")], 100), 0)
   # The first one wins.
   try Test.eq(
     Handshake.content_length(
-      [Header(name: "Content-Length", value: "3"), Header(name: "content-length", value: "9")],
+      [HTTP.Header(name: "Content-Length", value: "3"), HTTP.Header(name: "content-length", value: "9")],
       100,
     ),
     3,

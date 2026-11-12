@@ -48,9 +48,9 @@ export def int(min: Int, max: Int) -> Gen[Int]
   high = max.clamp(-BOUND, BOUND)
   origin = 0.clamp(low, high)
   Gen(
-    make: making() do |seed| Trees.int_tree(low + Seeds.draw(seed, high - low + 1), origin) end,
-    count: counting() do |size| reach(high - origin, origin - low, size) end,
-    all: listing() do |size| offsets(high - origin, origin - low, size).map do |step| origin + step end end,
+    make: making do |seed| Trees.int_tree(low + Seeds.draw(seed, high - low + 1), origin) end,
+    count: counting do |size| reach(high - origin, origin - low, size) end,
+    all: listing do |size| offsets(high - origin, origin - low, size).map do |step| origin + step end end,
   )
 end
 
@@ -72,9 +72,9 @@ export def float(min: Float, max: Float) -> Gen[Float]
   up = (high - origin).floor
   down = (origin - low).floor
   Gen(
-    make: making() do |seed| Trees.float_tree(low + Seeds.unit(seed) * (high - low), origin) end,
-    count: counting() do |size| reach(up, down, size) end,
-    all: listing() do |size| offsets(up, down, size).map do |step| origin + step.to_f end end,
+    make: making do |seed| Trees.float_tree(low + Seeds.unit(seed) * (high - low), origin) end,
+    count: counting do |size| reach(up, down, size) end,
+    all: listing do |size| offsets(up, down, size).map do |step| origin + step.to_f end end,
   )
 end
 
@@ -109,13 +109,13 @@ end
 export def list[T](gen: Gen[T], max_size: Int = 10) -> Gen[List[T]]
   limit = max_size.clamp(0, MAX_SIZE)
   Gen(
-    make: making() do |seed|
+    make: making do |seed|
       count = Seeds.draw(Seeds.split(seed, 0), limit + 1)
       trees = (0...count).to_a.map do |i| gen.make(Seeds.split(seed, i + 1)) end
       Trees.list_tree(trees)
     end,
-    count: counting() do |size| lists_count(gen.count(size), size.clamp(0, limit)) end,
-    all: listing() do |size| lists_up_to(gen.all(size), size.clamp(0, limit)) end,
+    count: counting do |size| lists_count(gen.count(size), size.clamp(0, limit)) end,
+    all: listing do |size| lists_up_to(gen.all(size), size.clamp(0, limit)) end,
   )
 end
 
@@ -126,7 +126,7 @@ end
 ## ```
 export def optional[T](gen: Gen[T]) -> Gen[Optional[T]]
   Gen(
-    make: making() do |seed|
+    make: making do |seed|
       if Seeds.draw(Seeds.split(seed, 0), 2) == 0
         absent: Trees.Tree[Optional[T]] = Trees.leaf(none)
         return absent
@@ -134,8 +134,8 @@ export def optional[T](gen: Gen[T]) -> Gen[Optional[T]]
 
       Trees.some_tree(gen.make(Seeds.split(seed, 1)))
     end,
-    count: counting() do |size| saturate(1 + gen.count(size)) end,
-    all: listing() do |size|
+    count: counting do |size| saturate(1 + gen.count(size)) end,
+    all: listing do |size|
       absent: List[Optional[T]] = [none]
       absent.concat(gen.all(size).map do |value| some(value) end)
     end,
@@ -154,7 +154,7 @@ export def one_of[T](items: List[T]) -> Gen[T]
   end
 
   chosen = map(int(0, items.size - 1)) do |i| items.at(i) end
-  Gen(make: chosen.make, count: counting() do |_| items.size end, all: listing() do |_| items end)
+  Gen(make: chosen.make, count: counting do |_| items.size end, all: listing do |_| items end)
 end
 
 ## The values of `gen` through `f`. They shrink as the values of `gen` do.
@@ -164,9 +164,9 @@ end
 ## ```
 export def map[A, B](gen: Gen[A], f: Fn[A, B]) -> Gen[B]
   Gen(
-    make: making() do |seed| Trees.map_tree(gen.make(seed), f) end,
+    make: making do |seed| Trees.map_tree(gen.make(seed), f) end,
     count: gen.count,
-    all: listing() do |size| gen.all(size).map do |value| f.call(value) end end,
+    all: listing do |size| gen.all(size).map do |value| f.call(value) end end,
   )
 end
 
@@ -178,13 +178,13 @@ end
 ## ```
 export def pair[A, B](a: Gen[A], b: Gen[B]) -> Gen[Pair[A, B]]
   Gen(
-    make: making() do |seed|
+    make: making do |seed|
       Trees.zip_trees(a.make(Seeds.split(seed, 0)), b.make(Seeds.split(seed, 1))) do |x, y|
         Pair(first: x, second: y)
       end
     end,
-    count: counting() do |size| saturate(a.count(size) * b.count(size)) end,
-    all: listing() do |size| pairs(a.all(size), b.all(size)) end,
+    count: counting do |size| saturate(a.count(size) * b.count(size)) end,
+    all: listing do |size| pairs(a.all(size), b.all(size)) end,
   )
 end
 
@@ -202,17 +202,17 @@ export def capped?(count: Int) -> Bool = count >= CAP
 
 ## `value`, always.
 export def just[T](value: T) -> Gen[T]
-  Gen(make: making() do |_| Trees.leaf(value) end, count: counting() do |_| 1 end, all: listing() do |_| [value] end)
+  Gen(make: making do |_| Trees.leaf(value) end, count: counting do |_| 1 end, all: listing do |_| [value] end)
 end
 
 ## One value of each of `gens`, in order: a list as long as `gens`, which shrinks only through its items.
 export def sequence[T](gens: List[Gen[T]]) -> Gen[List[T]]
   Gen(
-    make: making() do |seed|
+    make: making do |seed|
       Trees.fixed_tree((0...gens.size).to_a.map do |i| gens.at(i).make(Seeds.split(seed, i)) end)
     end,
-    count: counting() do |size| gens.reduce(1) do |total, gen| saturate(total * gen.count(size)) end end,
-    all: listing() do |size| product(gens.map do |gen| gen.all(size) end) end,
+    count: counting do |size| gens.reduce(1) do |total, gen| saturate(total * gen.count(size)) end end,
+    all: listing do |size| product(gens.map do |gen| gen.all(size) end) end,
   )
 end
 
@@ -224,12 +224,12 @@ export def choose[T](gens: List[Gen[T]]) -> Gen[T]
   end
 
   Gen(
-    make: making() do |seed|
+    make: making do |seed|
       index = Seeds.draw(Seeds.split(seed, 0), gens.size)
       Trees.choice_tree(index) do |i| gens.at(i).make(Seeds.split(seed, i + 1)) end
     end,
-    count: counting() do |size| gens.reduce(0) do |total, gen| saturate(total + gen.count(size)) end end,
-    all: listing() do |size| gens.reduce([]) do |all, gen| all.concat(gen.all(size)) end end,
+    count: counting do |size| gens.reduce(0) do |total, gen| saturate(total + gen.count(size)) end end,
+    all: listing do |size| gens.reduce([]) do |all, gen| all.concat(gen.all(size)) end end,
   )
 end
 

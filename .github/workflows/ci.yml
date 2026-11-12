@@ -9,93 +9,122 @@ permissions:
   contents: read
 
 env:
-  # The pinned Agentica release, for both jobs.
-  AGENTICA_VERSION: 0.30.0
-  AGENTICA_SHA256: cad88bfdd768271efd31e4a8b84f5e8b0c7a232edae27b494e6d518cbc401e38 # linux-x86_64
   # The nightly of Miri and of the doctests that check error codes, pinned so a new nightly cannot break CI by itself.
   NIGHTLY: nightly-2026-11-01
 
 jobs:
-  test:
-    # `test` is the required check, so it also carries the result of the rust job: it waits for it, and fails when it
-    # did not pass.
-    needs: rust
-    if: ${{ !cancelled() }}
+  # A pull request runs only the packages whose files changed (the rules are in the script); a push to main runs all of
+  # them. Each package runs on the Agentica version of its AGENTICA_VERSION file, so the packages are grouped by
+  # version: one job of `packages` per group.
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+    outputs:
+      groups: ${{ steps.groups.outputs.groups }}
     steps:
-      - name: Check that the rust job passed
-        if: needs.rust.result != 'success'
-        env:
-          RESULT: ${{ needs.rust.result }}
-        run: |
-          echo "The rust job ended with $RESULT." >&2
-          exit 1
-
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The history of the base branch, for the diff of a pull request.
           fetch-depth: 0
 
-      # A pull request runs only the packages whose files changed (the rules are in the script); a push to main runs
-      # all of them. The job always succeeds and keeps the name `test`, for the required check: with no package
-      # changed the steps below are skipped. The Makefile takes the list as an argument: its own assignment ignores the
-      # environment.
-      - name: Find the changed packages
+      - name: Find the changed packages and their versions
+        id: groups
         env:
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
         shell: bash
         # The diff goes to a file first: in a pipe a failed git diff (no base branch, no merge base) would read as
-        # "no package changed" and turn the required check green untested.
+        # "no package changed" and turn the required check green untested. groups is a JSON list of
+        # {version, sha256, packages}, `[]` when no package changed.
         run: |
+          set -euo pipefail
           if [ "$EVENT" = pull_request ]; then
             git diff --name-only --no-renames -z "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/changed-files"
             packages=$(.github/scripts/changed-packages.sh < "$RUNNER_TEMP/changed-files")
           else
             packages=$(.github/scripts/changed-packages.sh --all)
           fi
-          echo "PACKAGES=$packages" >> "$GITHUB_ENV"
-          if [ -n "$packages" ]; then echo "Packages to run: $packages"; else echo "No package changed: nothing to run."; fi
+          : > "$RUNNER_TEMP/versions"
+          for p in $packages; do
+            read -r version sha256 rest < "$p/AGENTICA_VERSION" || true
+            if [ -z "${version:-}" ] || [ -z "${sha256:-}" ]; then
+              echo "$p/AGENTICA_VERSION must hold the version and the sha256 of its linux-x86_64 archive" >&2
+              exit 1
+            fi
+            printf '%s\t%s\t%s\n' "$version" "$sha256" "$p" >> "$RUNNER_TEMP/versions"
+          done
+          groups=$(jq -cR -s 'split("\n") | map(select(. != "") | split("\t"))
+            | group_by(.[0]) | map({version: .[0][0], sha256: .[0][1], packages: (map(.[2]) | join(" "))})' \
+            "$RUNNER_TEMP/versions")
+          echo "groups=$groups" >> "$GITHUB_OUTPUT"
+          if [ -n "$packages" ]; then echo "Packages to run: $groups"; else echo "No package changed: nothing to run."; fi
 
-      - name: Install the pinned Agentica release
-        if: env.PACKAGES != ''
+  # The packages of one Agentica version, on that release (setup-agentica caches each version).
+  packages:
+    needs: plan
+    if: needs.plan.outputs.groups != '[]'
+    name: packages (${{ matrix.version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.groups) }}
+    env:
+      PACKAGES: ${{ matrix.packages }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install the Agentica release of the group
         uses: agentica-lang/setup-agentica@v1
         with:
-          version: ${{ env.AGENTICA_VERSION }}
-          sha256: ${{ env.AGENTICA_SHA256 }}
+          version: ${{ matrix.version }}
+          sha256: ${{ matrix.sha256 }}
 
-      # The locked packages of each folder, checked against the hashes of its agentica.lock.
+      # The locked packages of each folder, checked against the hashes of its agentica.lock. The Makefile takes the
+      # list as an argument: its own assignment ignores the environment.
       - name: Install the packages
-        if: env.PACKAGES != ''
         run: |
-          agentica --version
+          echo "Agentica $(agentica --version): $PACKAGES"
           make install PACKAGES="$PACKAGES"
 
       - name: Check
-        if: env.PACKAGES != ''
         run: make check PACKAGES="$PACKAGES"
 
       - name: Format
-        if: env.PACKAGES != ''
         run: make fmt-check PACKAGES="$PACKAGES"
 
       # The features of specs/ (they listen on 127.0.0.1 only) and the tests of test/.
       - name: Test
-        if: env.PACKAGES != ''
         run: make test PACKAGES="$PACKAGES"
 
       # The agentica code blocks of each docs/ folder run, or are checked.
       - name: Doc examples
-        if: env.PACKAGES != ''
         run: make doc-examples PACKAGES="$PACKAGES"
+
+  # `test` is the required check, so it carries the result of the other jobs: it fails when the plan or the rust job
+  # did not pass, or when a group of packages failed (`packages` is skipped when no package changed).
+  test:
+    needs: [plan, packages, rust]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check that the other jobs passed
+        env:
+          PLAN: ${{ needs.plan.result }}
+          PACKAGES: ${{ needs.packages.result }}
+          RUST: ${{ needs.rust.result }}
+        run: |
+          echo "plan: $PLAN, packages: $PACKAGES, rust: $RUST"
+          [ "$PLAN" = success ] && [ "$RUST" = success ] && { [ "$PACKAGES" = success ] || [ "$PACKAGES" = skipped ]; }
 
   # The Rust crate of native-gen (native-gen/native/agentica-native), when a pull request changes native-gen or this
   # file, and on main: its format and lints on stable, its tests on the MSRV of its Cargo.toml and on stable, its
   # doctests on nightly (which checks the error codes of the compile_fail ones), the tests under Miri, vm-check, a
-  # module on the crate run by the pinned Agentica release, gen-check, the modules on the Rust files native-gen makes,
-  # build-check, `cli.agc build` of a Rust module, and new-check, the module `new --lang rust` writes. The crate has no
-  # dependencies, so it needs no registry.
+  # module on the crate run by the Agentica release of native-gen (its AGENTICA_VERSION), gen-check, the modules on the
+  # Rust files native-gen makes, build-check, `cli.agc build` of a Rust module, and new-check, the module
+  # `new --lang rust` writes. The crate has no dependencies, so it needs no registry.
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -164,7 +193,14 @@ jobs:
           MIRIFLAGS: -Zmiri-strict-provenance
         run: cargo +"$NIGHTLY" miri test --lib
 
-      - name: Install the pinned Agentica release
+      - name: Read the Agentica version of native-gen
+        if: env.RUST == '1'
+        run: |
+          read -r version sha256 rest < ../../AGENTICA_VERSION
+          echo "AGENTICA_VERSION=$version" >> "$GITHUB_ENV"
+          echo "AGENTICA_SHA256=$sha256" >> "$GITHUB_ENV"
+
+      - name: Install the Agentica release of native-gen
         if: env.RUST == '1'
         uses: agentica-lang/setup-agentica@v1
         with:

@@ -1,5 +1,7 @@
 ## The records of the package.
 
+import HTTP from "std/http"
+
 ## The most that a timeout may be, in milliseconds: one day.
 export MAX_TIMEOUT_MS = 86_400_000
 
@@ -16,7 +18,7 @@ export MAX_BODY_BYTES = 65_536
 ## `close_timeout_ms` is how long `close` waits for the answer of the server. `tls` is the client context of a
 ## `wss://` URL (the system trust by default).
 export struct Options
-  headers: List[Header] = []
+  headers: List[HTTP.Header] = []
   protocols: List[String] = []
   max_message_bytes: Int = 1_048_576
   timeout_ms: Int = 30_000
@@ -40,7 +42,7 @@ export struct Client
   protocol: String
   options: Options
   status: Int = 101
-  headers: List[Header] = []
+  headers: List[HTTP.Header] = []
 end
 
 ## What `handshake` returns: the open connection, or the answer of a server that did not upgrade (a status from 200 to
@@ -49,5 +51,5 @@ end
 ## that character, and one that is still not UTF-8 is "".
 export enum Handshake
   Open(Client)
-  Refused(Int, List[Header], String)
+  Refused(Int, List[HTTP.Header], String)
 end

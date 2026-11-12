@@ -28,14 +28,14 @@ def echo(ws: HTTP.WebSocket) -> Result[Void]
   ok()
 end
 
-def header_of(request: HttpRequest, name: String) -> String
+def header_of(request: HTTP.Request, name: String) -> String
   values = HTTP.header_values(request.headers, name)
   return "none" if values.empty?
 
   values[0]
 end
 
-def say_headers(request: HttpRequest, ws: HTTP.WebSocket) -> Result[Void]
+def say_headers(request: HTTP.Request, ws: HTTP.WebSocket) -> Result[Void]
   text = "cookie=#{header_of(request, "cookie")};authorization=#{header_of(request, "authorization")}"
   try ws.outgoing.send(HTTP.Message.Text(text), 5_000)
   echo(ws)
@@ -48,22 +48,20 @@ end
 
 def session(f: Fn[HTTP.WebSocket, Result[Void]]) -> Fn[HTTP.WebSocket, Result[Void]] = f
 
-def route(request: HttpRequest, _body: HTTP.RequestBody) -> Result[HTTP.Answer]
+def route(request: HTTP.Request, _body: HTTP.RequestBody) -> Result[HTTP.Answer]
   options = HTTP.WebSocketOptions(protocols: PROTOCOLS)
   case request.path
     "/echo" -> ok(HTTP.Answer.Upgrade(try HTTP.accept_websocket(request, &echo, options)))
     "/headers" ->
       ok(
-        HTTP.Answer.Upgrade(
-          try HTTP.accept_websocket(request, session() do |ws| say_headers(request, ws) end, options),
-        ),
+        HTTP.Answer.Upgrade(try HTTP.accept_websocket(request, session do |ws| say_headers(request, ws) end, options)),
       )
     "/chat" -> ok(HTTP.Answer.Upgrade(try HTTP.accept_websocket(request, &say_protocol, options)))
-    _ -> ok(HTTP.Answer.Whole(HttpResponse(status: 404, headers: [], body: "not found".bytes)))
+    _ -> ok(HTTP.Answer.Whole(HTTP.Response(status: 404, headers: [], body: "not found".bytes)))
   end
 end
 
-def start() -> HttpServer
+def start() -> HTTP.Server
   cert = System.env("TLS_CERT")
   key = System.env("TLS_KEY")
   if cert.ok? and key.ok?

@@ -9,7 +9,7 @@ Use it to talk to any WebSocket server, or to test the one of your own app from 
 
 ## Install
 
-Needs Agentica 0.30.0 or later. Add it in a project with an `agentica.toml`:
+Needs Agentica 0.31.0-alpha.1 or later. Add it in a project with an `agentica.toml`:
 
 ```sh
 agentica add websocket-client https://github.com/agentica-lang/packages --tag websocket-client-0.2.0 --subdir websocket-client
@@ -45,7 +45,7 @@ def shout(ws: HTTP.WebSocket) -> Result[Void]
   ok()
 end
 
-def route(request: HttpRequest, _body: HTTP.RequestBody) -> Result[HTTP.Answer]
+def route(request: HTTP.Request, _body: HTTP.RequestBody) -> Result[HTTP.Answer]
   ok(HTTP.Answer.Upgrade(try HTTP.accept_websocket(request, &shout)))
 end
 
@@ -87,9 +87,9 @@ WebSocket.receive(client) -> Result[WebSocket.Message]
 WebSocket.close(client, code: Int = 1000, reason: String = "") -> Result[Void]
 
 WebSocket.Message: Text(String), Binary(Bytes), Close(Int, String)
-WebSocket.Handshake: Open(WebSocket.Client), Refused(status: Int, headers: List[Header], body: String)
-WebSocket.Client(socket, protocol: String, options, status: Int, headers: List[Header])
-WebSocket.Options(headers: List[Header] = [], protocols: List[String] = [], max_message_bytes: Int = 1048576,
+WebSocket.Handshake: Open(WebSocket.Client), Refused(status: Int, headers: List[HTTP.Header], body: String)
+WebSocket.Client(socket, protocol: String, options, status: Int, headers: List[HTTP.Header])
+WebSocket.Options(headers: List[HTTP.Header] = [], protocols: List[String] = [], max_message_bytes: Int = 1048576,
                   timeout_ms: Int = 30000, read_timeout_ms: Int = 30000, close_timeout_ms: Int = 5000,
                   tls: Optional[TlsContext] = none)
 ```

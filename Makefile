@@ -1,9 +1,18 @@
-# Needs Agentica 0.30.0 or later on PATH (CI pins it). Every target runs in each folder that has an agentica.toml.
-AGENTICA ?= agentica
+# Every target runs in each folder that has an agentica.toml, with the Agentica version of its AGENTICA_VERSION file:
+# tools/agentica-for.sh finds that binary (the rules are in its header).
+AGENTICA_FOR := tools/agentica-for.sh
 # CI passes the changed packages: make test PACKAGES="prop native-gen" (a command line value wins over this line).
 PACKAGES := $(patsubst %/agentica.toml,%,$(wildcard */agentica.toml))
-# How many test files of a package run at once.
+# How many test files and scenarios of a package run at once.
 JOBS ?= 4
+# The packages whose scenarios share files on disk, so they run one at a time: the scenarios of native-gen write the
+# headers of the same fixture folders.
+SERIAL_PACKAGES := native-gen
+# The head of the loop of each target: for each package, a subshell with the folder of its binary first on PATH, so
+# that `agentica` (and a program that a test starts by that name) is its version; it prints the package and the
+# version, and the recipe closes the subshell with `) done`.
+EACH_PACKAGE = for p in $(PACKAGES); do a=$$($(AGENTICA_FOR) $$p); ( export PATH="$${a%/*}:$$PATH"; \
+	echo "== $$p ($$(agentica --version))";
 
 .PHONY: help install check fmt-check test doc-examples doc-examples-test site site-mounts site-serve site-tools
 
@@ -21,42 +30,49 @@ help:
 # uses another package) has a manifest of its own in specs/fixtures/ws_client, so that the package does not depend on
 # it.
 install:
-	@set -e; for p in $(PACKAGES); do \
-		if [ -f $$p/agentica.lock ]; then echo "== $$p"; (cd $$p && $(AGENTICA) install); fi; \
+	@set -e; $(EACH_PACKAGE) \
+		if [ -f $$p/agentica.lock ]; then (cd $$p && agentica install); fi; \
 		if [ -f $$p/specs/fixtures/ws_client/agentica.lock ]; then \
-			echo "== $$p peer"; (cd $$p/specs/fixtures/ws_client && $(AGENTICA) install); \
+			echo "== $$p peer"; (cd $$p/specs/fixtures/ws_client && agentica install); \
 		fi; \
-	done
+	) done
 
 check:
-	@set -e; for p in $(PACKAGES); do echo "== $$p"; (cd $$p && $(AGENTICA) check); done
+	@set -e; $(EACH_PACKAGE) cd $$p && agentica check) done
 
 fmt-check:
-	@set -e; for p in $(PACKAGES); do echo "== $$p"; (cd $$p && $(AGENTICA) fmt --check); done
+	@set -e; $(EACH_PACKAGE) cd $$p && agentica fmt --check) done
 
 test:
-	@set -e; for p in $(PACKAGES); do echo "== $$p"; (cd $$p && $(AGENTICA) test --jobs $(JOBS)); done
+	@set -e; $(EACH_PACKAGE) \
+		jobs=$(JOBS); case " $(SERIAL_PACKAGES) " in *" $$p "*) jobs=1 ;; esac; \
+		cd $$p && agentica test --jobs $$jobs) done
 
 # The examples of each docs/ folder: a block with `def main` runs (and matches the `output` block after it), any other
-# is checked; the rules are in the header of tools/doc_examples.agc.
+# is checked; the rules are in the header of tools/doc_examples.agc. The tool runs on the version of the package, so
+# it must work on every version that a package declares.
 doc-examples: doc-examples-test
-	$(AGENTICA) tools/doc_examples.agc $(AGENTICA) $(PACKAGES)
+	@set -e; $(EACH_PACKAGE) agentica tools/doc_examples.agc "$$a" $$p) done
 
 # The fixture page has one block or fence per rule that fails, so the tool must exit 1 with exactly this summary and
 # one located line (page:line:) per failure on stderr.
 DOC_EXAMPLES_FIXTURE := tools/fixtures/doc_examples
 DOC_EXAMPLES_FIXTURE_FAILED := 9
 DOC_EXAMPLES_FIXTURE_SUMMARY := doc examples: 3 passed, $(DOC_EXAMPLES_FIXTURE_FAILED) failed, 1 fragments skipped
+# It runs once on each version that PACKAGES declare.
 doc-examples-test:
-	@errors=$$(mktemp); \
-	summary=$$($(AGENTICA) tools/doc_examples.agc $(AGENTICA) $(DOC_EXAMPLES_FIXTURE) 2>$$errors); code=$$?; \
-	located=$$(grep -cE '^$(DOC_EXAMPLES_FIXTURE)/docs/_index.md:[0-9]+:' $$errors); rm -f $$errors; \
-	if [ $$code -ne 1 ] || [ "$$summary" != "$(DOC_EXAMPLES_FIXTURE_SUMMARY)" ] \
-		|| [ "$$located" != "$(DOC_EXAMPLES_FIXTURE_FAILED)" ]; then \
-		echo "doc-examples-test: expected exit 1, '$(DOC_EXAMPLES_FIXTURE_SUMMARY)' and $(DOC_EXAMPLES_FIXTURE_FAILED)" \
-			"located lines; got exit $$code, '$$summary' and $$located"; \
-		exit 1; \
-	fi; echo "doc-examples-test: ok"
+	@set -e; bins=$$(for p in $(PACKAGES); do $(AGENTICA_FOR) $$p || exit 1; done); \
+	for a in $$(printf '%s\n' $$bins | sort -u); do \
+		errors=$$(mktemp); \
+		code=0; summary=$$($$a tools/doc_examples.agc $$a $(DOC_EXAMPLES_FIXTURE) 2>$$errors) || code=$$?; \
+		located=$$(grep -cE '^$(DOC_EXAMPLES_FIXTURE)/docs/_index.md:[0-9]+:' $$errors || true); rm -f $$errors; \
+		if [ $$code -ne 1 ] || [ "$$summary" != "$(DOC_EXAMPLES_FIXTURE_SUMMARY)" ] \
+			|| [ "$$located" != "$(DOC_EXAMPLES_FIXTURE_FAILED)" ]; then \
+			echo "doc-examples-test ($$($$a --version)): expected exit 1, '$(DOC_EXAMPLES_FIXTURE_SUMMARY)' and" \
+				"$(DOC_EXAMPLES_FIXTURE_FAILED) located lines; got exit $$code, '$$summary' and $$located"; \
+			exit 1; \
+		fi; echo "doc-examples-test ($$($$a --version)): ok"; \
+	done
 
 # The documentation site (Hugo): the look, the layouts and the highlighter come from the docs theme, the submodule
 # site/themes/docs-theme; the pages are the docs/ folder of each package. The theme's styles need Dart Sass.

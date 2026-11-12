@@ -5,6 +5,7 @@
 ## connection has no buffer and the `Client` is a plain record. The only bytes read ahead are the socket's own, which
 ## `TCP.read_line` and `TCP.recv_bytes` share.
 
+import HTTP from "std/http"
 import Frame from "frame"
 import Handshake from "handshake"
 import Types from "types"
@@ -145,7 +146,7 @@ end
 # The start of the body of a refused answer: `Content-Length` bytes, at most `MAX_BODY_BYTES`. The bytes that came
 # before the peer closed or the deadline hit are kept; a body that is missing is "". It never fails the call: the
 # status and the headers are the answer.
-def read_body_of(socket: Socket, headers: List[Header], deadline: Int) -> String
+def read_body_of(socket: Socket, headers: List[HTTP.Header], deadline: Int) -> String
   size = Handshake.content_length(headers, Types.MAX_BODY_BYTES)
   return "" if size < 1
 
