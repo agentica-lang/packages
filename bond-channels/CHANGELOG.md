@@ -4,6 +4,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-12
+
+Needs Agentica 0.30.0 or later and Bond 0.11.0.
+
+### Changed
+
+- Needs Bond 0.11.0 (the package is pinned by the tag), which has no chain after the `end` of a `do` block, so the sources check with the next Agentica too. Nothing else changes.
+
 ## [0.3.0] - 2026-11-11
 
 Needs Agentica 0.30.0 or later and Bond 0.10.1.
