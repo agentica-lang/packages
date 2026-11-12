@@ -38,7 +38,7 @@ end
 
 ## Install
 
-Needs Agentica 0.30.0 or later. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
+Needs Agentica 0.31.0-alpha.1 or later. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
 
 ```sh
 agentica add prop https://github.com/agentica-lang/packages --tag prop-0.2.1 --subdir prop

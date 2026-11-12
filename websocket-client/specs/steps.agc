@@ -4,6 +4,7 @@
 
 import BDD from "std/bdd"
 import Binary from "std/binary"
+import HTTP from "std/http"
 import WebSocket from "../websocket"
 
 PORT = "port"
@@ -189,7 +190,7 @@ def allows_connect_forever(ctx: BDD.Context, _args: List[String]) -> BDD.Context
 end
 
 def options_of(ctx: BDD.Context) -> WebSocket.Options
-  headers = pairs_of(ctx).map do |pair| Header(name: pair.name, value: pair.value) end
+  headers = pairs_of(ctx).map do |pair| HTTP.Header(name: pair.name, value: pair.value) end
   tls: Optional[TlsContext] = none
   if BDD.get(ctx, TRUSTS).ok?
     tls = some(TLS.client_context(TlsClientOptions(ca_file: CERTIFICATE)).unwrap!)
@@ -219,12 +220,12 @@ def connect_to(ctx: BDD.Context, url: String) -> BDD.Context
 end
 
 def kept(ctx: BDD.Context, ws: WebSocket.Client) -> BDD.Context
-  service = serving() do |request| drive(ws, request) end
+  service = serving do |request| drive(ws, request) end
   BDD.set(BDD.keep(ctx, CLIENT, service), "protocol", JSON.from(ws.protocol))
 end
 
 # What the answer of the handshake said, for the steps that follow: its kind, status, headers and body.
-def noted(ctx: BDD.Context, kind: String, status: Int, headers: List[Header], body: String) -> BDD.Context
+def noted(ctx: BDD.Context, kind: String, status: Int, headers: List[HTTP.Header], body: String) -> BDD.Context
   pairs = headers.map do |header| Pair(name: header.name, value: header.value) end
   with_kind = BDD.set(ctx, "answer kind", JSON.from(kind))
   with_status = BDD.set(with_kind, "answer status", JSON.from(status))

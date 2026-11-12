@@ -4,6 +4,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Needs Agentica 0.31.0-alpha.1.
+
+### Changed
+
+- **Breaking:** needs Agentica 0.31.0-alpha.1: the headers of `Options`, `Client` and `Refused` are `List[HTTP.Header]` (`import HTTP from "std/http"`), the name of the header type in 0.31. CI tests with Agentica 0.31.0-alpha.1.
+
 ## [0.2.0] - 2026-11-12
 
 ### Added

@@ -8,16 +8,18 @@ is in GitHub issues of `agentica-lang/packages`.
 ```text
 README.md            the table of packages and how to install one
 Makefile             install, check, fmt-check, test and doc-examples, each run in every folder that has an
-                     agentica.toml; site
+                     agentica.toml, on the Agentica version of that folder; site
 tools/               doc_examples.agc: runs the `agentica` blocks of the docs (the rules are in its header);
-                     fixtures/doc_examples: a page where it must fail
-.github/workflows/   ci.yml: the changed packages, the pinned Agentica release, then the five targets; pages.yml: the
-                     site (pinned Hugo and Dart Sass)
+                     fixtures/doc_examples: a page where it must fail; agentica-for.sh: the binary of a package's
+                     Agentica version (the rules are in its header)
+.github/workflows/   ci.yml: the changed packages grouped by Agentica version, one job per version that installs that
+                     release and runs the five targets; pages.yml: the site (pinned Hugo and Dart Sass)
 .github/scripts/     changed-packages.sh: which packages a list of changed files marks (the rules are in its header)
 site/                the Hugo site: hugo.toml, content/_index.md (the home), layouts/ (overrides: the home's list of
                      packages, and links written as files that fail when missing); the look, the layouts and the
                      highlighter come from themes/docs-theme (the submodule agentica-lang/docs-theme)
-PACKAGE/             one package: agentica.toml, agentica.lock (when it has dependencies), src/, specs/, test/, docs/
+PACKAGE/             one package: AGENTICA_VERSION, agentica.toml, agentica.lock (when it has dependencies), src/,
+                     specs/, test/, docs/
 bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub, broadcast, stats); src/protocol.agc the frames
                      (pure), src/hub.agc the hub (an actor), src/connection.agc one connection, src/types.agc the records;
                      turbo_streams, stream_key and signed_stream_name are in channels.agc too: src/signing.agc the
@@ -64,7 +66,11 @@ websocket-client/    a WebSocket client (RFC 6455): websocket.agc is the API (co
 
 ## Commands
 
-- Agentica 0.30.0 on PATH (CI pins it with its sha256 in `ci.yml`; `AGENTICA=/path/agentica make ...` works too).
+- Each package runs on its own Agentica version, in `PACKAGE/AGENTICA_VERSION`: one line, the version and the
+  sha256 of its `linux-x86_64` archive (from `SHA256SUMS` of the release), which CI checks. The Makefile takes the
+  binary from `~/.local/share/agentica/agentica-VERSION-PLATFORM/bin/` (`AGENTICA_HOME` moves it), or the `agentica`
+  on PATH when it is that version; releases unpack there side by side. To move a package, edit that line, fix what
+  `agentica check` reports, and add a `**Breaking:**` line to its CHANGELOG.
 - `make install` fetches `deps/` from each lock (git ignores `deps/`). `make check`, `make fmt-check`, `make test`
   run in each package folder; to work on one package, `cd` into it and run `agentica check`, `agentica fmt --check`
   and `agentica test`.
@@ -100,6 +106,8 @@ websocket-client/    a WebSocket client (RFC 6455): websocket.agc is the API (co
   blocks are still fragments; a new example is a whole file with its `output`. The rules are in the header of
   `tools/doc_examples.agc`, and `make doc-examples-test` checks the tool on its fixture. Site prose: one line per
   paragraph or list item, simple words.
+- `make test` runs the files and scenarios of a package `JOBS` at a time; a package whose scenarios share files on
+  disk is in `SERIAL_PACKAGES` of the Makefile and runs one at a time.
 - Each package has its own CHANGELOG.md; a user-visible change adds a line under its `## [Unreleased]`; a release renames
   it to `## [X.Y.Z] - DATE` and tags `PACKAGE-X.Y.Z`.
 - Release: a tag `PACKAGE-X.Y.Z` on main, made by the owner. A PR never pushes a tag.

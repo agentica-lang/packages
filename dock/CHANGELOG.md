@@ -4,6 +4,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Needs Agentica 0.31.0-alpha.1.
+
+### Changed
+
+- **Breaking:** needs Agentica 0.31.0-alpha.1. CI tests with Agentica 0.31.0-alpha.1.
+
 ## [0.2.0] - 2026-11-11
 
 Needs Agentica 0.30.0 or later.

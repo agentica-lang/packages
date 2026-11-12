@@ -40,11 +40,15 @@ end
 
 ```agentica {mode="check"}
 import WebSocket from "pkg/websocket-client/websocket"
+import HTTP from "std/http"
 
 def connect_to_cable() -> Result[WebSocket.Client]
   options = WebSocket.Options(
     protocols: ["actioncable-v1-json"],
-    headers: [Header(name: "Cookie", value: "user=ana"), Header(name: "Origin", value: "http://127.0.0.1:3000")],
+    headers: [
+      HTTP.Header(name: "Cookie", value: "user=ana"),
+      HTTP.Header(name: "Origin", value: "http://127.0.0.1:3000"),
+    ],
   )
   WebSocket.connect("ws://127.0.0.1:3000/cable", options)
 end
@@ -118,7 +122,7 @@ def count_up(ws: HTTP.WebSocket) -> Result[Void]
   ws.outgoing.send(HTTP.Message.Close(1000, "enough"), 5000)
 end
 
-def route(request: HttpRequest, _body: HTTP.RequestBody) -> Result[HTTP.Answer]
+def route(request: HTTP.Request, _body: HTTP.RequestBody) -> Result[HTTP.Answer]
   ok(HTTP.Answer.Upgrade(try HTTP.accept_websocket(request, &count_up)))
 end
 

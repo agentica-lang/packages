@@ -1,6 +1,8 @@
 ## The opening handshake of RFC 6455 for a client (section 4.1), as pure functions: the URL, the request text, and the
 ## check of the answer. The socket is in `connection.agc`.
 
+import HTTP from "std/http"
+
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_PORT = 65_535
 ## The status of a good handshake.
@@ -85,7 +87,7 @@ end
 ## The text of the handshake request for the `key` (the base64 of 16 random bytes), with the subprotocols that the
 ## client offers and the extra headers of the caller. An `error` for a header that the handshake owns, a name that is
 ## not a token and a value with a line break.
-export def request(target: Target, key: String, protocols: List[String], headers: List[Header]) -> Result[String]
+export def request(target: Target, key: String, protocols: List[String], headers: List[HTTP.Header]) -> Result[String]
   lines = [
     "GET #{target.path} HTTP/1.1",
     "Host: #{host_header(target)}",
@@ -157,13 +159,13 @@ end
 
 ## The headers of an answer as written (name and value, the value without the spaces around it), from the lines after
 ## the status line. A line with no colon is dropped.
-export def headers_of(lines: List[String]) -> List[Header]
-  headers: List[Header] = []
+export def headers_of(lines: List[String]) -> List[HTTP.Header]
+  headers: List[HTTP.Header] = []
   for field in lines
     case field.index_of(":")
       some(colon) ->
         value = field.slice(colon + 1, field.length - colon - 1).strip
-        headers = headers.push(Header(name: field.slice(0, colon).strip, value: value))
+        headers = headers.push(HTTP.Header(name: field.slice(0, colon).strip, value: value))
 
       none -> nil
     end
@@ -174,7 +176,7 @@ end
 
 ## The first `Content-Length` of the headers, at most `cap`: a value of digits only that does not fit an Int counts as
 ## `cap`, and anything else that is not a number (or no header) is 0.
-export def content_length(headers: List[Header], cap: Int) -> Int
+export def content_length(headers: List[HTTP.Header], cap: Int) -> Int
   for header in headers
     if header.name.downcase == "content-length"
       value = header.value.strip
@@ -273,7 +275,7 @@ def clean?(value: String) -> Bool
   true
 end
 
-def check_header(header: Header) -> Result[Void]
+def check_header(header: HTTP.Header) -> Result[Void]
   return error("a header name must be a token: \"#{header.name}\"") if not token?(header.name)
 
   return error("#{header.name} is written by the handshake itself") if OWNED.include?(header.name.downcase)
