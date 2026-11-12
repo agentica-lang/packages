@@ -4,6 +4,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-12
+
+### Added
+
+- `WebSocket.handshake`: like `connect`, but a server that does not upgrade (a 403, a 426) gives `Refused(status, headers, body)` instead of an `error`, so a program can read why.
+- `Client.status` and `Client.headers`: the answer of the 101 handshake, with the header names as the server wrote them.
+
 ## [0.1.0] - 2026-11-12
 
 Needs Agentica 0.30.0 or later.

@@ -3,7 +3,7 @@
 ## then runs the script that it got as program arguments, one operation each:
 ##
 ##   handshake MODE [ARG]  first, and optional: ok (the default), drip MS (the answer one byte at a time, MS apart),
-##                         protocol NAME, status CODE, bad-accept,
+##                         protocol NAME, status CODE [BODY], bad-accept,
 ##                         missing-upgrade, extension or mixed-case (header names and tokens in odd case)
 ##   send HEX              writes these bytes (spaces in HEX are ignored); the first `send` goes out in the same write
 ##                         as the answer to the handshake, so a frame that comes with it is always there at once
@@ -87,9 +87,19 @@ def answer(mode: List[String], key: String) -> String
       )
     "extension" -> "#{head}Sec-WebSocket-Accept: #{accept}\r\nSec-WebSocket-Extensions: permessage-deflate\r\n\r\n"
     "protocol" -> "#{head}Sec-WebSocket-Accept: #{accept}\r\nSec-WebSocket-Protocol: #{mode[1]}\r\n\r\n"
-    "status" -> "HTTP/1.1 #{mode[1]} Refused\r\nContent-Length: 0\r\n\r\n"
+    "status" -> refusal(mode)
     _ -> "#{head}Sec-WebSocket-Accept: #{accept}\r\n\r\n"
   end
+end
+
+# A refusal has a header and, when the script gives one, a body with its Content-Length.
+def refusal(mode: List[String]) -> String
+  body = ""
+  if mode.size > 2
+    body = mode[2]
+  end
+
+  "HTTP/1.1 #{mode[1]} Refused\r\nX-Reason: test\r\nContent-Length: #{body.bytes.size}\r\n\r\n#{body}"
 end
 
 def read_frame(socket: Socket) -> Result[Frame]

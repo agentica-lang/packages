@@ -3,7 +3,8 @@
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_PORT = 65_535
-SWITCHING = 101
+## The status of a good handshake.
+export SWITCHING = 101
 # The bytes of a token (RFC 9110 5.6.2): what the name of a header and of a subprotocol are made of.
 TOKEN_BYTES = "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".bytes
 # The headers that the handshake writes itself: a caller that sets one of them would break it.
@@ -146,6 +147,40 @@ export def check_response(lines: List[String], key: String, protocols: List[Stri
   ok(name)
 end
 
+## The status of the first line of an answer; an `error` when it is not HTTP/1.x.
+export def status_of(line: String) -> Result[Int]
+  parts = line.split(" ")
+  return error("the answer is not HTTP: #{line}") if parts.size < 2 or not parts[0].start_with?("HTTP/1.")
+
+  parts[1].to_i
+end
+
+## The headers of an answer as written (name and value, the value without the spaces around it), from the lines after
+## the status line. A line with no colon is dropped.
+export def headers_of(lines: List[String]) -> List[Header]
+  headers: List[Header] = []
+  for field in lines
+    case field.index_of(":")
+      some(colon) ->
+        value = field.slice(colon + 1, field.length - colon - 1).strip
+        headers = headers.push(Header(name: field.slice(0, colon).strip, value: value))
+
+      none -> nil
+    end
+  end
+
+  headers
+end
+
+## The `Content-Length` of the headers: 0 when it is missing or is not a number.
+export def content_length(headers: List[Header]) -> Int
+  for header in headers
+    return header.value.to_i.unwrap_or(0) if header.name.downcase == "content-length"
+  end
+
+  0
+end
+
 def default_port(secure: Bool) -> Int
   return 443 if secure
 
@@ -237,13 +272,6 @@ def check_header(header: Header) -> Result[Void]
   return error("the value of #{header.name} has a line break") if not clean?(header.value)
 
   ok()
-end
-
-def status_of(line: String) -> Result[Int]
-  parts = line.split(" ")
-  return error("the answer is not HTTP: #{line}") if parts.size < 2 or not parts[0].start_with?("HTTP/1.")
-
-  parts[1].to_i
 end
 
 # The values of the header `name` (lowercase) in every field, as written; a line with no colon has none.

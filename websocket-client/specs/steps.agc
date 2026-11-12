@@ -69,6 +69,11 @@ export def steps() -> List[BDD.Step]
     BDD.step("the client allows no end to connect", &allows_connect_forever),
     BDD.step("the client connects to {string}", &connects),
     BDD.step("the client connects to a port that nobody listens at", &connects_to_nothing),
+    BDD.step("the client performs the handshake with {string}", &performs_handshake),
+    BDD.step("the handshake is open with the status {int}", &handshake_is_open),
+    BDD.step("the handshake is refused with the status {int}", &handshake_is_refused),
+    BDD.step("the answer has the header {string} with {string}", &answer_has_header),
+    BDD.step("the answer has the body {string}", &answer_has_body),
     BDD.step("the connection fails with {string}", &connection_fails),
     BDD.step("the subprotocol is {string}", &subprotocol_is),
     BDD.step("the client sends the text {string}", &sends_text),
@@ -208,6 +213,57 @@ def connect_to(ctx: BDD.Context, url: String) -> BDD.Context
       BDD.set(BDD.keep(ctx, CLIENT, service), "protocol", JSON.from(ws.protocol))
     error(reason) -> BDD.set(ctx, FAILURE, JSON.from(reason))
   end
+end
+
+def kept(ctx: BDD.Context, ws: WebSocket.Client) -> BDD.Context
+  service = serving() do |request| drive(ws, request) end
+  BDD.set(BDD.keep(ctx, CLIENT, service), "protocol", JSON.from(ws.protocol))
+end
+
+# What the answer of the handshake said, for the steps that follow: its kind, status, headers and body.
+def noted(ctx: BDD.Context, kind: String, status: Int, headers: List[Header], body: String) -> BDD.Context
+  pairs = headers.map do |header| Pair(name: header.name, value: header.value) end
+  with_kind = BDD.set(ctx, "answer kind", JSON.from(kind))
+  with_status = BDD.set(with_kind, "answer status", JSON.from(status))
+  BDD.set(BDD.set(with_status, "answer headers", JSON.from(pairs)), "answer body", JSON.from(body))
+end
+
+def performs_handshake(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  port = JSON.int(BDD.get(ctx, PORT).unwrap!).unwrap!
+  case WebSocket.handshake(args[0].replace("PORT", "#{port}"), options_of(ctx))
+    error(reason) -> BDD.set(ctx, FAILURE, JSON.from(reason))
+
+    ok(answer) ->
+      case answer
+        WebSocket.Handshake.Open(ws) -> noted(kept(ctx, ws), "open", ws.status, ws.headers, "")
+        WebSocket.Handshake.Refused(status, headers, body) -> noted(ctx, "refused", status, headers, body)
+      end
+  end
+end
+
+def answer_text(ctx: BDD.Context, name: String) -> String = JSON.string(BDD.get(ctx, name).unwrap!).unwrap!
+
+def handshake_is_open(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  kind = answer_text(ctx, "answer kind")
+  status = JSON.int(BDD.get(ctx, "answer status").unwrap!).unwrap!
+  BDD.assert(ctx, kind == "open" and status == args[0].to_i!, "the handshake was #{kind} with #{status}")
+end
+
+def handshake_is_refused(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  kind = answer_text(ctx, "answer kind")
+  status = JSON.int(BDD.get(ctx, "answer status").unwrap!).unwrap!
+  BDD.assert(ctx, kind == "refused" and status == args[0].to_i!, "the handshake was #{kind} with #{status}")
+end
+
+def answer_has_header(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  pairs = JSON.decode(BDD.get(ctx, "answer headers").unwrap!, List[Pair]).unwrap!
+  found = pairs.any? do |pair| pair.name == args[0] and pair.value == args[1] end
+  BDD.assert(ctx, found, "no header #{args[0]}: #{args[1]} in #{pairs}")
+end
+
+def answer_has_body(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  body = answer_text(ctx, "answer body")
+  BDD.assert(ctx, body == args[0], "the body is \"#{body}\"")
 end
 
 def connects(ctx: BDD.Context, args: List[String]) -> BDD.Context

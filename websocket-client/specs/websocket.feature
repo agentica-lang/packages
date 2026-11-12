@@ -74,6 +74,50 @@ Feature: A WebSocket client
       | extension      | extension                  |
       | protocol other | subprotocol                |
 
+  Scenario Outline: A server that does not upgrade is an answer to read with `handshake`, and `connect` fails on it
+    Given the raw peer listens with the script:
+      """
+      handshake status <status> <body>
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the handshake is refused with the status <status>
+    And the answer has the header "X-Reason" with "test"
+    And the answer has the body "<body>"
+
+    Examples:
+      | status | body       |
+      | 403    | forbidden  |
+      | 426    | upgrade    |
+
+  Scenario: A refused answer with no body has an empty one
+    Given the raw peer listens with the script:
+      """
+      handshake status 404
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the handshake is refused with the status 404
+    And the answer has the body ""
+
+  Scenario: A 101 that is not a good handshake is still an error with `handshake`
+    Given the raw peer listens with the script:
+      """
+      handshake bad-accept
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the connection fails with "Sec-WebSocket-Accept"
+
+  Scenario: An open handshake has the status and the headers as the server wrote them, and the connection works
+    Given the raw peer listens with the script:
+      """
+      handshake mixed-case
+      send 81 02 68 69
+      wait
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the handshake is open with the status 101
+    And the answer has the header "UPGRADE" with "WebSocket"
+    And the client receives the text "hi"
+
   Scenario: Every frame of the client is masked and whole
     Given the raw peer listens with the script:
       """

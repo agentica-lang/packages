@@ -28,7 +28,19 @@ enum Step
   Broke(String)
 end
 
-export def connect(url: String, options: Types.Options) -> Result[Types.Client] = prefixed(open(url, options))
+export def connect(url: String, options: Types.Options) -> Result[Types.Client]
+  case prefixed(open(url, options))
+    ok(answer) ->
+      case answer
+        Types.Handshake.Open(client) -> ok(client)
+        Types.Handshake.Refused(status, _, _) -> error("websocket: the server answered #{status}, not 101")
+      end
+
+    error(reason) -> error(reason)
+  end
+end
+
+export def handshake(url: String, options: Types.Options) -> Result[Types.Handshake] = prefixed(open(url, options))
 
 export def send_data(client: Types.Client, opcode: Int, payload: Bytes) -> Result[Void]
   prefixed(send_frame(client, opcode, payload, MAX_SEND))
@@ -68,7 +80,7 @@ def check_options(options: Types.Options) -> Result[Void]
   ok()
 end
 
-def open(url: String, options: Types.Options) -> Result[Types.Client]
+def open(url: String, options: Types.Options) -> Result[Types.Handshake]
   try check_options(options)
   target = try Handshake.parse_url(url)
   key = Base64.strict_encode64(OpenSSL.Random.random_bytes(KEY_BYTES))
@@ -91,16 +103,48 @@ def dial(target: Handshake.Target, options: Types.Options) -> Result[Socket]
   end
 end
 
-def upgrade(socket: Socket, request: String, key: String, options: Types.Options) -> Result[Types.Client]
+# One deadline covers the head and the body of the answer. Any status but 101 is a `Refused` with what the server
+# said; a 101 that is not a good handshake is an `error`.
+def upgrade(socket: Socket, request: String, key: String, options: Types.Options) -> Result[Types.Handshake]
+  deadline = Time.monotonic_ms() + options.timeout_ms
   try TCP.send(socket, request, options.timeout_ms)
-  lines = try read_answer(socket, options.timeout_ms)
+  lines = try read_answer(socket, deadline)
+  return error("the server sent no answer") if lines.empty?
+
+  status = try Handshake.status_of(lines[0])
+  headers = Handshake.headers_of(lines.drop(1))
+  if status != Handshake.SWITCHING
+    body = read_body(socket, headers, deadline)
+    TCP.close(socket)
+    return ok(Types.Handshake.Refused(status, headers, body))
+  end
+
   protocol = try Handshake.check_response(lines, key, options.protocols)
-  ok(Types.Client(socket: socket, protocol: protocol, options: options))
+  ok(
+    Types.Handshake.Open(
+      Types.Client(socket: socket, protocol: protocol, options: options, status: status, headers: headers),
+    ),
+  )
+end
+
+# The start of the body of a refused answer: `Content-Length` bytes, at most `MAX_BODY_BYTES`. A body that is missing,
+# short or not UTF-8 is "" or what came: the status and the headers are the answer, so this never fails the call.
+def read_body(socket: Socket, headers: List[Header], deadline: Int) -> String
+  size = Handshake.content_length(headers)
+  if size > Types.MAX_BODY_BYTES
+    size = Types.MAX_BODY_BYTES
+  end
+
+  return "" if size < 1
+
+  case read_exact(socket, size, deadline)
+    ok(data) -> String.from_bytes(data).unwrap_or("")
+    error(_) -> ""
+  end
 end
 
 # The lines of the head of the answer, up to the empty line.
-def read_answer(socket: Socket, timeout_ms: Int) -> Result[List[String]]
-  deadline = Time.monotonic_ms() + timeout_ms
+def read_answer(socket: Socket, deadline: Int) -> Result[List[String]]
   lines: List[String] = []
   size = 0
   while true

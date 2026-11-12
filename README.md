@@ -19,7 +19,7 @@ prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.2.0", 
 | `prop` (`prop-0.2.0`) | Property-based testing: generators, shrinking, `Prop.check`, which runs a law on generated inputs and reports the smallest counterexample with its seed, law helpers, `Prop.of` for your types and a bounded exhaustive check. [Docs](https://agentica-lang.github.io/packages/prop/) |
 | `native-gen` (`native-gen-0.2.0`) | The C header of an `extern module` block: typed prototypes, the argument checks, the codecs and the tables of the module, generated from the `.agc`, and `new` to start a module. [Docs](https://agentica-lang.github.io/packages/native-gen/) |
 | `dock` (`dock-0.2.0`) | A TCP server: an accept loop, a task per client that runs your handler, and the clean-up when a client ends or crashes (`dock/dock.agc`). [Docs](https://agentica-lang.github.io/packages/dock/) |
-| `websocket-client` (`websocket-client-0.1.0`) | A WebSocket client (RFC 6455) over `std` TCP and TLS: `ws://` and `wss://`, text and binary messages, fragments, pings, the close handshake, a size limit and a read timeout (`websocket-client/websocket`). [Docs](https://agentica-lang.github.io/packages/websocket-client/) |
+| `websocket-client` (`websocket-client-0.2.0`) | A WebSocket client (RFC 6455) over `std` TCP and TLS: `ws://` and `wss://`, text and binary messages, fragments, pings, the close handshake, a size limit and a read timeout (`websocket-client/websocket`). [Docs](https://agentica-lang.github.io/packages/websocket-client/) |
 | `cache` (planned) | Cache strategies (CLOCK, sampled LRU, TinyLFU) behind the `Cache` facade of `std/cache` |
 
 ## Tags

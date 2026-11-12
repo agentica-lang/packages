@@ -10,6 +10,21 @@ weight: 1
 
 It opens a TCP connection (TLS for `wss`), sends the upgrade request with a new random `Sec-WebSocket-Key`, and checks the answer. The handshake is refused, and the socket closed, for a status other than 101, a missing `Upgrade: websocket` or `Connection: Upgrade`, a wrong `Sec-WebSocket-Accept`, a subprotocol that the client did not offer, and an extension (the client offers none).
 
+`WebSocket.handshake(url)` does the same, but a server that answers with a status other than 101 is not an `error`: you get `Refused(status, headers, body)` and the socket is closed. Use it to see why a server said no (a 403 for a wrong `Origin`, a 426 for a wrong version). `Open(client)` is the same `Client` that `connect` returns, with the `status` (101) and the `headers` of the answer, in the names that the server wrote. The body of a refused answer is read as long as its `Content-Length`, at most 64 KiB, within `timeout_ms`; it is `""` when the server sent no `Content-Length` (a chunked body is not read) or sent less. An `error` stays for a bad URL or option, a failed connect, a timeout, an answer that is not HTTP, and a 101 that is not a good handshake:
+
+```agentica {mode="check"}
+import WebSocket from "pkg/websocket-client/websocket"
+
+def why(url: String) -> Result[Void]
+  case try WebSocket.handshake(url)
+    WebSocket.Handshake.Open(ws) -> puts("open, protocol #{ws.protocol}")
+    WebSocket.Handshake.Refused(status, _, body) -> puts("refused #{status}: #{body}")
+  end
+
+  ok()
+end
+```
+
 `Options.headers` go in the request: cookies, `Authorization`, `Origin`. `Host`, `Upgrade`, `Connection` and the `Sec-WebSocket-*` headers are written by the handshake and refused here, as is a name that is not a token or a value with a line break.
 
 `Options.protocols` lists the subprotocols to offer, and `client.protocol` is the one the server chose (`""` for none):

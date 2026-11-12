@@ -22,14 +22,24 @@ import Frame from "src/frame"
 import Types from "src/types"
 
 export Types.Client
+export Types.Handshake
 export Types.Message
 export Types.Options
 
-## Connects to a `ws://` or `wss://` URL: the TCP or TLS connection, then the HTTP/1.1 upgrade of RFC 6455. An `error`
+## Connects to a `ws://` or `wss://` URL, and returns the `Client` (its `status` and `headers` are the answer): the TCP or TLS connection, then the HTTP/1.1 upgrade of RFC 6455. An `error`
 ## for a bad URL or option, a failed connect, an answer that is not a good handshake (a status other than 101, a wrong
 ## `Sec-WebSocket-Accept`, a subprotocol that was not offered, an extension), and a timeout.
 export def connect(url: String, options: Types.Options = Types.Options()) -> Result[Types.Client]
   Connection.connect(url, options)
+end
+
+## Like `connect`, but a server that answers with any status but 101 is not an `error`: the result is `Refused` with
+## the status, the headers (names as the server wrote them) and the start of the body (at most 64 KiB, as long as its
+## `Content-Length`, and "" when it sent none). The socket is closed then. An `error` is a bad URL or option, a failed
+## connect, a timeout, an answer that is not HTTP, and a 101 that is not a good handshake (wrong accept, no
+## `Upgrade`, a subprotocol that was not offered, an extension).
+export def handshake(url: String, options: Types.Options = Types.Options()) -> Result[Types.Handshake]
+  Connection.handshake(url, options)
 end
 
 ## Sends a text message (one frame). A message over 1 MiB less its head is an `error`.
