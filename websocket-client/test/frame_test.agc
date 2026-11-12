@@ -184,3 +184,19 @@ def test_a_close_payload_is_checked_before_it_is_sent() -> Result[Void]
   try Test.error?(Frame.close_payload(1000, "x" * 124))
   Test.ok?(Frame.close_payload(1000, "x" * 123))
 end
+
+# 1 + (2^63 - 1) would overflow an Int if the held bytes were added to a length from the network.
+def test_a_huge_length_after_a_fragment_does_not_overflow() -> Result[Void]
+  Test.eq(problem_code(Frame.check_head(head("807f7fffffffffffffff"), 10, 1)), Frame.CLOSE_TOO_BIG)
+end
+
+def test_a_length_must_have_its_shortest_form() -> Result[Void]
+  max = 100_000
+  try Test.eq(problem_code(Frame.check_head(head("827e0005"), max, 0)), Frame.CLOSE_PROTOCOL)
+  try Test.eq(problem_code(Frame.check_head(head("827e007d"), max, 0)), Frame.CLOSE_PROTOCOL)
+  try Test.eq(problem_code(Frame.check_head(head("827e007e"), max, 0)), 0)
+  try Test.eq(problem_code(Frame.check_head(head("827f000000000000ffff"), max, 0)), Frame.CLOSE_PROTOCOL)
+  try Test.eq(problem_code(Frame.check_head(head("827f0000000000010000"), max, 0)), 0)
+  # A control frame with a long form is refused anyway.
+  Test.eq(problem_code(Frame.check_head(head("897e0005"), max, 0)), Frame.CLOSE_PROTOCOL)
+end

@@ -39,13 +39,15 @@ end
 
 ## The head of a frame. It is read in two steps: the first two bytes (`head_of`) and then the tail they announce
 ## (`tail_size`, `complete`). `length` holds the 7-bit length until the tail completes it, and is -1 for a 64-bit
-## length that has its top bit set. `key` is empty for a frame that is not masked.
+## length that has its top bit set. `form` is the 7-bit length field as it came (126 and 127 announce a longer form).
+## `key` is empty for a frame that is not masked.
 export struct Head
   fin: Bool
   opcode: Int
   masked: Bool
   reserved: Int
   length: Int
+  form: Int
   key: Bytes
 end
 
@@ -112,6 +114,7 @@ export def head_of(two: Bytes) -> Head
     masked: second >= 128,
     reserved: (first / 16) % 8,
     length: second % 128,
+    form: second % 128,
     key: NO_BYTES,
   )
 end
@@ -147,7 +150,15 @@ export def complete(head: Head, tail: Bytes) -> Head
     key = tail.slice(used, KEY_BYTES)
   end
 
-  Head(fin: head.fin, opcode: head.opcode, masked: head.masked, reserved: head.reserved, length: length, key: key)
+  Head(
+    fin: head.fin,
+    opcode: head.opcode,
+    masked: head.masked,
+    reserved: head.reserved,
+    length: length,
+    form: head.form,
+    key: key,
+  )
 end
 
 ## What is wrong with a head whose tail was read, when something is, given the `held` bytes of the earlier fragments
@@ -160,11 +171,14 @@ export def check_head(head: Head, max: Int, held: Int) -> Optional[Problem]
 
   return some(Problem(code: CLOSE_PROTOCOL, reason: "unknown opcode")) if not known_opcode?(head.opcode)
 
+  return some(Problem(code: CLOSE_PROTOCOL, reason: "a length is not in its shortest form")) if long_form?(head)
+
   return check_control(head) if control?(head.opcode)
 
   return some(Problem(code: CLOSE_PROTOCOL, reason: "invalid frame length")) if head.length < 0
 
-  return some(Problem(code: CLOSE_TOO_BIG, reason: "message too big")) if held + head.length > max
+  # Not `held + length > max`: a length from the network can be 2^63 - 1, and the sum would overflow.
+  return some(Problem(code: CLOSE_TOO_BIG, reason: "message too big")) if head.length > max - held
 
   none
 end
@@ -233,6 +247,13 @@ export def valid_code?(code: Int) -> Bool
   return true if code >= 3000 and code <= 4999
 
   code >= 1000 and code <= 1014 and code != 1004 and code != 1005 and code != 1006
+end
+
+# RFC 6455 5.2: the shortest form of the length must be used (126 is for 126 to 65535, 127 for more).
+def long_form?(head: Head) -> Bool
+  return head.length < 126 if head.form == 126
+
+  head.form == 127 and head.length >= 0 and head.length < 65_536
 end
 
 def known_opcode?(opcode: Int) -> Bool = opcode <= BINARY or (opcode >= CLOSE and opcode <= PONG)

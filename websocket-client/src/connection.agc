@@ -20,11 +20,12 @@ MAX_HEAD_BYTES = 16_384
 KEY_BYTES = 16
 MASK_BYTES = 4
 
-# What reading a frame gave: a frame, the end of the connection, or a frame that a check refused.
+# What reading a frame gave: a frame, the end of the connection, a frame that a check refused, or an I/O error.
 enum Step
   Got(Frame.Head, Bytes)
   Ended
   Refused(Frame.Problem)
+  Broke(String)
 end
 
 export def connect(url: String, options: Types.Options) -> Result[Types.Client] = prefixed(open(url, options))
@@ -92,10 +93,11 @@ end
 
 # The lines of the head of the answer, up to the empty line.
 def read_answer(socket: Socket, timeout_ms: Int) -> Result[List[String]]
+  deadline = Time.monotonic_ms() + timeout_ms
   lines: List[String] = []
   size = 0
   while true
-    line = try TCP.read_line(socket, timeout_ms)
+    line = try TCP.read_line(socket, try left(deadline))
     break if line.empty?
 
     lines = lines.push(line)
@@ -115,8 +117,17 @@ def send_frame(client: Types.Client, opcode: Int, payload: Bytes, limit: Int) ->
   TCP.send_bytes(client.socket, Frame.encode(opcode, payload, key), client.options.timeout_ms)
 end
 
+# The milliseconds until `deadline`. Each wait of a read gets the time that is left, so a server cannot hold a read
+# open by sending a byte just before each timeout.
+def left(deadline: Int) -> Result[Int]
+  time = deadline - Time.monotonic_ms()
+  return error("operation timed out") if time < 1
+
+  ok(time)
+end
+
 # Bytes exactly as many as asked, or fewer when the server ended the connection first.
-def read_exact(socket: Socket, count: Int, timeout_ms: Int) -> Result[Bytes]
+def read_exact(socket: Socket, count: Int, deadline: Int) -> Result[Bytes]
   parts: List[Bytes] = []
   have = 0
   while have < count
@@ -125,7 +136,7 @@ def read_exact(socket: Socket, count: Int, timeout_ms: Int) -> Result[Bytes]
       want = READ_BYTES
     end
 
-    chunk = try TCP.recv_bytes(socket, want, timeout_ms)
+    chunk = try TCP.recv_bytes(socket, want, try left(deadline))
     break if chunk.empty?
 
     parts = parts.push(chunk)
@@ -135,14 +146,14 @@ def read_exact(socket: Socket, count: Int, timeout_ms: Int) -> Result[Bytes]
   ok(Bytes.concat(parts))
 end
 
-# One frame, checked: `held` is what the message has so far.
-def read_frame(client: Types.Client, held: Int, timeout_ms: Int) -> Result[Step]
+# One frame, checked, to be read before `deadline`: `held` is what the message has so far.
+def read_frame(client: Types.Client, held: Int, deadline: Int) -> Result[Step]
   socket = client.socket
-  two = try read_exact(socket, 2, timeout_ms)
+  two = try read_exact(socket, 2, deadline)
   return ok(Step.Ended) if two.size < 2
 
   first = Frame.head_of(two)
-  tail = try read_exact(socket, Frame.tail_size(first), timeout_ms)
+  tail = try read_exact(socket, Frame.tail_size(first), deadline)
   return ok(Step.Ended) if tail.size < Frame.tail_size(first)
 
   head = Frame.complete(first, tail)
@@ -151,16 +162,25 @@ def read_frame(client: Types.Client, held: Int, timeout_ms: Int) -> Result[Step]
     none -> nil
   end
 
-  payload = try read_exact(socket, head.length, timeout_ms)
+  payload = try read_exact(socket, head.length, deadline)
   return ok(Step.Ended) if payload.size < head.length
 
   ok(Step.Got(head, payload))
 end
 
+def step_of(client: Types.Client, held: Int, deadline: Int) -> Step
+  case read_frame(client, held, deadline)
+    ok(step) -> step
+    error(reason) -> Step.Broke(reason)
+  end
+end
+
 def read_message(client: Types.Client) -> Result[Types.Message]
   assembly = Frame.new_assembly()
   while true
-    case try read_frame(client, assembly.total, client.options.read_timeout_ms)
+    deadline = Time.monotonic_ms() + client.options.read_timeout_ms
+    case step_of(client, assembly.total, deadline)
+      Step.Broke(reason) -> return broke(client, reason)
       Step.Ended -> return ended(client)
       Step.Refused(problem) -> return error(reject(client, problem))
       Step.Got(head, payload) ->
@@ -193,8 +213,14 @@ end
 # its code (RFC 6455 5.5.1) and ends the connection.
 def control(client: Types.Client, head: Frame.Head, payload: Bytes) -> Result[Optional[Types.Message]]
   if head.opcode == Frame.PING
-    try send_frame(client, Frame.PONG, payload, Frame.CONTROL_BYTES)
-    return ok(none)
+    case send_frame(client, Frame.PONG, payload, Frame.CONTROL_BYTES)
+      ok(_) -> return ok(none)
+      error(reason) ->
+        case broke(client, reason)
+          ok(message) -> return ok(some(message))
+          error(text) -> return error(text)
+        end
+    end
   end
 
   return ok(none) if head.opcode == Frame.PONG
@@ -218,6 +244,16 @@ end
 def ended(client: Types.Client) -> Result[Types.Message]
   TCP.close(client.socket)
   ok(Types.Message.Close(Frame.CLOSE_ABNORMAL, ""))
+end
+
+# An I/O error ends the connection and the socket is closed. A timeout is the caller's error; any other (a reset, a
+# broken pipe) is a connection that ended with no close frame, 1006. A socket that is closed already (after a close)
+# is the caller's error.
+def broke(client: Types.Client, reason: String) -> Result[Types.Message]
+  return ended(client) if not reason.include?("timed out") and not reason.include?("socket is closed")
+
+  TCP.close(client.socket)
+  error(reason)
 end
 
 # A frame that broke a rule: the server is told with a close frame of the problem's code, the socket is closed, and
@@ -245,16 +281,14 @@ end
 def await_close(client: Types.Client) -> Void
   deadline = Time.monotonic_ms() + client.options.close_timeout_ms
   while true
-    left = deadline - Time.monotonic_ms()
-    return if left < 1
-
-    case read_frame(client, 0, left)
+    case read_frame(client, 0, deadline)
       error(_) -> return
       ok(step) ->
         case step
           Step.Got(head, _) -> return if head.opcode == Frame.CLOSE
           Step.Ended -> return
           Step.Refused(_) -> return
+          Step.Broke(_) -> return
         end
     end
   end

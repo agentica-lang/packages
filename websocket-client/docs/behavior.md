@@ -50,20 +50,20 @@ Masking runs in Agentica, at about 2 MB/s.
 - Fragments of a message are joined, and a control frame between them is handled on the way.
 - A ping is answered at once with a pong that has the same payload. A pong is dropped.
 - A text message is checked to be UTF-8.
-- A close frame is answered with its code, the socket is closed, and `receive` returns `Close(code, reason)`. The code is 1005 when the server sent none. A connection that ends with no close frame is `Close(1006, "")`, as the server of `std/http` tells its sessions.
+- A close frame is answered with its code, the socket is closed, and `receive` returns `Close(code, reason)`. The code is 1005 when the server sent none. A connection that ends with no close frame (the server dropped it, even in the middle of a frame, or reset it) is `Close(1006, "")`, as the server of `std/http` tells its sessions.
 - After a `Close`, or after `close`, the next `receive` is an `error`.
 
-These make `receive` close the connection with a close frame and return an `error` with the rule that was broken (the server sees the code in brackets):
+These make `receive` close the connection with a close frame and return an `error` with the rule that was broken:
 
 | What the server sent | Close code |
 |---|---|
-| a masked frame, a reserved bit (no extension is in use), an unknown opcode, a control frame over 125 bytes or fragmented, a continuation with no message, a new message inside a fragmented one, a bad length, a bad close frame | 1002 |
+| a masked frame, a reserved bit (no extension is in use), an unknown opcode, a control frame over 125 bytes or fragmented, a continuation with no message, a new message inside a fragmented one, a length that is not in its shortest form, a bad close frame (one byte, or a code that no peer may send) | 1002 |
 | a text message that is not UTF-8, or a close reason that is not | 1007 |
 | a message over `max_message_bytes` (all its fragments together) | 1009 |
 
 The size is checked from the head of a frame, before its payload is read, so a server cannot make the client hold more than `max_message_bytes`.
 
-A read that waits longer than `read_timeout_ms` for the next bytes is an `error` and closes the connection: the VM closes a socket whose I/O timed out. A server that pings keeps the wait alive, since each frame that arrives starts a new wait. For a quiet server, use a long `read_timeout_ms`.
+`read_timeout_ms` is the time for one whole frame, from the first byte to the last, so a server that sends a byte now and then cannot hold `receive`. A frame that is not complete by then is an `error` and the connection is closed. A server that pings keeps the connection alive, since each frame that arrives starts a new wait. The handshake and the wait of `close` have their own deadline the same way. For a quiet server, use a long `read_timeout_ms`.
 
 ## Close
 

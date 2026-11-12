@@ -4,10 +4,10 @@
 ##
 ## `headers` go in the handshake (cookies, `Authorization`, `Origin`); the headers that the handshake writes itself are
 ## refused. `protocols` are the subprotocols offered, in order of preference. `max_message_bytes` caps a message, all
-## its fragments together. `timeout_ms` covers the connect, the handshake and each send. `read_timeout_ms` is how long
-## `receive` waits for the next bytes of the server: a read that times out ends the connection. `close_timeout_ms` is
-## how long `close` waits for the answer of the server. `tls` is the client context of a `wss://` URL (the system
-## trust by default).
+## its fragments together. `timeout_ms` covers the connect, the whole handshake and each send. `read_timeout_ms` is how
+## long `receive` takes to read one whole frame: one that is not complete by then ends the connection.
+## `close_timeout_ms` is how long `close` waits for the answer of the server. `tls` is the client context of a
+## `wss://` URL (the system trust by default).
 export struct Options
   headers: List[Header] = []
   protocols: List[String] = []

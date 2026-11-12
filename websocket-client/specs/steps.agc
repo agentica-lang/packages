@@ -77,6 +77,7 @@ export def steps() -> List[BDD.Step]
     BDD.step("the client has no connection", &has_no_connection),
     BDD.step("sending a ping of {int} bytes fails with {string}", &ping_fails),
     BDD.step("sending a text of {int} bytes fails with {string}", &text_fails),
+    BDD.step("closing with {int} fails with {string}", &close_fails),
     BDD.step("the peer saw {string}", &peer_saw),
     BDD.step("the peer saw a close frame with the code {int}", &peer_saw_close),
   ]
@@ -185,6 +186,7 @@ def connects(ctx: BDD.Context, args: List[String]) -> BDD.Context
   connect_to(ctx, args[0].replace("PORT", "#{port}"))
 end
 
+# A port that was just released: another program could take it before the connect, which is unlikely on localhost.
 def connects_to_nothing(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   listener = TCP.listen("127.0.0.1", 0).unwrap!
   port = TCP.local_port(listener)
@@ -328,7 +330,16 @@ def text_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.assert(ctx, reply.failed and reply.error.include?(args[1]), "the text gave \"#{reply.error}\"")
 end
 
-def peer_saw(ctx: BDD.Context, args: List[String]) -> BDD.Context = BDD.then_line(ctx, args[0], PEER_MS)
+def close_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  reply = ask(ctx, Order(op: "close", code: args[0].to_i!))
+  BDD.assert(ctx, reply.failed and reply.error.include?(args[1]), "the close gave \"#{reply.error}\"")
+end
+
+# PORT in the line is the port of the peer.
+def peer_saw(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  port = JSON.int(BDD.get(ctx, PORT).unwrap!).unwrap!
+  BDD.then_line(ctx, args[0].replace("PORT", "#{port}"), PEER_MS)
+end
 
 def peer_saw_close(ctx: BDD.Context, args: List[String]) -> BDD.Context
   line = BDD.read_line(ctx, PEER_MS).unwrap!

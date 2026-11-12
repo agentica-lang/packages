@@ -9,7 +9,7 @@ Use it to talk to any WebSocket server, or to test the one of your own app from 
 
 ## Install
 
-Needs Agentica 0.30.0 or later. Add it in a project with an `agentica.toml`:
+Needs Agentica 0.30.0 or later. The tag `websocket-client-0.1.0` is pending: it exists after the first release. Add it in a project with an `agentica.toml`:
 
 ```sh
 agentica add websocket-client https://github.com/agentica-lang/packages --tag websocket-client-0.1.0 --subdir websocket-client
