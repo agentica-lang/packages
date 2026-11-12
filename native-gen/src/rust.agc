@@ -210,7 +210,8 @@ def term_types(plan: Plan) -> List[String]
     end
   end
 
-  plan.types.map do |type: Analysis.NativeType| type.name end.select do |name: String| found.include?(name) end
+  names = plan.types.map do |type: Analysis.NativeType| type.name end
+  names.select do |name: String| found.include?(name) end
 end
 
 # The Rust type of the canonical type `type` in a field or payload of `owner` ("" for a parameter or result), with
@@ -396,7 +397,8 @@ end
 
 # Whether the parameters or the result of `function` borrow the call.
 def borrows?(plan: Plan, function: Analysis.NativeFunction) -> Bool
-  texts = function.parameters.map do |param: Analysis.NativeParameter| param.type end.push(function.result)
+  params = function.parameters.map do |param: Analysis.NativeParameter| param.type end
+  texts = params.push(function.result)
   texts.any? do |text: String| leaves(Types.parse(text)).any? do |name: String| plan.borrowing.include?(name) end end
 end
 
@@ -517,7 +519,7 @@ def doc_lines(indent: String, doc: String) -> List[String]
   blank = true
   listed = false
   for line in doc.replace("\r", "").split("\n")
-    trimmed = line.trim
+    trimmed = line.strip
     text = line
     deep = !trimmed.empty? and column(line) >= 4
     if fence.empty? and !indented and deep and blank and !listed

@@ -133,7 +133,8 @@ def main() -> Void
     tell(inbox, Msg.Gone(conn.id))
   end
 
-  server = Dock.start(config) do |conn| serve(conn, inbox) end.unwrap!
+  started = Dock.start(config) do |conn| serve(conn, inbox) end
+  server = started.unwrap!
   Dock.watch(server, keeper)
   Dock.wait(server).unwrap!
 end

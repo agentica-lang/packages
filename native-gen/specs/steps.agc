@@ -281,7 +281,7 @@ def build_runner(ctx: BDD.Context, args: List[String]) -> BDD.Context
 
   binary = ""
   case Process.output(found.unwrap!, 10_000)
-    ok(out) -> binary = out.stdout.trim
+    ok(out) -> binary = out.stdout.strip
     error(_) -> binary = ""
   end
 
@@ -396,7 +396,8 @@ def relative_argument(ctx: BDD.Context, args: List[String]) -> BDD.Context
     current = "#{current}/specs"
   end
 
-  up = current.split("/").select do |part: String| !part.empty? end.map do |_part: String| ".." end
+  parts = current.split("/").select do |part: String| !part.empty? end
+  up = parts.map do |_part: String| ".." end
   path = in_folder(ctx, args[0])
   BDD.given_argument(ctx, "#{up.join("/")}#{path}")
 end
