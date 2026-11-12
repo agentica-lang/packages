@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-12
+
+Needs Agentica 0.30.0 or later.
+
 ### Added
 
 - `WebSocket.connect`: a WebSocket client (RFC 6455) for `ws://` and `wss://` over `std` TCP and TLS, with the upgrade handshake, the `Sec-WebSocket-Accept` check, subprotocols and extra headers.
