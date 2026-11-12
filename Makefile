@@ -17,10 +17,15 @@ help:
 	@echo "site       build the documentation site into site/public (the docs/ folder of each package)"
 	@echo "site-serve serve the site on localhost for a preview"
 
-# A package with no dependencies has no lock and nothing to fetch.
+# A package with no dependencies has no lock and nothing to fetch. The peer of the specs of a package (a program that
+# uses another package) has a manifest of its own in specs/fixtures/ws_client, so that the package does not depend on
+# it.
 install:
 	@set -e; for p in $(PACKAGES); do \
 		if [ -f $$p/agentica.lock ]; then echo "== $$p"; (cd $$p && $(AGENTICA) install); fi; \
+		if [ -f $$p/specs/fixtures/ws_client/agentica.lock ]; then \
+			echo "== $$p peer"; (cd $$p/specs/fixtures/ws_client && $(AGENTICA) install); \
+		fi; \
 	done
 
 check:

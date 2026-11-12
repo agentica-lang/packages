@@ -1,7 +1,7 @@
 ## The steps of `cable.feature`. The server is the program of `fixtures/server.agc`; the peer is
-## `fixtures/cable_peer.py`, a raw-socket WebSocket client that a step drives with one JSON line per command (it keeps
-## the connections open). A step may halt on what is not the scenario's business (the peer does not answer): that
-## fails the scenario.
+## `fixtures/ws_client/cable_client.agc`, a program of the package `websocket-client` (it shares no code with the
+## server, so it is an independent peer) that a step drives with one JSON line per command (it keeps the connections
+## open). A step may halt on what is not the scenario's business (the peer does not answer): that fails the scenario.
 
 import BDD from "std/bdd"
 import HTTP from "std/http"
@@ -10,7 +10,7 @@ PORT = "port"
 PEER = "peer"
 SERVER = "fixtures/server.agc"
 # Relative to the working directory of the run, which is the package folder (`make test`).
-PEER_PROGRAM = "specs/fixtures/cable_peer.py"
+PEER_PROGRAM = "specs/fixtures/ws_client/cable_client.agc"
 START_MS = 10_000
 ANSWER_MS = 15_000
 RECEIVE_MS = 5_000
@@ -71,7 +71,7 @@ def listens(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   started = BDD.given_program(ctx, SERVER)
   line = BDD.read_line(started, START_MS).unwrap!
   port = line.split(" ").last.to_i!
-  process = Process.spawn_captured("python3", [PEER_PROGRAM, "#{port}"]).unwrap!
+  process = Process.spawn_captured("agentica", [PEER_PROGRAM, "#{port}"]).unwrap!
   service = serving() do |request| ask(process, request) end
   BDD.set(BDD.keep(started, PEER, service), PORT, JSON.from(port))
 end
