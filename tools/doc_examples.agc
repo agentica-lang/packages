@@ -61,7 +61,8 @@ def main() -> Void
   skipped = 0
   for package in args.drop(1)
     parsed = examples_of(package)
-    fragments = parsed.examples.select do |example: Example| example.mode == "fragment" end.size
+    fragment_examples = parsed.examples.select do |example: Example| example.mode == "fragment" end
+    fragments = fragment_examples.size
     failed = run_package(agentica, package, parsed.examples)
     skipped += fragments
     passed += parsed.examples.size - fragments - failed.size

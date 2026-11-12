@@ -4,9 +4,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-12
+
+Needs Agentica 0.30.0 or later.
+
 ### Changed
 
 - **Breaking:** needs Agentica 0.30.0 or later: the sources are formatted with `agentica fmt` of 0.30.0, which uses its syntax (implicit returns, guards, one-line defs). CI tests with Agentica 0.30.0.
+
+### Fixed
+
+- The sources compile with the next Agentica, which refuses a method call right after the `end` of a `do` block (`CHECK-CHAIN-AFTER-END`); they still need Agentica 0.30.0 or later. `strip` replaces `trim`, which the next Agentica no longer has.
 
 ## [0.2.0] - 2026-11-10
 

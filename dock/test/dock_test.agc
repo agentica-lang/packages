@@ -98,7 +98,8 @@ def test_clients_get_their_own_bytes_back() -> Result[Void]
     Test.eq(got, text)
   end
 
-  try Test.eq(results.select do |r| not r.ok? end.size, 0)
+  failed = results.select do |r| not r.ok? end
+  try Test.eq(failed.size, 0)
   Dock.stop(server)
 end
 
@@ -222,7 +223,8 @@ def test_send_from_other_tasks_keeps_each_message_whole_and_in_order() -> Result
     ok(task)
   end
 
-  try Test.eq(results.select do |r| not r.ok? end.size, 0)
+  failed = results.select do |r| not r.ok? end
+  try Test.eq(failed.size, 0)
   Dock.close(conn)
   # The close is in the queue: a send after it fails now, not only once the client read the end.
   try Test.eq(Dock.send(conn, "late".bytes).ok?, false)
@@ -586,7 +588,8 @@ def test_slow_callbacks_never_hold_the_accept_loop() -> Result[Void]
     Test.eq(got, "client #{n}")
   end
 
-  try Test.eq(results.select do |r| not r.ok? end.size, 0)
+  failed = results.select do |r| not r.ok? end
+  try Test.eq(failed.size, 0)
   try await_stats(server) do |s| s.open == 0 end
   started = Time.now_ms
   try Test.eq(exchange(port, "fresh"), ok("fresh"))

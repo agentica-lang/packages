@@ -109,7 +109,8 @@ def test_an_optional_shrinks_to_none_and_then_through_its_value() -> Result[Void
   something = Prop.check(gen, seeded(13)) do |o| must(o.none? or o.unwrap! < 4, "4 or more") end
   try shrunk_to(something, "4")
   halves = Prop.sample(gen, 1, 400)
-  Test.assert(halves.select do |o| o.none? end.size > 120, "far fewer none than some")
+  nones = halves.select do |o| o.none? end
+  Test.assert(nones.size > 120, "far fewer none than some")
 end
 
 def test_the_shrinking_budget_ends_with_a_message() -> Result[Void]
@@ -144,7 +145,8 @@ def test_generators_stay_in_their_bounds() -> Result[Void]
   try Test.eq(ints.min, some(-5))
   try Test.eq(ints.max, some(5))
   lists = Prop.sample(Prop.list(Prop.bool(), 3), 1, 200)
-  try Test.eq(lists.map do |xs| xs.size end.max, some(3))
+  sizes = lists.map do |xs| xs.size end
+  try Test.eq(sizes.max, some(3))
   options = Prop.sample(Prop.optional(Prop.int(0, 0)), 1, 200)
   try Test.assert(options.any? do |o| o.none? end and options.any? do |o| o.some? end, "one kind is missing")
   texts = Prop.sample(Prop.string(4), 1, 200)

@@ -94,7 +94,10 @@ export def bool() -> Gen[Bool] = one_of([false, true])
 ## ```
 export def string(max_size: Int = 10) -> Gen[String]
   indexes = list(int(0, ALPHABET.size - 1), max_size)
-  map(indexes) do |chosen| chosen.map do |i| ALPHABET.at(i) end.join("") end
+  map(indexes) do |chosen|
+    letters = chosen.map do |i| ALPHABET.at(i) end
+    letters.join("")
+  end
 end
 
 ## A List of up to `max_size` (at most 1000) items of `gen`. It shrinks to a shorter list (the empty one first), then

@@ -155,7 +155,7 @@ def in_native?(file: String) -> Bool
 end
 
 # Whether `line` is the table header `header`, with a comment after it or not.
-def header_line?(line: String, header: String) -> Bool = line.split("#")[0].trim == header
+def header_line?(line: String, header: String) -> Bool = line.split("#")[0].strip == header
 
 def ended(text: String, newline: String) -> String
   return text if text.empty? or text.end_with?("\n")

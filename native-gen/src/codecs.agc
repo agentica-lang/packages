@@ -219,7 +219,8 @@ def ordered(codecs: Plan) -> List[Analysis.NativeType]
   for type in codecs.types
     for name in emit_order(codecs, type.name, done)
       done = done.add(name)
-      out = out.push(codecs.types.find do |t: Analysis.NativeType| t.name == name end.unwrap!)
+      matched = codecs.types.find do |t: Analysis.NativeType| t.name == name end
+      out = out.push(matched.unwrap!)
     end
   end
 
