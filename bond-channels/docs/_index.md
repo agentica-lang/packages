@@ -13,7 +13,7 @@ Needs Agentica 0.31.0-alpha.1 or later and Bond 0.12.0-alpha.1. The app depends 
 
 ```sh
 agentica add bond https://github.com/agentica-lang/bond --tag 0.12.0-alpha.1
-agentica add bond-channels https://github.com/agentica-lang/packages --tag bond-channels-0.3.1 --subdir bond-channels
+agentica add bond-channels https://github.com/agentica-lang/packages --tag bond-channels-0.4.0-alpha.1 --subdir bond-channels
 ```
 
 That writes these lines of `agentica.toml`, and the entries of `agentica.lock`:
@@ -21,8 +21,10 @@ That writes these lines of `agentica.toml`, and the entries of `agentica.lock`:
 ```toml
 [dependencies]
 bond = { git = "https://github.com/agentica-lang/bond", tag = "0.12.0-alpha.1" }
-bond-channels = { git = "https://github.com/agentica-lang/packages", tag = "bond-channels-0.3.1", subdir = "bond-channels" }
+bond-channels = { git = "https://github.com/agentica-lang/packages", tag = "bond-channels-0.4.0-alpha.1", subdir = "bond-channels" }
 ```
+
+On Agentica 0.30, stay on `bond-channels-0.3.1` with Bond `0.11.0`.
 
 The releases and their notes are in the [changelog](https://github.com/agentica-lang/packages/blob/main/bond-channels/CHANGELOG.md).
 
