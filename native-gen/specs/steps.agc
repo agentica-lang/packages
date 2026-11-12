@@ -1,7 +1,7 @@
 ## The steps of `header.feature`. The command runs as a program under test; the steps here give a scenario a package
 ## cache of its own, so a native build never reuses or leaves an entry in the user's cache, a folder for the header
-## that `--output` writes (both removed when the scenario ends), and the header of a fixture package, made before it is
-## built, so only one golden header is committed.
+## that `--output` writes (both removed when the scenario ends), and a copy of a fixture package with its header, made
+## before it is built, so only one golden header is committed and scenarios that run at once share no files.
 
 import BDD from "std/bdd"
 import NativeGen from "../native_gen"
@@ -24,7 +24,7 @@ def main() -> Void
     BDD.step("a fresh package cache", &fresh_cache),
     BDD.step("the header goes to a fresh folder as {string}", &fresh_output),
     BDD.step("the written header includes:", &written_header),
-    BDD.step("the header of the package of {string}", &package_header),
+    BDD.step("a copy of the package of {string} with its header", &package_copy),
     BDD.step("a fresh folder", &folder_step),
     BDD.step("the agentica.toml of the fresh folder is:", &manifest_step),
     BDD.step("the agentica.toml of the fresh folder has the line {string}", &manifest_line),
@@ -66,10 +66,11 @@ def main() -> Void
   ])
 end
 
-# Writes `native/NAME_native.h` beside the package file `FOLDER/NAME.agc`, removed when the scenario ends (git ignores
-# it too). A step runs in the folder that `agentica test` ran in, the package or specs/, while the paths of the feature
-# are from specs/.
-def package_header(ctx: BDD.Context, args: List[String]) -> BDD.Context
+# A copy of the package of the file `FOLDER/NAME.agc` in a fresh folder, which becomes the fresh folder of the
+# scenario, with `native/NAME_native.h` written by native-gen. Each scenario builds its own copy, so scenarios that run
+# at once (`agentica test --jobs N`) never share a header or a `_build` folder. A step runs in the folder that
+# `agentica test` ran in, the package or specs/, while the paths of the feature are from specs/.
+def package_copy(ctx: BDD.Context, args: List[String]) -> BDD.Context
   path = args[0]
   if File.stat("specs/header.feature").ok?
     path = "specs/#{path}"
@@ -78,14 +79,34 @@ def package_header(ctx: BDD.Context, args: List[String]) -> BDD.Context
   parts = path.split("/")
   file = parts[parts.size - 1]
   name = file.slice(0, file.length - ".agc".length)
-  folder = parts.take(parts.size - 1).join("/")
-  made = NativeGen.header(path)
-  return BDD.assert(ctx, false, made.message) if !made.ok?
+  case fresh_folder(ctx)
+    ok(made) ->
+      kept = BDD.set(made.ctx, SCAFFOLD, JSON.from(made.path))
+      copied = copy_package(parts.take(parts.size - 1).join("/"), made.path, name)
+      BDD.assert(kept, copied.ok?, "cannot copy the package of #{path}: #{copied.message}")
+    error(message) -> BDD.assert(ctx, false, message)
+  end
+end
 
-  header = "#{folder}/native/#{name}_native.h"
-  kept = BDD.after(ctx) do |_done| Path.remove(header) end
-  written = File.write_text(header, made.unwrap!)
-  BDD.assert(kept, written.ok?, "cannot write the header of #{path}: #{written.message}")
+# The files of the package folder `from` and of its native/ folder, as text, into `to`, but its `_build` folder and
+# any header there was; then the header of `to/NAME.agc`.
+def copy_package(from: String, to: String, name: String) -> Result[Void]
+  try copy_files(from, to)
+  try Dir.mkdir("#{to}/native")
+  try copy_files("#{from}/native", "#{to}/native")
+  header = try NativeGen.header("#{to}/#{name}.agc")
+  File.write_text("#{to}/native/#{name}_native.h", header)
+end
+
+def copy_files(from: String, to: String) -> Result[Void]
+  for entry in try Dir.list(from)
+    source = "#{from}/#{entry}"
+    next if entry.end_with?("_native.h") or (try File.stat(source)).kind != "file"
+
+    try File.write_text("#{to}/#{entry}", try File.read_text(source))
+  end
+
+  ok()
 end
 
 # A fresh folder that the scenario keeps, for `native new`.

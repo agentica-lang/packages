@@ -13,6 +13,7 @@
 ##   recv id timeout_ms -> {text} | {closed: code} | {timeout: true}
 ##   close id (a close frame) | drop id (no close frame)
 
+import HTTP from "std/http"
 import WebSocket from "pkg/websocket-client/websocket"
 
 # One day: a reader never times out by itself, `recv` has its own timeout.
@@ -82,7 +83,7 @@ def nothing() -> Json = JSON.parse("{}").unwrap!
 def failed(reason: String) -> Json = JSON.from({"error": JSON.from(reason)})
 
 def options_of(order: Order) -> WebSocket.Options
-  headers = order.headers.keys.map do |name| Header(name: name, value: order.headers[name]) end
+  headers = order.headers.keys.map do |name| HTTP.Header(name: name, value: order.headers[name]) end
   names = order.protocols.split(",").map do |name| name.strip end
   protocols = names.select do |name| not name.empty? end
   WebSocket.Options(headers: headers, protocols: protocols, read_timeout_ms: FOREVER_MS, close_timeout_ms: CLOSE_MS)

@@ -12,6 +12,7 @@
 ## `Turbo::StreamsChannel` is `Channels.turbo_streams` with a key of this program, and refuses the names that start
 ## with `secret:`.
 
+import HTTP from "std/http"
 import Bond from "pkg/bond/bond"
 import Channels from "../../channels"
 
@@ -114,8 +115,8 @@ end
 def readable?(session: Channels.Session, name: String) -> Bool = not name.start_with?("secret:")
 
 def handlers(hub: Channels.Hub, key: Bytes) -> Map[String, Channels.Handler]
-  left = leaving() do |session, params| room_left(hub, session, params) end
-  acted = acting() do |session, params, action, data| room_acted(hub, session, params, action, data) end
+  left = leaving do |session, params| room_left(hub, session, params) end
+  acted = acting do |session, params, action, data| room_acted(hub, session, params, action, data) end
   {
     "RoomChannel": Channels.handler(&room_subscribed).with(unsubscribed: left, perform: acted),
     "WatchChannel": Channels.handler(&watch_subscribed),
@@ -166,12 +167,12 @@ def serving(handler: Fn[Bond.Conn, Result[Bond.Conn]]) -> Fn[Bond.Conn, Result[B
 
 def main() -> Void
   hub = Channels.start_hub(Channels.HubOptions(beat_ms: setting("BEAT_MS", DEFAULT_BEAT_MS))).unwrap!
-  say_it = serving() do |conn| say(hub, conn) end
-  count_it = serving() do |conn| counts(hub, conn) end
-  stop_it = serving() do |conn| stop(hub, conn) end
-  disconnect_it = serving() do |conn| disconnect(hub, conn) end
+  say_it = serving do |conn| say(hub, conn) end
+  count_it = serving do |conn| counts(hub, conn) end
+  stop_it = serving do |conn| stop(hub, conn) end
+  disconnect_it = serving do |conn| disconnect(hub, conn) end
   key = Channels.stream_key("the secret of the specs").unwrap!
-  sign_it = serving() do |conn| signed(key, conn) end
+  sign_it = serving do |conn| signed(key, conn) end
   app = (
     Bond.app()
     |> Bond.get("/say", say_it)
@@ -194,7 +195,7 @@ def main() -> Void
     mounted,
     "127.0.0.1",
     0,
-    HttpServerOptions(max_connections: setting("MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS)),
+    HTTP.ServerOptions(max_connections: setting("MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS)),
   ).unwrap!
 
   puts("listening on #{Bond.local_port(server)}")

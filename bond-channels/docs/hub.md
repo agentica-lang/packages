@@ -36,7 +36,7 @@ weight: 3
 
 `mount` returns an `error` for options that cannot work: an `inbox` or `max_message_bytes` under 1, a negative `idle_ms`, or an `idle_ms` that is not more than the `beat_ms` of the hub (the WebSocket ping that keeps a quiet client could never come in time). The two kinds of options are different records, so a field given to the wrong one does not compile.
 
-A WebSocket holds one of the `max_connections` of the Bond server for its whole life. Set it above the number of clients plus the number of posters (`Bond.start_with(app, host, port, HttpServerOptions(max_connections: 1024))`).
+A WebSocket holds one of the `max_connections` of the Bond server for its whole life. Set it above the number of clients plus the number of posters (`Bond.start_with(app, host, port, HTTP.ServerOptions(max_connections: 1024))`).
 
 ## Broadcasts
 

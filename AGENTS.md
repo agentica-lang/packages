@@ -106,8 +106,8 @@ websocket-client/    a WebSocket client (RFC 6455): websocket.agc is the API (co
   blocks are still fragments; a new example is a whole file with its `output`. The rules are in the header of
   `tools/doc_examples.agc`, and `make doc-examples-test` checks the tool on its fixture. Site prose: one line per
   paragraph or list item, simple words.
-- `make test` runs the files and scenarios of a package `JOBS` at a time; a package whose scenarios share files on
-  disk is in `SERIAL_PACKAGES` of the Makefile and runs one at a time.
+- `make test` runs the files and scenarios of a package `JOBS` at a time, so a scenario never writes in a folder
+  that another one uses: it makes a fresh one (native-gen copies a fixture package before it builds it).
 - Each package has its own CHANGELOG.md; a user-visible change adds a line under its `## [Unreleased]`; a release renames
   it to `## [X.Y.Z] - DATE` and tags `PACKAGE-X.Y.Z`.
 - Release: a tag `PACKAGE-X.Y.Z` on main, made by the owner. A PR never pushes a tag.

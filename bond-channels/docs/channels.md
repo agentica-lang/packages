@@ -98,7 +98,7 @@ def leaving(f: Fn[Channels.Session, Json, Result[Void]]) -> Fn[Channels.Session,
   return f
 end
 
-on_leave = leaving() do |session, params| left(hub, session, params) end
+on_leave = leaving do |session, params| left(hub, session, params) end
 ```
 
 ## What Action Cable only logs

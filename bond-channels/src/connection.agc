@@ -41,7 +41,7 @@ end
 
 ## The handler of the Bond route.
 export def handler_of(mount: Mount) -> Bond.WebSocketHandler
-  wrapping() do |conn, socket| serve(mount, conn, socket) end
+  wrapping do |conn, socket| serve(mount, conn, socket) end
 end
 
 # Serves one WebSocket until it ends, then runs `unsubscribed` for every subscription it still holds.
@@ -97,9 +97,9 @@ def open(mount: Mount, socket: HTTP.WebSocket, identity: Types.Identity) -> Resu
   end
 
   Hub.count(hub, Hub.CONNECTIONS, 1)
-  pump = Task.spawn() do pump(socket, inbox) end
+  pump = Task.spawn do pump(socket, inbox) end
   # The loop owns the inbox: it closes when the loop ends or crashes, so the hub sees "closed" and the pump stops.
-  body = looping() do |owned| loop(line, owned) end
+  body = looping do |owned| loop(line, owned) end
   outcome = Task.await(Task.spawn_owning(body, inbox))
   Task.cancel(pump)
   if not outcome.ok?
@@ -380,7 +380,7 @@ end
 def finish(line: Line) -> Void
   for identifier in line.subscriptions.keys
     channel = line.subscriptions.get(identifier).unwrap_or("")
-    outcome = Task.await(Task.spawn() do release(line, channel, identifier) end)
+    outcome = Task.await(Task.spawn do release(line, channel, identifier) end)
     if not outcome.ok?
       IO.warn("bond-channels: leaving #{identifier} failed: #{outcome.message}")
     end

@@ -9,10 +9,10 @@ It speaks the Rails protocol, so the Action Cable client of Rails and `<turbo-ca
 
 ## Install
 
-Needs Agentica 0.30.0 or later and Bond 0.11.0. The app depends on Bond itself, at the same tag as the package, because two sources for one name in a tree is `PKG-SOURCE-CONFLICT`. Add both in a project with an `agentica.toml`:
+Needs Agentica 0.31.0-alpha.1 or later and Bond 0.12.0-alpha.1. The app depends on Bond itself, at the same tag as the package, because two sources for one name in a tree is `PKG-SOURCE-CONFLICT`. Add both in a project with an `agentica.toml`:
 
 ```sh
-agentica add bond https://github.com/agentica-lang/bond --tag 0.11.0
+agentica add bond https://github.com/agentica-lang/bond --tag 0.12.0-alpha.1
 agentica add bond-channels https://github.com/agentica-lang/packages --tag bond-channels-0.3.1 --subdir bond-channels
 ```
 
@@ -20,7 +20,7 @@ That writes these lines of `agentica.toml`, and the entries of `agentica.lock`:
 
 ```toml
 [dependencies]
-bond = { git = "https://github.com/agentica-lang/bond", tag = "0.11.0" }
+bond = { git = "https://github.com/agentica-lang/bond", tag = "0.12.0-alpha.1" }
 bond-channels = { git = "https://github.com/agentica-lang/packages", tag = "bond-channels-0.3.1", subdir = "bond-channels" }
 ```
 
@@ -31,6 +31,7 @@ The releases and their notes are in the [changelog](https://github.com/agentica-
 A chat room. A person is the cookie `user`. A subscription listens to the topic `room:ROOM`, and `GET /say?room=1&text=hi` tells everyone in room 1:
 
 ```agentica {mode="check"}
+import HTTP from "std/http"
 import Bond from "pkg/bond/bond"
 import Channels from "pkg/bond-channels/channels"
 
@@ -65,7 +66,7 @@ end
 
 def main() -> Void
   hub = Channels.start_hub().unwrap!
-  say_it = serving() do |conn| say(hub, conn) end
+  say_it = serving do |conn| say(hub, conn) end
   options = Channels.MountOptions(
     connect: &connect,
     handlers: {"RoomChannel": Channels.handler(&subscribed)},
@@ -73,7 +74,7 @@ def main() -> Void
 
   app = Bond.app() |> Bond.get("/say", say_it)
   mounted = Channels.mount(app, "/cable", hub, options).unwrap!
-  server = Bond.start_with(mounted, "127.0.0.1", 0, HttpServerOptions()).unwrap!
+  server = Bond.start_with(mounted, "127.0.0.1", 0, HTTP.ServerOptions()).unwrap!
   puts("listening on #{Bond.local_port(server)}")
   IO.flush()
   Bond.wait(server).unwrap!
