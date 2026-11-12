@@ -1,7 +1,7 @@
 ## The steps of `cable.feature`. The server is the program of `fixtures/server.agc`; the peer is
-## `fixtures/ws_client/cable_client.agc`, a program of the package `websocket-client` (it shares no code with the server, so it is
-## an independent peer) that a step drives with one JSON line per command (it keeps the connections open). A step may
-## halt on what is not the scenario's business (the peer does not answer): that fails the scenario.
+## `fixtures/ws_client/cable_client.agc`, a program of the package `websocket-client` (it shares no code with the
+## server, so it is an independent peer) that a step drives with one JSON line per command (it keeps the connections
+## open). A step may halt on what is not the scenario's business (the peer does not answer): that fails the scenario.
 
 import BDD from "std/bdd"
 import HTTP from "std/http"
