@@ -26,17 +26,23 @@ export Types.Handshake
 export Types.Message
 export Types.Options
 
-## Connects to a `ws://` or `wss://` URL, and returns the `Client` (its `status` and `headers` are the answer): the TCP or TLS connection, then the HTTP/1.1 upgrade of RFC 6455. An `error`
-## for a bad URL or option, a failed connect, an answer that is not a good handshake (a status other than 101, a wrong
-## `Sec-WebSocket-Accept`, a subprotocol that was not offered, an extension), and a timeout.
+## Connects to a `ws://` or `wss://` URL and returns the `Client` (its `status` and `headers` are the answer of the
+## server): the TCP or TLS connection, then the HTTP/1.1 upgrade of RFC 6455. An `error` for a bad URL or option, a
+## failed connect, an answer that is not a good handshake (a status other than 101, a wrong `Sec-WebSocket-Accept`, a
+## subprotocol that was not offered, an extension), and a timeout. It stops at the head of a refusing answer, and does
+## not read its body (`handshake` does).
 export def connect(url: String, options: Types.Options = Types.Options()) -> Result[Types.Client]
   Connection.connect(url, options)
 end
 
-## Like `connect`, but a server that answers with any status but 101 is not an `error`: the result is `Refused` with
-## the status, the headers (names as the server wrote them) and the start of the body (at most 64 KiB, as long as its
-## `Content-Length`, and "" when it sent none). The socket is closed then. An `error` is a bad URL or option, a failed
-## connect, a timeout, an answer that is not HTTP, and a 101 that is not a good handshake (wrong accept, no
+## Like `connect`, but a server that answers with a status from 200 to 599 other than 101 is not an `error`: the result
+## is `Refused` with the status, the headers (names as the server wrote them, the first `Content-Length` counts) and the
+## start of the body. The body is at most 64 KiB, as long as that `Content-Length` says; the bytes that came before the
+## peer closed or `timeout_ms` ended are kept; "" when there is no `Content-Length` or it is not a number; one that
+## does not fit an Int counts as the cap. A body cut in the middle of a character loses that character, and bytes that
+## are still not UTF-8 give "". The socket is closed then. `timeout_ms` covers the request, the head and the body
+## together, after the connect. An `error` is a bad URL or option, a failed connect, a timeout, an answer that is not
+## HTTP, a status outside 200 to 599 (a 1xx is not skipped), and a 101 that is not a good handshake (wrong accept, no
 ## `Upgrade`, a subprotocol that was not offered, an extension).
 export def handshake(url: String, options: Types.Options = Types.Options()) -> Result[Types.Handshake]
   Connection.handshake(url, options)

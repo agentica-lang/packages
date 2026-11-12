@@ -29,7 +29,7 @@ enum Step
 end
 
 export def connect(url: String, options: Types.Options) -> Result[Types.Client]
-  case prefixed(open(url, options))
+  case prefixed(open(url, options, false))
     ok(answer) ->
       case answer
         Types.Handshake.Open(client) -> ok(client)
@@ -40,7 +40,9 @@ export def connect(url: String, options: Types.Options) -> Result[Types.Client]
   end
 end
 
-export def handshake(url: String, options: Types.Options) -> Result[Types.Handshake] = prefixed(open(url, options))
+export def handshake(url: String, options: Types.Options) -> Result[Types.Handshake]
+  prefixed(open(url, options, true))
+end
 
 export def send_data(client: Types.Client, opcode: Int, payload: Bytes) -> Result[Void]
   prefixed(send_frame(client, opcode, payload, MAX_SEND))
@@ -80,13 +82,13 @@ def check_options(options: Types.Options) -> Result[Void]
   ok()
 end
 
-def open(url: String, options: Types.Options) -> Result[Types.Handshake]
+def open(url: String, options: Types.Options, read_body: Bool) -> Result[Types.Handshake]
   try check_options(options)
   target = try Handshake.parse_url(url)
   key = Base64.strict_encode64(OpenSSL.Random.random_bytes(KEY_BYTES))
   request = try Handshake.request(target, key, options.protocols, options.headers)
   socket = try dial(target, options)
-  case upgrade(socket, request, key, options)
+  case upgrade(socket, request, key, options, read_body)
     ok(client) -> ok(client)
     error(reason) ->
       TCP.close(socket)
@@ -103,18 +105,31 @@ def dial(target: Handshake.Target, options: Types.Options) -> Result[Socket]
   end
 end
 
-# One deadline covers the head and the body of the answer. Any status but 101 is a `Refused` with what the server
-# said; a 101 that is not a good handshake is an `error`.
-def upgrade(socket: Socket, request: String, key: String, options: Types.Options) -> Result[Types.Handshake]
+# One deadline covers the sending of the request, the head and (with `read_body`) the body of the answer. A status
+# outside 200 to 599 that is not 101 is no final answer: it is an `error` (a 1xx is not skipped). Any other status but
+# 101 is a `Refused`, and `connect` (no `read_body`) stops at its head, so it never waits for a body that it drops.
+def upgrade(
+  socket: Socket,
+  request: String,
+  key: String,
+  options: Types.Options,
+  read_body: Bool,
+) -> Result[Types.Handshake]
   deadline = Time.monotonic_ms() + options.timeout_ms
-  try TCP.send(socket, request, options.timeout_ms)
+  try TCP.send(socket, request, try left(deadline))
   lines = try read_answer(socket, deadline)
   return error("the server sent no answer") if lines.empty?
 
   status = try Handshake.status_of(lines[0])
   headers = Handshake.headers_of(lines.drop(1))
   if status != Handshake.SWITCHING
-    body = read_body(socket, headers, deadline)
+    return error("the server answered #{status}, which is not a final status") if status < 200 or status > 599
+
+    body = ""
+    if read_body
+      body = read_body_of(socket, headers, deadline)
+    end
+
     TCP.close(socket)
     return ok(Types.Handshake.Refused(status, headers, body))
   end
@@ -127,20 +142,69 @@ def upgrade(socket: Socket, request: String, key: String, options: Types.Options
   )
 end
 
-# The start of the body of a refused answer: `Content-Length` bytes, at most `MAX_BODY_BYTES`. A body that is missing,
-# short or not UTF-8 is "" or what came: the status and the headers are the answer, so this never fails the call.
-def read_body(socket: Socket, headers: List[Header], deadline: Int) -> String
-  size = Handshake.content_length(headers)
-  if size > Types.MAX_BODY_BYTES
-    size = Types.MAX_BODY_BYTES
-  end
-
+# The start of the body of a refused answer: `Content-Length` bytes, at most `MAX_BODY_BYTES`. The bytes that came
+# before the peer closed or the deadline hit are kept; a body that is missing is "". It never fails the call:
+# the status
+# and the headers are the answer.
+def read_body_of(socket: Socket, headers: List[Header], deadline: Int) -> String
+  size = Handshake.content_length(headers, Types.MAX_BODY_BYTES)
   return "" if size < 1
 
-  case read_exact(socket, size, deadline)
-    ok(data) -> String.from_bytes(data).unwrap_or("")
-    error(_) -> ""
+  text_of(read_partial(socket, size, deadline))
+end
+
+# Up to `count` bytes, fewer when the peer closes or the deadline comes first.
+def read_partial(socket: Socket, count: Int, deadline: Int) -> Bytes
+  parts: List[Bytes] = []
+  have = 0
+  while have < count
+    chunk = next_chunk(socket, count - have, deadline)
+    break if chunk.empty?
+
+    parts = parts.push(chunk)
+    have = have + chunk.size
   end
+
+  Bytes.concat(parts)
+end
+
+# The next bytes, or none for the end, a timeout or an error.
+def next_chunk(socket: Socket, want: Int, deadline: Int) -> Bytes
+  case left(deadline)
+    error(_) -> "".bytes
+    ok(time) -> TCP.recv_bytes(socket, want, time).unwrap_or("".bytes)
+  end
+end
+
+# The bytes as text. A body cut in the middle of a character (at the cap, or by the peer) loses that last character;
+# bytes that are still not UTF-8 give "".
+def text_of(data: Bytes) -> String
+  case String.from_bytes(data)
+    ok(text) -> return text
+    error(_) -> nil
+  end
+
+  for back in 1..3
+    break if back > data.size
+
+    lead = data.at(data.size - back)
+    if lead >= 192
+      length = 4
+      if lead < 224
+        length = 2
+      elsif lead < 240
+        length = 3
+      end
+
+      return "" if length <= back
+
+      return String.from_bytes(data.slice(0, data.size - back)).unwrap_or("")
+    end
+
+    return "" if lead < 128
+  end
+
+  ""
 end
 
 # The lines of the head of the answer, up to the empty line.

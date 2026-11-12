@@ -43,8 +43,10 @@ export struct Client
   headers: List[Header] = []
 end
 
-## What `handshake` returns: the open connection, or the answer of a server that did not upgrade (any status but 101),
-## with its headers and the start of its body (`MAX_BODY_BYTES` at most; empty when it sent no `Content-Length`).
+## What `handshake` returns: the open connection, or the answer of a server that did not upgrade (a status from 200 to
+## 599 but 101), with its headers and the start of its body: `MAX_BODY_BYTES` at most, the bytes that came before the
+## peer closed or the deadline hit, "" for no `Content-Length`. A body cut in the middle of a UTF-8 character loses
+## that character, and one that is still not UTF-8 is "".
 export enum Handshake
   Open(Client)
   Refused(Int, List[Header], String)

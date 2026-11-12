@@ -74,6 +74,8 @@ export def steps() -> List[BDD.Step]
     BDD.step("the handshake is refused with the status {int}", &handshake_is_refused),
     BDD.step("the answer has the header {string} with {string}", &answer_has_header),
     BDD.step("the answer has the body {string}", &answer_has_body),
+    BDD.step("the answer body has {int} bytes", &answer_body_size_is),
+    BDD.step("the connection took less than {int} milliseconds", &connection_took_less),
     BDD.step("the connection fails with {string}", &connection_fails),
     BDD.step("the subprotocol is {string}", &subprotocol_is),
     BDD.step("the client sends the text {string}", &sends_text),
@@ -207,11 +209,12 @@ end
 def serving(f: Fn[Json, Result[Json]]) -> Fn[Json, Result[Json]] = f
 
 def connect_to(ctx: BDD.Context, url: String) -> BDD.Context
-  case WebSocket.connect(url, options_of(ctx))
-    ok(ws) ->
-      service = serving() do |request| drive(ws, request) end
-      BDD.set(BDD.keep(ctx, CLIENT, service), "protocol", JSON.from(ws.protocol))
-    error(reason) -> BDD.set(ctx, FAILURE, JSON.from(reason))
+  started = Time.monotonic_ms()
+  result = WebSocket.connect(url, options_of(ctx))
+  timed = BDD.set(ctx, "connect elapsed", JSON.from(Time.monotonic_ms() - started))
+  case result
+    ok(ws) -> kept(timed, ws)
+    error(reason) -> BDD.set(timed, FAILURE, JSON.from(reason))
   end
 end
 
@@ -264,6 +267,16 @@ end
 def answer_has_body(ctx: BDD.Context, args: List[String]) -> BDD.Context
   body = answer_text(ctx, "answer body")
   BDD.assert(ctx, body == args[0], "the body is \"#{body}\"")
+end
+
+def answer_body_size_is(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  size = answer_text(ctx, "answer body").bytes.size
+  BDD.assert(ctx, size == args[0].to_i!, "the body has #{size} bytes")
+end
+
+def connection_took_less(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  elapsed = JSON.int(BDD.get(ctx, "connect elapsed").unwrap!).unwrap!
+  BDD.assert(ctx, elapsed < args[0].to_i!, "the connect took #{elapsed} ms")
 end
 
 def connects(ctx: BDD.Context, args: List[String]) -> BDD.Context

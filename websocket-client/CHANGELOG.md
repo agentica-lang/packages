@@ -9,7 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - `WebSocket.handshake`: like `connect`, but a server that does not upgrade (a 403, a 426) gives `Refused(status, headers, body)` instead of an `error`, so a program can read why.
-- `Client.status` and `Client.headers`: the answer of the 101 handshake, with the header names as the server wrote them.
+- `Client` gained `status` and `headers` (with defaults, so a `Client(...)` that a program builds still works): the answer of the 101 handshake, with the header names as the server wrote them.
+- `connect` still stops at the head of a refusing answer; only `handshake` reads its body (at most 64 KiB). A status outside 200 to 599 other than 101 is an `error` for both.
 
 ## [0.1.0] - 2026-11-12
 

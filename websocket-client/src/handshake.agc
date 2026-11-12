@@ -172,10 +172,19 @@ export def headers_of(lines: List[String]) -> List[Header]
   headers
 end
 
-## The `Content-Length` of the headers: 0 when it is missing or is not a number.
-export def content_length(headers: List[Header]) -> Int
+## The first `Content-Length` of the headers, at most `cap`: a value of digits only that does not fit an Int counts as
+## `cap`, and anything else that is not a number (or no header) is 0.
+export def content_length(headers: List[Header], cap: Int) -> Int
   for header in headers
-    return header.value.to_i.unwrap_or(0) if header.name.downcase == "content-length"
+    if header.name.downcase == "content-length"
+      value = header.value.strip
+      return 0 if value.empty? or not value.bytes.to_a.all? do |byte| byte >= 48 and byte <= 57 end
+
+      size = value.to_i.unwrap_or(cap)
+      return cap if size > cap
+
+      return size
+    end
   end
 
   0

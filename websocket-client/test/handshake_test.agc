@@ -128,9 +128,21 @@ def test_the_headers_of_an_answer_keep_their_names_and_lose_the_spaces() -> Resu
   try Test.eq(headers.size, 3)
   try Test.eq(headers[0], Header(name: "UPGRADE", value: "WebSocket"))
   try Test.eq(headers[1], Header(name: "X-Url", value: "http://a:80"))
-  try Test.eq(Handshake.content_length(headers), 12)
-  try Test.eq(Handshake.content_length([Header(name: "content-length", value: "x")]), 0)
-  try Test.eq(Handshake.content_length([]), 0)
+  try Test.eq(Handshake.content_length(headers, 100), 12)
+  try Test.eq(Handshake.content_length(headers, 5), 5)
+  try Test.eq(Handshake.content_length([Header(name: "content-length", value: "x")], 100), 0)
+  try Test.eq(Handshake.content_length([Header(name: "Content-Length", value: "99999999999999999999")], 100), 100)
+  try Test.eq(Handshake.content_length([Header(name: "Content-Length", value: "-3")], 100), 0)
+  # The first one wins.
+  try Test.eq(
+    Handshake.content_length(
+      [Header(name: "Content-Length", value: "3"), Header(name: "content-length", value: "9")],
+      100,
+    ),
+    3,
+  )
+
+  try Test.eq(Handshake.content_length([], 100), 0)
   try Test.eq(Handshake.status_of("HTTP/1.1 403 Forbidden"), ok(403))
   Test.error?(Handshake.status_of("garbage"))
 end
