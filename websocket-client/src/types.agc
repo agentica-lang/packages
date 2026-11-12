@@ -1,6 +1,10 @@
 ## The records of the package.
 
-## What `connect` takes besides the URL. The timeouts are in milliseconds and positive.
+## The most that a timeout may be, in milliseconds: one day.
+export MAX_TIMEOUT_MS = 86_400_000
+
+## What `connect` takes besides the URL. The timeouts are in milliseconds, from 1 to `MAX_TIMEOUT_MS`: a larger one is
+## an `error`.
 ##
 ## `headers` go in the handshake (cookies, `Authorization`, `Origin`); the headers that the handshake writes itself are
 ## refused. `protocols` are the subprotocols offered, in order of preference. `max_message_bytes` caps a message, all

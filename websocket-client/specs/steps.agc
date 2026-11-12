@@ -13,6 +13,9 @@ TRUSTS = "trusts"
 MAX_BYTES = "max_bytes"
 READ_MS = "read_ms"
 CLOSE_MS = "close_ms"
+TIMEOUT_MS = "timeout_ms"
+ELAPSED = "elapsed"
+HUGE = 9_223_372_036_854_775_807
 FAILURE = "failure"
 CLIENT = "client"
 SERVER = "fixtures/server.agc"
@@ -40,6 +43,7 @@ end
 
 # The answer of the service: an error, or what a receive got.
 struct Reply
+  elapsed: Int = 0
   failed: Bool = false
   error: String = ""
   kind: String = ""
@@ -59,6 +63,10 @@ export def steps() -> List[BDD.Step]
     BDD.step("the client reads at most {int} bytes of a message", &reads_at_most),
     BDD.step("the client waits {int} milliseconds for a read", &waits_for_read),
     BDD.step("the client waits {int} milliseconds for the answer to a close", &waits_for_close),
+    BDD.step("the client allows {int} milliseconds to connect", &allows_to_connect),
+    BDD.step("the client waits for a read with no end", &waits_for_read_forever),
+    BDD.step("the client waits for the answer to a close with no end", &waits_for_close_forever),
+    BDD.step("the client allows no end to connect", &allows_connect_forever),
     BDD.step("the client connects to {string}", &connects),
     BDD.step("the client connects to a port that nobody listens at", &connects_to_nothing),
     BDD.step("the connection fails with {string}", &connection_fails),
@@ -78,6 +86,9 @@ export def steps() -> List[BDD.Step]
     BDD.step("sending a ping of {int} bytes fails with {string}", &ping_fails),
     BDD.step("sending a text of {int} bytes fails with {string}", &text_fails),
     BDD.step("closing with {int} fails with {string}", &close_fails),
+    BDD.step("a client with a read timeout with no end fails to receive with {string}", &huge_receive_fails),
+    BDD.step("a client with a close timeout with no end fails to close with {string}", &huge_close_fails),
+    BDD.step("the close took less than {int} milliseconds", &close_took_less),
     BDD.step("the peer saw {string}", &peer_saw),
     BDD.step("the peer saw a close frame with the code {int}", &peer_saw_close),
   ]
@@ -153,6 +164,23 @@ def protocols_of(ctx: BDD.Context) -> List[String]
   end
 end
 
+def allows_to_connect(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  BDD.set(ctx, TIMEOUT_MS, JSON.from(args[0].to_i!))
+end
+
+# The biggest Int: what a program writes for "never".
+def waits_for_read_forever(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  BDD.set(ctx, READ_MS, JSON.from(HUGE))
+end
+
+def waits_for_close_forever(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  BDD.set(ctx, CLOSE_MS, JSON.from(HUGE))
+end
+
+def allows_connect_forever(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  BDD.set(ctx, TIMEOUT_MS, JSON.from(HUGE))
+end
+
 def options_of(ctx: BDD.Context) -> WebSocket.Options
   headers = pairs_of(ctx).map do |pair| Header(name: pair.name, value: pair.value) end
   tls: Optional[TlsContext] = none
@@ -164,6 +192,7 @@ def options_of(ctx: BDD.Context) -> WebSocket.Options
     headers: headers,
     protocols: protocols_of(ctx),
     max_message_bytes: int_setting(ctx, MAX_BYTES, 1_048_576),
+    timeout_ms: int_setting(ctx, TIMEOUT_MS, 30_000),
     read_timeout_ms: int_setting(ctx, READ_MS, 30_000),
     close_timeout_ms: int_setting(ctx, CLOSE_MS, 5_000),
     tls: tls,
@@ -226,6 +255,31 @@ def done(result: Result[Void]) -> Reply
   end
 end
 
+def timed_close(ws: WebSocket.Client, order: Order) -> Reply
+  started = Time.monotonic_ms()
+  reply = done(WebSocket.close(ws, order.code, order.text))
+  Reply(elapsed: Time.monotonic_ms() - started, failed: reply.failed, error: reply.error)
+end
+
+# The same connection with options that a program could write after the connect (the `Client` is a plain record).
+def forever_receive(ws: WebSocket.Client) -> Reply
+  other = WebSocket.Client(socket: ws.socket, protocol: ws.protocol, options: WebSocket.Options(read_timeout_ms: HUGE))
+  case WebSocket.receive(other)
+    ok(message) -> message_reply(message)
+    error(reason) -> Reply(failed: true, error: reason)
+  end
+end
+
+def forever_close(ws: WebSocket.Client) -> Reply
+  other = WebSocket.Client(
+    socket: ws.socket,
+    protocol: ws.protocol,
+    options: WebSocket.Options(close_timeout_ms: HUGE),
+  )
+
+  done(WebSocket.close(other, 1000, ""))
+end
+
 def run(ws: WebSocket.Client, order: Order) -> Reply
   case order.op
     "text" -> done(WebSocket.send_text(ws, order.text))
@@ -234,7 +288,9 @@ def run(ws: WebSocket.Client, order: Order) -> Reply
     "ping" -> done(WebSocket.send_ping(ws, order.text.bytes))
     "ping_of" -> done(WebSocket.send_ping(ws, ("x" * order.size).bytes))
     "pong" -> done(WebSocket.send_pong(ws, order.text.bytes))
-    "close" -> done(WebSocket.close(ws, order.code, order.text))
+    "close" -> timed_close(ws, order)
+    "receive_forever" -> forever_receive(ws)
+    "close_forever" -> forever_close(ws)
     _ ->
       case WebSocket.receive(ws)
         ok(message) -> message_reply(message)
@@ -274,7 +330,24 @@ def pings(ctx: BDD.Context, args: List[String]) -> BDD.Context = sent(ctx, Order
 def pongs(ctx: BDD.Context, args: List[String]) -> BDD.Context = sent(ctx, Order(op: "pong", text: args[0]))
 
 def closes(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  sent(ctx, Order(op: "close", code: args[0].to_i!, text: args[1]))
+  reply = ask(ctx, Order(op: "close", code: args[0].to_i!, text: args[1]))
+  BDD.assert(ctx, not reply.failed, "the client could not close: #{reply.error}")
+  BDD.set(ctx, ELAPSED, JSON.from(reply.elapsed))
+end
+
+def close_took_less(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  elapsed = JSON.int(BDD.get(ctx, ELAPSED).unwrap!).unwrap!
+  BDD.assert(ctx, elapsed < args[0].to_i!, "the close took #{elapsed} ms")
+end
+
+def huge_receive_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  reply = ask(ctx, Order(op: "receive_forever"))
+  BDD.assert(ctx, reply.failed and reply.error.include?(args[0]), "the receive gave \"#{reply.error}\"")
+end
+
+def huge_close_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  reply = ask(ctx, Order(op: "close_forever"))
+  BDD.assert(ctx, reply.failed and reply.error.include?(args[0]), "the close gave \"#{reply.error}\"")
 end
 
 def received(ctx: BDD.Context, kind: String) -> Reply

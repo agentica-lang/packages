@@ -51,12 +51,19 @@ def prefixed[T](result: Result[T]) -> Result[T]
   end
 end
 
+# A deadline is the clock plus a timeout: a timeout past a day would let that sum overflow an Int, and no program waits
+# longer than that for a socket.
 def check_options(options: Types.Options) -> Result[Void]
   if options.max_message_bytes < 1 or options.timeout_ms < 1 or options.read_timeout_ms < 1
     return error("max_message_bytes and the timeouts must be positive")
   end
 
   return error("close_timeout_ms must be positive") if options.close_timeout_ms < 1
+
+  limit = Types.MAX_TIMEOUT_MS
+  if options.timeout_ms > limit or options.read_timeout_ms > limit or options.close_timeout_ms > limit
+    return error("the timeouts are at most #{limit} milliseconds")
+  end
 
   ok()
 end
@@ -176,6 +183,7 @@ def step_of(client: Types.Client, held: Int, deadline: Int) -> Step
 end
 
 def read_message(client: Types.Client) -> Result[Types.Message]
+  try check_options(client.options)
   assembly = Frame.new_assembly()
   while true
     deadline = Time.monotonic_ms() + client.options.read_timeout_ms
@@ -268,6 +276,7 @@ end
 # The close handshake of the client (RFC 6455 7.1.2): send the close frame, read until the answer of the server, and
 # close the socket whatever came. The data that arrives meanwhile is dropped.
 def shut(client: Types.Client, code: Int, reason: String) -> Result[Void]
+  try check_options(client.options)
   payload = try Frame.close_payload(code, reason)
   case send_frame(client, Frame.CLOSE, payload, Frame.CONTROL_BYTES)
     ok(_) -> await_close(client)

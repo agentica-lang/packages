@@ -2,7 +2,8 @@
 ## which it says on its first line (`listening on PORT`). It accepts one client, answers its WebSocket handshake, and
 ## then runs the script that it got as program arguments, one operation each:
 ##
-##   handshake MODE [ARG]  first, and optional: ok (the default), protocol NAME, status CODE, bad-accept,
+##   handshake MODE [ARG]  first, and optional: ok (the default), drip MS (the answer one byte at a time, MS apart),
+##                         protocol NAME, status CODE, bad-accept,
 ##                         missing-upgrade, extension or mixed-case (header names and tokens in odd case)
 ##   send HEX              writes these bytes (spaces in HEX are ignored); the first `send` goes out in the same write
 ##                         as the answer to the handshake, so a frame that comes with it is always there at once
@@ -199,7 +200,9 @@ def run(listener: Listener, script: List[List[String]]) -> Result[Void]
   end
 
   answered = answer(mode, request.key).bytes
-  if not steps.empty? and steps[0][0] == "send"
+  if mode[0] == "drip"
+    try drip(socket, try mode[1].to_i, answered)
+  elsif not steps.empty? and steps[0][0] == "send"
     # The 101 and the first frame in one write: the client must keep the bytes that follow its head.
     try TCP.send_bytes(socket, answered + try hex_of(steps[0].drop(1)), STEP_MS)
     steps = steps.drop(1)

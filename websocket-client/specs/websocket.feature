@@ -329,3 +329,45 @@ Feature: A WebSocket client
     And the client sends the text "unread"
     Then the client receives the close 1006 ""
     And the client has no connection
+
+  Scenario: A timeout of "no end" is refused, not an overflow
+    Given the client waits for a read with no end
+    When the client connects to a port that nobody listens at
+    Then the connection fails with "at most"
+
+  Scenario: A connect timeout of "no end" is refused
+    Given the client allows no end to connect
+    When the client connects to a port that nobody listens at
+    Then the connection fails with "at most"
+
+  Scenario: A close timeout of "no end" is refused
+    Given the client waits for the answer to a close with no end
+    When the client connects to a port that nobody listens at
+    Then the connection fails with "at most"
+
+  Scenario: The options of a client that were changed after the connect are checked again
+    Given the std server listens on a free port
+    When the client connects to "ws://127.0.0.1:PORT/echo"
+    Then a client with a read timeout with no end fails to receive with "at most"
+    And a client with a close timeout with no end fails to close with "at most"
+
+  Scenario: The deadline of the handshake covers the whole answer, not each byte
+    Given the raw peer listens with the script:
+      """
+      handshake drip 10
+      """
+    And the client allows 1000 milliseconds to connect
+    When the client connects to "ws://127.0.0.1:PORT/"
+    Then the connection fails with "timed out"
+
+  Scenario: The deadline of the close covers the whole answer, not each byte
+    Given the raw peer listens with the script:
+      """
+      expect
+      drip 400 88 02 03 e8
+      """
+    And the client waits 500 milliseconds for the answer to a close
+    When the client connects to "ws://127.0.0.1:PORT/"
+    And the client closes with 1000 and ""
+    Then the close took less than 1100 milliseconds
+    And the peer saw a close frame with the code 1000

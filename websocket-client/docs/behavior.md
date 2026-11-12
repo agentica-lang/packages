@@ -41,6 +41,8 @@ end
 
 `send_text`, `send_binary`, `send_ping` and `send_pong` write one whole frame, always masked with a new random key. A ping or a pong carries at most 125 bytes. A message is at most 1 MiB less its frame head, because a frame goes out in one write, so that tasks that send at once never mix their frames; a larger payload is an `error` before anything is sent. A send that times out (`timeout_ms`) closes the socket.
 
+Every timeout (`timeout_ms`, `read_timeout_ms`, `close_timeout_ms`) is from 1 to 86,400,000 milliseconds (one day). A larger value is an `error`, from `connect` and also from `receive` and `close`, so a value that stands for "never" cannot overflow a deadline; use one day.
+
 Masking runs in Agentica, at about 2 MB/s.
 
 ## Receive
