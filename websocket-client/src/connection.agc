@@ -143,9 +143,8 @@ def upgrade(
 end
 
 # The start of the body of a refused answer: `Content-Length` bytes, at most `MAX_BODY_BYTES`. The bytes that came
-# before the peer closed or the deadline hit are kept; a body that is missing is "". It never fails the call:
-# the status
-# and the headers are the answer.
+# before the peer closed or the deadline hit are kept; a body that is missing is "". It never fails the call: the
+# status and the headers are the answer.
 def read_body_of(socket: Socket, headers: List[Header], deadline: Int) -> String
   size = Handshake.content_length(headers, Types.MAX_BODY_BYTES)
   return "" if size < 1
