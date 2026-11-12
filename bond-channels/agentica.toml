@@ -4,8 +4,6 @@ name = "bond-channels"
 [style]
 blank_line_after_end = true
 
-# websocket-client is for the specs only (a manifest has one list of dependencies, no dev ones): the peer of the cable.
 # The same tag as agentica-campfire: two sources for one name in a tree is `PKG-SOURCE-CONFLICT`.
 [dependencies]
 bond = { git = "https://github.com/agentica-lang/bond", tag = "0.10.1" }
-websocket-client = { git = "https://github.com/agentica-lang/packages", tag = "websocket-client-0.2.0", subdir = "websocket-client" }

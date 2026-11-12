@@ -22,8 +22,9 @@ bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub,
                      (pure), src/hub.agc the hub (an actor), src/connection.agc one connection, src/types.agc the records;
                      turbo_streams, stream_key and signed_stream_name are in channels.agc too: src/signing.agc the
                      Rails-format signed names (pure), src/turbo.agc the channel; specs/ has the frames, the cable
-                     and the Turbo features (fixtures/cable_client.agc is the peer: websocket-client in a program of
-                     its own, since a step cannot leave tasks running; fixtures/turbo_vectors.json is what Rails
+                     and the Turbo features (fixtures/ws_client/cable_client.agc is the peer: websocket-client in a program
+                     with a manifest of its own, since a step cannot leave tasks running and the package must not
+                     depend on it; fixtures/turbo_vectors.json is what Rails
                      signed), bench/fanout.py measures memory per socket and the hub's fan-out by hand, bench/hub_fanout.agc the hub alone (steps and time per frame)
 native-gen/          the C header of an `extern module` block: cli.agc is the command, native_gen.agc the API
                      (`header`), src/header.agc the text of the header, src/codecs.agc the C values of the structs and
