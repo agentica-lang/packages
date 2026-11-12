@@ -1,6 +1,6 @@
 Feature: The cable
   `Channels.mount` adds an Action Cable WebSocket to a Bond app. The program of `fixtures/server.agc` listens on
-  127.0.0.1 and a free port; the clients are `fixtures/cable_peer.py`, a raw-socket WebSocket client with cookies and
+  127.0.0.1 and a free port; the clients are those of the package `websocket-client`, with cookies and
   an Origin, and every frame is text of the `actioncable-v1-json` subprotocol (`protocol.feature` has the frames).
 
   Background:

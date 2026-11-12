@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The specs use the package `websocket-client` 0.2.0 as their client, in place of a Python script (`python3` is no longer needed). It is in `[dependencies]`, since a manifest has no dev ones, so an app that uses `bond-channels` fetches it too.
+
 ## [0.3.0] - 2026-11-11
 
 Needs Agentica 0.30.0 or later and Bond 0.10.1.
