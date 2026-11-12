@@ -51,6 +51,13 @@ prop/                property-based testing: prop.agc is the API (check, eq, ass
                      src/seed.agc the seed hashing (pure), src/check.agc the runner and the shrinking, src/laws.agc
                      the law helpers, src/schema.agc `Prop.of`, src/exhaustive.agc the bounded check; test/*_test.agc
                      are the unit tests (the API is plain function calls)
+websocket-client/    a WebSocket client (RFC 6455): websocket.agc is the API (connect, send_text, send_binary, send_ping,
+                     send_pong, receive, close); src/frame.agc the frames (pure), src/handshake.agc the URL, the request
+                     and the check of the answer (pure), src/connection.agc the socket, src/types.agc the records;
+                     test/ has the unit tests of the two pure modules; specs/ has the features, whose peers are
+                     fixtures/server.agc (the server of std/http, ws and wss; fixtures/cert.pem and key.pem are a
+                     self-signed pair for localhost) and fixtures/raw_peer.agc (a TCP server that writes the hex
+                     frames of a script and prints the frames it reads)
 ```
 
 ## Commands
