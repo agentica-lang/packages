@@ -12,6 +12,10 @@ Needs Agentica 0.31.0-alpha.1 and Bond 0.12.0-alpha.1.
 
 - **Breaking:** needs Agentica 0.31.0-alpha.1 and Bond 0.12.0-alpha.1 (the package is pinned by that tag): the server options are `HTTP.ServerOptions` of `std/http`, and the sources are formatted with its `agentica fmt`. CI tests with Agentica 0.31.0-alpha.1.
 
+### Fixed
+
+- `Channels.stop_hub` waits for the ticker it cancels, so no task of the hub is left running when it returns.
+
 ## [0.3.1] - 2026-11-12
 
 Needs Agentica 0.30.0 or later and Bond 0.11.0.

@@ -141,13 +141,16 @@ export def start(options: HubOptions) -> Result[Hub]
   ok(Hub(inbox: actor.inbox, task: actor.task, ticker: ticker, counters: counters, options: options))
 end
 
-## Asks the hub to end; its task returns and later sends fail. The ticker is cancelled with it, so that no task is left
-## sleeping for a beat (a program or a test that waits for its tasks does not wait for one more). A `Stop` that could
-## not be queued (the inbox stayed full) leaves the hub running, with its ticker.
+## Asks the hub to end; its task returns and later sends fail. The ticker is cancelled with it, and `stop` waits for it
+## to end, so that no task is left sleeping for a beat (a program or a test that waits for its tasks does not wait for
+## one more). A `Stop` that could not be queued (the inbox stayed full) leaves the hub running, with its ticker.
 export def stop(hub: Hub) -> Result[Void]
   sent = send(hub, HubMessage.Stop)
   if sent.ok? or gone?(hub)
+    # A cancel only marks the task; the await returns once its sleep or send has ended, with "task: cancelled", which
+    # is the expected end.
     Task.cancel(hub.ticker)
+    _ = Task.await(hub.ticker)
   end
 
   sent
