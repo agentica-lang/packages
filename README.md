@@ -3,21 +3,21 @@
 Small Agentica packages, one folder each. A folder is a package with its own `agentica.toml`; add one with its prefixed tag and its folder as `--subdir`, in a project with an `agentica.toml`:
 
 ```sh
-agentica add prop https://github.com/agentica-lang/packages --tag prop-0.2.0 --subdir prop
+agentica add prop https://github.com/agentica-lang/packages --tag prop-0.2.1 --subdir prop
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.2.0", subdir = "prop" }
+prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.2.1", subdir = "prop" }
 ```
 
 | Package | What it is |
 |---|---|
 | `bond-channels` (`bond-channels-0.3.0`) | Action Cable (`actioncable-v1-json`) channels for Bond apps: one WebSocket per tab at `/cable`, channels and a pub/sub hub, with the frames, the connections and the Turbo Streams signing (`bond-channels/channels.agc`). [Docs](https://agentica-lang.github.io/packages/bond-channels/) |
-| `prop` (`prop-0.2.0`) | Property-based testing: generators, shrinking, `Prop.check`, which runs a law on generated inputs and reports the smallest counterexample with its seed, law helpers, `Prop.of` for your types and a bounded exhaustive check. [Docs](https://agentica-lang.github.io/packages/prop/) |
-| `native-gen` (`native-gen-0.2.0`) | The C header of an `extern module` block: typed prototypes, the argument checks, the codecs and the tables of the module, generated from the `.agc`, and `new` to start a module. [Docs](https://agentica-lang.github.io/packages/native-gen/) |
+| `prop` (`prop-0.2.1`) | Property-based testing: generators, shrinking, `Prop.check`, which runs a law on generated inputs and reports the smallest counterexample with its seed, law helpers, `Prop.of` for your types and a bounded exhaustive check. [Docs](https://agentica-lang.github.io/packages/prop/) |
+| `native-gen` (`native-gen-0.3.0`) | The C header of an `extern module` block: typed prototypes, the argument checks, the codecs and the tables of the module, generated from the `.agc`, and `new` to start a module. [Docs](https://agentica-lang.github.io/packages/native-gen/) |
 | `dock` (`dock-0.2.0`) | A TCP server: an accept loop, a task per client that runs your handler, and the clean-up when a client ends or crashes (`dock/dock.agc`). [Docs](https://agentica-lang.github.io/packages/dock/) |
 | `websocket-client` (`websocket-client-0.2.0`) | A WebSocket client (RFC 6455) over `std` TCP and TLS: `ws://` and `wss://`, text and binary messages, fragments, pings, the close handshake, a size limit and a read timeout (`websocket-client/websocket`). [Docs](https://agentica-lang.github.io/packages/websocket-client/) |
 | `cache` (planned) | Cache strategies (CLOCK, sampled LRU, TinyLFU) behind the `Cache` facade of `std/cache` |

@@ -4,6 +4,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-12
+
+Needs Agentica 0.30.0 or later.
+
+### Fixed
+
+- The sources compile with the next Agentica, which refuses a method call right after the `end` of a `do` block (`CHECK-CHAIN-AFTER-END`); they still need Agentica 0.30.0 or later.
+
 ## [0.2.0] - 2026-11-11
 
 Needs Agentica 0.30.0 or later.
