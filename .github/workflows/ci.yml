@@ -46,15 +46,20 @@ jobs:
           fi
           : > "$RUNNER_TEMP/versions"
           for p in $packages; do
-            read -r version sha256 rest < "$p/AGENTICA_VERSION" || true
-            if [ -z "${version:-}" ] || [ -z "${sha256:-}" ]; then
+            # Reset first: a missing or empty file must not keep the values of the package before it.
+            version= sha256=
+            if [ -f "$p/AGENTICA_VERSION" ]; then read -r version sha256 rest < "$p/AGENTICA_VERSION" || true; fi
+            if [ -z "$version" ] || [ -z "$sha256" ]; then
               echo "$p/AGENTICA_VERSION must hold the version and the sha256 of its linux-x86_64 archive" >&2
               exit 1
             fi
             printf '%s\t%s\t%s\n' "$version" "$sha256" "$p" >> "$RUNNER_TEMP/versions"
           done
-          groups=$(jq -cR -s 'split("\n") | map(select(. != "") | split("\t"))
-            | group_by(.[0]) | map({version: .[0][0], sha256: .[0][1], packages: (map(.[2]) | join(" "))})' \
+          # One version with two sha256 values is an error: the job of the group would check only the first.
+          groups=$(jq -cR -s 'split("\n") | map(select(. != "") | split("\t")) | group_by(.[0])
+            | map(if (map(.[1]) | unique | length) > 1
+              then error("Agentica \(.[0][0]) has two sha256 values: \(map(.[2] + " " + .[1]) | join(", "))")
+              else {version: .[0][0], sha256: .[0][1], packages: (map(.[2]) | join(" "))} end)' \
             "$RUNNER_TEMP/versions")
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
           if [ -n "$packages" ]; then echo "Packages to run: $groups"; else echo "No package changed: nothing to run."; fi
@@ -196,7 +201,12 @@ jobs:
       - name: Read the Agentica version of native-gen
         if: env.RUST == '1'
         run: |
-          read -r version sha256 rest < ../../AGENTICA_VERSION
+          version= sha256=
+          read -r version sha256 rest < ../../AGENTICA_VERSION || true
+          if [ -z "$version" ] || [ -z "$sha256" ]; then
+            echo "native-gen/AGENTICA_VERSION must hold the version and the sha256 of its linux-x86_64 archive" >&2
+            exit 1
+          fi
           echo "AGENTICA_VERSION=$version" >> "$GITHUB_ENV"
           echo "AGENTICA_SHA256=$sha256" >> "$GITHUB_ENV"
 

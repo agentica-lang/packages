@@ -4,17 +4,17 @@ The C header of an Agentica `extern module` block. Write plain C functions with 
 arguments, the codecs of your structs, enums, Lists, Maps, Optionals and Results, and the tables of the module are
 generated from the `.agc`, the one source of every signature.
 
-Needs Agentica 0.30.0 or later. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
+Needs Agentica 0.31.0-alpha.1 or later. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
 
 ```sh
-agentica add native-gen https://github.com/agentica-lang/packages --tag native-gen-0.3.0 --subdir native-gen
+agentica add native-gen https://github.com/agentica-lang/packages --tag native-gen-0.4.0-alpha.1 --subdir native-gen
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-native-gen = { git = "https://github.com/agentica-lang/packages", tag = "native-gen-0.3.0", subdir = "native-gen" }
+native-gen = { git = "https://github.com/agentica-lang/packages", tag = "native-gen-0.4.0-alpha.1", subdir = "native-gen" }
 ```
 
 Before, each C function takes terms and checks them by hand:
