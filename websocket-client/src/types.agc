@@ -3,6 +3,9 @@
 ## The most that a timeout may be, in milliseconds: one day.
 export MAX_TIMEOUT_MS = 86_400_000
 
+## The most that the body of a refused answer keeps, in bytes.
+export MAX_BODY_BYTES = 65_536
+
 ## What `connect` takes besides the URL. The timeouts are in milliseconds, from 1 to `MAX_TIMEOUT_MS`: a larger one is
 ## an `error`.
 ##
@@ -30,9 +33,21 @@ export enum Message
   Close(Int, String)
 end
 
-## An open connection. `protocol` is the subprotocol that the server chose ("" for none).
+## An open connection. `protocol` is the subprotocol that the server chose ("" for none). `status` and `headers` are
+## the answer of the 101 handshake, with the names of the headers as the server wrote them.
 export struct Client
   socket: Socket
   protocol: String
   options: Options
+  status: Int = 101
+  headers: List[Header] = []
+end
+
+## What `handshake` returns: the open connection, or the answer of a server that did not upgrade (a status from 200 to
+## 599 but 101), with its headers and the start of its body: `MAX_BODY_BYTES` at most, the bytes that came before the
+## peer closed or the deadline hit, "" for no `Content-Length`. A body cut in the middle of a UTF-8 character loses
+## that character, and one that is still not UTF-8 is "".
+export enum Handshake
+  Open(Client)
+  Refused(Int, List[Header], String)
 end

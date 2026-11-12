@@ -74,6 +74,155 @@ Feature: A WebSocket client
       | extension      | extension                  |
       | protocol other | subprotocol                |
 
+  Scenario Outline: A server that does not upgrade is an answer to read with `handshake`, and `connect` fails on it
+    Given the raw peer listens with the script:
+      """
+      handshake status <status> <body>
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the handshake is refused with the status <status>
+    And the answer has the header "X-Reason" with "test"
+    And the answer has the body "<body>"
+
+    Examples:
+      | status | body       |
+      | 403    | forbidden  |
+      | 426    | upgrade    |
+
+  Scenario: A refused answer with no body has an empty one
+    Given the raw peer listens with the script:
+      """
+      handshake status 404
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the handshake is refused with the status 404
+    And the answer has the body ""
+
+  Scenario: A 101 that is not a good handshake is still an error with `handshake`
+    Given the raw peer listens with the script:
+      """
+      handshake bad-accept
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the connection fails with "Sec-WebSocket-Accept"
+
+  Scenario: An open handshake has the status and the headers as the server wrote them, and the connection works
+    Given the raw peer listens with the script:
+      """
+      handshake mixed-case
+      send 81 02 68 69
+      wait
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the handshake is open with the status 101
+    And the answer has the header "UPGRADE" with "WebSocket"
+    And the client receives the text "hi"
+
+  Scenario: `connect` stops at the head of a refused answer, and `handshake` reads the body within the deadline
+    Given the raw peer listens with the script:
+      """
+      handshake status-open 403 100
+      send 61 62 63
+      wait
+      """
+    And the client allows 1500 milliseconds to connect
+    When the client connects to "ws://127.0.0.1:PORT/"
+    Then the connection fails with "answered 403"
+    And the connection took less than 700 milliseconds
+
+  Scenario: `handshake` of a body that stalls returns what came before the deadline
+    Given the raw peer listens with the script:
+      """
+      handshake status-open 403 100
+      send 61 62 63
+      wait
+      """
+    And the client allows 800 milliseconds to connect
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the handshake is refused with the status 403
+    And the answer has the body "abc"
+
+  Scenario: A body that comes in pieces is joined
+    Given the raw peer listens with the script:
+      """
+      handshake status-open 403 6
+      send 61 62 63
+      sleep 150
+      send 64 65 66
+      wait
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the answer has the body "abcdef"
+
+  Scenario: A body that is shorter than its Content-Length, with the peer closing, keeps what came
+    Given the raw peer listens with the script:
+      """
+      handshake status-open 403 50
+      send 61 62 63
+      close
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the handshake is refused with the status 403
+    And the answer has the body "abc"
+
+  Scenario: A Content-Length that does not fit an Int counts as the cap, and a body over the cap is cut
+    Given the raw peer listens with the script:
+      """
+      handshake status-open 403 99999999999999999999
+      raw 70000
+      close
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the handshake is refused with the status 403
+    And the answer body has 65536 bytes
+
+  Scenario: A cut in the middle of a character drops that character
+    Given the raw peer listens with the script:
+      """
+      handshake status-open 403 70000
+      raw 65535
+      send c3 a9
+      close
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the answer body has 65535 bytes
+
+  Scenario: A Content-Length that is not a number means no body
+    Given the raw peer listens with the script:
+      """
+      handshake status-open 403 12x
+      send 61 62 63
+      close
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the answer has the body ""
+
+  Scenario: The socket is closed when the answer is refused
+    Given the raw peer listens with the script:
+      """
+      handshake status 403
+      expect-eof
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then the peer saw "eof"
+
+  Scenario Outline: A status that is no final answer is an error, a redirect is a refusal
+    Given the raw peer listens with the script:
+      """
+      handshake status <status>
+      """
+    When the client performs the handshake with "ws://127.0.0.1:PORT/"
+    Then <outcome>
+
+    Examples:
+      | status | outcome                                       |
+      | 100    | the connection fails with "status"            |
+      | 199    | the connection fails with "status"            |
+      | 600    | the connection fails with "status"            |
+      | 0      | the connection fails with "status"            |
+      | 302    | the handshake is refused with the status 302  |
+      | 599    | the handshake is refused with the status 599  |
+
   Scenario: Every frame of the client is masked and whole
     Given the raw peer listens with the script:
       """

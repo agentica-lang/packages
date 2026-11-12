@@ -3,7 +3,8 @@
 ## then runs the script that it got as program arguments, one operation each:
 ##
 ##   handshake MODE [ARG]  first, and optional: ok (the default), drip MS (the answer one byte at a time, MS apart),
-##                         protocol NAME, status CODE, bad-accept,
+##                         protocol NAME, status CODE [BODY], status-open CODE LENGTH (a
+##                         Content-Length with no body: the script sends it), bad-accept,
 ##                         missing-upgrade, extension or mixed-case (header names and tokens in odd case)
 ##   send HEX              writes these bytes (spaces in HEX are ignored); the first `send` goes out in the same write
 ##                         as the answer to the handshake, so a frame that comes with it is always there at once
@@ -11,6 +12,8 @@
 ##   fill BYTE SIZE        writes one whole frame (BYTE is its first byte in hex) of SIZE bytes "x", with the
 ##                         shortest length form
 ##   host                  prints `host=` and the Host header of the handshake
+##   raw SIZE              writes SIZE bytes "x" (the body of a long answer)
+##   expect-eof            prints `eof` when the client closes its end (it reads and drops what comes first)
 ##   expect                reads one frame of the client and prints `frame op=N fin=B masked=B payload=HEX`
 ##   expect-keys N         reads N frames and prints `masks distinct=K`, the number of different mask keys
 ##   sleep MS              waits
@@ -87,9 +90,20 @@ def answer(mode: List[String], key: String) -> String
       )
     "extension" -> "#{head}Sec-WebSocket-Accept: #{accept}\r\nSec-WebSocket-Extensions: permessage-deflate\r\n\r\n"
     "protocol" -> "#{head}Sec-WebSocket-Accept: #{accept}\r\nSec-WebSocket-Protocol: #{mode[1]}\r\n\r\n"
-    "status" -> "HTTP/1.1 #{mode[1]} Refused\r\nContent-Length: 0\r\n\r\n"
+    "status" -> refusal(mode)
+    "status-open" -> "HTTP/1.1 #{mode[1]} Refused\r\nX-Reason: test\r\nContent-Length: #{mode[2]}\r\n\r\n"
     _ -> "#{head}Sec-WebSocket-Accept: #{accept}\r\n\r\n"
   end
+end
+
+# A refusal has a header and, when the script gives one, a body with its Content-Length.
+def refusal(mode: List[String]) -> String
+  body = ""
+  if mode.size > 2
+    body = mode[2]
+  end
+
+  "HTTP/1.1 #{mode[1]} Refused\r\nX-Reason: test\r\nContent-Length: #{body.bytes.size}\r\n\r\n#{body}"
 end
 
 def read_frame(socket: Socket) -> Result[Frame]
@@ -168,6 +182,15 @@ def play(socket: Socket, request: Request, op: List[String]) -> Result[Void]
     "fill" -> try TCP.send_bytes(socket, filled(try hex_of([op[1]]), try op[2].to_i), STEP_MS)
     "host" ->
       puts("host=#{request.host}")
+      IO.flush()
+    "raw" -> try TCP.send_bytes(socket, ("x" * try op[1].to_i).bytes, STEP_MS)
+    "expect-eof" ->
+      while true
+        chunk = try TCP.recv_bytes(socket, 4096, STEP_MS)
+        break if chunk.empty?
+      end
+
+      puts("eof")
       IO.flush()
     "expect" ->
       frame = try read_frame(socket)
