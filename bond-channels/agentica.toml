@@ -6,4 +6,4 @@ blank_line_after_end = true
 
 # The same tag as agentica-campfire: two sources for one name in a tree is `PKG-SOURCE-CONFLICT`.
 [dependencies]
-bond = { git = "https://github.com/agentica-lang/bond", tag = "0.11.0" }
+bond = { git = "https://github.com/agentica-lang/bond", tag = "0.12.0-alpha.1" }

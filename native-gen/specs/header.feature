@@ -135,8 +135,9 @@ Feature: The C header of an extern module block
 
   Scenario Outline: The stats module on the header, built as <language>, gives the output of the hand-written one
     Given a fresh package cache
-    And the environment variable "CC" is "<cc>"
-    And the Agentica program "fixtures/stats/stats.agc"
+    And the C compiler builds as "<language>"
+    And a copy of the package of "fixtures/stats/stats.agc" with its header
+    And the Agentica program "stats.agc" in the fresh folder
     Then the program exits with code 0 within 25000 milliseconds
     And stdout is:
       """
@@ -149,15 +150,15 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                               |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror |
-      | C++      | sh ../cxx.sh                     |
+      | language |
+      | C11      |
+      | C++      |
 
   Scenario Outline: Every kind of argument reaches the C function, built as <language>
     Given a fresh package cache
-    And the environment variable "CC" is "<cc>"
-    And the header of the package of "fixtures/kinds/kinds.agc"
-    And the Agentica program "fixtures/kinds/kinds.agc"
+    And the C compiler builds as "<language>"
+    And a copy of the package of "fixtures/kinds/kinds.agc" with its header
+    And the Agentica program "kinds.agc" in the fresh folder
     Then the program exits with code 0 within 25000 milliseconds
     And stdout is:
       """
@@ -172,15 +173,15 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                               |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror |
-      | C++      | sh ../cxx.sh                     |
+      | language |
+      | C11      |
+      | C++      |
 
   Scenario Outline: Structs and enums come back equal through their C values, built as <language>
     Given a fresh package cache
-    And the environment variable "CC" is "<cc>"
-    And the header of the package of "fixtures/shapes/shapes.agc"
-    And the Agentica program "fixtures/shapes/shapes.agc"
+    And the C compiler builds as "<language>"
+    And a copy of the package of "fixtures/shapes/shapes.agc" with its header
+    And the Agentica program "shapes.agc" in the fresh folder
     Then the program exits with code 0 within 25000 milliseconds
     And stdout is:
       """
@@ -193,16 +194,16 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                               |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror |
-      | C++      | sh ../cxx.sh                     |
+      | language |
+      | C11      |
+      | C++      |
 
   Scenario Outline: A read of a bad value fails the call with the path of the bad part, built as <language>
     Given a fresh package cache
-    And the environment variable "CC" is "<cc>"
-    And the header of the package of "fixtures/shapes/shapes.agc"
+    And the C compiler builds as "<language>"
+    And a copy of the package of "fixtures/shapes/shapes.agc" with its header
     And the program argument "<call>"
-    And the Agentica program "fixtures/shapes/shapes.agc"
+    And the Agentica program "shapes.agc" in the fresh folder
     Then the program exits with code 1 within 25000 milliseconds
     And stderr includes:
       """
@@ -211,20 +212,20 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                                | call            | path                                 |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread         | Point: expected Point                |
-      | C++      | sh ../cxx.sh                      | misread         | Point: expected Point                |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested  | Label.at.x: expected Int             |
-      | C++      | sh ../cxx.sh                      | misread_nested  | Label.at.x: expected Int             |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | echo_label      | argument 1: Label.at.x: expected Int |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_payload | Shape.Circle.0.x: expected Int       |
-      | C++      | sh ../cxx.sh                      | misread_payload | Shape.Circle.0.x: expected Int       |
+      | language | call            | path                                 |
+      | C11      | misread         | Point: expected Point                |
+      | C++      | misread         | Point: expected Point                |
+      | C11      | misread_nested  | Label.at.x: expected Int             |
+      | C++      | misread_nested  | Label.at.x: expected Int             |
+      | C11      | echo_label      | argument 1: Label.at.x: expected Int |
+      | C11      | misread_payload | Shape.Circle.0.x: expected Int       |
+      | C++      | misread_payload | Shape.Circle.0.x: expected Int       |
 
   Scenario Outline: Lists and Maps come in through cursors and go out through builders, built as <language>
     Given a fresh package cache
-    And the environment variable "CC" is "<cc>"
-    And the header of the package of "fixtures/lists/lists.agc"
-    And the Agentica program "fixtures/lists/lists.agc"
+    And the C compiler builds as "<language>"
+    And a copy of the package of "fixtures/lists/lists.agc" with its header
+    And the Agentica program "lists.agc" in the fresh folder
     Then the program exits with code 0 within 25000 milliseconds
     And stdout is:
       """
@@ -236,16 +237,16 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                                |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror |
-      | C++      | sh ../cxx.sh                      |
+      | language |
+      | C11      |
+      | C++      |
 
   Scenario Outline: A bad item of a List or Map fails the call with its index, built as <language>
     Given a fresh package cache
-    And the environment variable "CC" is "<cc>"
-    And the header of the package of "fixtures/lists/lists.agc"
+    And the C compiler builds as "<language>"
+    And a copy of the package of "fixtures/lists/lists.agc" with its header
     And the program argument "<call>"
-    And the Agentica program "fixtures/lists/lists.agc"
+    And the Agentica program "lists.agc" in the fresh folder
     Then the program exits with code 1 within 25000 milliseconds
     And stderr includes:
       """
@@ -254,25 +255,25 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                                | call                    | path                                                        |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_list            | List[Int].1: expected Int                                   |
-      | C++      | sh ../cxx.sh                      | misread_list            | List[Int].1: expected Int                                   |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_map             | Map[String, Point].0.value.x: expected Int                  |
-      | C++      | sh ../cxx.sh                      | misread_map             | Map[String, Point].0.value.x: expected Int                  |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_argument        | argument 1: List[List[Float]].1: expected List[Float]       |
-      | C++      | sh ../cxx.sh                      | misread_argument        | argument 1: List[List[Float]].1: expected List[Float]       |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested_argument | argument 1: List[Float].1: expected Float                   |
-      | C++      | sh ../cxx.sh                      | misread_nested_argument | argument 1: List[Float].1: expected Float                   |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_map_argument    | argument 1: Map[Int, List[Int]].2.value: expected List[Int] |
-      | C++      | sh ../cxx.sh                      | misread_map_argument    | argument 1: Map[Int, List[Int]].2.value: expected List[Int] |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_map_value       | argument 1: List[Int].2: expected Int                       |
-      | C++      | sh ../cxx.sh                      | misread_map_value       | argument 1: List[Int].2: expected Int                       |
+      | language | call                    | path                                                        |
+      | C11      | misread_list            | List[Int].1: expected Int                                   |
+      | C++      | misread_list            | List[Int].1: expected Int                                   |
+      | C11      | misread_map             | Map[String, Point].0.value.x: expected Int                  |
+      | C++      | misread_map             | Map[String, Point].0.value.x: expected Int                  |
+      | C11      | misread_argument        | argument 1: List[List[Float]].1: expected List[Float]       |
+      | C++      | misread_argument        | argument 1: List[List[Float]].1: expected List[Float]       |
+      | C11      | misread_nested_argument | argument 1: List[Float].1: expected Float                   |
+      | C++      | misread_nested_argument | argument 1: List[Float].1: expected Float                   |
+      | C11      | misread_map_argument    | argument 1: Map[Int, List[Int]].2.value: expected List[Int] |
+      | C++      | misread_map_argument    | argument 1: Map[Int, List[Int]].2.value: expected List[Int] |
+      | C11      | misread_map_value       | argument 1: List[Int].2: expected Int                       |
+      | C++      | misread_map_value       | argument 1: List[Int].2: expected Int                       |
 
   Scenario Outline: Optional and Result come in as structs and go out through constructors, built as <language>
     Given a fresh package cache
-    And the environment variable "CC" is "<cc>"
-    And the header of the package of "fixtures/options/options.agc"
-    And the Agentica program "fixtures/options/options.agc"
+    And the C compiler builds as "<language>"
+    And a copy of the package of "fixtures/options/options.agc" with its header
+    And the Agentica program "options.agc" in the fresh folder
     Then the program exits with code 0 within 25000 milliseconds
     And stdout is:
       """
@@ -285,16 +286,16 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                                |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror |
-      | C++      | sh ../cxx.sh                      |
+      | language |
+      | C11      |
+      | C++      |
 
   Scenario Outline: A bad value in an Optional or Result fails the call with its path, built as <language>
     Given a fresh package cache
-    And the environment variable "CC" is "<cc>"
-    And the header of the package of "fixtures/options/options.agc"
+    And the C compiler builds as "<language>"
+    And a copy of the package of "fixtures/options/options.agc" with its header
     And the program argument "<call>"
-    And the Agentica program "fixtures/options/options.agc"
+    And the Agentica program "options.agc" in the fresh folder
     Then the program exits with code 1 within 25000 milliseconds
     And stderr includes:
       """
@@ -303,19 +304,19 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                                | call             | path                                         |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_result   | List[Result[Int]].0.ok: expected Int         |
-      | C++      | sh ../cxx.sh                      | misread_optional | List[Optional[Point]].0.some.x: expected Int |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_nested   | argument 1: List[Int].2: expected Int        |
-      | C++      | sh ../cxx.sh                      | misread_nested   | argument 1: List[Int].2: expected Int        |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror | misread_inner    | argument 1: List[Int].3: expected Int        |
-      | C++      | sh ../cxx.sh                      | misread_inner    | argument 1: List[Int].3: expected Int        |
+      | language | call             | path                                         |
+      | C11      | misread_result   | List[Result[Int]].0.ok: expected Int         |
+      | C++      | misread_optional | List[Optional[Point]].0.some.x: expected Int |
+      | C11      | misread_nested   | argument 1: List[Int].2: expected Int        |
+      | C++      | misread_nested   | argument 1: List[Int].2: expected Int        |
+      | C11      | misread_inner    | argument 1: List[Int].3: expected Int        |
+      | C++      | misread_inner    | argument 1: List[Int].3: expected Int        |
 
   Scenario Outline: A resource parameter is its state and each dropped resource is freed once, built as <language>
     Given a fresh package cache
-    And the environment variable "CC" is "<cc>"
-    And the header of the package of "fixtures/resources/resources.agc"
-    And the Agentica program "fixtures/resources/resources.agc"
+    And the C compiler builds as "<language>"
+    And a copy of the package of "fixtures/resources/resources.agc" with its header
+    And the Agentica program "resources.agc" in the fresh folder
     Then the program exits with code 0 within 25000 milliseconds
     And stdout is:
       """
@@ -327,9 +328,9 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | language | cc                                |
-      | C11      | cc -std=c11 -Wall -Wextra -Werror |
-      | C++      | sh ../cxx.sh                      |
+      | language |
+      | C11      |
+      | C++      |
 
   Scenario Outline: native new writes a module that builds and loads with nothing filled in, built as <language>
     Given a fresh package cache
@@ -547,9 +548,9 @@ Feature: The C header of an extern module block
 
   Scenario: The bench of a struct of 26 fields runs
     Given a fresh package cache
-    And the header of the package of "../bench/wide/wide.agc"
+    And a copy of the package of "../bench/wide/wide.agc" with its header
     And the program argument "10"
-    And the Agentica program "../bench/wide/wide.agc"
+    And the Agentica program "wide.agc" in the fresh folder
     Then the program exits with code 0 within 25000 milliseconds
     And stdout includes:
       """

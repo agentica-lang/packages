@@ -133,7 +133,7 @@ export def start(options: HubOptions) -> Result[Hub]
   end
 
   counters: ATS[String, Int] = ATS.new()
-  handler = handling() do |state, message| handle(state, message, counters) end
+  handler = handling do |state, message| handle(state, message, counters) end
   actor = Actor.start(Actor.Behaviour(init: &empty_state, handle: handler), Actor.Options(capacity: HUB_INBOX))
   # The hub and its ticker send through the channel itself, not `Actor.cast`, so a send keeps its "closed" and
   # "timed out" errors.

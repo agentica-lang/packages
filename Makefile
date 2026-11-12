@@ -5,9 +5,6 @@ AGENTICA_FOR := tools/agentica-for.sh
 PACKAGES := $(patsubst %/agentica.toml,%,$(wildcard */agentica.toml))
 # How many test files and scenarios of a package run at once.
 JOBS ?= 4
-# The packages whose scenarios share files on disk, so they run one at a time: the scenarios of native-gen write the
-# headers of the same fixture folders.
-SERIAL_PACKAGES := native-gen
 # The head of the loop of each target: for each package, a subshell with the folder of its binary first on PATH, so
 # that `agentica` (and a program that a test starts by that name) is its version; it prints the package and the
 # version, and the recipe closes the subshell with `) done`.
@@ -44,9 +41,7 @@ fmt-check:
 	@set -e; $(EACH_PACKAGE) cd $$p && agentica fmt --check) done
 
 test:
-	@set -e; $(EACH_PACKAGE) \
-		jobs=$(JOBS); case " $(SERIAL_PACKAGES) " in *" $$p "*) jobs=1 ;; esac; \
-		cd $$p && agentica test --jobs $$jobs) done
+	@set -e; $(EACH_PACKAGE) cd $$p && agentica test --jobs $(JOBS)) done
 
 # The examples of each docs/ folder: a block with `def main` runs (and matches the `output` block after it), any other
 # is checked; the rules are in the header of tools/doc_examples.agc. The tool runs on the version of the package, so

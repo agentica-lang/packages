@@ -7,12 +7,12 @@ Small packages for [Agentica](https://github.com/agentica-lang/agentica), one fo
 Add one with its prefixed tag, `PACKAGE-X.Y.Z`, and its folder as `--subdir`, in a project with an `agentica.toml`:
 
 ```sh
-agentica add prop https://github.com/agentica-lang/packages --tag prop-0.2.1 --subdir prop
+agentica add prop https://github.com/agentica-lang/packages --tag prop-0.3.0-alpha.1 --subdir prop
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.2.1", subdir = "prop" }
+prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.3.0-alpha.1", subdir = "prop" }
 ```

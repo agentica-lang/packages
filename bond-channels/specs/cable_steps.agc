@@ -72,7 +72,7 @@ def listens(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   line = BDD.read_line(started, START_MS).unwrap!
   port = line.split(" ").last.to_i!
   process = Process.spawn_captured("agentica", [PEER_PROGRAM, "#{port}"]).unwrap!
-  service = serving() do |request| ask(process, request) end
+  service = serving do |request| ask(process, request) end
   BDD.set(BDD.keep(started, PEER, service), PORT, JSON.from(port))
 end
 
