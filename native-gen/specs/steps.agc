@@ -98,6 +98,7 @@ def copy_package(from: String, to: String, name: String) -> Result[Void]
   File.write_text("#{to}/native/#{name}_native.h", header)
 end
 
+# Copies the regular files of `from` as text into `to`; it skips subfolders (such as `_build`) and headers.
 def copy_files(from: String, to: String) -> Result[Void]
   for entry in try Dir.list(from)
     source = "#{from}/#{entry}"
