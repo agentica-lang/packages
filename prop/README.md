@@ -6,7 +6,7 @@ breaks it, with the seed that replays the run. Pure Agentica; it runs inside `ag
 Add it in a project with an `agentica.toml`:
 
 ```sh
-agentica add prop https://github.com/agentica-lang/packages --tag prop-0.2.1 --subdir prop
+agentica add prop https://github.com/agentica-lang/packages --tag prop-0.3.0-alpha.1 --subdir prop
 ```
 
 The docs, with examples, the install and the changelog: <https://agentica-lang.github.io/packages/prop/>.
