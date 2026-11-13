@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-13
+
+Needs Agentica 0.31.0.
+
 ### Changed
 
 - `Prop.roundtrip`, `idempotent`, `associative` and `commutative` compare with the text that the generator writes for a value, so they work with a `Gen[Bytes]` or a generator of a struct with bytes (`Prop.map_shown`); for every other generator the text is its JSON, as before. The results of `Prop.oracle` and `Prop.preserves` still compare as JSON (#107).
