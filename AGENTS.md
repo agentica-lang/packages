@@ -53,7 +53,7 @@ dock/                a TCP server: dock.agc is the API (start, stop, wait, watch
 pool/                a generic pool of resources: pool.agc is the API (start, with, close, timeout?) and the caller's
                      side (the ticket, the body in the caller or in a task of its own); src/owner.agc the owner task
                      (the line, the workers' states, the health tick, the close), src/keeper.agc the task of one
-                     resource (init, ping, terminate), src/types.agc the records and messages; specs/ has the features
+                     resource (init, ping, checkin, terminate), src/types.agc the records and messages; specs/ has the features
                      (checkout, callers, lifecycle, outcomes), whose program under test is specs/driver.agc, a pool of
                      fake resources with counters that a step program drives by JSON lines (specs/protocol.agc,
                      specs/steps.agc); test/pool_test.agc has the unit test of `Pool.timeout?`; bench/checkout.agc

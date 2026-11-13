@@ -10,25 +10,31 @@ enum Outcome
 end
 
 ## What a pool is made of. `init` makes a worker from `config` in a task of its own for each worker (its keeper), which
-## owns the handles it opens; `terminate` ends it there. `checkout` (when given) runs in the caller before its body:
-## `error` ends that worker and the caller gets the next one. `checkin` gets the worker back after each body, in the
-## caller (`error` ends it: it is terminated and replaced); `ping` checks an idle worker at each health tick, in its
-## keeper (`error` ends it). No function of the spec runs in the owner task of the pool, so none can stall or end it.
+## owns the handles it opens; `terminate` ends it there. An `init` that never returns holds its place: the pool counts
+## that worker as being made. `checkout` (when given) runs before the body: in the caller when `lease_ms` is 0, else in
+## a task of its own for at most 5 seconds. Its `error` (or a crash, or a hang) ends that worker, and the caller gets
+## the next one at the front of the line. `checkin` gets the worker back after each body that ran, once (`error` ends
+## it: it is terminated and replaced): in the caller when `lease_ms` is 0, with no limit; else in the keeper, in a task
+## of its own for at most 5 seconds, after the caller has its result, so one that crashes or hangs ends the worker and
+## never reaches the caller. `ping` checks an idle worker at the health tick, in its keeper (`error` ends it). No
+## function of the spec runs in the owner task of the pool, so none can stall or end it.
 ##
 ## After a `TimedOut` body the worker is always terminated and replaced, whatever `checkin` returns: the cancelled body
 ## may still run for a moment, so nobody else may get the worker. After `Crashed` the body is dead, and `checkin`
 ## decides.
 ##
 ## `size` workers are kept. In a spike the pool makes up to `max_overflow` more (so `size + max_overflow` is the most
-## that exist). When a spike is over, an overflow worker that nobody needs stays for `overflow_idle_ms` and is ended if
-## it is still idle then (0 ends it as soon as it is given back), so the pool shrinks back to `size` and a steady load
-## a little over `size` does not make and end a worker for every request. A `lazy` pool makes its workers when callers
-## need them. `checkout_ms` is how long a caller waits for a worker. `lease_ms` is how long a body may run: the body
-## runs in a task of its own, cancelled after that long; 0 runs the body in the caller, with no limit. `max_age_ms` and
-## `idle_ms` need `health_ms` (the health tick is what applies them) and 0 turns each off; `idle_ms` needs a lazy pool,
-## since an eager pool would make a new worker at once. `max_waiting` is how many callers may wait in line for a worker
-## at once (0 or more); one more is refused with `pool error: queue full (max_waiting N)`, and 0 lets nobody wait: a
-## caller that finds every worker busy is refused.
+## that exist, also while one is being ended). When a spike is over, an overflow worker that nobody needs stays for
+## `overflow_idle_ms` and is ended if it is still idle then (0 ends it as soon as it is given back), so the pool shrinks
+## back to `size` and a steady load a little over `size` does not make and end a worker for every request. A `lazy`
+## pool makes its workers when callers need them. `checkout_ms` is how long a caller waits for a worker. `lease_ms` is
+## how long a body may run: the body runs in a task of its own, cancelled after that long; 0 runs the body in the
+## caller, with no limit. `max_age_ms` and `idle_ms` need `health_ms` (the health tick is what applies them) and 0
+## turns each off; `idle_ms` needs a lazy pool, since an eager pool would make a new worker at once. The health tick
+## pings the workers idle for `health_ms` or more. `max_waiting` is how many callers may wait in line for a busy
+## worker at once (0 or more); the callers that a worker being made, pinged or checked in will serve, or one that the
+## pool can still make, do not count. One more is refused with `pool error: queue full (max_waiting N)`, and 0 lets
+## nobody wait: a caller that finds every worker busy is refused, but a pool that can make a worker for it makes it.
 struct Spec[A, W]
   config: A
   init: Fn[A, Result[W]]

@@ -3,10 +3,10 @@
 ##
 ## One owner task holds the state of the resources and the line of callers (first come, first served), and runs none of
 ## the functions of the `Spec`. Each resource has a keeper task that makes it (so it owns the resource's handles),
-## pings it and ends it. The caller uses the resource directly and gives it back when its body ends: the body runs in a
-## task of its own when `lease_ms` is above 0, or in the caller when it is 0. A caller that crashes or is cancelled
-## while it holds a resource does not keep it: the owner sees its task end, and the resource is checked in by its
-## keeper or ended and replaced, never lost. Cancelling a caller cancels its body.
+## pings it, runs `checkin` when `lease_ms` is above 0, and ends it. The caller uses the resource directly and gives it
+## back when its body ends: the body runs in a task of its own when `lease_ms` is above 0, or in the caller when it is
+## 0. A caller that crashes or is cancelled while it holds a resource does not keep it: the owner sees its task end,
+## and the resource is checked in by its keeper or ended and replaced, never lost. Cancelling a caller cancels its body.
 ##
 ## Start the pool in a task that lives as long as the pool (`main`): the owner task ends with the task that started it.
 
@@ -46,10 +46,10 @@ def start[A, W](spec: Types.Spec[A, W]) -> Result[Pool[A, W]]
   end
 end
 
-## Runs the body with a resource of the pool and gives its result. `checkout` and `checkin` of the `Spec` run in the
-## caller, before and after the body. With `lease_ms` above 0 the body runs in a task of the pool, so a crash in it is
-## an `error` here, and one that runs past `lease_ms` is cancelled; with 0 it runs in the caller, and a crash in it is
-## the caller's own. Errors, each with a kind: `pool error: checkout timed out after N ms` (`pool.timeout.checkout`;
+## Runs the body with a resource of the pool and gives its result. With `lease_ms` above 0 the body runs in a task of
+## the pool, so a crash in it is an `error` here, and one that runs past `lease_ms` is cancelled; `checkout` and
+## `checkin` run in tasks of their own, bounded. With 0 the body, `checkout` and `checkin` run in the caller, and a
+## crash in them is the caller's own. Errors, each with a kind: `pool error: checkout timed out after N ms` (`pool.timeout.checkout`;
 ## the caller waited that long for a resource, with the last error of `init` as its cause if the pool could not make
 ## one), `pool error: lease timed out after N ms` (`pool.timeout.lease`), `pool error: queue full (max_waiting N)`
 ## (`pool.full`), `pool error: closed` and `pool error: owner task ended` (`pool.closed`). A caller that got one of

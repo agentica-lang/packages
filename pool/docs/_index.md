@@ -20,9 +20,9 @@ pool = { git = "https://github.com/agentica-lang/packages", tag = "pool-0.1.0", 
 
 A `Pool.Spec[A, W]` holds the config `A` and the functions that make, check and end the resources `W`. None of them runs in the owner task of the pool, so a slow or crashing one never stalls the pool or ends it:
 
-- `init(config)` makes a resource. It runs in a task of its own for each resource (its keeper), which owns the handles it opens, so they stay open while the resource lives.
-- `checkout(resource)` (optional) runs in the caller before its body. An `error` ends the resource, and the caller gets the next one without losing its place in line.
-- `checkin(resource, outcome)` gets the resource back after each body, in the caller, with the outcome `Done`, `Crashed` or `TimedOut`. An `error` ends the resource, and the pool makes another. After `TimedOut` the pool ends the resource whatever `checkin` returns, since the cancelled body may still run for a moment; after `Crashed` the body is dead and `checkin` decides.
+- `init(config)` makes a resource. It runs in a task of its own for each resource (its keeper), which owns the handles it opens, so they stay open while the resource lives. An `init` that never returns holds its place: the pool counts that resource as being made.
+- `checkout(resource)` (optional) runs before the body: in the caller with `lease_ms` 0, else in a task of its own for at most 5 seconds. An `error` (or a crash, or a hang) ends the resource, and the caller gets the next one without losing its place in line.
+- `checkin(resource, outcome)` gets the resource back after each body that ran, once, with the outcome `Done`, `Crashed` or `TimedOut`. With `lease_ms` 0 it runs in the caller, with no limit. Above 0 it runs in the keeper, in a task of its own for at most 5 seconds, after the caller has its result: one that crashes or hangs ends the resource and never reaches the caller. An `error` ends the resource, and the pool makes another. After `TimedOut` the pool ends the resource whatever `checkin` returns, since the cancelled body may still run for a moment; after `Crashed` the body is dead and `checkin` decides.
 - `ping(resource)` checks an idle resource at each health tick, in its keeper; an `error` ends it.
 - `terminate(resource)` ends it, in its keeper.
 
@@ -78,6 +78,8 @@ Pool.close(pool: Pool[A, W], drain_ms: Int) -> Void
 Pool.timeout?(message: String) -> Bool
 ```
 
+A `Pool` has the fields `spec`, `owner` (the owner task) and `counts`, which the pool keeps for reading: `waiting` (the callers in line, with those that gave up until the pool drops them), `live` (the resources made, being made or being ended) and `closed` once `close` has run. `waiting` and `live` are 0 once the close is over.
+
 ## The Spec
 
 The other fields of the `Spec`, all in milliseconds unless noted, with their defaults:
@@ -89,8 +91,8 @@ The other fields of the `Spec`, all in milliseconds unless noted, with their def
 - `checkout_ms` (5000): how long a caller waits for a resource.
 - `lease_ms` (30000): how long a body may run. The body runs in a task of its own, and one past this time is cancelled and its caller gets an error. 0 runs the body in the caller, with no limit.
 - `max_age_ms` (0) and `idle_ms` (0): a resource older than `max_age_ms` is ended and replaced; one unused for `idle_ms` is ended (`idle_ms` needs `lazy: true`, since an eager pool would make a new one at once). 0 turns the rule off. Both need `health_ms`, which applies them.
-- `max_waiting` (1000): how many callers may wait for a resource at once, 0 or more. 0 lets nobody wait: a caller that finds every resource busy is refused.
-- `health_ms` (5000): the interval of the health tick, which pings the idle resources and applies `max_age_ms` and `idle_ms`. 0 turns the tick off.
+- `max_waiting` (1000): how many callers may wait for a busy resource at once, 0 or more. The callers that a resource being made, pinged or checked in will serve, or one the pool can still make, do not count. 0 lets nobody wait: a caller that finds every resource busy is refused, but a pool that can make a resource for it (lazy, or with overflow) makes it.
+- `health_ms` (5000): the interval of the health tick, which pings the resources idle for `health_ms` or more and applies `max_age_ms` and `idle_ms`. A resource in use is never pinged. 0 turns the tick off.
 
 ## Errors
 
@@ -108,14 +110,15 @@ Each error of the pool has a kind, so a caller tests `e.is_a?("pool")` or a kind
 
 ## Callers that end
 
-The owner task watches the task of each caller. A caller that crashes or is cancelled while it holds a resource does not keep it: its keeper runs `checkin` with `Crashed` (a crash of a body that runs in the caller) or `TimedOut` (a cancel), and the resource comes back or is ended and replaced. Cancelling a caller cancels its body too, also when the body runs in a task of its own. A caller cancelled while it waits leaves the line.
+The owner task watches the task of each caller. A caller that crashes or is cancelled while it holds a resource does not keep it: its keeper runs `checkin` with `Crashed` (a crash of a body that runs in the caller) or `TimedOut` (a cancel), and the resource comes back or is ended and replaced. `checkin` runs once for each body that ran: a caller that ends before its body started has its resource ended without it, and one that ends during its own `checkin` (`lease_ms` 0) too. Cancelling a caller cancels its body too, also when the body runs in a task of its own. A caller cancelled while it waits leaves the line.
 
-A task that has used the pool counts its crash as observed, since the pool hears of it: a run whose only unobserved crash is in such a task does not exit 1 for it (the crash still prints).
+A task that has used the pool counts its crash as observed, since the pool hears of it: a run whose only unobserved crash is in such a task does not exit 1 for it (the crash still prints). The fix belongs in the language ([agentica-lang/agentica#1522](https://github.com/agentica-lang/agentica/issues/1522)).
 
 ## Closing
 
 `Pool.close(pool, drain_ms)` refuses new callers, lets the running bodies and the callers in line finish for up to `drain_ms`, fails the rest with `pool error: closed`, ends every resource and stops the pool.
 
 - Start the pool in a task that lives as long as it does, such as `main`: the owner task ends with the task that started it.
-- A body that runs in a task of its own and outlasts the drain is cancelled, and its caller gets `pool error: closed`. One that runs in its caller (`lease_ms` 0) is not cancelled: it finds its resource ended, and its result is its own.
-- The keepers have two seconds after the drain to end their resources; one that is still in `terminate` then is cancelled, and the VM closes the handles it owns. `ping`, and the `checkin` of a caller that ended, have 5 seconds each in the keeper.
+- A body that runs in a task of its own and outlasts the drain is cancelled, its keeper runs `checkin` with `TimedOut`, and its caller gets `pool error: closed`. One that runs in its caller (`lease_ms` 0) is not cancelled: it finds its resource ended, and its result is its own.
+- `ping`, `checkout` and `checkin` have 5 seconds each in a task of their own. The keepers have six seconds after the drain to end their resources, so one in such a call still runs `terminate`; a keeper that is still running then is cancelled, and the VM closes the handles it owns.
+- A caller in line hears within a fifth of a second that the owner task has ended (`pool error: owner task ended`).
