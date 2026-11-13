@@ -122,6 +122,7 @@ def act(driver: Driver, req: Request) -> Handled
     "race_crash" -> race_crash(driver, req)
     "wait_jobs" -> wait_jobs(driver)
     "sleep" -> slept(driver, req.number)
+    "release" -> released(driver)
     "close" -> close(driver, req.number)
     "expect_job" -> expect_job(collect(driver), req)
     "expect_timeout" -> expect_timeout(collect(driver), req)
@@ -370,6 +371,11 @@ end
 
 def slept(driver: Driver, ms: Int) -> Handled
   Task.sleep(ms)
+  reply(driver, Protocol.OK)
+end
+
+def released(driver: Driver) -> Handled
+  driver.stats.put("released", 1)
   reply(driver, Protocol.OK)
 end
 
@@ -642,6 +648,7 @@ def use(args: JobArgs, cell: Cell) -> Result[Int]
 
   case args.kind
     "hangs" -> Task.sleep(HANG_MS)
+    "gated" -> wait_release(args.stats)
     "crashes" ->
       args.stats.add("active", -1)
       args.stats.add("cell #{cell.id}", -1)
@@ -660,6 +667,13 @@ def use(args: JobArgs, cell: Cell) -> Result[Int]
   args.stats.add("#{prefix}active", -1)
   args.stats.add("cell #{cell.id}", -1)
   ok(cell.id)
+end
+
+def wait_release(stats: ATS[String, Int]) -> Void
+  deadline = Time.monotonic_ms() + HANG_MS
+  while not stats.get("released").ok? and Time.monotonic_ms() < deadline
+    Task.sleep(LOOP_NAP_MS)
+  end
 end
 
 # A checkout inside the body, on the same pool: with every resource taken it waits its own `checkout_ms` and times out,
