@@ -18,7 +18,7 @@ def connect(url: String, options: Types.Options) -> Result[Types.Client]
         Types.Handshake.Refused(status, _, _) -> error("websocket: the server answered #{status}, not 101")
       end
 
-    error(reason) -> error(reason)
+    error(e) -> error(e)
   end
 end
 
@@ -89,9 +89,9 @@ def open(url: String, options: Types.Options, read_body: Bool) -> Result[Types.H
   socket = try dial(target, options)
   case upgrade(socket, request, key, options, read_body)
     ok(client) -> ok(client)
-    error(reason) ->
+    error(e) ->
       TCP.close(socket)
-      error(reason)
+      error(e)
   end
 end
 
@@ -332,7 +332,7 @@ def control(client: Types.Client, head: Frame.Head, payload: Bytes) -> Result[Op
       error(e) ->
         case broke(client, e.message)
           ok(message) -> return ok(some(message))
-          error(text) -> return error(text)
+          error(failure) -> return error(failure)
         end
     end
   end

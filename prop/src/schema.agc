@@ -29,8 +29,7 @@ KEYS = ["a", "b", "é 漢"]
 LOWEST = -8
 
 # The members of a schema's `properties`, read only for their names: a `JSON.Value` has no keys, so a map of structs
-# (with no
-# fields that matter) is the way to list them.
+# (with no fields that matter) is the way to list them.
 struct Member
   type: Optional[String] = none
 end

@@ -7,14 +7,14 @@ generated from the `.agc`, the one source of every signature.
 Needs Agentica 0.31.0 or later. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
 
 ```sh
-agentica add native-gen https://github.com/agentica-lang/packages --tag native-gen-0.5.0 --subdir native-gen
+agentica add native-gen https://github.com/agentica-lang/packages --tag native-gen-0.4.0 --subdir native-gen
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-native-gen = { git = "https://github.com/agentica-lang/packages", tag = "native-gen-0.5.0", subdir = "native-gen" }
+native-gen = { git = "https://github.com/agentica-lang/packages", tag = "native-gen-0.4.0", subdir = "native-gen" }
 ```
 
 Before, each C function takes terms and checks them by hand:

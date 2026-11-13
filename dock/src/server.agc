@@ -224,9 +224,9 @@ end
 # The listener belongs to this task, so it closes whatever way the task ends.
 def supervise(boot: Boot) -> Result[Void]
   case TCP.listen(boot.config.host, boot.config.port)
-    error(message) ->
-      _ = boot.ready.send(error(message), 0)
-      error(message)
+    error(e) ->
+      _ = boot.ready.send(error(e), 0)
+      error(e)
     ok(listener) ->
       _ = boot.ready.send(ok(TCP.local_port(listener)), 0)
       accept_loop(listener, boot)

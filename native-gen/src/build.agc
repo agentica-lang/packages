@@ -35,7 +35,7 @@ def without_native(text: String) -> Result[String]
   case Toml.parse(text)
     ok(Toml.Value.Table(entries)) -> Toml.encode(Toml.Value.Table(entries.delete("native")))
     ok(_) -> error("not a table")
-    error(message) -> error(message)
+    error(e) -> error(e)
   end
 end
 
