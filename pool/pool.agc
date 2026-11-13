@@ -293,7 +293,9 @@ def in_runner[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], body: Fn[W, Resu
     # body never started); a lease that is over by now (the end of a drain) has the owner cancel this task, and a pool
     # that is gone (its inbox is closed) runs no body.
     told = pool.inbox.send(Types.Msg.Run(Types.Running(id: lease.id, seq: lease.seq, runner: Task.current())), SEND_MS)
-    return error("pool error: closed", kind: "pool.closed") if not told.ok?
+    # The end of a drain closes the orders of the keeper before the owner reads the message above, so a lease that is
+    # over is seen here even while the owner still runs (another keeper in a slow `init`).
+    return error("pool error: closed", kind: "pool.closed") if not told.ok? or lease.orders.closed?
 
     ok(body.call(lease.worker))
   end

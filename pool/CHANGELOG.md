@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - With `lease_ms` above 0, `checkout` runs in the task of the body, not in a task of its own, so a check costs no task. The caller still waits at most 5 seconds for it, and a `checkout` that refuses, crashes or hangs still ends the resource without reaching the caller, which gets the next resource at its place in line.
-- A body that runs in a task of the pool does not start when the drain of a close ended while its `checkout` ran: its caller gets `pool error: closed`.
+- A body that runs in a task of the pool does not start when the drain of a close ended while its `checkout` ran, also when the owner is still running (another resource in a slow `init`): the caller gets `pool error: closed`. The 5 seconds that a caller waits for `checkout` hold for one that waits (a sleep, a channel, I/O, a `compute def`), not for one that blocks in a plain native `def` call.
 - `close` returns after the last count is written: `waiting` and `live` are 0 when it returns.
 
 ### Documented

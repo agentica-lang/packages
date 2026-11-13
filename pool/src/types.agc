@@ -13,13 +13,13 @@ end
 ## owns the handles it opens; `terminate` ends it there. An `init` that never returns holds its place: the pool counts
 ## that worker as being made, and so does a `terminate` that never returns (it runs in the keeper, which owns the
 ## handles, so it has no limit). `checkout` (when given) runs before the body: in the caller when `lease_ms` is 0, else
-## in the task of the body, which the caller waits for at most 5 seconds. Its `error` (or a crash, or a hang) ends that
-## worker, and the caller gets the next one at the front of the line. `checkin` gets the worker back after each body
-## that ran, at most once (`error` ends it: it is terminated and replaced): in the caller when `lease_ms` is 0, with no
-## limit; else in the keeper, in a task of its own for at most 5 seconds, after the caller has its result, so one that
-## crashes or hangs ends the worker and never reaches the caller. `ping` checks an idle worker at the health tick, in
-## its keeper (`error` ends it). No function of the spec runs in the owner task of the pool, so none can stall or end
-## it.
+## in the task of the body, which the caller waits for at most 5 seconds (not when it blocks in a plain native `def`
+## call). Its `error` (or a crash, or a hang) ends that worker, and the caller gets the next one at the front of the
+## line. `checkin` gets the worker back after each body that ran, at most once (`error` ends it: it is terminated and
+## replaced): in the caller when `lease_ms` is 0, with no limit; else in the keeper, in a task of its own for at most 5
+## seconds, after the caller has its result, so one that crashes or hangs ends the worker and never reaches the caller.
+## `ping` checks an idle worker at the health tick, in its keeper (`error` ends it). No function of the spec runs in
+## the owner task of the pool, so none can stall or end it.
 ##
 ## After a `TimedOut` body the worker is always terminated and replaced, whatever `checkin` returns: the cancelled body
 ## may still run for a moment, so nobody else may get the worker. After `Crashed` the body is dead, and `checkin`

@@ -85,6 +85,26 @@ Feature: Lifecycle
     And the count "body_ran" is 0
     And the count "terminated" reaches 1 within 2000 ms
 
+  # The same with the owner still alive when the check passes: B waits for the slow init of resource 2 (3 s), so the owner
+  # has not ended. The end of the drain has closed the keeper's orders by then, which the task of A sees.
+  Scenario: Closing during a slow checkout does not let the body run after the drain, with the owner alive
+    Given a pool with:
+      | setting          | value |
+      | size             | 2     |
+      | lazy             | true  |
+      | checkout_ms      | 20000 |
+      | slow_checkout_ms | 600   |
+      | slow_init_at     | 2     |
+      | slow_init_ms     | 3000  |
+    When job "A" holds a resource for 10 ms
+    And job "B" holds a resource for 10 ms
+    And I wait 100 ms
+    And I close the pool, giving the jobs 100 ms to finish
+    And I wait for the jobs
+    Then job "A" gets "error pool error: closed"
+    And the count "body_ran" is 0
+    And the count "terminated" reaches 2 within 2000 ms
+
   Scenario: Closing with no time to drain fails the running job and the ones in line
     Given a pool with:
       | setting | value |
