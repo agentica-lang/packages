@@ -1,15 +1,15 @@
 ## The counters of a server: one ATS table that the supervisor and the writers of the clients update.
 
-export OPEN = 0
-export ACCEPTED = 1
-export REFUSED = 2
-export DROPPED = 3
-export CRASHED = 4
+OPEN = 0
+ACCEPTED = 1
+REFUSED = 2
+DROPPED = 3
+CRASHED = 4
 # Not in the snapshot: the `on_close` callbacks that run now.
-export HOOKS = 5
+HOOKS = 5
 
 ## A snapshot of the counters, read with `Dock.stats`.
-export struct Stats
+struct Stats
   ## Connections whose handler has not ended yet.
   open: Int
   ## Connections that got a handler (those over `max_connections` are not counted here).
@@ -22,7 +22,7 @@ export struct Stats
   crashed: Int
 end
 
-export def snapshot(table: ATS[Int, Int]) -> Stats
+def snapshot(table: ATS[Int, Int]) -> Stats
   Stats(
     open: table.add(OPEN, 0),
     accepted: table.add(ACCEPTED, 0),

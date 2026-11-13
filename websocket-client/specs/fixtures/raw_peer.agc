@@ -24,6 +24,8 @@
 
 import Binary from "std/binary"
 
+private
+
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 STEP_MS = 10_000
 KEY_HEADER = "sec-websocket-key:"
@@ -43,7 +45,7 @@ struct Request
   host: String
 end
 
-def read_exact(socket: Socket, count: Int) -> Result[Bytes]
+def read_exact(socket: TCP.Socket, count: Int) -> Result[Bytes]
   parts: List[Bytes] = []
   have = 0
   while have < count
@@ -57,7 +59,7 @@ def read_exact(socket: Socket, count: Int) -> Result[Bytes]
   ok(Bytes.concat(parts))
 end
 
-def read_request(socket: Socket) -> Result[Request]
+def read_request(socket: TCP.Socket) -> Result[Request]
   key = ""
   host = ""
   while true
@@ -106,7 +108,7 @@ def refusal(mode: List[String]) -> String
   "HTTP/1.1 #{mode[1]} Refused\r\nX-Reason: test\r\nContent-Length: #{body.bytes.size}\r\n\r\n#{body}"
 end
 
-def read_frame(socket: Socket) -> Result[Frame]
+def read_frame(socket: TCP.Socket) -> Result[Frame]
   head = try read_exact(socket, 2)
   length = head[1] % 128
   if length == 126
@@ -154,7 +156,7 @@ def filled(first: Bytes, size: Int) -> Bytes
   Bytes.concat([first, Bytes.from_list([127]).unwrap!, Binary.write_i64_be(size), payload])
 end
 
-def drip(socket: Socket, pause_ms: Int, data: Bytes) -> Result[Void]
+def drip(socket: TCP.Socket, pause_ms: Int, data: Bytes) -> Result[Void]
   for byte in data
     try TCP.send_bytes(socket, Bytes.from_list([byte]).unwrap!, STEP_MS)
     Task.sleep(pause_ms)
@@ -163,7 +165,7 @@ def drip(socket: Socket, pause_ms: Int, data: Bytes) -> Result[Void]
   ok()
 end
 
-def distinct_keys(socket: Socket, count: Int) -> Result[Void]
+def distinct_keys(socket: TCP.Socket, count: Int) -> Result[Void]
   keys: Set[Bytes] = Set.new([])
   for _round in 1..count
     frame = try read_frame(socket)
@@ -175,7 +177,7 @@ def distinct_keys(socket: Socket, count: Int) -> Result[Void]
   ok()
 end
 
-def play(socket: Socket, request: Request, op: List[String]) -> Result[Void]
+def play(socket: TCP.Socket, request: Request, op: List[String]) -> Result[Void]
   case op[0]
     "send" -> try TCP.send_bytes(socket, try hex_of(op.drop(1)), STEP_MS)
     "drip" -> try drip(socket, try op[1].to_i, try hex_of(op.drop(2)))
@@ -212,7 +214,7 @@ def play(socket: Socket, request: Request, op: List[String]) -> Result[Void]
   ok()
 end
 
-def run(listener: Listener, script: List[List[String]]) -> Result[Void]
+def run(listener: TCP.Listener, script: List[List[String]]) -> Result[Void]
   socket = try TCP.accept(listener, STEP_MS)
   request = try read_request(socket)
   mode = ["ok"]
@@ -247,6 +249,6 @@ def main() -> Void
   script = System.args().map do |line| line.split(" ") end
   case run(listener, script)
     ok(_) -> nil
-    error(reason) -> IO.warn("raw peer: #{reason}")
+    error(e) -> IO.warn("raw peer: #{e.message}")
   end
 end

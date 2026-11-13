@@ -1,5 +1,7 @@
 import Prop from "../prop"
 
+private
+
 # A plain law: `Test.assert` here would fail the test at the first case, before `check` shrinks it.
 def must(condition: Bool, text: String) -> Result[Void]
   return ok() if condition

@@ -3,44 +3,24 @@
 
 import HTTP from "std/http"
 
-GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-MAX_PORT = 65_535
 ## The status of a good handshake.
-export SWITCHING = 101
-# The bytes of a token (RFC 9110 5.6.2): what the name of a header and of a subprotocol are made of.
-TOKEN_BYTES = "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".bytes
-# The headers that the handshake writes itself: a caller that sets one of them would break it.
-OWNED = [
-  "host",
-  "upgrade",
-  "connection",
-  "sec-websocket-key",
-  "sec-websocket-version",
-  "sec-websocket-protocol",
-  "sec-websocket-extensions",
-]
+SWITCHING = 101
 
 ## Where a `ws://` or `wss://` URL points: the `path` has the query, and is "/" for none.
-export struct Target
+struct Target
   secure: Bool
   host: String
   port: Int
   path: String
 end
 
-# A host and a port; the port 0 stands for none.
-struct Address
-  host: String
-  port: Int
-end
-
 ## The `Sec-WebSocket-Accept` for a `Sec-WebSocket-Key` (RFC 6455 4.2.2): the base64 of the SHA-1 of the key and the
 ## GUID.
-export def accept_key(key: String) -> String = Base64.strict_encode64(OpenSSL.Digest.sha1("#{key}#{GUID}".bytes))
+def accept_key(key: String) -> String = Base64.strict_encode64(OpenSSL.Digest.sha1("#{key}#{GUID}".bytes))
 
 ## The target of a `ws://` or `wss://` URL. The fragment is dropped (RFC 6455 3 forbids it), and user info is refused:
 ## credentials go in a header. An IPv6 host goes in brackets.
-export def parse_url(url: String) -> Result[Target]
+def parse_url(url: String) -> Result[Target]
   return error("the URL must be ASCII with no space or control character: #{url}") if not plain?(url)
 
   secure = url.downcase.start_with?("wss://")
@@ -73,7 +53,7 @@ export def parse_url(url: String) -> Result[Target]
 end
 
 ## The `Host` header of a target: the port is left out when it is the default of the scheme.
-export def host_header(target: Target) -> String
+def host_header(target: Target) -> String
   host = target.host
   if host.include?(":")
     host = "[#{host}]"
@@ -87,7 +67,7 @@ end
 ## The text of the handshake request for the `key` (the base64 of 16 random bytes), with the subprotocols that the
 ## client offers and the extra headers of the caller. An `error` for a header that the handshake owns, a name that is
 ## not a token and a value with a line break.
-export def request(target: Target, key: String, protocols: List[String], headers: List[HTTP.Header]) -> Result[String]
+def request(target: Target, key: String, protocols: List[String], headers: List[HTTP.Header]) -> Result[String]
   lines = [
     "GET #{target.path} HTTP/1.1",
     "Host: #{host_header(target)}",
@@ -116,7 +96,7 @@ end
 ## The subprotocol that the server chose ("" for none), when its answer is a good handshake: status 101, `Upgrade` and
 ## `Connection` as RFC 6455 4.2.2 says, the accept of the `key`, a subprotocol that the client offered, and no
 ## extension (the client offers none). `lines` are the head of the answer without their line ends.
-export def check_response(lines: List[String], key: String, protocols: List[String]) -> Result[String]
+def check_response(lines: List[String], key: String, protocols: List[String]) -> Result[String]
   return error("the server sent no answer") if lines.empty?
 
   status = try status_of(lines[0])
@@ -150,7 +130,7 @@ export def check_response(lines: List[String], key: String, protocols: List[Stri
 end
 
 ## The status of the first line of an answer; an `error` when it is not HTTP/1.x.
-export def status_of(line: String) -> Result[Int]
+def status_of(line: String) -> Result[Int]
   parts = line.split(" ")
   return error("the answer is not HTTP: #{line}") if parts.size < 2 or not parts[0].start_with?("HTTP/1.")
 
@@ -159,7 +139,7 @@ end
 
 ## The headers of an answer as written (name and value, the value without the spaces around it), from the lines after
 ## the status line. A line with no colon is dropped.
-export def headers_of(lines: List[String]) -> List[HTTP.Header]
+def headers_of(lines: List[String]) -> List[HTTP.Header]
   headers: List[HTTP.Header] = []
   for field in lines
     case field.index_of(":")
@@ -176,7 +156,7 @@ end
 
 ## The first `Content-Length` of the headers, at most `cap`: a value of digits only that does not fit an Int counts as
 ## `cap`, and anything else that is not a number (or no header) is 0.
-export def content_length(headers: List[HTTP.Header], cap: Int) -> Int
+def content_length(headers: List[HTTP.Header], cap: Int) -> Int
   for header in headers
     if header.name.downcase == "content-length"
       value = header.value.strip
@@ -190,6 +170,29 @@ export def content_length(headers: List[HTTP.Header], cap: Int) -> Int
   end
 
   0
+end
+
+private
+
+GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+MAX_PORT = 65_535
+# The bytes of a token (RFC 9110 5.6.2): what the name of a header and of a subprotocol are made of.
+TOKEN_BYTES = "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".bytes
+# The headers that the handshake writes itself: a caller that sets one of them would break it.
+OWNED = [
+  "host",
+  "upgrade",
+  "connection",
+  "sec-websocket-key",
+  "sec-websocket-version",
+  "sec-websocket-protocol",
+  "sec-websocket-extensions",
+]
+
+# A host and a port; the port 0 stands for none.
+struct Address
+  host: String
+  port: Int
 end
 
 def default_port(secure: Bool) -> Int

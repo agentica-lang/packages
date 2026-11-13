@@ -2,7 +2,7 @@
 
 import {Outbox} from "outbox"
 
-export struct Config
+struct Config
   ## The port to listen on; 0 picks a free one, and `Server.port` says which.
   port: Int
   host: String = "127.0.0.1"
@@ -32,12 +32,12 @@ end
 # a user can hold the value but cannot name its type, so a `case` on it does not check, and a struct has no way to
 # hide a field otherwise (a private struct can still be read through the field). Private fields are asked for in
 # agentica-lang/agentica#1344; the enums go when they land.
-export enum ClientParts
+enum ClientParts
   # The socket, `idle_ms` and the outbox.
-  Parts(Socket, Int, Outbox)
+  Parts(TCP.Socket, Int, Outbox)
 end
 
-export enum ServerParts
+enum ServerParts
   # The channel that is closed to stop the server, the supervisor task, the counters, the channel where `watch` sends
   # the end of a task, and `grace_ms`.
   Parts(Channel[Bool], Task[Result[Void]], ATS[Int, Int], Channel[String], Int)
@@ -45,7 +45,7 @@ end
 
 ## One client, given to the handler; do not build one. Talk to it with `Dock.send`, `Dock.recv` and `Dock.close`;
 ## `inside` is private.
-export struct Conn
+struct Conn
   id: Int
   ## The IP of the client, without the port.
   peer: String
@@ -53,7 +53,7 @@ export struct Conn
 end
 
 ## A running server, given by `Dock.start`. `inside` is private.
-export struct Server
+struct Server
   port: Int
   inside: ServerParts
 end
