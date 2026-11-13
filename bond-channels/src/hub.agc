@@ -98,7 +98,7 @@ def register(
 end
 
 ## The broadcasts of `topics` reach the subscription `identifier` of the connection. Waits until the hub has written
-## `confirm` to the WebSocket; an `error` means nothing was written.
+## `confirm` to the WebSocket; an `error` means the hub does not route to it.
 def attach(hub: Hub, connection: Int, identifier: String, topics: List[String], confirm: String) -> Result[Void]
   done: Channel[Bool] = Channel.new(1)
   attach = Attach(
@@ -272,23 +272,25 @@ def send(hub: Hub, message: HubMessage) -> Result[Void] = hub.inbox.send(message
 
 def answered(hub: Hub, done: Channel[Bool]) -> Result[Void]
   waited = 0
-  while waited < ATTACH_WAIT_MS
-    case done.recv(ATTACH_SLICE_MS)
-      ok(attached) -> return attached_or_not(attached)
-
-      error(_) -> return error("the hub is gone") if gone?(hub)
-    end
+  while waited < ATTACH_WAIT_MS and not gone?(hub)
+    got = done.recv(ATTACH_SLICE_MS)
+    return attached_or_not(got.unwrap!) if got.ok?
 
     waited = waited + ATTACH_SLICE_MS
   end
 
-  error("the hub did not attach the subscription in #{ATTACH_WAIT_MS} ms")
+  # A closed `done` makes the hub skip the attach; an answer sent before the close still counts.
+  done.close
+  case done.recv(0)
+    ok(attached) -> attached_or_not(attached)
+    error(_) -> error("the hub did not attach the subscription")
+  end
 end
 
 def attached_or_not(attached: Bool) -> Result[Void]
   return ok() if attached
 
-  error("the hub does not know the connection")
+  error("the hub did not attach the subscription")
 end
 
 def away_key(connection: Int) -> String = "#{AWAY_PREFIX}#{connection}"
@@ -369,6 +371,8 @@ def subscribe(state: State, attach: Attach, counters: ATS[String, Int]) -> State
       _ = attach.done.send(false, 0)
       state
     some(entry) ->
+      return state if attach.done.closed?
+
       member = Member(connection: attach.connection, inbox: entry.inbox, outgoing: entry.outgoing)
       topics = state.topics
       keys = entry.keys
@@ -379,12 +383,16 @@ def subscribe(state: State, attach: Attach, counters: ATS[String, Int]) -> State
 
       entries = state.entries.put(attach.connection, entry.with(keys: keys))
       joined = state.with(entries: entries, topics: topics)
-      confirmed = entry.outgoing.send(attach.confirm, 0)
-      _ = attach.done.send(true, 0)
-      return joined if confirmed.ok?
+      if not entry.outgoing.send(attach.confirm, 0).ok?
+        _ = attach.done.send(false, 0)
+        lose(counters, member)
+        return remove_connection(joined, attach.connection)
+      end
 
-      lose(counters, member)
-      remove_connection(joined, attach.connection)
+      return joined if attach.done.send(true, 0).ok?
+
+      # The caller gave up while the hub was busy and rejects the subscription.
+      unsubscribe(joined, attach.connection, attach.identifier)
   end
 end
 

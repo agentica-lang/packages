@@ -155,11 +155,13 @@ def main() -> Void
       try Hubs.broadcast(hub, "room", "1")
       try Hubs.broadcast(hub, "room", "2")
       try Hubs.broadcast(hub, "room", "3")
+      try Test.assert(wait_closed(slow_inbox), "the inbox of the slow connection is closed")
+      try slow.recv(0)
+      try Hubs.broadcast(hub, "room", "4")
       try finish(hub)
-      try Test.assert(slow_inbox.closed?, "the inbox of the slow connection is closed")
-      # One drop, for the slow connection only; the next broadcast would count it again if the hub kept routing to it.
       try Test.eq(Hubs.stats(hub).drops, 1)
-      heard = ["1", "2", "3"].map do |payload| framed(Protocol.message("one", payload)) end
+      try Test.assert(written(slow).empty?, "the hub no longer routes to the dropped connection")
+      heard = ["1", "2", "3", "4"].map do |payload| framed(Protocol.message("one", payload)) end
       Test.eq(written(quick), [framed(confirm("one"))] + heard)
     end,
     # The `Away` event cannot be queued, so the hub closes the inbox and leaves the reason where the loop finds it. It

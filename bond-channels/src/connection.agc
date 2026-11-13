@@ -196,7 +196,10 @@ def closed_inbox(line: Line) -> Result[Void]
     some(reconnect) ->
       try away(line, reconnect)
       ok()
-    none -> write(line, HTTP.Message.Text(Protocol.disconnect_reconnect()))
+    none ->
+      # A drop: the queue may be full, so the frame does not wait.
+      _ = line.socket.outgoing.send(HTTP.Message.Text(Protocol.disconnect_reconnect()), 0)
+      ok()
   end
 end
 
@@ -300,14 +303,16 @@ def decide(line: Line, handler: Types.Handler, join: Protocol.Join, decision: Ty
   return write(line, HTTP.Message.Text(confirm)) if decision.streams.empty?
 
   # The hub writes the confirmation, so it reaches the socket before any broadcast.
-  attached = Hub.attach(line.mount.hub, line.connection, join.identifier, decision.streams, confirm)
-  return refuse(line, handler, join) if not attached.ok?
+  return ok() if Hub.attach(line.mount.hub, line.connection, join.identifier, decision.streams, confirm).ok?
 
+  # The hub may have dropped the connection for a full queue, so the reject does not wait.
+  try forget(line, handler, join.identifier, join.params)
+  _ = line.socket.outgoing.send(HTTP.Message.Text(Protocol.reject_subscription(join.identifier)), 0)
   ok()
 end
 
-# The client is told, and the subscription is forgotten: the hub never heard of it (an attach that failed was not
-# queued), so only the table and `unsubscribed` need it.
+# The client is told, and the subscription is forgotten: the hub does not route to it, so only the table and
+# `unsubscribed` need it.
 def refuse(line: Line, handler: Types.Handler, join: Protocol.Join) -> Result[Void]
   try forget(line, handler, join.identifier, join.params)
   write(line, HTTP.Message.Text(Protocol.reject_subscription(join.identifier)))

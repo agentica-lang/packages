@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - Broadcasts are framed once and written by the hub straight to each WebSocket, which costs less CPU per frame.
-- **Breaking:** `MountOptions.inbox` is now the WebSocket queue of a connection (at most 1048576): a slow `perform` no longer gets a client dropped; a client that does not read does.
+- **Breaking:** the WebSocket queue of a connection holds twice `MountOptions.inbox` (at most 1048576), and a client whose queue is full at any moment is dropped; broadcasts no longer queue behind a slow `perform`.
 
 ## [0.4.0] - 2026-11-13
 

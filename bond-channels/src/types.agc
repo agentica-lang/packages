@@ -30,8 +30,9 @@ end
 ## the payloads to transmit to that connection. An `error` of any of them is logged and the connection stays open (an
 ## `error` of `subscribed` also rejects the subscription).
 ##
-## Every function runs on the loop task of its connection: a slow `perform` stalls the next commands of that client
-## (not its broadcasts). Do the slow work in a task of its own and answer with a broadcast.
+## Every function runs on the loop task of its connection: a slow `perform` stalls the next commands and pings of that
+## client, and a connection whose `inbox` fills is dropped (broadcasts do not queue there). Do the slow work in a task
+## of its own and answer with a broadcast.
 struct Handler
   subscribed: Fn[Session, JSON.Value, Result[Subscription]]
   unsubscribed: Fn[Session, JSON.Value, Result[Void]]
@@ -47,8 +48,8 @@ end
 
 ## What `mount` takes: `connect` gives the identity of the person from the handshake (its cookies), or an `error` that
 ## is answered with an `unauthorized` disconnect; `handlers` maps the channel names of the client to their functions.
-## `allowed_origins` is as in `Bond.websocket`. `inbox` is the messages queued for one connection (1 or more, at most
-## 1048576; a client that does not read and fills it is dropped); a peer silent for `idle_ms` is closed (0 turns that
+## `allowed_origins` is as in `Bond.websocket`. `inbox` is the events queued for one connection (1 or more); its WebSocket
+## holds twice that (at most 1048576), and a connection with a full queue at any moment is dropped; a peer silent for `idle_ms` is closed (0 turns that
 ## off, otherwise it must be more than the `beat_ms` of the hub, or the WebSocket ping could not keep a quiet client);
 ## a client frame over `max_message_bytes` closes with 1009.
 struct MountOptions
