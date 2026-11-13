@@ -6,6 +6,8 @@ import Types from "../src/types"
 
 # Real sockets on 127.0.0.1 and a port picked by the system: the handlers run in the tasks of the server.
 
+private
+
 def echo(conn: Dock.Conn) -> Void
   while true
     case Dock.recv(conn, 4096)
@@ -190,14 +192,14 @@ def test_idle_timeout_and_a_flooded_client_dropped_at_the_cap() -> Result[Void]
   ok()
 end
 
-def start_client(port: Int, word: String) -> Result[Socket]
+def start_client(port: Int, word: String) -> Result[TCP.Socket]
   socket = try TCP.connect("127.0.0.1", port, 5000)
   try TCP.send(socket, word, 5000)
   ok(socket)
 end
 
 # Reads until the server closes.
-def read_all(socket: Socket) -> Result[Bytes]
+def read_all(socket: TCP.Socket) -> Result[Bytes]
   got = "".bytes
   while true
     chunk = try TCP.recv_bytes(socket, 65_536, 10_000)
@@ -418,7 +420,7 @@ end
 def test_a_connection_over_the_limit_is_closed_at_once_and_a_freed_slot_is_reused() -> Result[Void]
   config = Dock.Config(port: 0, max_connections: 3)
   server = try Dock.start(config, &sit)
-  clients: List[Socket] = []
+  clients: List[TCP.Socket] = []
   for _ in 1..3
     clients = clients.push(try TCP.connect("127.0.0.1", server.port, 5000))
   end
@@ -449,7 +451,7 @@ def test_many_connections_ending_at_once_are_all_closed_and_counted() -> Result[
   config = noting(Dock.Config(port: 0, max_connections: 100), ids)
   server = try Dock.start(config, &sit)
   before = open_files()
-  clients: List[Socket] = []
+  clients: List[TCP.Socket] = []
   for _ in 1..100
     clients = clients.push(try TCP.connect("127.0.0.1", server.port, 5000))
   end
