@@ -3,6 +3,8 @@
 ## of a type that holds a term, a method that borrows only in its result, a struct of no fields, and the names and
 ## types that clippy would flag.
 
+private
+
 struct Node
   value: Int
   next: Optional[Node]

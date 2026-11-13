@@ -1,6 +1,8 @@
 ## Resources through the header: a parameter is the state of its resource, `_new` makes one, `_get` reads a term, and
 ## the free function counts the frees.
 
+private
+
 extern module "resources"
   resource Db
   ## A Db with the id `id`.

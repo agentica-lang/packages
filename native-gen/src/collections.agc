@@ -13,14 +13,14 @@ import Types from "types"
 
 ## The Lists, Maps, Optionals and Results of a block: `read` those the parameters and the read structs and enums reach, `made` those the
 ## results and the made ones reach, each after the ones it holds.
-export struct Shelf
+struct Shelf
   codecs: Codecs.Plan
   read: List[Types.Type]
   made: List[Types.Type]
 end
 
 ## The Lists, Maps, Optionals and Results of `block`.
-export def of(block: Analysis.NativeBlock, codecs: Codecs.Plan) -> Shelf
+def of(block: Analysis.NativeBlock, codecs: Codecs.Plan) -> Shelf
   read: List[String] = []
   made: List[String] = []
   for function in block.functions
@@ -46,17 +46,17 @@ export def of(block: Analysis.NativeBlock, codecs: Codecs.Plan) -> Shelf
 end
 
 ## Whether a parameter of `type` arrives as a cursor (a List or Map) or a C struct (an Optional or Result).
-export def typed?(type: String) -> Bool = held?(Types.parse(type))
+def typed?(type: String) -> Bool = held?(Types.parse(type))
 
 ## The C type of a parameter of `type`: its cursor or struct, or what the codecs give.
-export def c_type(shelf: Shelf, type: String) -> String
+def c_type(shelf: Shelf, type: String) -> String
   return name(shelf, Types.parse(type)) if typed?(type)
 
   Codecs.c_type(shelf.codecs, "", type)
 end
 
 ## The C names the Lists, Maps, Optionals and Results declare.
-export def global_names(shelf: Shelf) -> List[Names.Named]
+def global_names(shelf: Shelf) -> List[Names.Named]
   named: List[Names.Named] = []
   for type in shelf.read
     c = name(shelf, type)
@@ -101,7 +101,7 @@ export def global_names(shelf: Shelf) -> List[Names.Named]
 end
 
 ## The cursor and builder types and the prototypes of their functions.
-export def declarations(shelf: Shelf) -> List[String]
+def declarations(shelf: Shelf) -> List[String]
   return [] if shelf.read.empty? and shelf.made.empty?
 
   lines = [
@@ -137,7 +137,7 @@ export def declarations(shelf: Shelf) -> List[String]
 end
 
 ## The definitions of the cursors and builders, for the implementation part of the header.
-export def definitions(shelf: Shelf) -> List[String]
+def definitions(shelf: Shelf) -> List[String]
   lines: List[String] = []
   done: Set[String] = Set.new([])
   # `read` holds each List or Map after those it holds, so the decoder of an item that is one finds its open defined.
@@ -168,7 +168,7 @@ export def definitions(shelf: Shelf) -> List[String]
 end
 
 ## The statements of a wrapper that open or decode argument `at`, a List, Map, Optional or Result, into `local`.
-export def decode_argument(shelf: Shelf, type: String, local: String, at: Int) -> List[String]
+def decode_argument(shelf: Shelf, type: String, local: String, at: Int) -> List[String]
   tree = Types.parse(type)
   lines = [
     "  #{name(shelf, tree)} #{local};",
@@ -183,6 +183,8 @@ export def decode_argument(shelf: Shelf, type: String, local: String, at: Int) -
 
   lines
 end
+
+private
 
 # The Lists, Maps, Optionals and Results inside `types`, each once, each after the ones it holds.
 def collections(types: List[String]) -> List[Types.Type]

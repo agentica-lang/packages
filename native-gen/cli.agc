@@ -20,6 +20,8 @@ import NativeGen from "native_gen"
 import OP from "std/option_parser"
 import {Arg, Kind, Opt} from "std/option_parser"
 
+private
+
 PROGRAM = "native-gen"
 
 struct NewOptions
@@ -150,7 +152,7 @@ def run(options: Options) -> Result[Void]
   case File.read_text(options.output)
     ok(kept) if kept == text -> ok()
     ok(_) -> error("[NATIVE-GEN-STALE] #{options.output} is not the one #{options.file} gives; make it again")
-    error(message) -> error("[NATIVE-GEN-IO] #{options.output}: #{message}")
+    error(e) -> error("[NATIVE-GEN-IO] #{options.output}: #{e.message}")
   end
 end
 

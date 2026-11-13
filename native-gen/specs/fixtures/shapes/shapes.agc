@@ -3,6 +3,8 @@
 ## payloads; `Tree` is recursive, so its payloads stay terms. `misread` reads a term of the wrong type, the
 ## `misread_*` ones a value with a String where its Point has an Int.
 
+private
+
 struct Point
   x: Int
   y: Int

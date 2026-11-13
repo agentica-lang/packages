@@ -4,6 +4,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-13
+
+Needs Agentica 0.31.0.
+
+### Changed
+
+- **Breaking:** needs Agentica 0.31.0, and `agentica = "0.31.0"` in the manifest says so: the sources use `private` instead of `export` and the `Error` record of a failed Result (`e.message`). The public names of every module are the same. CI tests with Agentica 0.31.0.
+
+### Fixed
+
+- `native-gen` compiles on Agentica 0.31.0: the `error(message)` of a `case` binds an `Error`, so the text is `e.message` (`NativeGen.build`, the `new` and manifest steps).
+
 ## [0.4.0-alpha.1] - 2026-11-12
 
 Needs Agentica 0.31.0-alpha.1.
