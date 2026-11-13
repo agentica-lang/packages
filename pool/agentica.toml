@@ -1,0 +1,6 @@
+name = "pool"
+agentica = "0.31.0"
+
+# Every bare `end` is followed by an empty line (AGENTS.md).
+[style]
+blank_line_after_end = true
