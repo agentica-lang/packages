@@ -197,17 +197,17 @@ def non_empty_list[T](gen: Gen[T], max_size: Int = 10) -> Gen[List[T]]
   sized_list(gen, 1, max_size)
 end
 
-## Bytes of `min` up to `max` (at most 1000) values from 0 to 255. They shrink to fewer bytes, down to `min`, and each
-## toward 0. A counterexample shows them as the list of their values; `Prop.eq` cannot compare `Bytes`, so compare
-## `bytes.to_a`. Halts when `min` is below 0 or above `max`. At size k it has the bytes of `min` up to `min` + k, each
-## up to k from 0.
+## Bytes of `min` up to `max` (both at most 1000) values from 0 to 255. They shrink to fewer bytes, down to `min`, and
+## each toward 0. A counterexample shows them as the list of their values; `Prop.eq` cannot compare `Bytes`, so compare
+## `bytes.to_a`. Halts when `min` is below 0, above `max` or above 1000. At size k it has the bytes of `min` up to
+## `min` + k, each up to k from 0.
 ##
 ## ```ruby
 ## Prop.sample(Prop.bytes(1, 3), 1, 2).map do |bytes| bytes.to_a end # [[5, 191], [248]]
 ## ```
 def bytes(min: Int = 0, max: Int = 16) -> Gen[Bytes]
-  if min < 0 or min > max
-    bad: Result[Gen[Bytes]] = error("Prop.bytes: min #{min} must be between 0 and max #{max}")
+  if min < 0 or min > max or min > MAX_SIZE
+    bad: Result[Gen[Bytes]] = error("Prop.bytes: min #{min} must be between 0 and max #{max}, and at most #{MAX_SIZE}")
     return bad.unwrap!
   end
 

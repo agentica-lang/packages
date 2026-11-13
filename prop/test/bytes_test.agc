@@ -72,6 +72,29 @@ def test_a_non_empty_list_is_never_empty_and_shrinks_to_one_item() -> Result[Voi
   Test.assert(result.message.include?("shrunk to [7],"), result.message)
 end
 
+# These laws fail on the empty list too, so a shrink tree that ignored the floor would end in `[]`.
+def test_the_floor_of_a_list_holds_when_the_law_fails_on_the_empty_list() -> Result[Void]
+  gen = Prop.non_empty_list(Prop.int(1, 12), 8)
+  long = Prop.check(gen, seeded(9)) do |xs| must(xs.size <= 5, "long") end
+  try Test.assert(long.message.include?("shrunk to [1,1,1,1,1,1],"), long.message)
+  one = Prop.check(gen, seeded(11)) do |_| must(false, "always") end
+  try Test.assert(one.message.include?("shrunk to [1],"), one.message)
+  zeros = Prop.check(Prop.bytes(3, 10), seeded(12)) do |_| must(false, "always") end
+  try Test.assert(zeros.message.include?("shrunk to [0,0,0],"), zeros.message)
+  fewest = Prop.check(Prop.bytes(2, 12), seeded(13)) do |b| must(b.length < 6, "six bytes or more") end
+  Test.assert(fewest.message.include?("shrunk to [0,0,0,0,0,0],"), fewest.message)
+end
+
+# `Prop.one_of` gives its items to JSON.encode, so fixed vectors of bytes go through an index and `map_shown`.
+def test_vectors_of_bytes_are_drawn_through_an_index() -> Result[Void]
+  vectors = ["ab".bytes, "".bytes, "xyz".bytes]
+  gen = Prop.map_shown(Prop.int(0, vectors.size - 1), &vector_text) do |i| vectors.at(i) end
+  result = Prop.check(gen, seeded(14)) do |b| must(b.length < 2, "two bytes or more") end
+  Test.assert(result.message.include?("shrunk to bytes of 2,"), result.message)
+end
+
+def vector_text(bytes: Bytes) -> String = "bytes of #{bytes.length}"
+
 # A cut of a sequence: the sizes of the pieces, none of them 0, cycled until the sequence is used up.
 def test_any_cut_of_a_sequence_puts_it_back_together() -> Result[Void]
   Prop.check(Prop.pair(Prop.bytes(0, 40), Prop.non_empty_list(Prop.int(1, 12))), seeded(10)) do |p|

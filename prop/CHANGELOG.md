@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- A `Gen` has a `show` field, the text of a value in a counterexample: `Prop.check` and `Prop.exhaustive` no longer need the generated type to be JSON-encodable. The text of every other generator is what `JSON.encode` gave. A `Gen(...)` built by hand needs `show`.
+- **Breaking:** a `Gen` has a `show` field, the text of a value in a counterexample, so a `Gen(...)` built by hand needs `show: ...`. `Prop.check` and `Prop.exhaustive` no longer need the generated type to be JSON-encodable; the six laws, `Prop.eq`, `Prop.map` and `Prop.one_of` still do. The text of every other generator is what `JSON.encode` gave.
 
 ## [0.3.0] - 2026-11-13
 

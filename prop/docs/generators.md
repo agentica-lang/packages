@@ -151,7 +151,7 @@ Prop.non_empty_list(gen: Gen[T], max_size: Int = 10) -> Gen[List[T]]
 
 A List of 1 up to `max_size` items of `gen` (`max_size` is at most 1000, and a `max_size` below 1 halts the test). It shrinks to a one-item list, then to smaller items, and never to the empty list. Use it where an empty list is no input.
 
-It is also the generator of a cut: the sizes of the pieces that a sequence is split into, none of them 0, so a law can check every way to cut a parser's input. `Prop.non_empty_list(Prop.int(1, 12))` gives sizes to cycle through until the input is used up. It does less than a `Prop.chunks` that took the sequence itself, and that is the point: it does not choose a sequence type, and it shrinks like every other list.
+It is also the generator of a cut: the sizes of the pieces that a sequence is split into, none of them 0, so a law can check every way to cut a parser's input. `Prop.non_empty_list(Prop.int(1, 12))` gives sizes to cycle through until the input is used up.
 
 ```agentica
 import Prop from "pkg/prop/prop"
@@ -202,9 +202,9 @@ ok()
 Prop.bytes(min: Int = 0, max: Int = 16) -> Gen[Bytes]
 ```
 
-Bytes of `min` up to `max` values from 0 to 255 (`max` is at most 1000; a `min` below 0 or above `max` halts the test). They shrink to fewer bytes, down to `min`, and each byte toward 0.
+Bytes of `min` up to `max` values from 0 to 255. Both are at most 1000, and a `min` below 0 or above `max` halts the test. They shrink to fewer bytes, down to `min`, and each byte toward 0.
 
-`Bytes` is not JSON, so `Prop.eq` cannot compare it (`CHECK-NOT-ENCODABLE`): compare `bytes.to_a`, or use `==` in a law that fails with `error(...)`. A counterexample of bytes is written as the list of their values.
+`Bytes` is not JSON, so `Prop.eq` cannot compare it (`CHECK-NOT-ENCODABLE`): compare `bytes.to_a`, or use `==` in a law that fails with `error(...)`. A counterexample of bytes is written as the list of their values. The six [laws](laws.md) compare with `Prop.eq` too, so they refuse a `Gen[Bytes]` (`CHECK-NOT-ENCODABLE`): state the law with `Prop.check`, for example a round trip as `Prop.check(Prop.bytes()) do |bytes| ... end` that returns `error(...)` when `decode(encode(bytes)) != bytes` (`==` works on `Bytes`).
 
 ```agentica
 import Prop from "pkg/prop/prop"
@@ -250,7 +250,7 @@ end
 Prop.one_of(items: List[T]) -> Gen[T]
 ```
 
-One of `items`. It shrinks toward the first item, so put the simplest first. An empty list halts the test.
+One of `items`. It shrinks toward the first item, so put the simplest first. An empty list halts the test. The items go to `JSON.encode`, so they cannot be `Bytes`: for fixed test vectors, draw the index and show the value with [`Prop.map_shown`](#propmap_shown), as `Prop.map_shown(Prop.int(0, vectors.size - 1), &show) do |i| vectors.at(i) end`.
 
 ```agentica
 import Prop from "pkg/prop/prop"
