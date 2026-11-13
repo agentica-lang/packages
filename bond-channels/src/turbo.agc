@@ -7,17 +7,19 @@ import Types from "types"
 ## The `subscribed` of a Turbo channel. A name that is missing, is not a string or does not verify with `key` rejects
 ## the subscription, and so does a verified one that `authorize(session, name)` refuses (the membership check of the
 ## app: a signature says the page was made for someone, not that this person may read it now).
-export def subscribing(
+def subscribing(
   key: Bytes,
   authorize: Fn[Types.Session, String, Bool],
-) -> Fn[Types.Session, Json, Result[Types.Subscription]]
+) -> Fn[Types.Session, JSON.Value, Result[Types.Subscription]]
   signed do |session, params| subscribe(key, authorize, session, params) end
 end
 
+private
+
 # A block cannot be assigned to a name: this gives it a typed parameter first.
 def signed(
-  f: Fn[Types.Session, Json, Result[Types.Subscription]],
-) -> Fn[Types.Session, Json, Result[Types.Subscription]]
+  f: Fn[Types.Session, JSON.Value, Result[Types.Subscription]],
+) -> Fn[Types.Session, JSON.Value, Result[Types.Subscription]]
   f
 end
 
@@ -25,7 +27,7 @@ def subscribe(
   key: Bytes,
   authorize: Fn[Types.Session, String, Bool],
   session: Types.Session,
-  params: Json,
+  params: JSON.Value,
 ) -> Result[Types.Subscription]
   name = verified(key, params)
   return ok(Types.Subscription(rejected: true)) if name.none? or not authorize.call(session, name.unwrap!)
@@ -33,7 +35,7 @@ def subscribe(
   ok(Types.Subscription(streams: [name.unwrap!]))
 end
 
-def verified(key: Bytes, params: Json) -> Optional[String]
+def verified(key: Bytes, params: JSON.Value) -> Optional[String]
   field = JSON.get(params, "signed_stream_name")
   return none if not field.ok?
 

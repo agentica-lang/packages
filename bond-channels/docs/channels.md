@@ -29,9 +29,9 @@ A handshake from another site is answered 403. `MountOptions.allowed_origins` li
 
 | Function | Type | When it runs |
 |---|---|---|
-| `subscribed` | `Fn[Session, Json, Result[Subscription]]` | the client subscribes; `params` is the whole identifier |
-| `unsubscribed` | `Fn[Session, Json, Result[Void]]` | the client unsubscribes, or the connection ends in any way |
-| `perform` | `Fn[Session, Json, String, Json, Result[List[Json]]]` | the client sends a message to the channel |
+| `subscribed` | `Fn[Session, JSON.Value, Result[Subscription]]` | the client subscribes; `params` is the whole identifier |
+| `unsubscribed` | `Fn[Session, JSON.Value, Result[Void]]` | the client unsubscribes, or the connection ends in any way |
+| `perform` | `Fn[Session, JSON.Value, String, JSON.Value, Result[List[JSON.Value]]]` | the client sends a message to the channel |
 
 `Channels.handler(subscribed)` makes a handler that has no `unsubscribed` and takes no actions. Replace those with `with`:
 
@@ -57,7 +57,7 @@ An `error` from any of them is logged, and the connection stays open. An `error`
 | `rejected` | `false` | answer `reject_subscription` instead of the confirmation |
 
 ```agentica {mode="fragment"}
-def subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
+def subscribed(session: Channels.Session, params: JSON.Value) -> Result[Channels.Subscription]
   room = try room_of(params)
   greeting = JSON.from("welcome #{session.identity.id}")
   return ok(Channels.Subscription(streams: ["room:#{room}"], transmit: [greeting]))
@@ -74,10 +74,10 @@ A client message has an `action` and any other keys in its `data`. `perform` get
 def acted(
   hub: Channels.Hub,
   session: Channels.Session,
-  params: Json,
+  params: JSON.Value,
   action: String,
-  data: Json,
-) -> Result[List[Json]]
+  data: JSON.Value,
+) -> Result[List[JSON.Value]]
   room = try room_of(params)
   if action == "say"
     text = try JSON.string(try JSON.get(data, "text"))
@@ -94,7 +94,7 @@ A client that sends `{"command":"message","identifier":"...","data":"{\"action\"
 The block of a handler is not a function you can store in a map directly, so give its type a name first, with a function that returns its argument:
 
 ```agentica {mode="fragment"}
-def leaving(f: Fn[Channels.Session, Json, Result[Void]]) -> Fn[Channels.Session, Json, Result[Void]]
+def leaving(f: Fn[Channels.Session, JSON.Value, Result[Void]]) -> Fn[Channels.Session, JSON.Value, Result[Void]]
   return f
 end
 
@@ -110,7 +110,7 @@ As in Rails, these get no reply, and the connection stays open: a subscribe to a
 `unsubscribed` runs for each subscription when the client unsubscribes, closes, drops, is cut off for being too slow, or when its handler crashes. It is the place to announce that a person left:
 
 ```agentica {mode="fragment"}
-def left(hub: Channels.Hub, session: Channels.Session, params: Json) -> Result[Void]
+def left(hub: Channels.Hub, session: Channels.Session, params: JSON.Value) -> Result[Void]
   room = try room_of(params)
   return Channels.broadcast_text(hub, "room:#{room}", "#{session.identity.id} left")
 end

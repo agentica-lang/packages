@@ -11,6 +11,8 @@ import Hubs from "../src/hub"
 import Protocol from "../src/protocol"
 import {HubOptions} from "../src/types"
 
+private
+
 TOPIC = "room:1"
 
 def setting(name: String, fallback: Int) -> Int

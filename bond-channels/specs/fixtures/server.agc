@@ -16,6 +16,8 @@ import HTTP from "std/http"
 import Bond from "pkg/bond/bond"
 import Channels from "../../channels"
 
+private
+
 DEFAULT_BEAT_MS = 3_000
 DEFAULT_IDLE_MS = 120_000
 DEFAULT_SLOW_MS = 1_500
@@ -49,18 +51,18 @@ def connect(conn: Bond.Conn) -> Result[Channels.Identity]
   ok(Channels.Identity(id: user, data: JSON.from(user)))
 end
 
-def text_field(data: Json, name: String) -> Result[String]
+def text_field(data: JSON.Value, name: String) -> Result[String]
   field = try JSON.get(data, name)
   JSON.string(field)
 end
 
-def room_of(params: Json) -> String = text_field(params, "room").unwrap_or("lobby")
+def room_of(params: JSON.Value) -> String = text_field(params, "room").unwrap_or("lobby")
 
-def room_subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
+def room_subscribed(session: Channels.Session, params: JSON.Value) -> Result[Channels.Subscription]
   ok(Channels.Subscription(streams: ["room:#{room_of(params)}"]))
 end
 
-def room_left(hub: Channels.Hub, session: Channels.Session, params: Json) -> Result[Void]
+def room_left(hub: Channels.Hub, session: Channels.Session, params: JSON.Value) -> Result[Void]
   notice = JSON.from(Notice(left: session.identity.id, room: room_of(params)))
   Channels.broadcast_json(hub, "left", notice)
 end
@@ -68,10 +70,10 @@ end
 def room_acted(
   hub: Channels.Hub,
   session: Channels.Session,
-  params: Json,
+  params: JSON.Value,
   action: String,
-  data: Json,
-) -> Result[List[Json]]
+  data: JSON.Value,
+) -> Result[List[JSON.Value]]
   case action
     "say" ->
       text = try text_field(data, "text")
@@ -87,28 +89,28 @@ def room_acted(
   end
 end
 
-def watch_subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
+def watch_subscribed(session: Channels.Session, params: JSON.Value) -> Result[Channels.Subscription]
   ok(Channels.Subscription(streams: ["left"]))
 end
 
-def greet_subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
+def greet_subscribed(session: Channels.Session, params: JSON.Value) -> Result[Channels.Subscription]
   ok(Channels.Subscription(transmit: [JSON.from("hello #{session.identity.id}")]))
 end
 
-def failing_subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
+def failing_subscribed(session: Channels.Session, params: JSON.Value) -> Result[Channels.Subscription]
   error("the channel is broken")
 end
 
-def refused_subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
+def refused_subscribed(session: Channels.Session, params: JSON.Value) -> Result[Channels.Subscription]
   ok(Channels.Subscription(rejected: true))
 end
 
 # A block follows a call, so these give the blocks of `handlers` a typed name first.
-def leaving(f: Fn[Channels.Session, Json, Result[Void]]) -> Fn[Channels.Session, Json, Result[Void]] = f
+def leaving(f: Fn[Channels.Session, JSON.Value, Result[Void]]) -> Fn[Channels.Session, JSON.Value, Result[Void]] = f
 
 def acting(
-  f: Fn[Channels.Session, Json, String, Json, Result[List[Json]]],
-) -> Fn[Channels.Session, Json, String, Json, Result[List[Json]]]
+  f: Fn[Channels.Session, JSON.Value, String, JSON.Value, Result[List[JSON.Value]]],
+) -> Fn[Channels.Session, JSON.Value, String, JSON.Value, Result[List[JSON.Value]]]
   f
 end
 

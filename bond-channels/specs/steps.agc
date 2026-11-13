@@ -6,6 +6,8 @@ import Cable from "cable_steps"
 import Protocol from "../src/protocol"
 import Turbo from "turbo_steps"
 
+private
+
 IDENTIFIER = "identifier"
 PAYLOAD = "payload"
 READ = "read"
@@ -22,7 +24,7 @@ end
 def given_object_payload(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   case JSON.parse(BDD.doc_string(ctx))
     ok(value) -> BDD.set(ctx, PAYLOAD, JSON.from(Protocol.json_payload(value)))
-    error(reason) -> BDD.assert(ctx, false, "the payload is not JSON: #{reason}")
+    error(e) -> BDD.assert(ctx, false, "the payload is not JSON: #{e.message}")
   end
 end
 
@@ -61,7 +63,7 @@ def message_is(ctx: BDD.Context, _args: List[String]) -> BDD.Context
 end
 
 # What the server read, as the JSON of its fields: the one form that the Then step can compare with a Doc String.
-def described(command: Protocol.Command) -> Json
+def described(command: Protocol.Command) -> JSON.Value
   case command
     Protocol.Command.Subscribe(join) ->
       JSON.from({
@@ -93,12 +95,12 @@ end
 def read_frame(ctx: BDD.Context, frame: String) -> BDD.Context
   case Protocol.decode_command(frame)
     ok(command) -> BDD.set(ctx, READ, JSON.from(canonical(described(command))))
-    error(reason) -> BDD.set(ctx, IGNORED, JSON.from(reason))
+    error(e) -> BDD.set(ctx, IGNORED, JSON.from(e.message))
   end
 end
 
 # Both sides go through `JSON.parse`, which writes the keys in one order, so the order of the Doc String is free.
-def canonical(value: Json) -> String = JSON.encode(JSON.parse(JSON.encode(value)).unwrap!)
+def canonical(value: JSON.Value) -> String = JSON.encode(JSON.parse(JSON.encode(value)).unwrap!)
 
 def server_reads(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   expected = JSON.parse(BDD.doc_string(ctx)).unwrap!

@@ -1,5 +1,7 @@
 import Protocol from "../src/protocol"
 
+private
+
 # The one rule that a feature would need a 4 KiB Doc String for.
 def padded_identifier(bytes: Int) -> String
   frame_start = "{\"channel\":\"A\",\"pad\":\""

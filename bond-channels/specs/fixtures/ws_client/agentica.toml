@@ -1,8 +1,9 @@
 name = "cable-client"
+agentica = "0.31.0"
 
 # Every bare `end` is followed by an empty line (AGENTS.md).
 [style]
 blank_line_after_end = true
 
 [dependencies]
-websocket-client = { git = "https://github.com/agentica-lang/packages", tag = "websocket-client-0.3.0-alpha.1", subdir = "websocket-client" }
+websocket-client = { git = "https://github.com/agentica-lang/packages", tag = "websocket-client-0.3.0", subdir = "websocket-client" }

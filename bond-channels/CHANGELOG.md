@@ -4,6 +4,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-13
+
+Needs Agentica 0.31.0 and Bond 0.12.0.
+
+### Changed
+
+- **Breaking:** needs Agentica 0.31.0 and Bond 0.12.0 (the package is pinned by that tag), and `agentica = "0.31.0"` in the manifest says so: the sources use `private` instead of `export`, `JSON.Value` for `Json`, and the `Error` record of a failed Result (`e.message`). The public names are the same, and so are the messages of the errors. CI tests with Agentica 0.31.0.
+
 ## [0.4.0-alpha.1] - 2026-11-12
 
 Needs Agentica 0.31.0-alpha.1 and Bond 0.12.0-alpha.1.
