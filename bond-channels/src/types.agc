@@ -48,10 +48,10 @@ end
 
 ## What `mount` takes: `connect` gives the identity of the person from the handshake (its cookies), or an `error` that
 ## is answered with an `unauthorized` disconnect; `handlers` maps the channel names of the client to their functions.
-## `allowed_origins` is as in `Bond.websocket`. `inbox` is the events queued for one connection (1 or more); its WebSocket
-## holds twice that (at most 1048576), and a connection with a full queue at any moment is dropped; a peer silent for `idle_ms` is closed (0 turns that
-## off, otherwise it must be more than the `beat_ms` of the hub, or the WebSocket ping could not keep a quiet client);
-## a client frame over `max_message_bytes` closes with 1009.
+## `allowed_origins` is as in `Bond.websocket`. `inbox` is the events queued for one connection (1 or more); its
+## WebSocket holds twice that (at most 1048576), and a connection with a full queue at any moment is dropped; a peer
+## silent for `idle_ms` is closed (0 turns that off, otherwise it must be more than the `beat_ms` of the hub, or the
+## WebSocket ping could not keep a quiet client); a client frame over `max_message_bytes` closes with 1009.
 struct MountOptions
   connect: Fn[Bond.Conn, Result[Identity]]
   handlers: Map[String, Handler]

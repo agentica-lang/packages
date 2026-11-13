@@ -371,7 +371,8 @@ def subscribe(state: State, attach: Attach, counters: ATS[String, Int]) -> State
       _ = attach.done.send(false, 0)
       state
     some(entry) ->
-      return state if attach.done.closed?
+      # Claimed first: a caller that gave up gets no confirmation, so never a confirmation and then a reject.
+      return state if not attach.done.send(true, 0).ok?
 
       member = Member(connection: attach.connection, inbox: entry.inbox, outgoing: entry.outgoing)
       topics = state.topics
@@ -383,16 +384,10 @@ def subscribe(state: State, attach: Attach, counters: ATS[String, Int]) -> State
 
       entries = state.entries.put(attach.connection, entry.with(keys: keys))
       joined = state.with(entries: entries, topics: topics)
-      if not entry.outgoing.send(attach.confirm, 0).ok?
-        _ = attach.done.send(false, 0)
-        lose(counters, member)
-        return remove_connection(joined, attach.connection)
-      end
+      return joined if entry.outgoing.send(attach.confirm, 0).ok?
 
-      return joined if attach.done.send(true, 0).ok?
-
-      # The caller gave up while the hub was busy and rejects the subscription.
-      unsubscribe(joined, attach.connection, attach.identifier)
+      lose(counters, member)
+      remove_connection(joined, attach.connection)
   end
 end
 
