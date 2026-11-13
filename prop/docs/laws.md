@@ -163,6 +163,21 @@ ok()
 
 ## Equality and your own laws
 
-A law compares with `Prop.eq`: the values are compared as JSON, so they must be JSON-encodable, and two maps with the same pairs in a different order differ. This is why a law refuses a generator of `Bytes` (or of a struct with a `Bytes` field) with `CHECK-NOT-ENCODABLE`, though `Prop.check` accepts it. For bytes, state the law with `Prop.check` and compare with `==` or `bytes.to_a`. A failure names the law and both values, as `f(f(x)) differs from f(x)` above.
+A law compares the values it checks as the text that the generator writes for them, which for the built-in generators is their JSON, so two maps with the same pairs in a different order differ. That is `Prop.eq` for `Prop.roundtrip` (`x`), `idempotent` (`f(x)`), `associative` and `commutative` (`op(a, b)`) over a generator of any type, `Prop.bytes` and `Prop.map_shown` included. The results that `Prop.oracle` (`fast(x)`, `slow(x)`) and `Prop.preserves` (`measure(x)`) compare have no generator, so they go through `Prop.eq` and must be JSON-encodable: return `bytes.to_a` instead of `Bytes`. A failure names the law and both values, as `f(f(x)) differs from f(x)` above.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def drop_last(bytes: Bytes) -> Bytes = bytes.take(bytes.length - 1)
+
+def main() -> Void
+  result = Prop.roundtrip(Prop.bytes(1, 6), &drop_last) do |kept| ok(kept) end
+  puts(result.message.include?("expected [0], got []"))
+end
+```
+
+```output
+true
+```
 
 For a law that is not here, use `Prop.check` and return `Prop.eq(...)` or `error(...)`. See [Checking](checking.md).
