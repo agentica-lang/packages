@@ -9,19 +9,19 @@ It speaks the Rails protocol, so the Action Cable client of Rails and `<turbo-ca
 
 ## Install
 
-Needs Agentica 0.31.0-alpha.1 or later and Bond 0.12.0-alpha.1. The app depends on Bond itself, at the same tag as the package, because two sources for one name in a tree is `PKG-SOURCE-CONFLICT`. Add both in a project with an `agentica.toml`:
+Needs Agentica 0.31.0 or later and Bond 0.12.0. The app depends on Bond itself, at the same tag as the package, because two sources for one name in a tree is `PKG-SOURCE-CONFLICT`. Add both in a project with an `agentica.toml`:
 
 ```sh
-agentica add bond https://github.com/agentica-lang/bond --tag 0.12.0-alpha.1
-agentica add bond-channels https://github.com/agentica-lang/packages --tag bond-channels-0.4.0-alpha.1 --subdir bond-channels
+agentica add bond https://github.com/agentica-lang/bond --tag 0.12.0
+agentica add bond-channels https://github.com/agentica-lang/packages --tag bond-channels-0.4.0 --subdir bond-channels
 ```
 
 That writes these lines of `agentica.toml`, and the entries of `agentica.lock`:
 
 ```toml
 [dependencies]
-bond = { git = "https://github.com/agentica-lang/bond", tag = "0.12.0-alpha.1" }
-bond-channels = { git = "https://github.com/agentica-lang/packages", tag = "bond-channels-0.4.0-alpha.1", subdir = "bond-channels" }
+bond = { git = "https://github.com/agentica-lang/bond", tag = "0.12.0" }
+bond-channels = { git = "https://github.com/agentica-lang/packages", tag = "bond-channels-0.4.0", subdir = "bond-channels" }
 ```
 
 On Agentica 0.30, stay on `bond-channels-0.3.1` with Bond `0.11.0`.
@@ -43,13 +43,13 @@ def connect(conn: Bond.Conn) -> Result[Channels.Identity]
   return ok(Channels.Identity(id: user, data: JSON.from(user)))
 end
 
-def room_of(params: Json) -> Result[String]
+def room_of(params: JSON.Value) -> Result[String]
   room = try JSON.get(params, "room")
   return JSON.string(room)
 end
 
 # A subscription listens to the topic of its room.
-def subscribed(session: Channels.Session, params: Json) -> Result[Channels.Subscription]
+def subscribed(session: Channels.Session, params: JSON.Value) -> Result[Channels.Subscription]
   room = try room_of(params)
   return ok(Channels.Subscription(streams: ["room:#{room}"]))
 end

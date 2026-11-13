@@ -8,6 +8,17 @@ import Hub from "hub"
 import Protocol from "protocol"
 import Types from "types"
 
+## What `mount` gives to every connection.
+struct Mount
+  hub: Hub.Hub
+  options: Types.MountOptions
+end
+
+## The handler of the Bond route.
+def handler_of(mount: Mount) -> Bond.WebSocketHandler = wrapping do |conn, socket| serve(mount, conn, socket) end
+
+private
+
 MAX_SUBSCRIPTIONS = 64
 # A client that does not read for this long is cut off (the outgoing channel of std/http holds only 8 messages).
 WRITE_MS = 5_000
@@ -24,12 +35,6 @@ NORMAL_CLOSE = 1_000
 GOING_AWAY = 1_001
 TRY_LATER = 1_013
 
-## What `mount` gives to every connection.
-export struct Mount
-  hub: Hub.Hub
-  options: Types.MountOptions
-end
-
 # The task of the loop: everything it needs, besides its inbox, which it owns.
 struct Line
   mount: Mount
@@ -37,11 +42,6 @@ struct Line
   connection: Int
   identity: Types.Identity
   subscriptions: ATS[String, String]
-end
-
-## The handler of the Bond route.
-export def handler_of(mount: Mount) -> Bond.WebSocketHandler
-  wrapping do |conn, socket| serve(mount, conn, socket) end
 end
 
 # Serves one WebSocket until it ends, then runs `unsubscribed` for every subscription it still holds.
@@ -53,8 +53,8 @@ def serve(mount: Mount, conn: Bond.Conn, socket: HTTP.WebSocket) -> Result[Void]
 
   case mount.options.connect.call(conn)
     ok(identity) -> open(mount, socket, identity)
-    error(reason) ->
-      IO.warn("bond-channels: connection refused: #{reason}")
+    error(e) ->
+      IO.warn("bond-channels: connection refused: #{e.message}")
       socket.outgoing.send(HTTP.Message.Text(Protocol.disconnect_unauthorized()), WRITE_MS)
   end
 end
@@ -237,7 +237,7 @@ end
 
 def write(line: Line, message: HTTP.Message) -> Result[Void] = line.socket.outgoing.send(message, WRITE_MS)
 
-def transmit(line: Line, identifier: String, payloads: List[Json]) -> Result[Void]
+def transmit(line: Line, identifier: String, payloads: List[JSON.Value]) -> Result[Void]
   for payload in payloads
     try write(line, HTTP.Message.Text(Protocol.message(identifier, Protocol.json_payload(payload))))
   end
@@ -248,8 +248,8 @@ end
 # What Action Cable only logs (a bad frame, an unknown channel or subscription) is logged and the connection stays.
 def command(line: Line, text: String) -> Result[Void]
   case Protocol.decode_command(text)
-    error(reason) ->
-      IO.warn("bond-channels: ignored a frame: #{reason}")
+    error(e) ->
+      IO.warn("bond-channels: ignored a frame: #{e.message}")
       ok()
     ok(decoded) ->
       case decoded
@@ -285,8 +285,8 @@ def subscribe_to(line: Line, handler: Types.Handler, join: Protocol.Join) -> Res
   line.subscriptions.put(join.identifier, join.channel)
   Hub.count(line.mount.hub, Hub.SUBSCRIPTIONS, 1)
   case handler.subscribed.call(session(line), join.params)
-    error(reason) ->
-      IO.warn("bond-channels: subscribing to #{join.channel} failed: #{reason}")
+    error(e) ->
+      IO.warn("bond-channels: subscribing to #{join.channel} failed: #{e.message}")
       refuse(line, handler, join)
     ok(decision) -> decide(line, handler, join, decision)
   end
@@ -316,11 +316,11 @@ end
 
 # A subscription that ends: out of the table, and `unsubscribed` runs. The hub is not told here: `leave` does it for a
 # client that unsubscribes, and `Disconnect` does it for the whole connection.
-def forget(line: Line, handler: Types.Handler, identifier: String, params: Json) -> Result[Void]
+def forget(line: Line, handler: Types.Handler, identifier: String, params: JSON.Value) -> Result[Void]
   line.subscriptions.delete(identifier)
   Hub.count(line.mount.hub, Hub.SUBSCRIPTIONS, -1)
   case handler.unsubscribed.call(session(line), params)
-    error(reason) -> IO.warn("bond-channels: unsubscribed failed: #{reason}")
+    error(e) -> IO.warn("bond-channels: unsubscribed failed: #{e.message}")
     ok(_) -> return ok()
   end
 
@@ -367,8 +367,8 @@ def perform(line: Line, action: Protocol.Action) -> Result[Void]
     some(handler) ->
       case handler.perform.call(session(line), params, action.name, action.data)
         ok(payloads) -> transmit(line, action.identifier, payloads)
-        error(reason) ->
-          IO.warn("bond-channels: #{channel.unwrap!} #{action.name} failed: #{reason}")
+        error(e) ->
+          IO.warn("bond-channels: #{channel.unwrap!} #{action.name} failed: #{e.message}")
           ok()
       end
   end

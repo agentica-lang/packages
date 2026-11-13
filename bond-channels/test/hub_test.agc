@@ -2,6 +2,8 @@ import Hubs from "../src/hub"
 import Protocol from "../src/protocol"
 import {HubOptions} from "../src/types"
 
+private
+
 # True when the next event of the inbox is `Away(reconnect)`.
 def away?(inbox: Channel[Hubs.Event], reconnect: Bool) -> Bool
   got = inbox.recv(2_000)

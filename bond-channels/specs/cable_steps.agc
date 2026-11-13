@@ -6,31 +6,7 @@
 import BDD from "std/bdd"
 import HTTP from "std/http"
 
-PORT = "port"
-PEER = "peer"
-SERVER = "fixtures/server.agc"
-# Relative to the working directory of the run, which is the package folder (`make test`).
-PEER_PROGRAM = "specs/fixtures/ws_client/cable_client.agc"
-START_MS = 10_000
-ANSWER_MS = 15_000
-RECEIVE_MS = 5_000
-# The most frames that a scenario skips between two that it waits for (a fast ping may fill the gap).
-SKIPPED_FRAMES = 400
-STATS_TRIES = 300
-STATS_WAIT_MS = 10
-SOCKET_HEADER = "Sec-WebSocket-Protocol"
-
-struct Order
-  op: String
-  id: String = ""
-  path: String = ""
-  headers: Map[String, String] = {}
-  protocols: String = ""
-  text: String = ""
-  timeout_ms: Int = 0
-end
-
-export def steps() -> List[BDD.Step]
+def steps() -> List[BDD.Step]
   [
     BDD.step("the cable server listens on a free port", &listens),
     BDD.step("client {string} connects with:", &connects),
@@ -59,13 +35,39 @@ export def steps() -> List[BDD.Step]
   ]
 end
 
-def ask(process: Process, request: Json) -> Result[Json]
+private
+
+PORT = "port"
+PEER = "peer"
+SERVER = "fixtures/server.agc"
+# Relative to the working directory of the run, which is the package folder (`make test`).
+PEER_PROGRAM = "specs/fixtures/ws_client/cable_client.agc"
+START_MS = 10_000
+ANSWER_MS = 15_000
+RECEIVE_MS = 5_000
+# The most frames that a scenario skips between two that it waits for (a fast ping may fill the gap).
+SKIPPED_FRAMES = 400
+STATS_TRIES = 300
+STATS_WAIT_MS = 10
+SOCKET_HEADER = "Sec-WebSocket-Protocol"
+
+struct Order
+  op: String
+  id: String = ""
+  path: String = ""
+  headers: Map[String, String] = {}
+  protocols: String = ""
+  text: String = ""
+  timeout_ms: Int = 0
+end
+
+def ask(process: Process, request: JSON.Value) -> Result[JSON.Value]
   try Process.send(process, JSON.encode(request) + "\n", ANSWER_MS)
   line = try Process.read_line(process, ANSWER_MS)
   JSON.parse(line)
 end
 
-def serving(f: Fn[Json, Result[Json]]) -> Fn[Json, Result[Json]] = f
+def serving(f: Fn[JSON.Value, Result[JSON.Value]]) -> Fn[JSON.Value, Result[JSON.Value]] = f
 
 def listens(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   started = BDD.given_program(ctx, SERVER)
@@ -78,15 +80,17 @@ end
 
 def port_of(ctx: BDD.Context) -> Int = JSON.int(BDD.get(ctx, PORT).unwrap!).unwrap!
 
-def peer(ctx: BDD.Context, order: Order) -> Json = BDD.call(ctx, PEER, JSON.from(order)).unwrap!
+def peer(ctx: BDD.Context, order: Order) -> JSON.Value = BDD.call(ctx, PEER, JSON.from(order)).unwrap!
 
-def text_of(answer: Json, name: String) -> String
+def text_of(answer: JSON.Value, name: String) -> String
   JSON.string(JSON.get(answer, name).unwrap_or(JSON.from(""))).unwrap_or("")
 end
 
-def int_of(answer: Json, name: String) -> Int = JSON.int(JSON.get(answer, name).unwrap_or(JSON.from(0))).unwrap_or(0)
+def int_of(answer: JSON.Value, name: String) -> Int
+  JSON.int(JSON.get(answer, name).unwrap_or(JSON.from(0))).unwrap_or(0)
+end
 
-def has?(answer: Json, name: String) -> Bool = JSON.get(answer, name).ok?
+def has?(answer: JSON.Value, name: String) -> Bool = JSON.get(answer, name).ok?
 
 # The rows of the table are `| header | value |` after a title row; PORT in a value is the port of the server.
 def connects(ctx: BDD.Context, args: List[String]) -> BDD.Context
@@ -122,7 +126,7 @@ end
 
 def room_identifier(room: String) -> String = "{\"channel\":\"RoomChannel\",\"room\":\"#{room}\"}"
 
-def send_command(ctx: BDD.Context, id: String, command: Json) -> BDD.Context
+def send_command(ctx: BDD.Context, id: String, command: JSON.Value) -> BDD.Context
   _ = peer(ctx, Order(op: "send", id: id, text: JSON.encode(command)))
   ctx
 end
@@ -147,7 +151,7 @@ def subscribe_to_signed(ctx: BDD.Context, id: String, signed: String) -> BDD.Con
   send_command(ctx, id, command)
 end
 
-def message_command(room: String, data: Json) -> Json
+def message_command(room: String, data: JSON.Value) -> JSON.Value
   JSON.from({
     "command": JSON.from("message"),
     "identifier": JSON.from(room_identifier(room)),
@@ -165,7 +169,7 @@ def says(ctx: BDD.Context, args: List[String]) -> BDD.Context
   send_command(ctx, args[0], message_command(args[2], data))
 end
 
-def next_frame(ctx: BDD.Context, id: String, timeout_ms: Int) -> Json
+def next_frame(ctx: BDD.Context, id: String, timeout_ms: Int) -> JSON.Value
   peer(ctx, Order(op: "recv", id: id, timeout_ms: timeout_ms))
 end
 

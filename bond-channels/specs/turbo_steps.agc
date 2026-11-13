@@ -5,10 +5,7 @@
 import BDD from "std/bdd"
 import Signing from "../src/signing"
 
-# Relative to the working directory of the run, which is the package folder (`make test`).
-VECTORS = "specs/fixtures/turbo_vectors.json"
-
-export def steps() -> List[BDD.Step]
+def steps() -> List[BDD.Step]
   [
     BDD.step("the stream key of the secret of the vectors is the key of Rails", &key_is_rails_key),
     BDD.step("an empty secret makes no stream key", &empty_secret_has_no_key),
@@ -17,18 +14,23 @@ export def steps() -> List[BDD.Step]
   ]
 end
 
-def vectors() -> Json = JSON.parse(File.read_text(VECTORS).unwrap!).unwrap!
+private
 
-def field(value: Json, name: String) -> Json = JSON.get(value, name).unwrap!
+# Relative to the working directory of the run, which is the package folder (`make test`).
+VECTORS = "specs/fixtures/turbo_vectors.json"
 
-def text(value: Json, name: String) -> String = JSON.string(field(value, name)).unwrap!
+def vectors() -> JSON.Value = JSON.parse(File.read_text(VECTORS).unwrap!).unwrap!
 
-def rows(name: String) -> List[Json] = JSON.list(field(vectors(), name)).unwrap!
+def field(value: JSON.Value, name: String) -> JSON.Value = JSON.get(value, name).unwrap!
+
+def text(value: JSON.Value, name: String) -> String = JSON.string(field(value, name)).unwrap!
+
+def rows(name: String) -> List[JSON.Value] = JSON.list(field(vectors(), name)).unwrap!
 
 def key() -> Bytes = Signing.stream_key(text(vectors(), "secret_key_base")).unwrap!
 
 # A vector whose `expected` is not a string (null, or the number that Rails reads back as 42) is refused here.
-def expected_name(row: Json) -> Optional[String]
+def expected_name(row: JSON.Value) -> Optional[String]
   case JSON.string(field(row, "expected"))
     ok(name) -> some(name)
     error(_) -> none
