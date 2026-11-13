@@ -72,10 +72,13 @@ Feature: Checkout
       | setting      | value |
       | size         | 1     |
       | max_overflow | 2     |
-    When job "A" holds a resource for 300 ms
-    And job "B" holds a resource for 300 ms
-    And job "C" holds a resource for 300 ms
-    And job "D" holds a resource for 300 ms
+    When job "A" holds a resource until the jobs are released
+    And job "B" holds a resource until the jobs are released
+    And job "C" holds a resource until the jobs are released
+    And job "D" holds a resource until the jobs are released
+    And the count "active" reaches 3 within 2000 ms
+    And the pool counts 1 "waiting" within 2000 ms
+    And the jobs are released
     And I wait for the jobs
     Then the count "peak" is 3
     And the count "made" reaches 3 within 2000 ms

@@ -47,6 +47,7 @@ def main() -> Void
     job_step("job {string} crashes", "crashes"),
     job_step("job {string} returns an error", "fails"),
     job_step("job {string} never returns", "hangs"),
+    job_step("job {string} holds a resource until the jobs are released", "gated"),
     job_step("job {string} checks out again inside its body", "nests"),
     BDD.step("the caller of job {string} is cancelled") do |ctx, args|
       send(ctx, Request(op: "cancel_job", name: args[0]))
@@ -58,6 +59,7 @@ def main() -> Void
       BDD.then_exit(BDD.when_eof(ctx), args[0].to_i!, REPLY_MS)
     end,
     BDD.step("I wait for the jobs") do |ctx, _args| send(ctx, Request(op: "wait_jobs")) end,
+    BDD.step("the jobs are released") do |ctx, _args| send(ctx, Request(op: "release")) end,
     BDD.step("I wait {int} ms") do |ctx, args| send(ctx, Request(op: "sleep", number: args[0].to_i!)) end,
     BDD.step("I close the pool, giving the jobs {int} ms to finish") do |ctx, args|
       send(ctx, Request(op: "close", number: args[0].to_i!))
