@@ -8,14 +8,14 @@ description: A generic pool of resources. A fixed number of long-lived resources
 Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
-agentica add pool https://github.com/agentica-lang/packages --tag pool-0.1.1 --subdir pool
+agentica add pool https://github.com/agentica-lang/packages --tag pool-0.1.2 --subdir pool
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-pool = { git = "https://github.com/agentica-lang/packages", tag = "pool-0.1.1", subdir = "pool" }
+pool = { git = "https://github.com/agentica-lang/packages", tag = "pool-0.1.2", subdir = "pool" }
 ```
 
 A `Pool.Spec[A, W]` holds the config `A` and the functions that make, check and end the resources `W`. None of them runs in the owner task of the pool, so a slow or crashing one never stalls the pool or ends it:
