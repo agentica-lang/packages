@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-13
+
+Needs Agentica 0.31.0.
+
 ### Fixed
 
 - A body that crashes at the moment its caller is cancelled no longer goes unobserved: the caller watches the task of the body itself, so a crash whose notice came in counts as observed (it was a flaky `RUNTIME-TASK-CRASHED`, or "N task crashes were not observed", at exit).

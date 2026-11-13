@@ -8,7 +8,7 @@ ended and replaced, and idle resources are checked on a health tick.
 Add it in a project with an `agentica.toml`:
 
 ```sh
-agentica add pool https://github.com/agentica-lang/packages --tag pool-0.1.1 --subdir pool
+agentica add pool https://github.com/agentica-lang/packages --tag pool-0.1.2 --subdir pool
 ```
 
 The docs, with the example and every option: <https://agentica-lang.github.io/packages/pool/>.
