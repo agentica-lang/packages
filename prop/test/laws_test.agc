@@ -1,5 +1,7 @@
 import Prop from "../prop"
 
+private
+
 struct Point
   x: Int
   y: Float
