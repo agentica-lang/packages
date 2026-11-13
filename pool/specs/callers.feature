@@ -187,6 +187,21 @@ Feature: Callers
       | 0     | 2 |
       | 30000 | 1 |
 
+  # A is cancelled during its 300 ms checkout, before its body starts: no checkin runs, and the resource is ended.
+  Scenario: A caller cancelled before its body starts has no checkin, and its resource is replaced
+    Given a pool with:
+      | setting          | value |
+      | size             | 1     |
+      | slow_checkout_ms | 300   |
+    When job "A" holds a resource for 10 ms
+    And the caller of job "A" is cancelled
+    And job "B" holds a resource for 10 ms
+    And I wait for the jobs
+    Then job "B" gets "ok 2"
+    And the count "body_ran" is 1
+    And the count "checkin_timed_out" is 0
+    And the count "terminated" reaches 1 within 2000 ms
+
   # The checkin of a body that ran in a task of the pool runs in a task of its own, after the caller has its result, and
   # for at most 5 seconds: one that crashes or hangs ends its resource, never the caller.
   Scenario Outline: A checkin that <bad> does not reach the caller, and its resource is replaced (lease_ms above 0)

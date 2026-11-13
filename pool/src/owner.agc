@@ -495,10 +495,12 @@ def keeper_down[A, W](core: Core[A, W], state: State[W], keeping: Keeping, down:
   serve(core, retire(state, keeping.slot))
 end
 
-# A caller's task ended while it held workers, and its tickets leave the line. `checkin` runs once for each lease: a
-# worker whose grant the caller never read is idle again, one whose `checkin` the caller had started is ended, and for
-# the others the keeper runs `checkin` with how the caller ended (a crash is `Crashed`, a cancel `TimedOut`, which
-# always ends the worker).
+# A caller's task ended while it held workers, and its tickets leave the line. `checkin` runs at most once for each
+# lease, and only after a body that may have run: a worker whose grant the caller never read is idle again; one whose
+# `checkin` the caller had started (`lease_ms` 0), or whose body had not started in its task (`lease_ms` above 0), is
+# ended without it; for the others the keeper runs `checkin` with how the caller ended (a crash is `Crashed`, a cancel
+# `TimedOut`, which always ends the worker). A runner cancelled with its caller may still be about to start, so a
+# worker whose body did not start is ended, never lent again.
 def client_down[A, W](core: Core[A, W], state: State[W], down: TaskDown) -> State[W]
   outcome = Types.Outcome.TimedOut
   if down.reason == TaskExit.Crashed
@@ -518,6 +520,8 @@ def let_go[A, W](core: Core[A, W], state: State[W], id: Int, outcome: Types.Outc
   return retire(state, id) if slot.phase == Phase.Returning
 
   return park(core, state, id, slot.idle_since_ms) if unread?(slot)
+
+  return retire(state, id) if core.spec.lease_ms > 0 and slot.runner.none?
 
   lost(state, id, outcome)
 end
