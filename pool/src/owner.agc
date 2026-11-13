@@ -1,7 +1,7 @@
 ## The owner task of a pool: the one task that holds the state of the workers and the line of callers, and changes it
 ## one message at a time. It runs no user code: `init`, `ping` and `terminate` run in the keepers (keeper.agc),
-## `checkout` and `checkin` in the callers (or in the keeper, for a caller that is gone), so a slow or crashing
-## function of the spec never stalls the pool or ends it.
+## `checkout` in the callers, and `checkin` in the caller when `lease_ms` is 0, else in the keeper (also for a caller
+## that is gone), so a slow or crashing function of the spec never stalls the pool or ends it.
 ##
 ## It is written by hand on a channel, not with `std/actor`: `Actor.call` does not close its reply channel when it
 ## gives up and `Actor.reply` drops a send that fails, so a worker lent to a caller that has just given up would be
@@ -62,12 +62,15 @@ struct Core[A, W]
   ready: Channel[Result[Void]]
 end
 
-# A made worker is idle, lent to a caller (`holder` is its task id, `runner` the task of its body when `lease_ms` is
-# above 0), pinged in its keeper, or checked in there for a caller that is gone; a worker on its way out is no longer
-# a slot at all, and its keeper ends it.
+# A made worker is idle, lent to a caller, given back by a caller that runs `checkin` (`lease_ms` 0), pinged in its
+# keeper, or checked in there; a worker on its way out is no longer a slot at all, and its keeper ends it. A lent
+# worker has the number of its lease (`seq`), its caller's task id (`holder`), the ticket channel the grant went to
+# (`reply`: while the grant is there, the caller has not used the worker) and the task of its body when `lease_ms` is
+# above 0 (`runner`).
 enum Phase
   Idle
   Lent
+  Returning
   Pinging
   Checking
 end
@@ -76,7 +79,9 @@ struct Slot[W]
   worker: W
   phase: Phase
   orders: Channel[Keeper.Order]
+  seq: Int
   holder: Int
+  reply: Optional[Channel[Types.Grant[W]]]
   runner: Optional[TaskRef]
   born_ms: Int
   idle_since_ms: Int
@@ -108,6 +113,7 @@ struct State[W]
   watched: Set[Int]
   checking: Int
   next_id: Int
+  next_seq: Int
   failure: Result[Void]
   retry_at_ms: Int
   check_at_ms: Int
@@ -137,6 +143,7 @@ def fresh[A, W](spec: Types.Spec[A, W], now: Int) -> State[W]
     watched: Set.new([]),
     checking: 0,
     next_id: 1,
+    next_seq: 1,
     failure: ok(),
     retry_at_ms: 0,
     check_at_ms: 0,
@@ -153,6 +160,7 @@ end
 def handle[A, W](core: Core[A, W], state: State[W], msg: Types.Msg[W]) -> State[W]
   case msg
     Types.Msg.Checkout(ticket) -> checkout(core, watch(core, state, ticket.client), ticket)
+    Types.Msg.Returning(held) -> returning(state, held)
     Types.Msg.Checkin(back) -> checkin(core, state, back)
     Types.Msg.Run(running) -> run(state, running)
     Types.Msg.Ready(made) -> ready(core, state, made)
@@ -180,7 +188,7 @@ def checkout[A, W](core: Core[A, W], state: State[W], ticket: Types.Ticket[W]) -
     return refuse(current, ticket, Types.Refusal.Full) if full?(core, current)
   end
 
-  serve(core, enqueue(current, ticket))
+  serve(core, current.with(waiters: current.waiters.put(current.tail, ticket), tail: current.tail + 1))
 end
 
 # True when one more caller would wait over `max_waiting`. The callers that a worker being made, pinged or checked in
@@ -196,11 +204,9 @@ def refuse[W](state: State[W], ticket: Types.Ticket[W], refusal: Types.Refusal) 
   state
 end
 
-def enqueue[W](state: State[W], ticket: Types.Ticket[W]) -> State[W]
-  case ticket.place
-    Types.Place.Back -> state.with(waiters: state.waiters.put(state.tail, ticket), tail: state.tail + 1)
-    Types.Place.Front -> state.with(waiters: state.waiters.put(state.head - 1, ticket), head: state.head - 1)
-  end
+# A caller whose worker `checkout` refused goes back to the front of the line, whatever `max_waiting` says.
+def to_front[W](state: State[W], ticket: Types.Ticket[W]) -> State[W]
+  state.with(waiters: state.waiters.put(state.head - 1, ticket), head: state.head - 1)
 end
 
 # Drops the tickets of the callers that gave up (they closed them), keeping the order of the others.
@@ -228,7 +234,7 @@ end
 def serve[A, W](core: Core[A, W], state: State[W]) -> State[W]
   current = state
   while current.head < current.tail and not current.idle.empty?
-    # The keys from head to tail - 1 are always there: `enqueue` and `purge` keep them so.
+    # The keys from head to tail - 1 are always there: `checkout`, `to_front` and `purge` keep them so.
     ticket = current.waiters.get(current.head).unwrap!
     current = lend(current.with(waiters: current.waiters.delete(current.head), head: current.head + 1), ticket)
   end
@@ -240,11 +246,15 @@ def lend[W](state: State[W], ticket: Types.Ticket[W]) -> State[W]
   id = state.idle.last
   # Every id in `idle` is a slot: `retire` takes it out of both.
   slot = state.slots.get(id).unwrap!
-  lease = Types.Lease(id: id, worker: slot.worker)
+  lease = Types.Lease(id: id, seq: state.next_seq, worker: slot.worker)
   return state if not ticket.reply.send(Types.Grant.Lent(lease), 0).ok?
 
-  lent = slot.with(phase: Phase.Lent, holder: ticket.client.id, runner: none)
-  state.with(idle: state.idle.take(state.idle.size - 1), slots: state.slots.put(id, lent))
+  lent = slot.with(phase: Phase.Lent, seq: state.next_seq, holder: ticket.client.id, reply: some(ticket.reply))
+  state.with(
+    idle: state.idle.take(state.idle.size - 1),
+    slots: state.slots.put(id, lent),
+    next_seq: state.next_seq + 1,
+  )
 end
 
 # Starts the keepers of the workers that are wanted and missing: `size` of them in an eager pool, and in any pool one
@@ -313,7 +323,9 @@ def ready[A, W](core: Core[A, W], state: State[W], made: Types.Made[W]) -> State
             worker: worker,
             phase: Phase.Idle,
             orders: orders,
+            seq: 0,
             holder: 0,
+            reply: none,
             runner: none,
             born_ms: now,
             idle_since_ms: now,
@@ -343,36 +355,58 @@ def booted[A, W](core: Core[A, W], state: State[W]) -> State[W]
   state.with(booting: false)
 end
 
-def checkin[A, W](core: Core[A, W], state: State[W], back: Types.Back) -> State[W]
+def checkin[A, W](core: Core[A, W], state: State[W], back: Types.Back[W]) -> State[W]
   case state.slots.get(back.id)
-    # The worker was ended meanwhile: its caller's task ended, or the drain of a close is over.
-    none -> state
-    some(slot) ->
-      return state if slot.phase != Phase.Lent
+    some(slot) if slot.seq == back.seq and lent?(slot) -> given(core, state, back.id, back.how)
+    # The worker was ended meanwhile (its caller's task ended, or the drain of a close is over); a caller whose worker
+    # `checkout` refused still waits.
+    _ ->
+      case back.how
+        Types.Return.Again(ticket) -> serve(core, to_front(state, ticket))
+        _ -> state
+      end
+  end
+end
 
-      return serve(core, retire(state, back.id)) if not back.keep or aged?(core.spec, slot, Time.monotonic_ms())
+def given[A, W](core: Core[A, W], state: State[W], id: Int, how: Types.Return[W]) -> State[W]
+  case how
+    Types.Return.Keep -> park(core, state, id, Time.monotonic_ms())
+    Types.Return.Drop -> serve(core, retire(state, id))
+    Types.Return.Check(outcome) -> lost(state, id, outcome)
+    Types.Return.Again(ticket) -> serve(core, to_front(retire(state, id), ticket))
+  end
+end
 
-      park(core, state, back.id, Time.monotonic_ms())
+def lent?[W](slot: Slot[W]) -> Bool = slot.phase == Phase.Lent or slot.phase == Phase.Returning
+
+def returning[W](state: State[W], held: Types.Held) -> State[W]
+  case state.slots.get(held.id)
+    some(slot) if slot.phase == Phase.Lent and slot.seq == held.seq ->
+      state.with(slots: state.slots.put(held.id, slot.with(phase: Phase.Returning)))
+    _ -> state
   end
 end
 
 def run[W](state: State[W], running: Types.Running) -> State[W]
   case state.slots.get(running.id)
-    some(slot) if slot.phase == Phase.Lent ->
+    some(slot) if slot.phase == Phase.Lent and slot.seq == running.seq ->
       state.with(slots: state.slots.put(running.id, slot.with(runner: some(running.runner))))
     _ -> state
   end
 end
 
-# A worker that is free again: it goes to the idle ones and serves the line, unless nobody can need it (a close with
-# nobody in line, or an overflow worker with `overflow_idle_ms` 0).
+# A worker that is free again: it goes to the idle ones and serves the line, unless it is too old (`max_age_ms`) or
+# nobody can need it (a close with nobody in line, or an overflow worker with `overflow_idle_ms` 0).
 def park[A, W](core: Core[A, W], state: State[W], id: Int, idle_since_ms: Int) -> State[W]
+  slot = state.slots.get(id).unwrap!
   nobody_waits = state.head == state.tail
   if nobody_waits and (state.closing or (surplus?(core, state) and core.spec.overflow_idle_ms == 0))
     return serve(core, retire(state, id))
   end
 
-  slot = state.slots.get(id).unwrap!.with(phase: Phase.Idle, holder: 0, runner: none, idle_since_ms: idle_since_ms)
+  return serve(core, retire(state, id)) if aged?(core.spec, slot, Time.monotonic_ms())
+
+  slot = slot.with(phase: Phase.Idle, holder: 0, reply: none, runner: none, idle_since_ms: idle_since_ms)
   parked = state.with(slots: state.slots.put(id, slot), idle: state.idle.push(id))
   serve(core, parked.with(check_at_ms: earliest(parked.check_at_ms, due_ms(core.spec, slot))))
 end
@@ -453,8 +487,10 @@ def keeper_down[A, W](core: Core[A, W], state: State[W], keeping: Keeping, down:
   serve(core, retire(state, keeping.slot))
 end
 
-# A caller's task ended while it held workers: their keepers run `checkin` with how it ended (a crash is `Crashed`,
-# a cancel `TimedOut`, which always ends the worker), and its tickets leave the line.
+# A caller's task ended while it held workers, and its tickets leave the line. `checkin` runs once for each lease: a
+# worker whose grant the caller never read is idle again, one whose `checkin` the caller had started is ended, and for
+# the others the keeper runs `checkin` with how the caller ended (a crash is `Crashed`, a cancel `TimedOut`, which
+# always ends the worker).
 def client_down[A, W](core: Core[A, W], state: State[W], down: TaskDown) -> State[W]
   outcome = Types.Outcome.TimedOut
   if down.reason == TaskExit.Crashed
@@ -463,22 +499,39 @@ def client_down[A, W](core: Core[A, W], state: State[W], down: TaskDown) -> Stat
 
   held = state.slots.keys.select { |id| holds?(state, id, down.task_id) }
   cleared = held.reduce(state.with(watched: state.watched.delete(down.task_id))) do |acc, id|
-    lost(acc, id, outcome)
+    let_go(core, acc, id, outcome)
   end
 
   serve(core, drop_tickets(cleared, down.task_id))
 end
 
+def let_go[A, W](core: Core[A, W], state: State[W], id: Int, outcome: Types.Outcome) -> State[W]
+  slot = state.slots.get(id).unwrap!
+  return retire(state, id) if slot.phase == Phase.Returning
+
+  return park(core, state, id, slot.idle_since_ms) if unread?(slot)
+
+  lost(state, id, outcome)
+end
+
+def unread?[W](slot: Slot[W]) -> Bool
+  case slot.reply
+    some(reply) -> not reply.empty?
+    none -> false
+  end
+end
+
+# The keeper runs `checkin`, and reports back like a ping.
 def lost[W](state: State[W], id: Int, outcome: Types.Outcome) -> State[W]
   slot = state.slots.get(id).unwrap!
-  _ = slot.orders.send(Keeper.Order.Lost(outcome), 0)
-  checking = slot.with(phase: Phase.Checking, holder: 0, runner: none)
+  _ = slot.orders.send(Keeper.Order.Checkin(outcome), 0)
+  checking = slot.with(phase: Phase.Checking, holder: 0, reply: none, runner: none)
   state.with(slots: state.slots.put(id, checking), checking: state.checking + 1)
 end
 
 def holds?[W](state: State[W], id: Int, task_id: Int) -> Bool
   case state.slots.get(id)
-    some(slot) -> slot.phase == Phase.Lent and slot.holder == task_id
+    some(slot) -> lent?(slot) and slot.holder == task_id
     none -> false
   end
 end
@@ -615,7 +668,7 @@ end
 
 def retire_free[W](state: State[W], id: Int, all: Bool) -> State[W]
   case state.slots.get(id)
-    some(slot) if all or slot.phase != Phase.Lent -> retire(state, id)
+    some(slot) if all or not lent?(slot) -> retire(state, id)
     _ -> state
   end
 end

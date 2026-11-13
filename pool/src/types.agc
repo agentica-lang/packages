@@ -52,18 +52,13 @@ end
 struct Ticket[W]
   reply: Channel[Grant[W]]
   client: TaskRef
-  place: Place
 end
 
-## Where a ticket goes in line: a caller whose worker `checkout` ended keeps its place at the front.
-enum Place
-  Back
-  Front
-end
-
-## A worker lent to a caller.
+## A worker lent to a caller, with the number of this lease, which every message about it carries: a message of an
+## earlier lease of the same worker changes nothing.
 struct Lease[W]
   id: Int
+  seq: Int
   worker: W
 end
 
@@ -78,15 +73,33 @@ enum Refusal
   Closed
 end
 
-## A worker given back by its caller, kept or not.
-struct Back
+## A lease that its caller ends: the caller runs `checkin` now (`lease_ms` 0), so its keeper must not run it again.
+struct Held
   id: Int
-  keep: Bool
+  seq: Int
+end
+
+## A worker given back by its caller, and what becomes of it.
+struct Back[W]
+  id: Int
+  seq: Int
+  how: Return[W]
+end
+
+## `Keep` and `Drop`: the caller ran `checkin`, or never used the worker (`Keep`). `Check`: the keeper runs `checkin`
+## with how the body ended (`lease_ms` above 0). `Again`: `checkout` refused the worker, which is ended, and the
+## caller waits at the front of the line with a new ticket.
+enum Return[W]
+  Keep
+  Drop
+  Check(Outcome)
+  Again(Ticket[W])
 end
 
 ## The task that runs a body when `lease_ms` is above 0, which a close cancels at the end of its drain.
 struct Running
   id: Int
+  seq: Int
   runner: TaskRef
 end
 
@@ -96,7 +109,7 @@ struct Made[W]
   worker: Result[W]
 end
 
-## What a ping, or a `checkin` that a keeper ran for a caller that is gone, said.
+## What a ping, or a `checkin` that a keeper ran, said.
 struct Checked
   id: Int
   keep: Bool
@@ -111,7 +124,8 @@ end
 ## The messages of the owner's inbox.
 enum Msg[W]
   Checkout(Ticket[W])
-  Checkin(Back)
+  Returning(Held)
+  Checkin(Back[W])
   Run(Running)
   Ready(Made[W])
   Check(Checked)

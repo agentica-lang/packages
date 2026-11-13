@@ -21,7 +21,8 @@ LOOP_NAP_MS = 5
 SETTING_NAMES = [
   "size", "max_overflow", "overflow_idle_ms", "checkout_ms", "lease_ms", "max_age_ms", "idle_ms", "max_waiting",
   "lazy", "health_ms", "keep_dirty", "dirty_done", "bad_ping_id", "init_fails_from", "init_crashes_at", "slow_init_at",
-  "slow_init_ms", "bad_checkout_id", "slow_ping_ms", "slow_terminate_ms",
+  "slow_init_ms", "bad_checkout_id", "slow_ping_ms", "slow_terminate_ms", "slow_checkin_ms", "bad_checkin",
+  "slow_checkout_ms",
 ]
 
 # The resource of the pool.
@@ -43,6 +44,9 @@ struct Fake
   bad_checkout_id: Int
   slow_ping_ms: Int
   slow_terminate_ms: Int
+  slow_checkin_ms: Int
+  bad_checkin: String
+  slow_checkout_ms: Int
 end
 
 struct Driver
@@ -135,6 +139,9 @@ def spec_of(driver: Driver, table: List[List[String]]) -> Result[Pool.Spec[Fake,
     bad_checkout_id: try settings.get("bad_checkout_id", "0").to_i,
     slow_ping_ms: try settings.get("slow_ping_ms", "0").to_i,
     slow_terminate_ms: try settings.get("slow_terminate_ms", "0").to_i,
+    slow_checkin_ms: try settings.get("slow_checkin_ms", "0").to_i,
+    bad_checkin: settings.get("bad_checkin", "no"),
+    slow_checkout_ms: try settings.get("slow_checkout_ms", "0").to_i,
   )
 
   base = Pool.Spec(
@@ -375,8 +382,24 @@ def make(fake: Fake) -> Result[Cell]
 end
 
 # A cell is kept after a clean job (unless `dirty_done`); after a crash or a timeout only when the fake says so
-# (`keep_dirty`).
+# (`keep_dirty`). `slow_checkin_ms` makes each checkin take that long after it counted itself, and `bad_checkin`
+# (`crashes`, `hangs`) makes it misbehave.
 def check_in(cell: Cell, outcome: Pool.Outcome) -> Result[Void]
+  case cell.fake.bad_checkin
+    "crashes" -> return error("never #{"not a number".to_i!}")
+    "hangs" -> Task.sleep(HANG_MS)
+    _ -> nil
+  end
+
+  kept = checked_in(cell, outcome)
+  if cell.fake.slow_checkin_ms > 0
+    Task.sleep(cell.fake.slow_checkin_ms)
+  end
+
+  kept
+end
+
+def checked_in(cell: Cell, outcome: Pool.Outcome) -> Result[Void]
   stats = cell.fake.stats
   case outcome
     Pool.Outcome.Done ->
@@ -395,6 +418,10 @@ end
 
 def check_out(cell: Cell) -> Result[Void]
   cell.fake.stats.add("checkouts", 1)
+  if cell.fake.slow_checkout_ms > 0
+    Task.sleep(cell.fake.slow_checkout_ms)
+  end
+
   return error("cell #{cell.id} is refused") if cell.id == cell.fake.bad_checkout_id
 
   ok()

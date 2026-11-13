@@ -164,3 +164,66 @@ Feature: Callers
     And job "B" gets "error pool error: closed"
     And the count "made" is 1
     And the count "terminated" is 1
+
+  # A's body ends at once and its checkin takes 300 ms; the cancel comes during that checkin (lease_ms 0) or after the
+  # caller got its result (above 0). The checkin that was cut off is not run again, and its resource is ended.
+  Scenario Outline: A caller cancelled after its body has checkin run once (lease_ms <lease>)
+    Given a pool with:
+      | setting         | value   |
+      | size            | 1       |
+      | lease_ms        | <lease> |
+      | slow_checkin_ms | 300     |
+    When job "A" holds a resource for 1 ms
+    And the caller of job "A" is cancelled
+    And job "B" holds a resource for 10 ms
+    And I wait for the jobs
+    Then job "B" gets "ok <b>"
+    And the count "checkin_done" reaches 2 within 2000 ms
+    And the count "checkin_timed_out" is 0
+    And the count "checkin_crashed" is 0
+
+    Examples:
+      | lease | b |
+      | 0     | 2 |
+      | 30000 | 1 |
+
+  # The checkin of a body that ran in a task of the pool runs in a task of its own, after the caller has its result, and
+  # for at most 5 seconds: one that crashes or hangs ends its resource, never the caller.
+  Scenario Outline: A checkin that <bad> does not reach the caller, and its resource is replaced (lease_ms above 0)
+    Given a pool with:
+      | setting     | value |
+      | size        | 1     |
+      | bad_checkin | <bad> |
+      | checkout_ms | 8000  |
+    When job "A" holds a resource for 10 ms
+    And job "B" holds a resource for 10 ms
+    And I wait for the jobs
+    Then job "A" gets "ok 1"
+    And job "B" gets "ok 2"
+    And the jobs ended in this order: "A,B"
+    And the count "terminated" reaches 1 within 2000 ms
+
+    Examples:
+      | bad     |
+      | crashes |
+      | hangs   |
+
+  # A's resource 1 is refused after 100 ms of checkout; meanwhile B fills the line (max_waiting 1) and C is refused. A
+  # keeps its place at the front for resource 2, which takes 200 ms to make, and B gets it after A.
+  Scenario: A caller whose resource checkout refuses keeps its place even when the line is full
+    Given a pool with:
+      | setting          | value |
+      | size             | 1     |
+      | max_waiting      | 1     |
+      | bad_checkout_id  | 1     |
+      | slow_checkout_ms | 100   |
+      | slow_init_at     | 2     |
+      | slow_init_ms     | 200   |
+    When job "A" holds a resource for 10 ms
+    And job "B" holds a resource for 10 ms
+    And job "C" holds a resource for 10 ms
+    And I wait for the jobs
+    Then job "A" gets "ok 2"
+    And job "B" gets "ok 2"
+    And job "C" gets "error pool error: queue full (max_waiting 1)"
+    And the jobs ended in this order: "C,A,B"
