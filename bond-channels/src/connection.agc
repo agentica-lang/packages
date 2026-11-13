@@ -20,7 +20,7 @@ def handler_of(mount: Mount) -> Bond.WebSocketHandler = wrapping do |conn, socke
 private
 
 MAX_SUBSCRIPTIONS = 64
-# A client that does not read for this long is cut off (the outgoing channel of std/http holds only 8 messages).
+# A client that does not read for this long is cut off.
 WRITE_MS = 5_000
 PUMP_MS = 60_000
 # How often an idle loop looks at the hub: a hub that ended or crashed sends nothing more, so this is how its
@@ -90,7 +90,7 @@ def open(mount: Mount, socket: HTTP.WebSocket, identity: Types.Identity) -> Resu
   inbox: Channel[Hub.Event] = Channel.new(mount.options.inbox)
   # Before any command is handled: the browser waits for it, and the loadgen subscribes right after the handshake.
   try socket.outgoing.send(HTTP.Message.Text(Protocol.welcome()), WRITE_MS)
-  if not Hub.register(hub, connection, identity.id, inbox, ping_every(mount.options, hub)).ok?
+  if not Hub.register(hub, connection, identity.id, inbox, socket.outgoing, ping_every(mount.options, hub)).ok?
     return hub_gone(socket) if Hub.gone?(hub)
 
     return hub_busy(socket)
@@ -196,7 +196,10 @@ def closed_inbox(line: Line) -> Result[Void]
     some(reconnect) ->
       try away(line, reconnect)
       ok()
-    none -> write(line, HTTP.Message.Text(Protocol.disconnect_reconnect()))
+    none ->
+      # A drop: the queue may be full, so the frame does not wait.
+      _ = line.socket.outgoing.send(HTTP.Message.Text(Protocol.disconnect_reconnect()), 0)
+      ok()
   end
 end
 
@@ -294,24 +297,25 @@ end
 
 def decide(line: Line, handler: Types.Handler, join: Protocol.Join, decision: Types.Subscription) -> Result[Void]
   try transmit(line, join.identifier, decision.transmit)
-  return refuse(line, handler, join) if decision.rejected or not attached?(line, join.identifier, decision.streams)
+  return refuse(line, handler, join) if decision.rejected
 
-  write(line, HTTP.Message.Text(Protocol.confirm_subscription(join.identifier)))
+  confirm = Protocol.confirm_subscription(join.identifier)
+  return write(line, HTTP.Message.Text(confirm)) if decision.streams.empty?
+
+  # The hub writes the confirmation, so it reaches the socket before any broadcast.
+  return ok() if Hub.attach(line.mount.hub, line.connection, join.identifier, decision.streams, confirm).ok?
+
+  # The hub may have dropped the connection for a full queue, so the reject does not wait.
+  try forget(line, handler, join.identifier, join.params)
+  _ = line.socket.outgoing.send(HTTP.Message.Text(Protocol.reject_subscription(join.identifier)), 0)
+  ok()
 end
 
-# The client is told, and the subscription is forgotten: the hub never heard of it (an attach that failed was not
-# queued), so only the table and `unsubscribed` need it.
+# The client is told, and the subscription is forgotten: the hub does not route to it, so only the table and
+# `unsubscribed` need it.
 def refuse(line: Line, handler: Types.Handler, join: Protocol.Join) -> Result[Void]
   try forget(line, handler, join.identifier, join.params)
   write(line, HTTP.Message.Text(Protocol.reject_subscription(join.identifier)))
-end
-
-# The hub queue is FIFO, so a broadcast sent after this one reaches the inbox after the confirmation is written. A
-# hub that does not take the message rejects the subscription: it could never hear a broadcast.
-def attached?(line: Line, identifier: String, streams: List[String]) -> Bool
-  return true if streams.empty?
-
-  Hub.attach(line.mount.hub, line.connection, identifier, streams).ok?
 end
 
 # A subscription that ends: out of the table, and `unsubscribed` runs. The hub is not told here: `leave` does it for a

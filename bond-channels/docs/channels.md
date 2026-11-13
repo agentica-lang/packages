@@ -42,7 +42,9 @@ handlers = {"RoomChannel": room}
 
 A `Session` has the number of the `connection`, its `identity`, and the `subscriptions` it holds now (their identifiers).
 
-Every function runs on the task of its connection, the one that writes the frames to that client. A slow `perform` (a database call, a lock) stalls the writes to that client: its frames queue in its inbox, and the hub drops the client when `MountOptions.inbox` frames are waiting. Do the slow work in a task of your own and answer with a broadcast.
+Every function runs on the task of its connection, the one that handles the commands of that client. A slow `perform` (a database call, a lock) stalls the next commands and pings of that client, and a connection whose `inbox` fills with them is dropped. Broadcasts do not queue there: the hub writes them to the WebSocket itself. Do the slow work in a task of your own and answer with a broadcast.
+
+So a broadcast can reach the client before the reply of the `perform` that sent it; Action Cable does not promise that order either.
 
 An `error` from any of them is logged, and the connection stays open. An `error` from `subscribed` also rejects the subscription.
 

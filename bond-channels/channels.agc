@@ -106,12 +106,21 @@ def mount(app: Bond.App, path: String, hub: Hubs.Hub, options: Types.MountOption
     max_message_bytes: options.max_message_bytes,
     idle_ms: options.idle_ms,
     protocols: [Protocol.SUBPROTOCOL],
+    outgoing_queue: min_of(options.inbox * 2, MAX_OUTGOING_QUEUE),
   )
 
   ok(Bond.websocket(app, path, serving, options.allowed_origins, some(websocket)))
 end
 
 private
+
+MAX_OUTGOING_QUEUE = 1_048_576
+
+def min_of(a: Int, b: Int) -> Int
+  return a if a < b
+
+  b
+end
 
 def checked(hub: Hubs.Hub, options: Types.MountOptions) -> Result[Void]
   return error("inbox must be 1 or more, it is #{options.inbox}") if options.inbox < 1

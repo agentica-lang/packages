@@ -230,8 +230,9 @@ Feature: The cable
       | no close frame            | drops the connection             |
       | a crash of the handler    | performs "crash" in the room "1" |
 
-  Scenario: A client that cannot keep up is dropped by the hub, and `unsubscribed` still runs
-    Given the environment variable "INBOX" is "2"
+  Scenario: A connection that does not take its events is dropped by the hub, and `unsubscribed` still runs
+    Given the environment variable "BEAT_MS" is "50"
+    And the environment variable "INBOX" is "2"
     And the environment variable "SLOW_MS" is "500"
     And the cable server listens on a free port
     When client "slow" connects with:
@@ -249,23 +250,8 @@ Feature: The cable
     And client "slow" subscribes to the room "1"
     And client "slow" eventually receives a frame containing "confirm_subscription"
     And client "slow" performs "slow" in the room "1"
-    And client "watch" eventually receives a frame containing "{\"started\":\"slow\"}"
-    And the app broadcasts "m1" to "room:1"
-    And the app broadcasts "m2" to "room:1"
-    And the app broadcasts "m3" to "room:1"
-    And the app broadcasts "m4" to "room:1"
-    Then client "slow" receives:
-      """
-      {"identifier":"{\"channel\":\"RoomChannel\",\"room\":\"1\"}","message":"m1"}
-      """
-    And client "slow" receives:
-      """
-      {"identifier":"{\"channel\":\"RoomChannel\",\"room\":\"1\"}","message":"m2"}
-      """
-    And client "slow" receives:
-      """
-      {"type":"disconnect","reason":null,"reconnect":true}
-      """
+    Then client "watch" eventually receives a frame containing "{\"started\":\"slow\"}"
+    And client "slow" eventually receives a frame containing "\"reconnect\":true"
     And client "watch" eventually receives a frame containing "\"message\":{\"left\":\"slow\",\"room\":\"1\"}"
     And the stats become:
       """
@@ -438,6 +424,15 @@ Feature: The cable
     And client "watch" eventually receives a frame containing "{\"started\":\"slow\"}"
     And the app broadcasts "m1" to "room:1"
     And the app broadcasts "m2" to "room:1"
+    And client "slow" sends:
+      """
+      one
+      """
+    And client "slow" sends:
+      """
+      two
+      """
+    And 200 milliseconds pass
     And the app disconnects "slow" with reconnect "false"
     Then client "slow" receives:
       """
