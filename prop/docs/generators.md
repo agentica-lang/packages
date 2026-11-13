@@ -6,6 +6,23 @@ weight: 2
 
 A generator, `Gen[T]`, makes values of type `T` from a seed. The examples show what a generator makes with `Prop.sample`, the first values that `Prop.check` would try with that seed.
 
+The types are `Prop.Gen[T]` and `Prop.Pair[A, B]`. To write them bare in the signature of a helper, import the names next to the module: `import {Gen, Pair} from "pkg/prop/prop"` (on its own line, after `import Prop from "pkg/prop/prop"`).
+
+```agentica
+import Prop from "pkg/prop/prop"
+import {Gen, Pair} from "pkg/prop/prop"
+
+def tagged(gen: Gen[String]) -> Gen[Pair[Int, String]] = Prop.pair(Prop.int(0, 9), gen)
+
+def main() -> Void
+  puts(Prop.sample(tagged(Prop.one_of(["a", "b"])), 1, 2))
+end
+```
+
+```output
+[Pair(first: 4, second: "b"), Pair(first: 4, second: "a")]
+```
+
 ## Prop.sample
 
 ```signature
@@ -126,6 +143,87 @@ end
 [[4, 1, 6], [4, 0], [3, 8, 9]]
 ```
 
+## Prop.non_empty_list
+
+```signature
+Prop.non_empty_list(gen: Gen[T], max_size: Int = 10) -> Gen[List[T]]
+```
+
+A List of 1 up to `max_size` items of `gen` (`max_size` is at most 1000, and a `max_size` below 1 halts the test). It shrinks to a one-item list, then to smaller items, and never to the empty list. Use it where an empty list is no input.
+
+It is also the generator of a cut: the sizes of the pieces that a sequence is split into, none of them 0, so a law can check every way to cut a parser's input. `Prop.non_empty_list(Prop.int(1, 12))` gives sizes to cycle through until the input is used up.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  puts(Prop.sample(Prop.non_empty_list(Prop.int(1, 9), 3), 2, 3))
+end
+```
+
+```output
+[[7, 1, 1], [3], [8, 3]]
+```
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def cut(whole: Bytes, sizes: List[Int]) -> List[Bytes]
+  pieces: List[Bytes] = []
+  rest = whole
+  turn = 0
+  while not rest.empty?
+    size = sizes.at(turn % sizes.size)
+    pieces = pieces.push(rest.take(size))
+    rest = rest.drop(size)
+    turn += 1
+  end
+
+  pieces
+end
+
+def main() -> Void
+  cuts = Prop.pair(Prop.bytes(0, 40), Prop.non_empty_list(Prop.int(1, 12)))
+  result = Prop.check(cuts) do |p|
+    Prop.eq(Bytes.concat(cut(p.first, p.second)).to_a, p.first.to_a)
+  end
+
+  puts(result)
+end
+```
+
+```output
+ok()
+```
+
+## Prop.bytes
+
+```signature
+Prop.bytes(min: Int = 0, max: Int = 16) -> Gen[Bytes]
+```
+
+Bytes of `min` up to `max` values from 0 to 255. Both are at most 1000, and a `min` below 0 or above `max` halts the test. They shrink to fewer bytes, down to `min`, and each byte toward 0.
+
+`Bytes` is not JSON, so `Prop.eq` cannot compare it (`CHECK-NOT-ENCODABLE`): compare `bytes.to_a`, or use `==` in a law that fails with `error(...)`. A counterexample of bytes is written as the list of their values. The six [laws](laws.md) compare with `Prop.eq` too, so they refuse a `Gen[Bytes]` (`CHECK-NOT-ENCODABLE`): state the law with `Prop.check`, for example a round trip as `Prop.check(Prop.bytes()) do |bytes| ... end` that returns `error(...)` when `decode(encode(bytes)) != bytes` (`==` works on `Bytes`).
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+def main() -> Void
+  puts(Prop.sample(Prop.bytes(1, 3), 1, 2).map do |bytes| bytes.to_a end)
+  result = Prop.check(Prop.bytes(2, 12), Prop.Config(seed: some(3))) do |bytes|
+    Prop.eq(bytes.length < 4, true)
+  end
+
+  puts(result.message)
+end
+```
+
+```output
+[[5, 191], [248]]
+falsified after 2 runs, shrunk to [0,0,0,0], seed 3: expected true, got false
+```
+
 ## Prop.optional
 
 ```signature
@@ -152,7 +250,7 @@ end
 Prop.one_of(items: List[T]) -> Gen[T]
 ```
 
-One of `items`. It shrinks toward the first item, so put the simplest first. An empty list halts the test.
+One of `items`. It shrinks toward the first item, so put the simplest first. An empty list halts the test. The items go to `JSON.encode`, so they cannot be `Bytes`: for fixed test vectors, draw the index and show the value with [`Prop.map_shown`](#propmap_shown), as `Prop.map_shown(Prop.int(0, vectors.size - 1), &show) do |i| vectors.at(i) end`.
 
 ```agentica
 import Prop from "pkg/prop/prop"
@@ -185,6 +283,41 @@ end
 
 ```output
 [30, 20, 50, 40, 10]
+```
+
+## Prop.map_shown
+
+```signature
+Prop.map_shown(gen: Gen[A], show: Fn[B, String], f: Fn[A, B]) -> Gen[B]
+```
+
+`Prop.map` for a result that JSON cannot encode, such as a struct with a `Bytes` field: `show` writes a value for the counterexample. A generator of `Bytes` or of a struct with bytes needs it, as `Prop.map` (and `Prop.one_of`) give each value to `JSON.encode`.
+
+```agentica
+import Prop from "pkg/prop/prop"
+
+struct Frame
+  tag: Int
+  data: Bytes
+end
+
+def label(frame: Frame) -> String = "#{frame.tag}:#{frame.data.to_a}"
+
+def main() -> Void
+  parts = Prop.pair(Prop.int(0, 9), Prop.bytes(0, 6))
+  frames = Prop.map_shown(parts, &label) do |p| Frame(tag: p.first, data: p.second) end
+  result = Prop.check(frames, Prop.Config(seed: some(5))) do |frame|
+    return error("three bytes or more") if frame.data.length >= 3
+
+    ok()
+  end
+
+  puts(result.message)
+end
+```
+
+```output
+falsified after 1 run, shrunk to 0:[0, 0, 0], seed 5: three bytes or more
 ```
 
 ## Prop.pair

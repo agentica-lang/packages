@@ -1,15 +1,17 @@
-## Generators. A `Gen[T]` makes the shrink tree of a value from a seed; the same seed gives the same tree.
+## Generators. A `Gen[T]` makes the shrink tree of a value from a seed; the same seed gives the same tree, and it
+## writes a value as text for a counterexample, so a value that JSON cannot encode (`Bytes`) can still be reported.
 
 import Seeds from "seed"
 import Trees from "tree"
 
 ## A source of values of type T for `Prop.check` and `Prop.exhaustive`. `make` draws a shrink tree from a seed;
 ## `count` and `all` are the small cases for a size: how many there are (a count stops at 1_000_000_000) and the
-## values, simplest first.
+## values, simplest first. `show` writes a value as JSON text, or as the generator says when JSON cannot encode it.
 struct Gen[T]
   make: Fn[Int, Trees.Tree[T]]
   count: Fn[Int, Int]
   all: Fn[Int, List[T]]
+  show: Fn[T, String]
 end
 
 ## Two values, as made by `Prop.pair`.
@@ -37,6 +39,7 @@ def int(min: Int, max: Int) -> Gen[Int]
     make: making do |seed| Trees.int_tree(low + Seeds.draw(seed, high - low + 1), origin) end,
     count: counting do |size| reach(high - origin, origin - low, size) end,
     all: listing do |size| offsets(high - origin, origin - low, size).map do |step| origin + step end end,
+    show: showing do |n| JSON.encode(n) end,
   )
 end
 
@@ -61,6 +64,7 @@ def float(min: Float, max: Float) -> Gen[Float]
     make: making do |seed| Trees.float_tree(low + Seeds.unit(seed) * (high - low), origin) end,
     count: counting do |size| reach(up, down, size) end,
     all: listing do |size| offsets(up, down, size).map do |step| origin + step.to_f end end,
+    show: showing do |x| JSON.encode(x) end,
   )
 end
 
@@ -92,18 +96,7 @@ end
 ## ```ruby
 ## Prop.sample(Prop.list(Prop.int(0, 9), 3), 2, 3) # [[4, 1, 6], [4, 0], [3, 8, 9]]
 ## ```
-def list[T](gen: Gen[T], max_size: Int = 10) -> Gen[List[T]]
-  limit = max_size.clamp(0, MAX_SIZE)
-  Gen(
-    make: making do |seed|
-      count = Seeds.draw(Seeds.split(seed, 0), limit + 1)
-      trees = (0...count).to_a.map do |i| gen.make(Seeds.split(seed, i + 1)) end
-      Trees.list_tree(trees)
-    end,
-    count: counting do |size| lists_count(gen.count(size), size.clamp(0, limit)) end,
-    all: listing do |size| lists_up_to(gen.all(size), size.clamp(0, limit)) end,
-  )
-end
+def list[T](gen: Gen[T], max_size: Int = 10) -> Gen[List[T]] = sized_list(gen, 0, max_size)
 
 ## `none` or `some` of a value of `gen`, half and half; `some` shrinks to `none` first.
 ##
@@ -125,6 +118,7 @@ def optional[T](gen: Gen[T]) -> Gen[Optional[T]]
       absent: List[Optional[T]] = [none]
       absent.concat(gen.all(size).map do |value| some(value) end)
     end,
+    show: showing do |value| show_optional(value) do |item| gen.show(item) end end,
   )
 end
 
@@ -140,7 +134,12 @@ def one_of[T](items: List[T]) -> Gen[T]
   end
 
   chosen = map(int(0, items.size - 1)) do |i| items.at(i) end
-  Gen(make: chosen.make, count: counting do |_| items.size end, all: listing do |_| items end)
+  Gen(
+    make: chosen.make,
+    count: counting do |_| items.size end,
+    all: listing do |_| items end,
+    show: showing do |value| JSON.encode(value) end,
+  )
 end
 
 ## The values of `gen` through `f`. They shrink as the values of `gen` do.
@@ -148,13 +147,19 @@ end
 ## ```ruby
 ## Prop.sample(Prop.map(Prop.int(1, 5)) do |n| n * 10 end, 1) # [30, 20, 50, 40, 10]
 ## ```
-def map[A, B](gen: Gen[A], f: Fn[A, B]) -> Gen[B]
-  Gen(
-    make: making do |seed| Trees.map_tree(gen.make(seed), f) end,
-    count: gen.count,
-    all: listing do |size| gen.all(size).map do |value| f.call(value) end end,
-  )
-end
+def map[A, B](gen: Gen[A], f: Fn[A, B]) -> Gen[B] = mapped(gen, f, showing do |value| JSON.encode(value) end)
+
+## The values of `gen` through `f`, written by `show` in a counterexample, for a result that JSON cannot encode (a
+## struct with a `Bytes` field): `Prop.map` needs a result that JSON encodes. They shrink as the values of `gen` do.
+##
+## ```ruby
+## def label(bytes: Bytes) -> String = "bytes of #{bytes.length}"
+##
+## sized = Prop.map_shown(Prop.int(1, 9), &label) do |n| Bytes.from_list([n]).unwrap! end
+## Prop.check(sized, Prop.Config(seed: some(1))) do |_| error("always") end
+## # error("falsified after 1 run, shrunk to bytes of 1, seed 1: always")
+## ```
+def map_shown[A, B](gen: Gen[A], show: Fn[B, String], f: Fn[A, B]) -> Gen[B] = mapped(gen, f, show)
 
 ## A `Pair` of a value of `a` and one of `b`, shrinking `a` first.
 ##
@@ -171,7 +176,43 @@ def pair[A, B](a: Gen[A], b: Gen[B]) -> Gen[Pair[A, B]]
     end,
     count: counting do |size| saturate(a.count(size) * b.count(size)) end,
     all: listing do |size| pairs(a.all(size), b.all(size)) end,
+    show: showing do |both| "{\"first\":#{a.show(both.first)},\"second\":#{b.show(both.second)}}" end,
   )
+end
+
+## A non-empty List of 1 up to `max_size` (at most 1000) items of `gen`; it halts when `max_size` is less than 1. It
+## shrinks to a one-item list, then by shrinking the items, and never to the empty list. At size k it has the lists of
+## 1 up to k + 1 items, each an item of `gen` at size k. Use it where an empty list is no input, such as the sizes of
+## the pieces that cut a sequence: `Prop.non_empty_list(Prop.int(1, 12))`.
+##
+## ```ruby
+## Prop.sample(Prop.non_empty_list(Prop.int(1, 9), 3), 2, 3) # [[7, 1, 1], [3], [8, 3]]
+## ```
+def non_empty_list[T](gen: Gen[T], max_size: Int = 10) -> Gen[List[T]]
+  if max_size < 1
+    bad: Result[Gen[List[T]]] = error("Prop.non_empty_list: max_size #{max_size} is less than 1")
+    return bad.unwrap!
+  end
+
+  sized_list(gen, 1, max_size)
+end
+
+## Bytes of `min` up to `max` (both at most 1000) values from 0 to 255. They shrink to fewer bytes, down to `min`, and
+## each toward 0. A counterexample shows them as the list of their values; `Prop.eq` cannot compare `Bytes`, so compare
+## `bytes.to_a`. Halts when `min` is below 0, above `max` or above 1000. At size k it has the bytes of `min` up to
+## `min` + k, each up to k from 0.
+##
+## ```ruby
+## Prop.sample(Prop.bytes(1, 3), 1, 2).map do |bytes| bytes.to_a end # [[5, 191], [248]]
+## ```
+def bytes(min: Int = 0, max: Int = 16) -> Gen[Bytes]
+  if min < 0 or min > max or min > MAX_SIZE
+    bad: Result[Gen[Bytes]] = error("Prop.bytes: min #{min} must be between 0 and max #{max}, and at most #{MAX_SIZE}")
+    return bad.unwrap!
+  end
+
+  values = sized_list(int(0, BYTE_MAX), min, max)
+  mapped(values, ->(items: List[Int]) { Bytes.from_list(items).unwrap! }, showing do |made| show_bytes(made) end)
 end
 
 ## The values that `gen` makes for `count` seeds from `seed` on: the first cases `Prop.check` runs with that seed.
@@ -188,7 +229,12 @@ def capped?(count: Int) -> Bool = count >= CAP
 
 ## `value`, always.
 def just[T](value: T) -> Gen[T]
-  Gen(make: making do |_| Trees.leaf(value) end, count: counting do |_| 1 end, all: listing do |_| [value] end)
+  Gen(
+    make: making do |_| Trees.leaf(value) end,
+    count: counting do |_| 1 end,
+    all: listing do |_| [value] end,
+    show: showing do |made| JSON.encode(made) end,
+  )
 end
 
 ## One value of each of `gens`, in order: a list as long as `gens`, which shrinks only through its items.
@@ -199,6 +245,7 @@ def sequence[T](gens: List[Gen[T]]) -> Gen[List[T]]
     end,
     count: counting do |size| gens.reduce(1) do |total, gen| saturate(total * gen.count(size)) end end,
     all: listing do |size| product(gens.map do |gen| gen.all(size) end) end,
+    show: showing do |values| show_items((0...gens.size).to_a.map do |i| gens.at(i).show(values.at(i)) end) end,
   )
 end
 
@@ -216,6 +263,7 @@ def choose[T](gens: List[Gen[T]]) -> Gen[T]
     end,
     count: counting do |size| gens.reduce(0) do |total, gen| saturate(total + gen.count(size)) end end,
     all: listing do |size| gens.reduce([]) do |all, gen| all.concat(gen.all(size)) end end,
+    show: showing do |value| JSON.encode(value) end,
   )
 end
 
@@ -224,6 +272,7 @@ private
 # `int` and `float` clamp their bounds to this, so a range always fits the 62 bits that `Seeds.draw` can cover.
 BOUND = 1152921504606846976
 FLOAT_BOUND = 1.0e15
+BYTE_MAX = 255
 # Letters first, so a string shrinks toward "a"; then printable ASCII, and last the characters that break naive code:
 # accents, CJK, an emoji, a tab and a newline.
 LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -241,6 +290,52 @@ def making[T](make: Fn[Int, Trees.Tree[T]]) -> Fn[Int, Trees.Tree[T]] = make
 def counting(count: Fn[Int, Int]) -> Fn[Int, Int] = count
 
 def listing[T](all: Fn[Int, List[T]]) -> Fn[Int, List[T]] = all
+
+def showing[T](show: Fn[T, String]) -> Fn[T, String] = show
+
+def mapped[A, B](gen: Gen[A], f: Fn[A, B], show: Fn[B, String]) -> Gen[B]
+  Gen(
+    make: making do |seed| Trees.map_tree(gen.make(seed), f) end,
+    count: gen.count,
+    all: listing do |size| gen.all(size).map do |value| f.call(value) end end,
+    show: show,
+  )
+end
+
+# A List of `min` up to `max` items of `gen`, with `max` clamped to the longest list. A list never shrinks below `min`.
+def sized_list[T](gen: Gen[T], min: Int, max: Int) -> Gen[List[T]]
+  limit = max.clamp(0, MAX_SIZE)
+  shortest = min.clamp(0, limit)
+  Gen(
+    make: making do |seed|
+      count = shortest + Seeds.draw(Seeds.split(seed, 0), limit - shortest + 1)
+      trees = (0...count).to_a.map do |i| gen.make(Seeds.split(seed, i + 1)) end
+      Trees.floored_list_tree(trees, shortest)
+    end,
+    count: counting do |size| lists_count(gen.count(size), shortest, reach_length(shortest, limit, size)) end,
+    all: listing do |size| lists_between(gen.all(size), shortest, reach_length(shortest, limit, size)) end,
+    show: showing do |items| show_items(items.map do |item| gen.show(item) end) end,
+  )
+end
+
+# The longest list at `size`: `size` items more than the shortest, but never above the limit, and at least
+# the shortest.
+def reach_length(shortest: Int, limit: Int, size: Int) -> Int
+  (shortest + size.clamp(0, limit)).clamp(shortest, limit)
+end
+
+# The JSON text of a list whose items are already written.
+def show_items(parts: List[String]) -> String = "[#{parts.join(",")}]"
+
+def show_optional[T](value: Optional[T], show: Fn[T, String]) -> String
+  case value
+    some(item) -> show.call(item)
+    none -> "null"
+  end
+end
+
+# Bytes as the list of their values, which is what JSON would show for a list of Ints.
+def show_bytes(bytes: Bytes) -> String = JSON.encode(bytes.to_a)
 
 def saturate(n: Int) -> Int = n.clamp(0, CAP)
 
@@ -268,13 +363,16 @@ def offsets(up: Int, down: Int, size: Int) -> List[Int]
   out
 end
 
-# 1 + n + n^2 + ... + n^longest, stopping at CAP.
-def lists_count(items: Int, longest: Int) -> Int
+# n^shortest + ... + n^longest, stopping at CAP.
+def lists_count(items: Int, shortest: Int, longest: Int) -> Int
   total = 0
   power = 1
   length = 0
   while length <= longest and total < CAP
-    total = saturate(total + power)
+    if length >= shortest
+      total = saturate(total + power)
+    end
+
     power = saturate(power * items)
     length += 1
   end
@@ -282,10 +380,10 @@ def lists_count(items: Int, longest: Int) -> Int
   total
 end
 
-# The lists of 0 up to `longest` items, the shorter first.
-def lists_up_to[T](items: List[T], longest: Int) -> List[List[T]]
+# The lists of `shortest` up to `longest` items, the shorter first.
+def lists_between[T](items: List[T], shortest: Int, longest: Int) -> List[List[T]]
   out: List[List[T]] = []
-  for length in 0..longest
+  for length in shortest..longest
     out = out.concat(sequences(items, length))
   end
 

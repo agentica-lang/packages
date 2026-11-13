@@ -163,6 +163,6 @@ ok()
 
 ## Equality and your own laws
 
-A law compares with `Prop.eq`: the values are compared as JSON, so they must be JSON-encodable, and two maps with the same pairs in a different order differ. A failure names the law and both values, as `f(f(x)) differs from f(x)` above.
+A law compares with `Prop.eq`: the values are compared as JSON, so they must be JSON-encodable, and two maps with the same pairs in a different order differ. This is why a law refuses a generator of `Bytes` (or of a struct with a `Bytes` field) with `CHECK-NOT-ENCODABLE`, though `Prop.check` accepts it. For bytes, state the law with `Prop.check` and compare with `==` or `bytes.to_a`. A failure names the law and both values, as `f(f(x)) differs from f(x)` above.
 
 For a law that is not here, use `Prop.check` and return `Prop.eq(...)` or `error(...)`. See [Checking](checking.md).

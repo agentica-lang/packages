@@ -35,9 +35,12 @@ export Gens.float
 export Gens.bool
 export Gens.string
 export Gens.list
+export Gens.non_empty_list
+export Gens.bytes
 export Gens.optional
 export Gens.one_of
 export Gens.map
+export Gens.map_shown
 export Gens.pair
 export Gens.sample
 export Laws.roundtrip

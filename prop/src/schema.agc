@@ -153,7 +153,7 @@ def dictionaries(value: Gens.Gen[JSON.Value]) -> Gens.Gen[JSON.Value]
   drawn = Gens.map(Gens.list(Gens.pair(Gens.string(KEY_MAX), value), LIST_MAX)) do |pairs| from_pairs(pairs) end
   slots = KEYS.map do |_| Gens.optional(value) end
   listed = Gens.map(Gens.sequence(slots)) do |made| from_slots(made) end
-  Gens.Gen(make: drawn.make, count: listed.count, all: listed.all)
+  Gens.Gen(make: drawn.make, count: listed.count, all: listed.all, show: listed.show)
 end
 
 def from_pairs(pairs: List[Gens.Pair[String, JSON.Value]]) -> JSON.Value

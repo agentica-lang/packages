@@ -4,6 +4,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `Prop.bytes(min, max)` makes `Bytes`, which shrink to fewer and smaller bytes. A counterexample of bytes is reported as the list of their values.
+- `Prop.non_empty_list(gen, max_size)` makes lists of at least one item, which never shrink to the empty list. With `Prop.int(1, 12)` it is the sizes of the pieces that cut a sequence, so a law can try any cut.
+- `Prop.map_shown(gen, show, f)` is `Prop.map` for a result that JSON cannot encode, such as a struct with a `Bytes` field.
+- The docs say how to write `Gen` and `Pair` bare: `import {Gen, Pair} from "pkg/prop/prop"`.
+
+### Changed
+
+- **Breaking:** a `Gen` has a `show` field, the text of a value in a counterexample, so a `Gen(...)` built by hand needs `show: ...`. `Prop.check` and `Prop.exhaustive` no longer need the generated type to be JSON-encodable; the six laws, `Prop.eq`, `Prop.map` and `Prop.one_of` still do. The text of every other generator is what `JSON.encode` gave.
+
 ## [0.3.0] - 2026-11-13
 
 Needs Agentica 0.31.0.

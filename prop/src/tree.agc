@@ -49,7 +49,10 @@ def int_tree(n: Int, origin: Int) -> Tree[Int] = grow(n) do from_list(int_shrink
 def float_tree(x: Float, origin: Float) -> Tree[Float] = grow(x) do from_list(float_shrinks(x, origin), 0) end
 
 ## The tree of the list of values. It shrinks by dropping items (all of them, a half, one), then by shrinking one item.
-def list_tree[T](trees: List[Tree[T]]) -> Tree[List[T]] = shaped(trees, false, 0)
+def list_tree[T](trees: List[Tree[T]]) -> Tree[List[T]] = shaped(trees, false, 0, 0)
+
+## The tree of the list of values, which never shrinks to fewer than `floor` items: as `list_tree` otherwise.
+def floored_list_tree[T](trees: List[Tree[T]], floor: Int) -> Tree[List[T]] = shaped(trees, false, 0, floor)
 
 ## The tree of the list of values, with as many items as `trees`: it shrinks only through the items.
 def fixed_tree[T](trees: List[Tree[T]]) -> Tree[List[T]]
@@ -161,49 +164,62 @@ end
 # A list tree. After an item shrank (`items_first`), the next candidates are the shrinks of that item and the ones
 # after it, because a shrink that worked tends to work again; after a drop, the drops go on from the same position.
 # The rest follows, so the shrinking still ends only when no candidate falsifies the law.
-def shaped[T](trees: List[Tree[T]], items_first: Bool, start: Int) -> Tree[List[T]]
-  grow(trees.map do |tree| tree.value end) do list_candidates(trees, items_first, start) end
+def shaped[T](trees: List[Tree[T]], items_first: Bool, start: Int, floor: Int) -> Tree[List[T]]
+  grow(trees.map do |tree| tree.value end) do list_candidates(trees, items_first, start, floor) end
 end
 
-def list_candidates[T](trees: List[Tree[T]], items_first: Bool, start: Int) -> Optional[Candidates[List[T]]]
+def list_candidates[T](
+  trees: List[Tree[T]],
+  items_first: Bool,
+  start: Int,
+  floor: Int,
+) -> Optional[Candidates[List[T]]]
   return none if trees.empty?
 
-  return append(item_shrinks(trees, start, 0)) do append(halves(trees, 0)) do drops(trees, 0, 0) end end if items_first
+  if items_first
+    return append(item_shrinks(trees, start, 0, floor)) do
+      append(halves(trees, 0, floor)) do drops(trees, 0, 0, floor) end
+    end
+  end
 
-  append(halves(trees, 0)) do append(drops(trees, start, 0)) do item_shrinks(trees, 0, 0) end end
+  append(halves(trees, 0, floor)) do append(drops(trees, start, 0, floor)) do item_shrinks(trees, 0, 0, floor) end end
 end
 
-# The empty list, then (from 4 items) each half.
-def halves[T](trees: List[Tree[T]], step: Int) -> Optional[Candidates[List[T]]]
+# The shortest list that the floor allows, then (from 4 items) each half that is not below it.
+def halves[T](trees: List[Tree[T]], step: Int, floor: Int) -> Optional[Candidates[List[T]]]
   half = trees.size / 2
-  if step == 0
-    return cons(shaped(trees.take(0), false, 0)) do halves(trees, 1) end
+  if step == 0 and trees.size > floor
+    return cons(shaped(trees.take(floor), false, 0, floor)) do halves(trees, 1, floor) end
+  elsif step == 0
+    return halves(trees, 1, floor)
   elsif step == 1 and trees.size >= 4
-    return cons(shaped(trees.drop(half), false, 0)) do halves(trees, 2) end
-  elsif step == 2 and trees.size >= 4
-    return cons(shaped(trees.take(half), false, 0)) do halves(trees, 3) end
+    return cons(shaped(trees.drop(half), false, 0, floor)) do halves(trees, 2, floor) end if trees.size - half >= floor
+
+    return halves(trees, 2, floor)
+  elsif step == 2 and trees.size >= 4 and half >= floor
+    return cons(shaped(trees.take(half), false, 0, floor)) do halves(trees, 3, floor) end
   end
 
   none
 end
 
 # Each list with one item less, from position `start` and around (`count` of them done).
-def drops[T](trees: List[Tree[T]], start: Int, count: Int) -> Optional[Candidates[List[T]]]
+def drops[T](trees: List[Tree[T]], start: Int, count: Int, floor: Int) -> Optional[Candidates[List[T]]]
   size = trees.size
-  return none if size < 2 or count >= size
+  return none if size < 2 or size <= floor or count >= size
 
   index = (start + count) % size
   fewer = trees.take(index).concat(trees.drop(index + 1))
-  cons(shaped(fewer, false, index)) do drops(trees, start, count + 1) end
+  cons(shaped(fewer, false, index, floor)) do drops(trees, start, count + 1, floor) end
 end
 
 # The shrinks of each item, from item `start` and around (`count` of them done).
-def item_shrinks[T](trees: List[Tree[T]], start: Int, count: Int) -> Optional[Candidates[List[T]]]
+def item_shrinks[T](trees: List[Tree[T]], start: Int, count: Int, floor: Int) -> Optional[Candidates[List[T]]]
   return none if count >= trees.size
 
   index = (start + count) % trees.size
-  append(map_candidates(trees[index].shrinks()) do |child| shaped(trees.set(index, child), true, index) end) do
-    item_shrinks(trees, start, count + 1)
+  append(map_candidates(trees[index].shrinks()) do |child| shaped(trees.set(index, child), true, index, floor) end) do
+    item_shrinks(trees, start, count + 1, floor)
   end
 end
 
