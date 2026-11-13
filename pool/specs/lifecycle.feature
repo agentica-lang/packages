@@ -120,3 +120,29 @@ Feature: Lifecycle
     Then job "A" gets "error pool error: closed"
     And the count "made" is 1
     And the count "terminated" is 1
+
+  # The caller gives its resource back every 5 ms, so it is never idle for health_ms, and the tick leaves it alone.
+  Scenario: The health tick pings only the resources idle for health_ms, so a busy caller never waits for one
+    Given a pool with:
+      | setting      | value |
+      | size         | 1     |
+      | max_overflow | 2     |
+      | health_ms    | 100   |
+      | slow_ping_ms | 300   |
+    When job "A" keeps taking a resource for 1000 ms
+    And I wait for the jobs
+    Then the count "pings" is 0
+    And the count "made" is 1
+    And the count "loop_failed" is 0
+
+  Scenario: A resource that is ended is replaced only once its terminate is over
+    Given a pool with:
+      | setting           | value |
+      | size              | 1     |
+      | dirty_done        | true  |
+      | slow_terminate_ms | 300   |
+    When job "A" holds a resource for 10 ms
+    And job "B" holds a resource for 10 ms
+    And I wait for the jobs
+    Then job "B" gets "ok 2"
+    And the count "alive_peak" is 1

@@ -105,6 +105,7 @@ Feature: Callers
       | 160  |
       | 170  |
 
+  # The first tick that finds the resource idle for health_ms is the one at about 200 ms; B comes during its ping.
   Scenario: A caller that comes while the only resource is pinged waits, and gets a new one when the ping ends it
     Given a pool with:
       | setting      | value |
@@ -112,7 +113,7 @@ Feature: Callers
       | health_ms    | 100   |
       | slow_ping_ms | 400   |
       | bad_ping_id  | 1     |
-    When I wait 150 ms
+    When I wait 250 ms
     And job "B" holds a resource for 10 ms
     And I wait for the jobs
     Then job "B" gets "ok 2"

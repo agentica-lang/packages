@@ -2,9 +2,9 @@
 ## requests that `steps.agc` sends (`protocol.agc`), one JSON line in and one reply line out.
 ##
 ## A resource is a `Cell` with a number. The counters of the fake (`made`, `terminated`, `checkin_done`,
-## `checkin_crashed`, `checkin_timed_out`, `checkouts`, `pings`, `active`, `peak`) say what the pool did with its
-## resources. `double_lease` counts the bodies that got a cell while another body still used it, and `kinds` holds the
-## kind of each job's error.
+## `checkin_crashed`, `checkin_timed_out`, `checkouts`, `pings`, `active`, `peak`, and `alive` with its `alive_peak`)
+## say what the pool did with its resources. `double_lease` counts the bodies that got a cell while another body still
+## used it, and `kinds` holds the kind of each job's error.
 
 import Pool from "../pool"
 import Protocol from "protocol"
@@ -21,7 +21,7 @@ LOOP_NAP_MS = 5
 SETTING_NAMES = [
   "size", "max_overflow", "overflow_idle_ms", "checkout_ms", "lease_ms", "max_age_ms", "idle_ms", "max_waiting",
   "lazy", "health_ms", "keep_dirty", "dirty_done", "bad_ping_id", "init_fails_from", "init_crashes_at", "slow_init_at",
-  "slow_init_ms", "bad_checkout_id", "slow_ping_ms",
+  "slow_init_ms", "bad_checkout_id", "slow_ping_ms", "slow_terminate_ms",
 ]
 
 # The resource of the pool.
@@ -42,6 +42,7 @@ struct Fake
   slow_init_ms: Int
   bad_checkout_id: Int
   slow_ping_ms: Int
+  slow_terminate_ms: Int
 end
 
 struct Driver
@@ -133,6 +134,7 @@ def spec_of(driver: Driver, table: List[List[String]]) -> Result[Pool.Spec[Fake,
     slow_init_ms: try settings.get("slow_init_ms", "0").to_i,
     bad_checkout_id: try settings.get("bad_checkout_id", "0").to_i,
     slow_ping_ms: try settings.get("slow_ping_ms", "0").to_i,
+    slow_terminate_ms: try settings.get("slow_terminate_ms", "0").to_i,
   )
 
   base = Pool.Spec(
@@ -200,7 +202,7 @@ def start_job(driver: Driver, req: Request) -> Handled
         name: req.name,
         kind: req.kind,
         ms: req.number,
-        times: 1,
+        times: [req.times, 1].max.unwrap!,
         stats: driver.stats,
         kinds: driver.kinds,
         finished: driver.finished,
@@ -364,6 +366,11 @@ def make(fake: Fake) -> Result[Cell]
 
   return error("init failed for resource #{id}") if fake.init_fails_from > 0 and id >= fake.init_fails_from
 
+  alive = fake.stats.add("alive", 1)
+  if alive > fake.stats.get("alive_peak").unwrap_or(0)
+    fake.stats.put("alive_peak", alive)
+  end
+
   ok(Cell(id: id, fake: fake))
 end
 
@@ -394,6 +401,11 @@ def check_out(cell: Cell) -> Result[Void]
 end
 
 def end_it(cell: Cell) -> Void
+  if cell.fake.slow_terminate_ms > 0
+    Task.sleep(cell.fake.slow_terminate_ms)
+  end
+
+  cell.fake.stats.add("alive", -1)
   cell.fake.stats.add("terminated", 1)
 end
 

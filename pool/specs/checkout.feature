@@ -193,3 +193,38 @@ Feature: Checkout
     And the count "flood_failed" is 13
     And the count "double_lease" is 0
     And the count "peak" is 2
+
+  # The callers that a resource being made will serve do not count against max_waiting.
+  Scenario Outline: With max_waiting 0 the pool still makes a resource for a caller (<case>)
+    Given a pool with:
+      | setting      | value          |
+      | size         | 1              |
+      | lazy         | <lazy>         |
+      | max_overflow | <max_overflow> |
+      | max_waiting  | 0              |
+    When job "A" holds a resource for 300 ms
+    And job "B" holds a resource for 10 ms
+    And I wait for the jobs
+    Then job "A" gets "ok 1"
+    And job "B" gets "<b>"
+
+    Examples:
+      | case                | lazy  | max_overflow | b                                            |
+      | a lazy pool         | true  | 0            | error pool error: queue full (max_waiting 0) |
+      | an eager pool grows | false | 1            | ok 2                                         |
+
+  # B gives up while the overflow resource 2 is made for it and asks again; its first ticket stays in line, and must not
+  # make the pool make resource 3.
+  Scenario: A caller that gave up does not make the pool make another resource
+    Given a pool with:
+      | setting      | value |
+      | size         | 1     |
+      | max_overflow | 2     |
+      | checkout_ms  | 200   |
+      | slow_init_at | 2     |
+      | slow_init_ms | 300   |
+    When job "A" holds a resource for 1000 ms
+    And job "B" holds a resource for 10 ms, 2 times
+    And I wait for the jobs
+    Then job "B" gets "ok 2"
+    And the count "made" is 2

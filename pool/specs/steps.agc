@@ -19,6 +19,9 @@ def main() -> Void
     BDD.step("job {string} holds a resource for {int} ms") do |ctx, args|
       send(ctx, Request(op: "job", name: args[0], kind: "holds", number: args[1].to_i!))
     end,
+    BDD.step("job {string} holds a resource for {int} ms, {int} times") do |ctx, args|
+      send(ctx, Request(op: "job", name: args[0], kind: "holds", number: args[1].to_i!, times: args[2].to_i!))
+    end,
     BDD.step("job {string} probes the pool for {int} ms") do |ctx, args|
       send(ctx, Request(op: "job", name: args[0], kind: "probe", number: args[1].to_i!))
     end,
