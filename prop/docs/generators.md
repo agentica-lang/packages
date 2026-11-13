@@ -210,7 +210,7 @@ end
 ## Prop.of
 
 ```signature
-Prop.of(codec: Codec[T], schema: Json, depth: Int = 2) -> Gen[T]
+Prop.of(codec: Codec[T], schema: JSON.Value, depth: Int = 2) -> Gen[T]
 ```
 
 Values of a struct or an enum that JSON can decode. Pass `T.codec` and `JSON.schema(T)` of the same type: the generator makes the JSON that the schema allows, and the codec decodes it.
