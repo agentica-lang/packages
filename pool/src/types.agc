@@ -55,11 +55,27 @@ struct Ticket[W]
 end
 
 ## A worker lent to a caller, with the number of this lease, which every message about it carries: a message of an
-## earlier lease of the same worker changes nothing.
+## earlier lease of the same worker changes nothing. `orders` is the channel of the worker's keeper, where a caller
+## whose body ran in a task of the pool (`lease_ms` above 0) asks for `checkin`.
 struct Lease[W]
   id: Int
   seq: Int
   worker: W
+  orders: Channel[Order]
+end
+
+## An order for the keeper of a worker: ping it while it is idle, or run `checkin` after the lease `seq`. Its caller
+## and the owner (for a caller that is gone, or at the end of a close) may both ask for the same lease; the keeper runs
+## the first and drops the other, so `checkin` runs once.
+enum Order
+  Ping(Int)
+  Checkin(Turn)
+end
+
+## A `checkin` to run: the lease, and how its body ended.
+struct Turn
+  seq: Int
+  outcome: Outcome
 end
 
 ## The answer to a ticket.
@@ -86,13 +102,11 @@ struct Back[W]
   how: Return[W]
 end
 
-## `Keep` and `Drop`: the caller ran `checkin`, or never used the worker (`Keep`). `Check`: the keeper runs `checkin`
-## with how the body ended (`lease_ms` above 0). `Again`: `checkout` refused the worker, which is ended, and the
-## caller waits at the front of the line with a new ticket.
+## `Keep` and `Drop`: the caller ran `checkin`, or never used the worker (`Keep`). `Again`: `checkout` refused the
+## worker, which is ended, and the caller waits at the front of the line with a new ticket.
 enum Return[W]
   Keep
   Drop
-  Check(Outcome)
   Again(Ticket[W])
 end
 
@@ -109,9 +123,10 @@ struct Made[W]
   worker: Result[W]
 end
 
-## What a ping, or a `checkin` that a keeper ran, said.
+## What a ping, or a `checkin` that a keeper ran, said, and for which lease (for a ping: the last one).
 struct Checked
   id: Int
+  seq: Int
   keep: Bool
 end
 

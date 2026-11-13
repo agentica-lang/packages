@@ -175,7 +175,7 @@ end
 def wait_grant[A, W](pool: Pool[A, W], reply: Channel[Types.Grant[W]], deadline: Int) -> Result[Types.Lease[W]]
   left = deadline - Time.monotonic_ms()
   while left > 0 and not pool.inbox.closed?
-    case reply.recv([left, OWNER_CHECK_MS].min.unwrap!)
+    case reply.recv(left.clamp(1, OWNER_CHECK_MS))
       ok(grant) -> return granted(pool, grant, deadline)
       error(_) -> left = deadline - Time.monotonic_ms()
     end
@@ -245,11 +245,12 @@ def last_failure[A, W](pool: Pool[A, W]) -> Result[Void]
   end
 end
 
-# `lease_ms` 0: the body and `checkin` run here. The owner learns first that `checkin` runs, so that if the caller
-# ends during it the keeper does not run it again: the resource is ended instead. A crash ends the caller's task, and
-# the owner, which watches it, has the keeper check the resource in.
+# `lease_ms` 0: the body and `checkin` run here. A crash ends the caller's task, and the owner, which watches it, has
+# the keeper check the resource in.
 def in_caller[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], body: Fn[W, Result[R]]) -> Result[R]
   result = body.call(lease.worker)
+  # The owner learns first that `checkin` runs, so that if the caller ends during it the keeper does not run it again:
+  # the resource is ended instead.
   _ = pool.inbox.send(Types.Msg.Returning(Types.Held(id: lease.id, seq: lease.seq)), SEND_MS)
   if pool.spec.checkin.call(lease.worker, Types.Outcome.Done).ok?
     give_back(pool, lease, Types.Return.Keep)
@@ -262,7 +263,8 @@ end
 
 # The body runs in a task of its own, which tells the owner who it is, so that a close can cancel it. Its own Result
 # goes inside another, so that a crash or a cancel (the outer error) is told apart from an error the body gave. The
-# keeper runs `checkin`, in a task of its own for HOOK_MS, after the caller has its result.
+# keeper runs `checkin`, in a task of its own for HOOK_MS, after the caller has its result: one that crashes or hangs
+# ends the resource, never the caller.
 def in_runner[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], body: Fn[W, Result[R]]) -> Result[R]
   runner = Task.spawn do
     _ = pool.inbox.send(Types.Msg.Run(Types.Running(id: lease.id, seq: lease.seq, runner: Task.current())), SEND_MS)
@@ -274,7 +276,7 @@ def in_runner[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], body: Fn[W, Resu
     Await.TimedOut ->
       Task.cancel(runner)
       Task.sleep(CANCEL_GRACE_MS)
-      give_back(pool, lease, Types.Return.Check(Types.Outcome.TimedOut))
+      hand_in(lease, Types.Outcome.TimedOut)
       error("#{LEASE_TIMEOUT} after #{pool.spec.lease_ms} ms", kind: "pool.timeout.lease")
   end
 end
@@ -282,13 +284,19 @@ end
 def ran_out[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], ran: Result[Result[R]]) -> Result[R]
   case ran
     ok(result) ->
-      give_back(pool, lease, Types.Return.Check(Types.Outcome.Done))
+      hand_in(lease, Types.Outcome.Done)
       result
     error(e) if e.is_a?("task.cancelled") and pool.counts.has_key?(CLOSED) -> closed(pool)
     error(e) ->
-      give_back(pool, lease, Types.Return.Check(Types.Outcome.Crashed))
+      hand_in(lease, Types.Outcome.Crashed)
       error(e)
   end
+end
+
+# Asks the keeper of the resource to run `checkin` and give it back. A send that fails means that the resource was
+# ended meanwhile.
+def hand_in[W](lease: Types.Lease[W], outcome: Types.Outcome) -> Void
+  _ = lease.orders.send(Types.Order.Checkin(Types.Turn(seq: lease.seq, outcome: outcome)), SEND_MS)
 end
 
 # A send that fails means the pool is closed, and the close ends the resource.

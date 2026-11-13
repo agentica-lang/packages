@@ -35,14 +35,23 @@ def own[A, W](spec: Types.Spec[A, W], counts: ATS[String, Int], chans: Chans[W])
     _ = core.ready.send(ok(), 0)
   end
 
+  ticked = 0
   while not state.done
-    case core.inbox.recv(wait_ms(state))
+    case next_msg(core, state)
       ok(msg) -> state = handle(core, state, msg)
       error(_) -> nil
     end
 
-    state = publish(core, tick(core, state))
+    # The timers and the counts are looked at once a millisecond while messages keep coming, so that a burst pays for
+    # them once, and always before the owner waits; a close is looked at after every message.
+    now = Time.monotonic_ms()
+    if state.closing or now != ticked or core.inbox.empty?
+      ticked = now
+      state = publish(core, tick(core, state, now))
+    end
   end
+
+  _ = publish(core, state)
 end
 
 private
@@ -82,7 +91,7 @@ end
 struct Slot[W]
   worker: W
   phase: Phase
-  orders: Channel[Keeper.Order]
+  orders: Channel[Types.Order]
   seq: Int
   holder: Int
   reply: Optional[Channel[Types.Grant[W]]]
@@ -107,7 +116,7 @@ end
 # close sets `closing`, the end of the drain (`deadline_ms`) and the callers of `close` (`dones`); `grace_ms` is when
 # the keepers left are cancelled.
 struct State[W]
-  starting: Map[Int, Channel[Keeper.Order]]
+  starting: Map[Int, Channel[Types.Order]]
   slots: Map[Int, Slot[W]]
   idle: List[Int]
   waiters: Map[Int, Types.Ticket[W]]
@@ -163,6 +172,14 @@ def fresh[A, W](spec: Types.Spec[A, W], now: Int) -> State[W]
     shown_waiting: -1,
     shown_live: -1,
   )
+end
+
+# The next message: at once when there is one, so that a busy owner does not work out how long it may wait.
+def next_msg[A, W](core: Core[A, W], state: State[W]) -> Result[Types.Msg[W]]
+  got = core.inbox.recv(0)
+  return got if got.ok?
+
+  core.inbox.recv(wait_ms(state))
 end
 
 def handle[A, W](core: Core[A, W], state: State[W], msg: Types.Msg[W]) -> State[W]
@@ -254,7 +271,7 @@ def lend[W](state: State[W], ticket: Types.Ticket[W]) -> State[W]
   id = state.idle.last
   # Every id in `idle` is a slot: `retire` takes it out of both.
   slot = state.slots.get(id).unwrap!
-  lease = Types.Lease(id: id, seq: state.next_seq, worker: slot.worker)
+  lease = Types.Lease(id: id, seq: state.next_seq, worker: slot.worker, orders: slot.orders)
   return state if not ticket.reply.send(Types.Grant.Lent(lease), 0).ok?
 
   lent = slot.with(phase: Phase.Lent, seq: state.next_seq, holder: ticket.client.id, reply: some(ticket.reply))
@@ -271,7 +288,7 @@ end
 # callers that gave up are dropped first: they want nothing. A failed `init` holds the next one back until
 # `retry_at_ms`.
 def top_up[A, W](core: Core[A, W], state: State[W]) -> State[W]
-  return state if state.retry_at_ms > Time.monotonic_ms() or not missing?(core, state)
+  return state if not missing?(core, state) or state.retry_at_ms > Time.monotonic_ms()
 
   current = purge(state)
   while missing?(core, current)
@@ -282,7 +299,7 @@ def top_up[A, W](core: Core[A, W], state: State[W]) -> State[W]
 end
 
 def missing?[A, W](core: Core[A, W], state: State[W]) -> Bool
-  kept(state) < wanted(core, state) and live(state) < cap(core)
+  live(state) < cap(core) and kept(state) < wanted(core, state)
 end
 
 # The most keepers alive at once.
@@ -295,18 +312,20 @@ def live[W](state: State[W]) -> Int = state.keepers.size
 def kept[W](state: State[W]) -> Int = state.slots.size + state.starting.size
 
 def wanted[A, W](core: Core[A, W], state: State[W]) -> Int
-  needed = state.tail - state.head - state.idle.size - state.starting.size - state.checking
-  base = core.spec.size
-  if core.spec.lazy or state.closing
-    base = 0
+  wanted = kept(state) + state.tail - state.head - state.idle.size - state.starting.size - state.checking
+  if wanted < core.spec.size and not (core.spec.lazy or state.closing)
+    wanted = core.spec.size
   end
 
-  [base, kept(state) + needed].max.unwrap!.clamp(0, cap(core))
+  return cap(core) if wanted > cap(core)
+
+  wanted
 end
 
 def spawn_keeper[A, W](core: Core[A, W], state: State[W]) -> State[W]
-  # One order is pending at most: the owner sends one only to a worker it then holds as Checking.
-  orders: Channel[Keeper.Order] = Channel.new(1)
+  # Two orders are pending at most: a lent worker's `checkin` from its caller and one from the owner, for a caller that
+  # is gone or a close; the owner pings only an idle worker.
+  orders: Channel[Types.Order] = Channel.new(2)
   keep_fn: Fn[Keeper.Keeper[A, W], Void] = &Keeper.keep
   task = Task.spawn(keep_fn, Keeper.Keeper(spec: core.spec, id: state.next_id, inbox: core.inbox, orders: orders))
   Task.monitor(task, core.inbox) do |down| Types.Msg.Down(down) end
@@ -380,7 +399,6 @@ def given[A, W](core: Core[A, W], state: State[W], id: Int, how: Types.Return[W]
   case how
     Types.Return.Keep -> park(core, state, id, Time.monotonic_ms())
     Types.Return.Drop -> serve(core, retire(state, id))
-    Types.Return.Check(outcome) -> lost(state, id, outcome)
     Types.Return.Again(ticket) -> serve(core, to_front(retire(state, id), ticket))
   end
 end
@@ -412,7 +430,7 @@ def park[A, W](core: Core[A, W], state: State[W], id: Int, idle_since_ms: Int) -
     return serve(core, retire(state, id))
   end
 
-  return serve(core, retire(state, id)) if aged?(core.spec, slot, Time.monotonic_ms())
+  return serve(core, retire(state, id)) if core.spec.max_age_ms > 0 and aged?(core.spec, slot, Time.monotonic_ms())
 
   slot = slot.with(phase: Phase.Idle, holder: 0, reply: none, runner: none, idle_since_ms: idle_since_ms)
   parked = state.with(slots: state.slots.put(id, slot), idle: state.idle.push(id))
@@ -455,14 +473,23 @@ def earliest(a: Int, b: Int) -> Int
 
   return a if b == 0
 
-  [a, b].min.unwrap!
+  return a if a < b
+
+  b
 end
 
+# A ping or a `checkin` done in the keeper: for a lent worker (its caller asked the keeper itself) or one the owner
+# sent there, of the same lease.
 def checked[A, W](core: Core[A, W], state: State[W], checked: Types.Checked) -> State[W]
   case state.slots.get(checked.id)
-    some(slot) if in_keeper?(slot) ->
+    some(slot) if slot.seq == checked.seq and (in_keeper?(slot) or slot.phase == Phase.Lent) ->
       # Back from the keeper first, so that `retire` does not count it out a second time.
-      back = state.with(slots: state.slots.put(checked.id, slot.with(phase: Phase.Idle)), checking: state.checking - 1)
+      checking = state.checking
+      if in_keeper?(slot)
+        checking -= 1
+      end
+
+      back = state.with(slots: state.slots.put(checked.id, slot.with(phase: Phase.Idle)), checking: checking)
       return serve(core, retire(back, checked.id)) if not checked.keep
 
       # A ping does not count as use: the worker stays idle since it was given back, for `idle_ms`.
@@ -536,7 +563,7 @@ end
 # The keeper runs `checkin`, and reports back like a ping.
 def lost[W](state: State[W], id: Int, outcome: Types.Outcome) -> State[W]
   slot = state.slots.get(id).unwrap!
-  _ = slot.orders.send(Keeper.Order.Checkin(outcome), 0)
+  _ = slot.orders.send(Types.Order.Checkin(Types.Turn(seq: slot.seq, outcome: outcome)), 0)
   checking = slot.with(phase: Phase.Checking, holder: 0, reply: none, runner: none)
   state.with(slots: state.slots.put(id, checking), checking: state.checking + 1)
 end
@@ -571,8 +598,7 @@ def stop_timers[W](state: State[W]) -> State[W] = state.with(check_at_ms: 0, tic
 
 # Runs after every message and every wait: the close, the health tick, the overflow workers that are due, and a
 # retry of `init`.
-def tick[A, W](core: Core[A, W], state: State[W]) -> State[W]
-  now = Time.monotonic_ms()
+def tick[A, W](core: Core[A, W], state: State[W], now: Int) -> State[W]
   return closing_tick(core, state, now) if state.closing
 
   current = state
@@ -611,7 +637,7 @@ def stale?[A, W](spec: Types.Spec[A, W], slot: Slot[W], now: Int) -> Bool
 end
 
 def ping[W](state: State[W], id: Int, slot: Slot[W]) -> State[W]
-  _ = slot.orders.send(Keeper.Order.Ping, 0)
+  _ = slot.orders.send(Types.Order.Ping(slot.seq), 0)
   pinging = slot.with(phase: Phase.Pinging)
   state.with(
     slots: state.slots.put(id, pinging),
@@ -665,7 +691,8 @@ def closing_tick[A, W](core: Core[A, W], state: State[W], now: Int) -> State[W]
   finish(current.with(keepers: {}))
 end
 
-# Ends the workers that are idle, pinged or starting, and the lent ones too when `all`.
+# Ends the workers that are idle, pinged or starting, and the lent ones too when `all`. A body that the close cut off
+# in its task has `checkin` run by the keeper, as after a lease that timed out, then its worker is ended.
 def end_free[W](state: State[W], all: Bool) -> State[W]
   state.starting.values.each do |orders| orders.close end
   state.slots.keys.reduce(state.with(starting: {})) do |acc, id| retire_free(acc, id, all) end
@@ -680,8 +707,10 @@ end
 
 def retire_free[W](state: State[W], id: Int, all: Bool) -> State[W]
   case state.slots.get(id)
-    some(slot) if all or not lent?(slot) -> retire(state, id)
-    _ -> state
+    some(slot) if lent?(slot) and not all -> state
+    some(slot) if slot.phase == Phase.Lent and slot.runner.some? -> lost(state, id, Types.Outcome.TimedOut)
+    some(_) -> retire(state, id)
+    none -> state
   end
 end
 

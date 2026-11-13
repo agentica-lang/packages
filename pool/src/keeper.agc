@@ -5,20 +5,13 @@
 
 import Types from "types"
 
-## An order of the owner: ping the idle worker, or run `checkin` with how the body ended, for a body that ran in a task
-## of the pool (`lease_ms` above 0) or a caller whose task ended while it held the worker.
-enum Order
-  Ping
-  Checkin(Types.Outcome)
-end
-
 ## What a keeper needs: the spec, the id of its worker, the owner's inbox, and its own channel of orders, which the
 ## owner closes to end the worker.
 struct Keeper[A, W]
   spec: Types.Spec[A, W]
   id: Int
   inbox: Channel[Types.Msg[W]]
-  orders: Channel[Order]
+  orders: Channel[Types.Order]
 end
 
 ## Makes the worker, tells the owner, then serves the orders until its channel closes, and ends the worker.
@@ -51,11 +44,16 @@ SEND_MS = 5_000
 # How long a function of the spec may run in a task of its own: a ping, a `checkin`, a `checkout`.
 HOOK_MS = 5_000
 
+# `checked` is the last lease checked in: a second order for it is dropped.
 def serve[A, W](keeper: Keeper[A, W], worker: W) -> Void
+  checked = 0
   while not (keeper.orders.closed? and keeper.orders.empty?)
     case keeper.orders.recv(WAIT_MS)
-      ok(order) -> tell(keeper, Types.Msg.Check(Types.Checked(id: keeper.id, keep: obey(keeper.spec, worker, order))))
-      error(_) -> next
+      ok(Types.Order.Ping(seq)) -> report(keeper, seq, settled?(Task.spawn do keeper.spec.ping.call(worker) end))
+      ok(Types.Order.Checkin(turn)) if turn.seq > checked ->
+        checked = turn.seq
+        report(keeper, turn.seq, checked_in?(keeper.spec, worker, turn.outcome))
+      _ -> next
     end
   end
 
@@ -63,13 +61,13 @@ def serve[A, W](keeper: Keeper[A, W], worker: W) -> Void
 end
 
 # A worker whose body was cut off is never kept, whatever `checkin` says.
-def obey[A, W](spec: Types.Spec[A, W], worker: W, order: Order) -> Bool
-  case order
-    Order.Ping -> settled?(Task.spawn do spec.ping.call(worker) end)
-    Order.Checkin(outcome) ->
-      kept = settled?(Task.spawn do spec.checkin.call(worker, outcome) end)
-      kept and outcome != Types.Outcome.TimedOut
-  end
+def checked_in?[A, W](spec: Types.Spec[A, W], worker: W, outcome: Types.Outcome) -> Bool
+  kept = settled?(Task.spawn do spec.checkin.call(worker, outcome) end)
+  kept and outcome != Types.Outcome.TimedOut
+end
+
+def report[A, W](keeper: Keeper[A, W], seq: Int, keep: Bool) -> Void
+  tell(keeper, Types.Msg.Check(Types.Checked(id: keeper.id, seq: seq, keep: keep)))
 end
 
 def tell[A, W](keeper: Keeper[A, W], msg: Types.Msg[W]) -> Void

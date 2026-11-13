@@ -121,18 +121,19 @@ Feature: Lifecycle
     And the count "made" is 1
     And the count "terminated" is 1
 
-  # The caller gives its resource back every 5 ms, so it is never idle for health_ms, and the tick leaves it alone.
+  # The caller gives its resource back every 5 ms, so it is never idle for health_ms, and the tick pings only the two
+  # resources that wait. No overflow resource is made for a ping.
   Scenario: The health tick pings only the resources idle for health_ms, so a busy caller never waits for one
     Given a pool with:
       | setting      | value |
-      | size         | 1     |
-      | max_overflow | 2     |
+      | size         | 3     |
+      | max_overflow | 3     |
       | health_ms    | 100   |
       | slow_ping_ms | 300   |
     When job "A" keeps taking a resource for 1000 ms
     And I wait for the jobs
-    Then the count "pings" is 0
-    And the count "made" is 1
+    Then the count "made" is 3
+    And the count "terminated" is 0
     And the count "loop_failed" is 0
 
   Scenario: A resource that is ended is replaced only once its terminate is over
