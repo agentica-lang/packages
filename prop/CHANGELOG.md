@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-13
+
+Needs Agentica 0.31.0.
+
 ### Added
 
 - `Prop.bytes(min, max)` makes `Bytes`, which shrink to fewer and smaller bytes. A counterexample of bytes is reported as the list of their values.
