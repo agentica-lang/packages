@@ -5,6 +5,9 @@
 
 import Types from "types"
 
+## How long a function of the spec may run in a task of its own: a ping, a `checkin`, a `checkout`.
+HOOK_MS = 5_000
+
 ## What a keeper needs: the spec, the id of its worker, the owner's inbox, and its own channel of orders, which the
 ## owner closes to end the worker.
 struct Keeper[A, W]
@@ -41,8 +44,6 @@ private
 WAIT_MS = 60_000
 # The owner's inbox is never full in practice (see owner.agc); a send that cannot get in means the owner is gone.
 SEND_MS = 5_000
-# How long a function of the spec may run in a task of its own: a ping, a `checkin`, a `checkout`.
-HOOK_MS = 5_000
 
 # `checked` is the last lease checked in: a second order for it is dropped.
 def serve[A, W](keeper: Keeper[A, W], worker: W) -> Void

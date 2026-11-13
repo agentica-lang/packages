@@ -22,7 +22,7 @@ SETTING_NAMES = [
   "size", "max_overflow", "overflow_idle_ms", "checkout_ms", "lease_ms", "max_age_ms", "idle_ms", "max_waiting",
   "lazy", "health_ms", "keep_dirty", "dirty_done", "bad_ping_id", "init_fails_from", "init_crashes_at", "slow_init_at",
   "slow_init_ms", "bad_checkout_id", "slow_ping_ms", "slow_terminate_ms", "slow_checkin_ms", "bad_checkin",
-  "slow_checkout_ms",
+  "slow_checkout_ms", "checkout_fault",
 ]
 
 # The resource of the pool.
@@ -47,6 +47,7 @@ struct Fake
   slow_checkin_ms: Int
   bad_checkin: String
   slow_checkout_ms: Int
+  checkout_fault: String
 end
 
 struct Driver
@@ -125,6 +126,7 @@ def act(driver: Driver, req: Request) -> Handled
     "expect_kind" -> expect_kind(collect(driver), req)
     "expect_order" -> expect_order(collect(driver), req.text)
     "expect_count" -> expect_count(driver, req)
+    "expect_one_task" -> expect_one_task(driver)
     "expect_pool_count" -> expect_pool_count(driver, req)
     _ -> Handled(driver: driver, reply: "unknown op #{req.op.inspect}")
   end
@@ -156,6 +158,7 @@ def spec_of(driver: Driver, table: List[List[String]]) -> Result[Pool.Spec[Fake,
     slow_checkin_ms: try settings.get("slow_checkin_ms", "0").to_i,
     bad_checkin: settings.get("bad_checkin", "no"),
     slow_checkout_ms: try settings.get("slow_checkout_ms", "0").to_i,
+    checkout_fault: settings.get("checkout_fault", "no"),
   )
 
   base = Pool.Spec(
@@ -420,6 +423,19 @@ def expect_pool_count(driver: Driver, req: Request) -> Handled
   end
 end
 
+# The `checkout` of the last resource lent and the body that got it ran in one task (with `lease_ms` 0 the
+# caller's), so
+# that no task is spawned for the check.
+def expect_one_task(driver: Driver) -> Handled
+  checkout = driver.stats.get("checkout_task").unwrap_or(0)
+  body = driver.stats.get("body_task").unwrap_or(0)
+  return reply(driver, "no checkout or no body ran") if checkout == 0 or body == 0
+
+  return reply(driver, Protocol.OK) if checkout == body
+
+  reply(driver, "the checkout ran in task #{checkout} and the body in task #{body}")
+end
+
 def counted?(req: Request, value: Int) -> Bool = value == req.number or (req.kind == "reaches" and value > req.number)
 
 # The fake resource: a numbered cell that counts what the pool does with it.
@@ -476,8 +492,19 @@ def checked_in(cell: Cell, outcome: Pool.Outcome) -> Result[Void]
   error("cell #{cell.id} is dirty")
 end
 
+# `bad_checkout_id` is the cell that `checkout` refuses, or, with `checkout_fault` (`crashes`, `hangs`), crashes on or
+# hangs on. The task it runs in is counted in `checkout_task`, and the one of the body in `body_task`.
 def check_out(cell: Cell) -> Result[Void]
   cell.fake.stats.add("checkouts", 1)
+  cell.fake.stats.put("checkout_task", Task.current().id)
+  if cell.id == cell.fake.bad_checkout_id
+    case cell.fake.checkout_fault
+      "crashes" -> return error("never #{"not a number".to_i!}")
+      "hangs" -> Task.sleep(HANG_MS)
+      _ -> nil
+    end
+  end
+
   if cell.fake.slow_checkout_ms > 0
     Task.sleep(cell.fake.slow_checkout_ms)
   end
@@ -562,6 +589,7 @@ def use(args: JobArgs, cell: Cell) -> Result[Int]
   end
 
   args.stats.add("body_ran", 1)
+  args.stats.put("body_task", Task.current().id)
   if args.stats.add("cell #{cell.id}", 1) > 1
     args.stats.add("double_lease", 1)
   end
