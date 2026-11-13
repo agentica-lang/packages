@@ -7,53 +7,7 @@ import Binary from "std/binary"
 import HTTP from "std/http"
 import WebSocket from "../websocket"
 
-PORT = "port"
-HEADERS = "headers"
-PROTOCOLS = "protocols"
-TRUSTS = "trusts"
-MAX_BYTES = "max_bytes"
-READ_MS = "read_ms"
-CLOSE_MS = "close_ms"
-TIMEOUT_MS = "timeout_ms"
-ELAPSED = "elapsed"
-HUGE = 9_223_372_036_854_775_807
-FAILURE = "failure"
-CLIENT = "client"
-SERVER = "fixtures/server.agc"
-RAW_PEER = "fixtures/raw_peer.agc"
-# Relative to the working directory of the run, which is the package folder (`make test`); the programs of the peers
-# run in the folder of the feature instead.
-CERTIFICATE = "specs/fixtures/cert.pem"
-PEER_CERTIFICATE = "fixtures/cert.pem"
-PEER_KEY = "fixtures/key.pem"
-START_MS = 10_000
-PEER_MS = 5_000
-
-struct Pair
-  name: String
-  value: String
-end
-
-struct Order
-  op: String
-  text: String = ""
-  hex: String = ""
-  size: Int = 0
-  code: Int = 0
-end
-
-# The answer of the service: an error, or what a receive got.
-struct Reply
-  elapsed: Int = 0
-  failed: Bool = false
-  error: String = ""
-  kind: String = ""
-  text: String = ""
-  hex: String = ""
-  code: Int = 0
-end
-
-export def steps() -> List[BDD.Step]
+def steps() -> List[BDD.Step]
   [
     BDD.step("the std server listens on a free port", &std_server_listens),
     BDD.step("the std server listens with TLS on a free port", &tls_server_listens),
@@ -100,6 +54,54 @@ export def steps() -> List[BDD.Step]
     BDD.step("the peer saw {string}", &peer_saw),
     BDD.step("the peer saw a close frame with the code {int}", &peer_saw_close),
   ]
+end
+
+private
+
+PORT = "port"
+HEADERS = "headers"
+PROTOCOLS = "protocols"
+TRUSTS = "trusts"
+MAX_BYTES = "max_bytes"
+READ_MS = "read_ms"
+CLOSE_MS = "close_ms"
+TIMEOUT_MS = "timeout_ms"
+ELAPSED = "elapsed"
+HUGE = 9_223_372_036_854_775_807
+FAILURE = "failure"
+CLIENT = "client"
+SERVER = "fixtures/server.agc"
+RAW_PEER = "fixtures/raw_peer.agc"
+# Relative to the working directory of the run, which is the package folder (`make test`); the programs of the peers
+# run in the folder of the feature instead.
+CERTIFICATE = "specs/fixtures/cert.pem"
+PEER_CERTIFICATE = "fixtures/cert.pem"
+PEER_KEY = "fixtures/key.pem"
+START_MS = 10_000
+PEER_MS = 5_000
+
+struct Pair
+  name: String
+  value: String
+end
+
+struct Order
+  op: String
+  text: String = ""
+  hex: String = ""
+  size: Int = 0
+  code: Int = 0
+end
+
+# The answer of the service: an error, or what a receive got.
+struct Reply
+  elapsed: Int = 0
+  failed: Bool = false
+  error: String = ""
+  kind: String = ""
+  text: String = ""
+  hex: String = ""
+  code: Int = 0
 end
 
 def port_line(ctx: BDD.Context) -> BDD.Context
@@ -191,9 +193,9 @@ end
 
 def options_of(ctx: BDD.Context) -> WebSocket.Options
   headers = pairs_of(ctx).map do |pair| HTTP.Header(name: pair.name, value: pair.value) end
-  tls: Optional[TlsContext] = none
+  tls: Optional[TLS.Context] = none
   if BDD.get(ctx, TRUSTS).ok?
-    tls = some(TLS.client_context(TlsClientOptions(ca_file: CERTIFICATE)).unwrap!)
+    tls = some(TLS.client_context(TLS.ClientOptions(ca_file: CERTIFICATE)).unwrap!)
   end
 
   WebSocket.Options(
@@ -207,7 +209,7 @@ def options_of(ctx: BDD.Context) -> WebSocket.Options
   )
 end
 
-def serving(f: Fn[Json, Result[Json]]) -> Fn[Json, Result[Json]] = f
+def serving(f: Fn[JSON.Value, Result[JSON.Value]]) -> Fn[JSON.Value, Result[JSON.Value]] = f
 
 def connect_to(ctx: BDD.Context, url: String) -> BDD.Context
   started = Time.monotonic_ms()
@@ -215,7 +217,7 @@ def connect_to(ctx: BDD.Context, url: String) -> BDD.Context
   timed = BDD.set(ctx, "connect elapsed", JSON.from(Time.monotonic_ms() - started))
   case result
     ok(ws) -> kept(timed, ws)
-    error(reason) -> BDD.set(timed, FAILURE, JSON.from(reason))
+    error(e) -> BDD.set(timed, FAILURE, JSON.from(e.message))
   end
 end
 
@@ -235,7 +237,7 @@ end
 def performs_handshake(ctx: BDD.Context, args: List[String]) -> BDD.Context
   port = JSON.int(BDD.get(ctx, PORT).unwrap!).unwrap!
   case WebSocket.handshake(args[0].replace("PORT", "#{port}"), options_of(ctx))
-    error(reason) -> BDD.set(ctx, FAILURE, JSON.from(reason))
+    error(e) -> BDD.set(ctx, FAILURE, JSON.from(e.message))
 
     ok(answer) ->
       case answer
@@ -321,7 +323,7 @@ end
 def done(result: Result[Void]) -> Reply
   case result
     ok(_) -> Reply()
-    error(reason) -> Reply(failed: true, error: reason)
+    error(e) -> Reply(failed: true, error: e.message)
   end
 end
 
@@ -336,7 +338,7 @@ def forever_receive(ws: WebSocket.Client) -> Reply
   other = WebSocket.Client(socket: ws.socket, protocol: ws.protocol, options: WebSocket.Options(read_timeout_ms: HUGE))
   case WebSocket.receive(other)
     ok(message) -> message_reply(message)
-    error(reason) -> Reply(failed: true, error: reason)
+    error(e) -> Reply(failed: true, error: e.message)
   end
 end
 
@@ -364,12 +366,12 @@ def run(ws: WebSocket.Client, order: Order) -> Reply
     _ ->
       case WebSocket.receive(ws)
         ok(message) -> message_reply(message)
-        error(reason) -> Reply(failed: true, error: reason)
+        error(e) -> Reply(failed: true, error: e.message)
       end
   end
 end
 
-def drive(ws: WebSocket.Client, request: Json) -> Result[Json]
+def drive(ws: WebSocket.Client, request: JSON.Value) -> Result[JSON.Value]
   order = try JSON.decode(request, Order)
   ok(JSON.from(run(ws, order)))
 end

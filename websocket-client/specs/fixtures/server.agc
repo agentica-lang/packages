@@ -7,6 +7,8 @@
 
 import HTTP from "std/http"
 
+private
+
 PROTOCOLS = ["chat", "other"]
 
 def echo(ws: HTTP.WebSocket) -> Result[Void]
@@ -65,7 +67,7 @@ def start() -> HTTP.Server
   cert = System.env("TLS_CERT")
   key = System.env("TLS_KEY")
   if cert.ok? and key.ok?
-    context = TLS.server_context(TlsServerOptions(cert_file: cert.unwrap!, key_file: key.unwrap!)).unwrap!
+    context = TLS.server_context(TLS.ServerOptions(cert_file: cert.unwrap!, key_file: key.unwrap!)).unwrap!
     return HTTP.serve_tls("127.0.0.1", 0, context, &route).unwrap!
   end
 

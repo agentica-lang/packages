@@ -1,6 +1,8 @@
 import HTTP from "std/http"
 import Handshake from "../src/handshake"
 
+private
+
 # RFC 6455 4.2.2 and 1.3: the key of the example and the accept it gets.
 KEY = "dGhlIHNhbXBsZSBub25jZQ=="
 ACCEPT = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
