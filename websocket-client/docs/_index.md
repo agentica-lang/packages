@@ -9,17 +9,17 @@ Use it to talk to any WebSocket server, or to test the one of your own app from 
 
 ## Install
 
-Needs Agentica 0.31.0-alpha.1 or later. Add it in a project with an `agentica.toml`:
+Needs Agentica 0.31.0 or later. Add it in a project with an `agentica.toml`:
 
 ```sh
-agentica add websocket-client https://github.com/agentica-lang/packages --tag websocket-client-0.3.0-alpha.1 --subdir websocket-client
+agentica add websocket-client https://github.com/agentica-lang/packages --tag websocket-client-0.4.0 --subdir websocket-client
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-websocket-client = { git = "https://github.com/agentica-lang/packages", tag = "websocket-client-0.3.0-alpha.1", subdir = "websocket-client" }
+websocket-client = { git = "https://github.com/agentica-lang/packages", tag = "websocket-client-0.4.0", subdir = "websocket-client" }
 ```
 
 The releases and their notes are in the [changelog](https://github.com/agentica-lang/packages/blob/main/websocket-client/CHANGELOG.md).

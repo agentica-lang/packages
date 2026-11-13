@@ -38,17 +38,17 @@ end
 
 ## Install
 
-Needs Agentica 0.31.0-alpha.1 or later. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
+Needs Agentica 0.31.0 or later. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
 
 ```sh
-agentica add prop https://github.com/agentica-lang/packages --tag prop-0.3.0-alpha.1 --subdir prop
+agentica add prop https://github.com/agentica-lang/packages --tag prop-0.4.0 --subdir prop
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.3.0-alpha.1", subdir = "prop" }
+prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.4.0", subdir = "prop" }
 ```
 
 The releases and their notes are in the [changelog](https://github.com/agentica-lang/packages/blob/main/prop/CHANGELOG.md).

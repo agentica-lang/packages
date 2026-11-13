@@ -4,6 +4,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-13
+
+Needs Agentica 0.31.0.
+
+### Changed
+
+- **Breaking:** needs Agentica 0.31.0, and `agentica = "0.31.0"` in the manifest says so: the `tls` of `Options` and `Client` is `Optional[TLS.Context]` (the new name of `TlsContext`), and the sources use `private` instead of `export` and the `Error` record of a failed Result (`e.message`). The public names are the same. CI tests with Agentica 0.31.0.
+
 ## [0.3.0-alpha.1] - 2026-11-12
 
 Needs Agentica 0.31.0-alpha.1.
