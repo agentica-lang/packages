@@ -5,7 +5,8 @@
 It starts specs/fixtures/server.agc, opens N WebSockets that subscribe to one room (one raw-socket client, one asyncio
 task each), and reads the resident memory of the server before and after (memory per socket). Then it broadcasts M
 messages through `GET /say` and times how long it takes for every socket to read all of them (frames per second, and
-messages per second for the hub, which is one task). It is run by hand: the numbers depend on the machine.
+messages per second for the hub, which is one task). It also prints the CPU time of the server per frame, which does
+not depend on the speed of this client. It is run by hand: the numbers depend on the machine.
 """
 import argparse
 import asyncio
@@ -22,6 +23,13 @@ MARK = b'"message":"'
 def rss_kib(pid):
     with open("/proc/%d/status" % pid) as status:
         return next(int(line.split()[1]) for line in status if line.startswith("VmRSS:"))
+
+
+def cpu_seconds(pid):
+    """User plus system CPU time of a process: the cost of the server, whatever the speed of this client."""
+    with open("/proc/%d/stat" % pid) as stat:
+        fields = stat.read().rsplit(")", 1)[1].split()
+    return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
 
 
 def frame(opcode, payload):
@@ -84,6 +92,7 @@ async def main():
         print("sockets %d: RSS %d KiB -> %d KiB, %.1f KiB per socket" % (
             options.sockets, before, after, (after - before) / options.sockets))
         body = "x" * options.payload
+        cpu_before = cpu_seconds(server.pid)
         started = time.monotonic()
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         for number in range(options.messages):
@@ -94,8 +103,10 @@ async def main():
             await asyncio.sleep(0.01)
         elapsed = time.monotonic() - started
         total = sum(counts)
+        cpu = cpu_seconds(server.pid) - cpu_before
         print("%d messages x %d sockets in %.2f s: %.0f messages/s, %.0f frames/s, errors %d" % (
             options.messages, options.sockets, elapsed, options.messages / elapsed, total / elapsed, len(errors)))
+        print("server CPU %.2f s for the broadcasts: %.1f us per frame" % (cpu, cpu * 1e6 / max(total, 1)))
         writer.write(b"GET /stats HTTP/1.1\r\nHost: x\r\n\r\n")
         await writer.drain()
         stats = (await reader.readuntil(b"}")).decode()

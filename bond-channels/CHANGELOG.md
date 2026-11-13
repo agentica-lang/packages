@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- A broadcast is framed once per identifier (`HTTP.prepare`) and the hub writes that message to the WebSocket of each subscriber itself, without a task of the connection in between, and walks lists it keeps instead of building a list of its maps for every broadcast. The hub also writes the confirmation of a subscription, so no broadcast comes before it. `MountOptions.inbox` is now the `outgoing_queue` of the WebSocket (at most 1048576): a slow `perform` no longer gets the client dropped, a client that does not read does.
+
 ## [0.4.0] - 2026-11-13
 
 Needs Agentica 0.31.0 and Bond 0.12.0.

@@ -30,7 +30,7 @@ weight: 3
 | `connect` | none | gives the [identity](channels.md) of the person, or an `error` |
 | `handlers` | none | the channel names of the client, mapped to their [handlers](channels.md) |
 | `allowed_origins` | `[]` | the origins that may connect, as in `Bond.websocket` |
-| `inbox` | 256 | the frames queued for one connection (1 or more); a connection with a full inbox is dropped |
+| `inbox` | 256 | the messages queued for one connection (1 or more): its WebSocket takes that many broadcasts before it is full (up to 1048576), and its task that many events from the hub; a connection with a full queue is dropped |
 | `idle_ms` | 120000 | a peer silent for this long is closed; 0 turns it off |
 | `max_message_bytes` | 65536 | a client frame over this closes the connection with 1009 |
 
@@ -44,7 +44,7 @@ A WebSocket holds one of the `max_connections` of the Bond server for its whole 
 
 A broadcast that cannot be queued in `broadcast_wait_ms` is an `error`, and it is counted as lost in `stats`. An HTTP handler may ignore it.
 
-A connection that is too slow for its traffic is closed by the hub: it gets a `disconnect` frame with `reconnect: true`, and `unsubscribed` still runs.
+A connection that is too slow for its traffic (its WebSocket queue stays full, because the client does not read) is closed by the hub: it gets a `disconnect` frame with `reconnect: true`, and `unsubscribed` still runs.
 
 ## Stats
 
@@ -54,7 +54,7 @@ A connection that is too slow for its traffic is closed by the hub: it gets a `d
 |---|---|
 | `connections` | the connections now |
 | `subscriptions` | the subscriptions now |
-| `drops` | the connections that the hub closed for a full inbox |
+| `drops` | the connections that the hub closed for a full queue |
 | `lost` | the broadcasts that could not be queued |
 
 ## Disconnect a person
