@@ -53,7 +53,7 @@ def smallest[T](gen: Gens.Gen[T], size: Int, law: Fn[T, Result[Void]]) -> Result
     for value in gen.all(at)
       verdict = law.call(value)
       if not verdict.ok? and not Checks.discarded?(verdict)
-        return error("falsified at size #{at}, counterexample #{JSON.encode(value)}: #{verdict.message}")
+        return error("falsified at size #{at}, counterexample #{gen.show(value)}: #{verdict.message}")
       end
     end
   end

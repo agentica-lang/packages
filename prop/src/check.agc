@@ -46,7 +46,7 @@ def check[T](gen: Gens.Gen[T], config: Config = Config(), law: Fn[T, Result[Void
     else
       found = shrink(tree, verdict.message, law, config.shrinks)
       runs = count(passed + 1, "run")
-      message = "falsified after #{runs}, shrunk to #{JSON.encode(found.value)}, seed #{seed}: #{found.message}"
+      message = "falsified after #{runs}, shrunk to #{gen.show(found.value)}, seed #{seed}: #{found.message}"
       return error(message)
     end
   end

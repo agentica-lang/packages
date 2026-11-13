@@ -60,7 +60,7 @@ Everything is under `Prop`, from `import Prop from "pkg/prop/prop"`. Each functi
 | Page | Functions |
 |---|---|
 | [Checking](checking.md) | `Prop.check`, `Prop.Config`, `Prop.eq`, `Prop.assume` |
-| [Generators](generators.md) | `Prop.int`, `float`, `bool`, `string`, `list`, `optional`, `one_of`, `map`, `pair`, `sample`, `of` |
+| [Generators](generators.md) | `Prop.int`, `float`, `bool`, `string`, `list`, `non_empty_list`, `bytes`, `optional`, `one_of`, `map`, `map_shown`, `pair`, `sample`, `of` |
 | [Laws](laws.md) | `Prop.roundtrip`, `idempotent`, `oracle`, `associative`, `commutative`, `preserves` |
 | [Exhaustive check](exhaustive.md) | `Prop.exhaustive`, `Prop.cases` |
 | [For agents](agents.md) | how an AI that writes Agentica should use the package |
