@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-13
+
+Needs Agentica 0.31.0.
+
 ### Changed
 
 - With `lease_ms` above 0, `checkout` runs in the task of the body, not in a task of its own, so a check costs no task. The caller still waits at most 5 seconds for it, and a `checkout` that refuses, crashes or hangs still ends the resource without reaching the caller, which gets the next resource at its place in line.
