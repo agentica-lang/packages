@@ -27,10 +27,10 @@ def chans[W]() -> Chans[W]
   Chans(inbox: inbox, ready: ready)
 end
 
-## Runs the pool until it is closed or its start fails.
-def own[A, W](spec: Types.Spec[A, W], chans: Chans[W]) -> Void
-  core = Core(spec: spec, inbox: chans.inbox, ready: chans.ready)
-  state = top_up(core, fresh(spec, Time.monotonic_ms()))
+## Runs the pool until it is closed or its start fails, and keeps `waiting` and `live` in `counts`.
+def own[A, W](spec: Types.Spec[A, W], counts: ATS[String, Int], chans: Chans[W]) -> Void
+  core = Core(spec: spec, inbox: chans.inbox, ready: chans.ready, counts: counts)
+  state = publish(core, top_up(core, fresh(spec, Time.monotonic_ms())))
   if not state.booting
     _ = core.ready.send(ok(), 0)
   end
@@ -41,7 +41,7 @@ def own[A, W](spec: Types.Spec[A, W], chans: Chans[W]) -> Void
       error(_) -> nil
     end
 
-    state = tick(core, state)
+    state = publish(core, tick(core, state))
   end
 end
 
@@ -53,13 +53,17 @@ MAX_WAIT_MS = 60_000
 # once for every caller.
 INIT_RETRY_MS = 1_000
 # How long the keepers have to end their workers once the drain of a close is over; the ones still running are
-# cancelled then, and the VM closes the handles they own.
-CLOSE_GRACE_MS = 2_000
+# cancelled then, and the VM closes the handles they own. It is longer than a keeper gives a ping or a `checkin`
+# (HOOK_MS), so that `terminate` runs after one that is in flight.
+CLOSE_GRACE_MS = 6_000
+WAITING = "waiting"
+LIVE = "live"
 
 struct Core[A, W]
   spec: Types.Spec[A, W]
   inbox: Channel[Types.Msg[W]]
   ready: Channel[Result[Void]]
+  counts: ATS[String, Int]
 end
 
 # A made worker is idle, lent to a caller, given back by a caller that runs `checkin` (`lease_ms` 0), pinged in its
@@ -124,6 +128,8 @@ struct State[W]
   dones: List[Channel[Bool]]
   grace_ms: Int
   done: Bool
+  shown_waiting: Int
+  shown_live: Int
 end
 
 def fresh[A, W](spec: Types.Spec[A, W], now: Int) -> State[W]
@@ -154,6 +160,8 @@ def fresh[A, W](spec: Types.Spec[A, W], now: Int) -> State[W]
     dones: [],
     grace_ms: 0,
     done: false,
+    shown_waiting: -1,
+    shown_live: -1,
   )
 end
 
@@ -650,7 +658,7 @@ def closing_tick[A, W](core: Core[A, W], state: State[W], now: Int) -> State[W]
   return current if now < current.grace_ms
 
   current.keepers.values.each do |keeping| Task.cancel(keeping.task) end
-  finish(current)
+  finish(current.with(keepers: {}))
 end
 
 # Ends the workers that are idle, pinged or starting, and the lent ones too when `all`.
@@ -676,6 +684,18 @@ end
 def finish[W](state: State[W]) -> State[W]
   state.dones.each do |done| _ = done.send(true, 0) end
   state.with(done: true)
+end
+
+# Writes the counts that changed, for the readers of `Pool.counts`. The line holds the tickets of callers that gave up
+# until they are dropped, so `waiting` may count them for a while.
+def publish[A, W](core: Core[A, W], state: State[W]) -> State[W]
+  waiting = state.tail - state.head
+  alive = live(state)
+  return state if waiting == state.shown_waiting and alive == state.shown_live
+
+  core.counts.put(WAITING, waiting)
+  core.counts.put(LIVE, alive)
+  state.with(shown_waiting: waiting, shown_live: alive)
 end
 
 # Until the next deadline: an idle worker due, a retry of `init`, the end of the drain or of the grace.

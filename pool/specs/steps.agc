@@ -13,6 +13,10 @@ REPLY_MS = 60_000
 def main() -> Void
   BDD.run([
     BDD.step("a pool with:") do |ctx, _args| send(ctx, Request(op: "start", table: BDD.table(ctx))) end,
+    BDD.step("a pool started in a task of its own, with:") do |ctx, _args|
+      send(ctx, Request(op: "start_owned", table: BDD.table(ctx)))
+    end,
+    BDD.step("the task that started the pool ends") do |ctx, _args| send(ctx, Request(op: "end_starter")) end,
     BDD.step("starting a pool with these settings fails with {string}:") do |ctx, args|
       send(ctx, Request(op: "start_fails", text: args[0], table: BDD.table(ctx)))
     end,
@@ -69,6 +73,12 @@ def main() -> Void
     end,
     BDD.step("the count {string} is {int}") do |ctx, args|
       send(ctx, Request(op: "expect_count", name: args[0], number: args[1].to_i!, kind: "is"))
+    end,
+    BDD.step("the pool counts {int} {string} within {int} ms") do |ctx, args|
+      send(
+        ctx,
+        Request(op: "expect_pool_count", name: args[1], number: args[0].to_i!, kind: "is", wait: args[2].to_i!),
+      )
     end,
     BDD.step("the count {string} reaches {int} within {int} ms") do |ctx, args|
       send(

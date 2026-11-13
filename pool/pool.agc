@@ -17,15 +17,17 @@ import Types from "src/types"
 export Types.Outcome
 export Types.Spec
 
-## A running pool. Share it with every task that needs a resource.
+## A running pool. Share it with every task that needs a resource. `owner` is the owner task. `counts` is kept by the
+## pool, to read: `waiting` (the callers in line), `live` (the resources made, being made or being ended), and
+## `closed` once `close` has run; `waiting` and `live` are 0 once the close is over.
 struct Pool[A, W]
   spec: Types.Spec[A, W]
+  owner: Task[Void]
+  counts: ATS[String, Int]
 
   private
 
   inbox: Channel[Types.Msg[W]]
-  owner: Task[Void]
-  flags: ATS[String, Int]
 end
 
 ## Starts a pool and waits for it to make its resources (none when `lazy`). An `init` that fails stops the start
@@ -33,9 +35,10 @@ end
 def start[A, W](spec: Types.Spec[A, W]) -> Result[Pool[A, W]]
   try check_spec(spec)
   chans: Owner.Chans[W] = Owner.chans()
-  owner = spawn_owner(chans) do |owned| Owner.own(spec, owned) end
+  counts: ATS[String, Int] = ATS.new()
+  owner = spawn_owner(chans) do |owned| Owner.own(spec, counts, owned) end
   case chans.ready.recv(START_MS)
-    ok(started) -> started_pool(spec, chans, owner, started)
+    ok(started) -> started_pool(chans, Pool(spec: spec, owner: owner, counts: counts, inbox: chans.inbox), started)
     error(_) if chans.ready.closed? -> error("pool error: owner task ended during the start", kind: "pool.closed")
     error(_) ->
       Task.cancel(owner)
@@ -52,7 +55,7 @@ end
 ## (`pool.full`), `pool error: closed` and `pool error: owner task ended` (`pool.closed`). A caller that got one of
 ## these errors never has its body run later.
 def with[A, W, R](pool: Pool[A, W], body: Fn[W, Result[R]]) -> Result[R]
-  return closed(pool) if pool.flags.has_key?(CLOSED)
+  return closed(pool) if pool.counts.has_key?(CLOSED)
 
   checkout_ms = pool.spec.checkout_ms
   lease = try take(pool, Time.monotonic_ms() + checkout_ms)
@@ -65,7 +68,7 @@ end
 ## with `pool error: closed` (a body that runs in a task of the pool is cancelled; one that runs in its caller finds
 ## its resource ended), ends every resource and stops the pool. Closing twice does nothing.
 def close[A, W](pool: Pool[A, W], drain_ms: Int) -> Void
-  return if not pool.flags.put_new(CLOSED, 1)
+  return if not pool.counts.put_new(CLOSED, 1)
 
   done: Channel[Bool] = Channel.new(1)
   drain = [drain_ms, 0].max.unwrap!
@@ -84,10 +87,11 @@ private
 
 START_MS = 60_000
 SEND_MS = 5_000
-# How long `close` waits after the drain: the owner gives the keepers 2 seconds to end their resources.
-CLOSE_WAIT_MS = 5_000
+# How long `close` waits after the drain: the owner gives the keepers 6 seconds to end their resources.
+CLOSE_WAIT_MS = 8_000
 # A body that ran past `lease_ms` is cancelled and given a moment to stop before `checkin` sees it.
 CANCEL_GRACE_MS = 20
+OWNER_CHECK_MS = 200
 MAX_RESOURCES = 1_048_576
 CLOSED = "closed"
 CHECKOUT_TIMEOUT = "pool error: checkout timed out"
@@ -97,15 +101,9 @@ def spawn_owner[W](chans: Owner.Chans[W], body: Fn[Owner.Chans[W], Void]) -> Tas
   Task.spawn_owning(body, chans)
 end
 
-def started_pool[A, W](
-  spec: Types.Spec[A, W],
-  chans: Owner.Chans[W],
-  owner: Task[Void],
-  started: Result[Void],
-) -> Result[Pool[A, W]]
-  flags: ATS[String, Int] = ATS.new()
+def started_pool[A, W](chans: Owner.Chans[W], pool: Pool[A, W], started: Result[Void]) -> Result[Pool[A, W]]
   case started
-    ok(_) -> ok(Pool(spec: spec, inbox: chans.inbox, owner: owner, flags: flags))
+    ok(_) -> ok(pool)
     error(e) ->
       # The owner ends the resources already made, then ends, which closes `ready`.
       _ = chans.ready.recv(START_MS)
@@ -152,7 +150,7 @@ def argument(text: String) -> Result[Void] = error("pool error: #{text}", kind: 
 
 # The pool was closed, or its owner task ended with the task that started it.
 def closed[A, W, T](pool: Pool[A, W]) -> Result[T]
-  return error("pool error: closed", kind: "pool.closed") if pool.flags.has_key?(CLOSED)
+  return error("pool error: closed", kind: "pool.closed") if pool.counts.has_key?(CLOSED)
 
   error("pool error: owner task ended", kind: "pool.closed")
 end
@@ -173,11 +171,17 @@ def take[A, W](pool: Pool[A, W], deadline: Int) -> Result[Types.Lease[W]]
   wait_grant(pool, reply, deadline)
 end
 
+# Waits in slices of OWNER_CHECK_MS, so that a caller hears soon that the owner task has ended (its inbox closes).
 def wait_grant[A, W](pool: Pool[A, W], reply: Channel[Types.Grant[W]], deadline: Int) -> Result[Types.Lease[W]]
-  case reply.recv([deadline - Time.monotonic_ms(), 0].max.unwrap!)
-    ok(grant) -> granted(pool, grant, deadline)
-    error(_) -> give_up(pool, reply)
+  left = deadline - Time.monotonic_ms()
+  while left > 0 and not pool.inbox.closed?
+    case reply.recv([left, OWNER_CHECK_MS].min.unwrap!)
+      ok(grant) -> return granted(pool, grant, deadline)
+      error(_) -> left = deadline - Time.monotonic_ms()
+    end
   end
+
+  give_up(pool, reply)
 end
 
 def granted[A, W](pool: Pool[A, W], grant: Types.Grant[W], deadline: Int) -> Result[Types.Lease[W]]
@@ -280,7 +284,7 @@ def ran_out[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], ran: Result[Result
     ok(result) ->
       give_back(pool, lease, Types.Return.Check(Types.Outcome.Done))
       result
-    error(e) if e.is_a?("task.cancelled") and pool.flags.has_key?(CLOSED) -> closed(pool)
+    error(e) if e.is_a?("task.cancelled") and pool.counts.has_key?(CLOSED) -> closed(pool)
     error(e) ->
       give_back(pool, lease, Types.Return.Check(Types.Outcome.Crashed))
       error(e)

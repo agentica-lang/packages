@@ -146,3 +146,30 @@ Feature: Lifecycle
     And I wait for the jobs
     Then job "B" gets "ok 2"
     And the count "alive_peak" is 1
+
+  # The ping takes 3 seconds, less than the 5 that a keeper gives it: the close waits for it, then ends the resource.
+  Scenario: Closing during a slow ping still ends the resource
+    Given a pool with:
+      | setting      | value |
+      | size         | 1     |
+      | health_ms    | 100   |
+      | slow_ping_ms | 3000  |
+    Then the count "pings" reaches 1 within 1000 ms
+    When I close the pool, giving the jobs 0 ms to finish
+    Then the count "terminated" is 1
+
+  Scenario: The pool counts the callers in line and the resources alive, and both are 0 once it is closed
+    Given a pool with:
+      | setting | value |
+      | size    | 2     |
+    When job "A" holds a resource for 400 ms
+    And job "B" holds a resource for 400 ms
+    And job "C" holds a resource for 10 ms
+    And job "D" holds a resource for 10 ms
+    Then the pool counts 2 "waiting" within 200 ms
+    And the pool counts 2 "live" within 0 ms
+    When I wait for the jobs
+    Then the pool counts 0 "waiting" within 200 ms
+    When I close the pool, giving the jobs 100 ms to finish
+    Then the pool counts 0 "waiting" within 0 ms
+    And the pool counts 0 "live" within 0 ms

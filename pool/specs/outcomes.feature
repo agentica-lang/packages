@@ -137,3 +137,20 @@ Feature: Outcomes
     And the count "double_lease" is 0
     And the count "made" reaches 3 within 2000 ms
     And the count "terminated" reaches 2 within 2000 ms
+
+  # The owner task ends with the task that started the pool. B, in line for 3 seconds, hears of it at once.
+  Scenario: A pool whose owner task ended fails the callers that wait and the ones that come after
+    Given a pool started in a task of its own, with:
+      | setting     | value |
+      | size        | 1     |
+      | checkout_ms | 3000  |
+    When job "A" holds a resource for 1000 ms
+    And job "B" holds a resource for 10 ms
+    And the task that started the pool ends
+    And I wait for the jobs
+    Then job "B" gets "error pool error: owner task ended"
+    And job "B" fails with the kind "pool.closed"
+    And the jobs ended in this order: "B,A"
+    When job "C" holds a resource for 10 ms
+    And I wait for the jobs
+    Then job "C" gets "error pool error: owner task ended"

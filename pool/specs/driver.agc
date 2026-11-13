@@ -57,6 +57,7 @@ struct Driver
   tasks: Map[String, Task[Result[Void]]]
   results: Map[String, String]
   order: List[String]
+  starter: Optional[Task[Void]]
 end
 
 struct JobArgs
@@ -79,7 +80,17 @@ def main() -> Void
   stats: ATS[String, Int] = ATS.new()
   kinds: ATS[String, String] = ATS.new()
   finished: Channel[String] = Channel.new(5_000)
-  driver = Driver(stats: stats, kinds: kinds, finished: finished, pool: none, tasks: {}, results: {}, order: [])
+  driver = Driver(
+    stats: stats,
+    kinds: kinds,
+    finished: finished,
+    pool: none,
+    tasks: {},
+    results: {},
+    order: [],
+    starter: none,
+  )
+
   line = IO.gets
   while line.ok?
     handled = handle(driver, line.unwrap_or(""))
@@ -101,6 +112,8 @@ def act(driver: Driver, req: Request) -> Handled
   case req.op
     "start" -> start(driver, req)
     "start_fails" -> start_fails(driver, req)
+    "start_owned" -> start_owned(driver, req)
+    "end_starter" -> end_starter(driver)
     "job" -> start_job(driver, req)
     "flood" -> flood(driver, req)
     "cancel_job" -> cancel_job(driver, req.name)
@@ -112,6 +125,7 @@ def act(driver: Driver, req: Request) -> Handled
     "expect_kind" -> expect_kind(collect(driver), req)
     "expect_order" -> expect_order(collect(driver), req.text)
     "expect_count" -> expect_count(driver, req)
+    "expect_pool_count" -> expect_pool_count(driver, req)
     _ -> Handled(driver: driver, reply: "unknown op #{req.op.inspect}")
   end
 end
@@ -181,6 +195,34 @@ def start(driver: Driver, req: Request) -> Handled
 end
 
 def with_pool(driver: Driver, pool: Pool.Pool[Fake, Cell]) -> Driver = driver.with(pool: some(pool))
+
+# Starts the pool in a task that then waits, so that a step can end it, and the owner task of the pool with it.
+def start_owned(driver: Driver, req: Request) -> Handled
+  case spec_of(driver, req.table)
+    error(message) -> reply(driver, message.message)
+    ok(spec) ->
+      started: Channel[Result[Pool.Pool[Fake, Cell]]] = Channel.new(1)
+      starter = Task.spawn do
+        _ = started.send(Pool.start(spec), 0)
+        Task.sleep(HANG_MS)
+      end
+
+      case started.recv(WAIT_JOBS_MS)
+        ok(ok(pool)) -> reply(with_pool(driver, pool).with(starter: some(starter)), Protocol.OK)
+        ok(error(message)) -> reply(driver, "the pool did not start: #{message}")
+        _ -> reply(driver, "the pool did not start within #{WAIT_JOBS_MS} ms")
+      end
+  end
+end
+
+def end_starter(driver: Driver) -> Handled
+  case driver.starter
+    none -> reply(driver, "no pool was started in a task")
+    some(starter) ->
+      Task.cancel(starter)
+      reply(driver.with(starter: none), Protocol.OK)
+  end
+end
 
 def start_fails(driver: Driver, req: Request) -> Handled
   case spec_of(driver, req.table)
@@ -358,6 +400,24 @@ def expect_count(driver: Driver, req: Request) -> Handled
   return reply(driver, Protocol.OK) if counted?(req, value)
 
   reply(driver, "the count #{req.name.inspect} is #{value}, not #{req.number}")
+end
+
+# A count that the pool keeps (`waiting`, `live`), polled like `expect_count`.
+def expect_pool_count(driver: Driver, req: Request) -> Handled
+  case driver.pool
+    none -> reply(driver, "no pool is started")
+    some(pool) ->
+      deadline = Time.monotonic_ms() + req.wait
+      value = pool.counts.get(req.name).unwrap_or(0)
+      while not counted?(req, value) and Time.monotonic_ms() < deadline
+        Task.sleep(POLL_MS)
+        value = pool.counts.get(req.name).unwrap_or(0)
+      end
+
+      return reply(driver, Protocol.OK) if counted?(req, value)
+
+      reply(driver, "the pool count #{req.name.inspect} is #{value}, not #{req.number}")
+  end
 end
 
 def counted?(req: Request, value: Int) -> Bool = value == req.number or (req.kind == "reaches" and value > req.number)
