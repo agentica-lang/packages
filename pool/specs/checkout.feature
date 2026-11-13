@@ -61,9 +61,10 @@ Feature: Checkout
     And the caller of job "A" is cancelled
     And job "B" holds a resource for 10 ms
     And I wait for the jobs
-    Then job "B" succeeds
-    And the count "made" is 1
-    And the count "checkin_done" is 2
+    Then job "B" gets "ok 2"
+    And the count "made" is 2
+    And the count "checkin_timed_out" reaches 1 within 2000 ms
+    And the count "checkin_done" is 1
     And the count "double_lease" is 0
 
   Scenario: The pool lends up to max_overflow more resources in a spike and ends them when they are given back

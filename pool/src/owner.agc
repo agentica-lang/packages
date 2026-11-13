@@ -1,0 +1,606 @@
+## The owner task of a pool: the one task that holds the state of the workers and the line of callers, and changes it
+## one message at a time. It runs no user code: `init`, `ping` and `terminate` run in the keepers (keeper.agc),
+## `checkout` and `checkin` in the callers (or in the keeper, for a caller that is gone), so a slow or crashing
+## function of the spec never stalls the pool or ends it.
+##
+## It is written by hand on a channel, not with `std/actor`: `Actor.call` does not close its reply channel when it
+## gives up and `Actor.reply` drops a send that fails, so a worker lent to a caller that has just given up would be
+## lost, and a behaviour has no receive timeout for the deadlines of the pool (agentica-lang/agentica#1523).
+
+import Keeper from "keeper"
+import Types from "types"
+
+## The channels that the owner task owns: they close when it ends, however it ends, so that no caller waits for a
+## pool that is gone. `ready` answers once, when the start is done or has failed.
+struct Chans[W]
+  inbox: Channel[Types.Msg[W]]
+  ready: Channel[Result[Void]]
+end
+
+## New channels for an owner.
+def chans[W]() -> Chans[W]
+  # A monitor's notice that finds the inbox full is dropped (agentica-lang/agentica#1522), and the end of a task that
+  # holds a worker comes only as such a notice, so the inbox has the largest room a channel can have. Room costs
+  # nothing until it is used.
+  inbox: Channel[Types.Msg[W]] = Channel.new(1_048_576)
+  ready: Channel[Result[Void]] = Channel.new(1)
+  Chans(inbox: inbox, ready: ready)
+end
+
+## Runs the pool until it is closed or its start fails.
+def own[A, W](spec: Types.Spec[A, W], chans: Chans[W]) -> Void
+  core = Core(spec: spec, inbox: chans.inbox, ready: chans.ready)
+  state = top_up(core, fresh(spec, Time.monotonic_ms()))
+  if not state.booting
+    _ = core.ready.send(ok(), 0)
+  end
+
+  while not state.done
+    case core.inbox.recv(wait_ms(state))
+      ok(msg) -> state = handle(core, state, msg)
+      error(_) -> nil
+    end
+
+    state = tick(core, state)
+  end
+end
+
+private
+
+# The longest wait for a message when no deadline is nearer.
+MAX_WAIT_MS = 60_000
+# How long the owner waits before it calls `init` again after a failure, so that a database that is down is not asked
+# once for every caller.
+INIT_RETRY_MS = 1_000
+# How long the keepers have to end their workers once the drain of a close is over; the ones still running are
+# cancelled then, and the VM closes the handles they own.
+CLOSE_GRACE_MS = 2_000
+
+struct Core[A, W]
+  spec: Types.Spec[A, W]
+  inbox: Channel[Types.Msg[W]]
+  ready: Channel[Result[Void]]
+end
+
+# A made worker is idle, lent to a caller (`holder` is its task id, `runner` the task of its body when `lease_ms` is
+# above 0), pinged in its keeper, or checked in there for a caller that is gone; a worker on its way out is no longer
+# a slot at all, and its keeper ends it.
+enum Phase
+  Idle
+  Lent
+  Pinging
+  Checking
+end
+
+struct Slot[W]
+  worker: W
+  phase: Phase
+  orders: Channel[Keeper.Order]
+  holder: Int
+  runner: Optional[TaskRef]
+  born_ms: Int
+  idle_since_ms: Int
+end
+
+struct Keeping
+  task: Task[Void]
+  slot: Int
+end
+
+# `starting` holds the workers whose `init` runs (by slot id, with their keeper's channel), `slots` the made ones and
+# `idle` the ids of the idle ones, the most recently given back last: the pool lends that one first, so that a pool
+# with more workers than its load keeps using a few of them and the others reach `idle_ms` and `overflow_idle_ms`.
+# The line is `waiters` from `head` to `tail` - 1. `keepers` is every keeper task that has not ended, by task id;
+# `watched` the callers' tasks that the owner monitors. `failure` is the last `init` error until a worker is made,
+# and `retry_at_ms` when `init` may run again (0: now). `check_at_ms` is the next time an overflow worker may be idle
+# long enough to end (0: none), and `tick_ms` the next health tick (0: none). A close sets `closing`, the end of the
+# drain (`deadline_ms`) and the callers of `close` (`dones`); `grace_ms` is when the keepers left are cancelled.
+struct State[W]
+  starting: Map[Int, Channel[Keeper.Order]]
+  slots: Map[Int, Slot[W]]
+  idle: List[Int]
+  waiters: Map[Int, Types.Ticket[W]]
+  head: Int
+  tail: Int
+  keepers: Map[Int, Keeping]
+  watched: Set[Int]
+  next_id: Int
+  failure: Result[Void]
+  retry_at_ms: Int
+  check_at_ms: Int
+  tick_ms: Int
+  booting: Bool
+  closing: Bool
+  deadline_ms: Int
+  dones: List[Channel[Bool]]
+  grace_ms: Int
+  done: Bool
+end
+
+def fresh[A, W](spec: Types.Spec[A, W], now: Int) -> State[W]
+  tick = 0
+  if spec.health_ms > 0
+    tick = now + spec.health_ms
+  end
+
+  State(
+    starting: {},
+    slots: {},
+    idle: [],
+    waiters: {},
+    head: 0,
+    tail: 0,
+    keepers: {},
+    watched: Set.new([]),
+    next_id: 1,
+    failure: ok(),
+    retry_at_ms: 0,
+    check_at_ms: 0,
+    tick_ms: tick,
+    booting: not spec.lazy,
+    closing: false,
+    deadline_ms: 0,
+    dones: [],
+    grace_ms: 0,
+    done: false,
+  )
+end
+
+def handle[A, W](core: Core[A, W], state: State[W], msg: Types.Msg[W]) -> State[W]
+  case msg
+    Types.Msg.Checkout(ticket) -> checkout(core, watch(core, state, ticket.client), ticket)
+    Types.Msg.Checkin(back) -> checkin(core, state, back)
+    Types.Msg.Run(running) -> run(state, running)
+    Types.Msg.Ready(made) -> ready(core, state, made)
+    Types.Msg.Check(checked) -> checked(core, state, checked)
+    Types.Msg.Down(down) -> down(core, state, down)
+    Types.Msg.Failure(answer) -> answer_failure(state, answer)
+    Types.Msg.Close(closing) -> close(state, closing)
+  end
+end
+
+# The end of a caller's task comes as a notice; each task is monitored once (a monitor cannot be removed).
+def watch[A, W](core: Core[A, W], state: State[W], client: TaskRef) -> State[W]
+  return state if state.watched.include?(client.id)
+
+  Task.monitor(client, core.inbox) do |down| Types.Msg.Down(down) end
+  state.with(watched: state.watched.add(client.id))
+end
+
+def checkout[A, W](core: Core[A, W], state: State[W], ticket: Types.Ticket[W]) -> State[W]
+  return refuse(state, ticket, Types.Refusal.Closed) if state.closing
+
+  current = state
+  if current.idle.empty? and current.tail - current.head >= core.spec.max_waiting
+    current = purge(current)
+    return refuse(current, ticket, Types.Refusal.Full) if current.tail - current.head >= core.spec.max_waiting
+  end
+
+  serve(core, enqueue(current, ticket))
+end
+
+def refuse[W](state: State[W], ticket: Types.Ticket[W], refusal: Types.Refusal) -> State[W]
+  _ = ticket.reply.send(Types.Grant.Refused(refusal), 0)
+  state
+end
+
+def enqueue[W](state: State[W], ticket: Types.Ticket[W]) -> State[W]
+  case ticket.place
+    Types.Place.Back -> state.with(waiters: state.waiters.put(state.tail, ticket), tail: state.tail + 1)
+    Types.Place.Front -> state.with(waiters: state.waiters.put(state.head - 1, ticket), head: state.head - 1)
+  end
+end
+
+# Drops the tickets of the callers that gave up (they closed them), keeping the order of the others.
+def purge[W](state: State[W]) -> State[W]
+  renumber(state, tickets(state).select { |ticket| not ticket.reply.closed? })
+end
+
+def renumber[W](state: State[W], kept: List[Types.Ticket[W]]) -> State[W]
+  waiters: Map[Int, Types.Ticket[W]] = {}
+  for ticket in kept
+    waiters = waiters.put(waiters.size, ticket)
+  end
+
+  state.with(waiters: waiters, head: 0, tail: kept.size)
+end
+
+def tickets[W](state: State[W]) -> List[Types.Ticket[W]]
+  return [] if state.head == state.tail
+
+  (state.head..(state.tail - 1)).to_a.map { |i| state.waiters.get(i).unwrap! }
+end
+
+# Lends the idle workers to the callers at the head of the line, then makes the workers that are missing. A ticket
+# whose caller gave up refuses the send, and its worker stays idle for the next one.
+def serve[A, W](core: Core[A, W], state: State[W]) -> State[W]
+  current = state
+  while current.head < current.tail and not current.idle.empty?
+    # The keys from head to tail - 1 are always there: `enqueue` and `purge` keep them so.
+    ticket = current.waiters.get(current.head).unwrap!
+    current = lend(current.with(waiters: current.waiters.delete(current.head), head: current.head + 1), ticket)
+  end
+
+  top_up(core, current)
+end
+
+def lend[W](state: State[W], ticket: Types.Ticket[W]) -> State[W]
+  id = state.idle.last
+  # Every id in `idle` is a slot: `retire` takes it out of both.
+  slot = state.slots.get(id).unwrap!
+  lease = Types.Lease(id: id, worker: slot.worker)
+  return state if not ticket.reply.send(Types.Grant.Lent(lease), 0).ok?
+
+  lent = slot.with(phase: Phase.Lent, holder: ticket.client.id, runner: none)
+  state.with(idle: state.idle.take(state.idle.size - 1), slots: state.slots.put(id, lent))
+end
+
+# Starts the keepers of the workers that are wanted and missing: `size` of them in an eager pool, and in any pool one
+# for each caller in line that no idle or starting worker will serve, up to `size + max_overflow`. A failed `init`
+# holds the next one back until `retry_at_ms`.
+def top_up[A, W](core: Core[A, W], state: State[W]) -> State[W]
+  return state if state.retry_at_ms > Time.monotonic_ms()
+
+  current = state
+  while live(current) < wanted(core, current)
+    current = spawn_keeper(core, current)
+  end
+
+  current
+end
+
+def live[W](state: State[W]) -> Int = state.slots.size + state.starting.size
+
+def wanted[A, W](core: Core[A, W], state: State[W]) -> Int
+  needed = state.tail - state.head - state.idle.size - state.starting.size
+  base = core.spec.size
+  if core.spec.lazy or state.closing
+    base = 0
+  end
+
+  [base, live(state) + needed].max.unwrap!.clamp(0, core.spec.size + core.spec.max_overflow)
+end
+
+def spawn_keeper[A, W](core: Core[A, W], state: State[W]) -> State[W]
+  # One order is pending at most: the owner sends one only to a worker it then holds as Checking.
+  orders: Channel[Keeper.Order] = Channel.new(1)
+  keep_fn: Fn[Keeper.Keeper[A, W], Void] = &Keeper.keep
+  task = Task.spawn(keep_fn, Keeper.Keeper(spec: core.spec, id: state.next_id, inbox: core.inbox, orders: orders))
+  Task.monitor(task, core.inbox) do |down| Types.Msg.Down(down) end
+  state.with(
+    starting: state.starting.put(state.next_id, orders),
+    keepers: state.keepers.put(task.id, Keeping(task: task, slot: state.next_id)),
+    next_id: state.next_id + 1,
+  )
+end
+
+def ready[A, W](core: Core[A, W], state: State[W], made: Types.Made[W]) -> State[W]
+  case state.starting.get(made.id)
+    # A worker whose slot was given up (a close): its keeper finds its channel closed and ends it.
+    none -> state
+    some(orders) ->
+      rest = state.with(starting: state.starting.delete(made.id))
+      case made.worker
+        error(e) -> failed(core, rest, error(e))
+        ok(worker) ->
+          now = Time.monotonic_ms()
+          slot = Slot(
+            worker: worker,
+            phase: Phase.Idle,
+            orders: orders,
+            holder: 0,
+            runner: none,
+            born_ms: now,
+            idle_since_ms: now,
+          )
+
+          added = rest.with(slots: rest.slots.put(made.id, slot), failure: ok(), retry_at_ms: 0)
+          booted(core, park(core, added, made.id, now))
+      end
+  end
+end
+
+# An `init` that failed. During the start the start fails with its error and the pool ends; later the callers that
+# time out get it as the cause, and `init` waits INIT_RETRY_MS before the next try.
+def failed[A, W](core: Core[A, W], state: State[W], failure: Result[Void]) -> State[W]
+  if state.booting
+    _ = core.ready.send(failure, 0)
+    return stop_timers(state).with(booting: false, closing: true, deadline_ms: Time.monotonic_ms())
+  end
+
+  state.with(failure: failure, retry_at_ms: Time.monotonic_ms() + INIT_RETRY_MS)
+end
+
+def booted[A, W](core: Core[A, W], state: State[W]) -> State[W]
+  return state if not state.booting or state.slots.size < core.spec.size
+
+  _ = core.ready.send(ok(), 0)
+  state.with(booting: false)
+end
+
+def checkin[A, W](core: Core[A, W], state: State[W], back: Types.Back) -> State[W]
+  case state.slots.get(back.id)
+    # The worker was ended meanwhile: its caller's task ended, or the drain of a close is over.
+    none -> state
+    some(slot) ->
+      return state if slot.phase != Phase.Lent
+
+      return serve(core, retire(state, back.id)) if not back.keep or aged?(core.spec, slot, Time.monotonic_ms())
+
+      park(core, state, back.id, Time.monotonic_ms())
+  end
+end
+
+def run[W](state: State[W], running: Types.Running) -> State[W]
+  case state.slots.get(running.id)
+    some(slot) if slot.phase == Phase.Lent ->
+      state.with(slots: state.slots.put(running.id, slot.with(runner: some(running.runner))))
+    _ -> state
+  end
+end
+
+# A worker that is free again: it goes to the idle ones and serves the line, unless nobody can need it (a close with
+# nobody in line, or an overflow worker with `overflow_idle_ms` 0).
+def park[A, W](core: Core[A, W], state: State[W], id: Int, idle_since_ms: Int) -> State[W]
+  nobody_waits = state.head == state.tail
+  if nobody_waits and (state.closing or (surplus?(core, state) and core.spec.overflow_idle_ms == 0))
+    return serve(core, retire(state, id))
+  end
+
+  slot = state.slots.get(id).unwrap!.with(phase: Phase.Idle, holder: 0, runner: none, idle_since_ms: idle_since_ms)
+  parked = state.with(slots: state.slots.put(id, slot), idle: state.idle.push(id))
+  serve(core, parked.with(check_at_ms: earliest(parked.check_at_ms, due_ms(core.spec, slot))))
+end
+
+# Ends a worker: its keeper sees its channel closed, runs `terminate` and ends.
+def retire[W](state: State[W], id: Int) -> State[W]
+  case state.slots.get(id)
+    some(slot) ->
+      slot.orders.close
+      state.with(slots: state.slots.delete(id), idle: state.idle.select { |other| other != id })
+    none -> state
+  end
+end
+
+def surplus?[A, W](core: Core[A, W], state: State[W]) -> Bool = live(state) > core.spec.size
+
+def aged?[A, W](spec: Types.Spec[A, W], slot: Slot[W], now: Int) -> Bool
+  spec.max_age_ms > 0 and now - slot.born_ms >= spec.max_age_ms
+end
+
+# When an idle worker may be an overflow worker idle for `overflow_idle_ms` (0: never, in a pool without overflow).
+def due_ms[A, W](spec: Types.Spec[A, W], slot: Slot[W]) -> Int
+  return 0 if spec.max_overflow == 0
+
+  slot.idle_since_ms + spec.overflow_idle_ms
+end
+
+# The earlier of two times, where 0 means none.
+def earliest(a: Int, b: Int) -> Int
+  return b if a == 0
+
+  return a if b == 0
+
+  [a, b].min.unwrap!
+end
+
+def checked[A, W](core: Core[A, W], state: State[W], checked: Types.Checked) -> State[W]
+  case state.slots.get(checked.id)
+    none -> state
+    some(slot) ->
+      return state if slot.phase == Phase.Idle or slot.phase == Phase.Lent
+
+      return serve(core, retire(state, checked.id)) if not checked.keep
+
+      # A ping does not count as use: the worker stays idle since it was given back, for `idle_ms`.
+      idle_since = Time.monotonic_ms()
+      if slot.phase == Phase.Pinging
+        idle_since = slot.idle_since_ms
+      end
+
+      park(core, state, checked.id, idle_since)
+  end
+end
+
+def down[A, W](core: Core[A, W], state: State[W], down: TaskDown) -> State[W]
+  case state.keepers.get(down.task_id)
+    some(keeping) -> keeper_down(core, state.with(keepers: state.keepers.delete(down.task_id)), keeping, down)
+    none -> client_down(core, state, down)
+  end
+end
+
+# A keeper ended. After `retire` that is the normal end; else it crashed: in `init` (a failed `init`), or in `ping`
+# or `terminate`, and its worker is gone with it.
+def keeper_down[A, W](core: Core[A, W], state: State[W], keeping: Keeping, down: TaskDown) -> State[W]
+  if state.starting.key?(keeping.slot)
+    crashed: Result[Void] = error("pool error: init crashed: #{down.message}", kind: "task.crashed")
+    return serve(core, failed(core, state.with(starting: state.starting.delete(keeping.slot)), crashed))
+  end
+
+  return state if not state.slots.key?(keeping.slot)
+
+  serve(core, retire(state, keeping.slot))
+end
+
+# A caller's task ended while it held workers: their keepers run `checkin` with how it ended (a crash is `Crashed`,
+# a cancel `TimedOut`, which always ends the worker), and its tickets leave the line.
+def client_down[A, W](core: Core[A, W], state: State[W], down: TaskDown) -> State[W]
+  outcome = Types.Outcome.TimedOut
+  if down.reason == TaskExit.Crashed
+    outcome = Types.Outcome.Crashed
+  end
+
+  held = state.slots.keys.select { |id| holds?(state, id, down.task_id) }
+  cleared = held.reduce(state.with(watched: state.watched.delete(down.task_id))) do |acc, id|
+    lost(acc, id, outcome)
+  end
+
+  serve(core, drop_tickets(cleared, down.task_id))
+end
+
+def lost[W](state: State[W], id: Int, outcome: Types.Outcome) -> State[W]
+  slot = state.slots.get(id).unwrap!
+  _ = slot.orders.send(Keeper.Order.Lost(outcome), 0)
+  state.with(slots: state.slots.put(id, slot.with(phase: Phase.Checking, holder: 0, runner: none)))
+end
+
+def holds?[W](state: State[W], id: Int, task_id: Int) -> Bool
+  case state.slots.get(id)
+    some(slot) -> slot.phase == Phase.Lent and slot.holder == task_id
+    none -> false
+  end
+end
+
+def drop_tickets[W](state: State[W], task_id: Int) -> State[W]
+  return state if (not tickets(state).any? { |ticket| ticket.client.id == task_id })
+
+  renumber(state, tickets(state).select { |ticket| ticket.client.id != task_id })
+end
+
+def answer_failure[W](state: State[W], answer: Channel[Result[Void]]) -> State[W]
+  _ = answer.send(state.failure, 0)
+  state
+end
+
+def close[W](state: State[W], closing: Types.Closing) -> State[W]
+  dones = state.dones.push(closing.done)
+  return state.with(dones: dones) if state.closing
+
+  stop_timers(state).with(closing: true, deadline_ms: Time.monotonic_ms() + closing.drain_ms, dones: dones)
+end
+
+# A pool that closes no longer pings, trims or makes workers after a failure.
+def stop_timers[W](state: State[W]) -> State[W] = state.with(check_at_ms: 0, tick_ms: 0, retry_at_ms: 0)
+
+# Runs after every message and every wait: the close, the health tick, the overflow workers that are due, and a
+# retry of `init`.
+def tick[A, W](core: Core[A, W], state: State[W]) -> State[W]
+  now = Time.monotonic_ms()
+  return closing_tick(core, state, now) if state.closing
+
+  current = state
+  if current.tick_ms > 0 and now >= current.tick_ms
+    current = health(core, current.with(tick_ms: now + core.spec.health_ms), now)
+  end
+
+  if current.check_at_ms > 0 and now >= current.check_at_ms
+    current = trim(core, current, now)
+  end
+
+  return serve(core, current.with(retry_at_ms: 0)) if current.retry_at_ms > 0 and now >= current.retry_at_ms
+
+  current
+end
+
+# The health tick: each idle worker that is too old (`max_age_ms`) or idle too long (`idle_ms`) is ended, and each
+# other one is pinged in its keeper, which reports back; it is not lent meanwhile.
+def health[A, W](core: Core[A, W], state: State[W], now: Int) -> State[W]
+  current = state
+  for id in state.idle
+    slot = current.slots.get(id).unwrap!
+    if stale?(core.spec, slot, now)
+      current = retire(current, id)
+    else
+      current = ping(current, id, slot)
+    end
+  end
+
+  serve(core, current)
+end
+
+def stale?[A, W](spec: Types.Spec[A, W], slot: Slot[W], now: Int) -> Bool
+  aged?(spec, slot, now) or (spec.idle_ms > 0 and now - slot.idle_since_ms >= spec.idle_ms)
+end
+
+def ping[W](state: State[W], id: Int, slot: Slot[W]) -> State[W]
+  _ = slot.orders.send(Keeper.Order.Ping, 0)
+  pinging = slot.with(phase: Phase.Pinging)
+  state.with(slots: state.slots.put(id, pinging), idle: state.idle.select { |other| other != id })
+end
+
+# Ends the overflow workers idle for `overflow_idle_ms`, the longest idle first, while the pool is over `size`; the
+# overflow worker that serves a steady load is lent again before that and stays. This is the idle path of the
+# workers, with the overflow time instead of the health tick.
+def trim[A, W](core: Core[A, W], state: State[W], now: Int) -> State[W]
+  current = state.with(check_at_ms: 0)
+  for id in state.idle
+    slot = current.slots.get(id).unwrap!
+    if surplus?(core, current) and now - slot.idle_since_ms >= core.spec.overflow_idle_ms
+      current = retire(current, id)
+    elsif surplus?(core, current)
+      current = current.with(check_at_ms: earliest(current.check_at_ms, due_ms(core.spec, slot)))
+    end
+  end
+
+  serve(core, current)
+end
+
+# A close: the callers in line are still served until the end of the drain, and the workers nobody can need are ended
+# at once. When the drain is over the callers left are refused, the bodies that still run in a task of their own are
+# cancelled (their callers get `closed`), and every worker is ended, also the lent ones (a body that runs in its caller
+# finds its worker ended). The pool ends when every keeper has ended, or CLOSE_GRACE_MS later.
+def closing_tick[A, W](core: Core[A, W], state: State[W], now: Int) -> State[W]
+  current = purge(state)
+  if now >= current.deadline_ms
+    tickets(current).each do |ticket| _ = ticket.reply.send(Types.Grant.Refused(Types.Refusal.Closed), 0) end
+    current.slots.values.each do |slot| cancel_runner(slot) end
+    current = current.with(waiters: {}, head: 0, tail: 0)
+  end
+
+  if current.head == current.tail
+    current = end_free(current, now >= current.deadline_ms)
+  end
+
+  return current if not current.slots.empty? or not current.starting.empty?
+
+  return finish(current) if current.keepers.empty?
+
+  return current.with(grace_ms: now + CLOSE_GRACE_MS) if current.grace_ms == 0
+
+  return current if now < current.grace_ms
+
+  current.keepers.values.each do |keeping| Task.cancel(keeping.task) end
+  finish(current)
+end
+
+# Ends the workers that are idle, pinged or starting, and the lent ones too when `all`.
+def end_free[W](state: State[W], all: Bool) -> State[W]
+  state.starting.values.each do |orders| orders.close end
+  state.slots.keys.reduce(state.with(starting: {})) do |acc, id| retire_free(acc, id, all) end
+end
+
+def cancel_runner[W](slot: Slot[W]) -> Void
+  case slot.runner
+    some(runner) -> Task.cancel(runner)
+    none -> return
+  end
+end
+
+def retire_free[W](state: State[W], id: Int, all: Bool) -> State[W]
+  case state.slots.get(id)
+    some(slot) if all or slot.phase != Phase.Lent -> retire(state, id)
+    _ -> state
+  end
+end
+
+def finish[W](state: State[W]) -> State[W]
+  state.dones.each do |done| _ = done.send(true, 0) end
+  state.with(done: true)
+end
+
+# Until the next deadline: an idle worker due, a retry of `init`, the end of the drain or of the grace.
+def wait_ms[W](state: State[W]) -> Int
+  now = Time.monotonic_ms()
+  until = earliest(earliest(state.check_at_ms, state.retry_at_ms), state.tick_ms)
+  if state.closing and now < state.deadline_ms
+    until = earliest(until, state.deadline_ms)
+  end
+
+  if state.closing
+    until = earliest(until, state.grace_ms)
+  end
+
+  return MAX_WAIT_MS if until == 0
+
+  (until - now).clamp(1, MAX_WAIT_MS)
+end

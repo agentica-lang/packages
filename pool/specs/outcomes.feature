@@ -65,7 +65,8 @@ Feature: Outcomes
     Examples:
       | setting      | value   | error                                                   |
       | size         | 0       | pool error: size must be at least 1                     |
-      | checkout_ms  | 0       | pool error: checkout_ms and lease_ms must be at least 1 |
+      | checkout_ms  | 0       | pool error: checkout_ms must be at least 1, and lease_ms 0 or more |
+      | lease_ms     | -1      | pool error: checkout_ms must be at least 1, and lease_ms 0 or more |
       | max_overflow | -1      | pool error: max_overflow, overflow_idle_ms              |
       | max_age_ms   | 100     | pool error: max_age_ms and idle_ms need health_ms       |
       | idle_ms      | 100     | pool error: max_age_ms and idle_ms need health_ms       |
@@ -84,7 +85,7 @@ Feature: Outcomes
     And job "B" fails with a pool timeout
     And the count "made" is 2
 
-  Scenario: A pool whose owner crashes fails the callers that wait and the ones that come after
+  Scenario: An init that crashes counts as a failed init, and the pool makes the resource on a later try
     Given a pool with:
       | setting         | value |
       | size            | 1     |
@@ -93,11 +94,11 @@ Feature: Outcomes
     When job "A" never returns
     And job "B" holds a resource for 10 ms
     And I wait for the jobs
-    Then job "B" gets "error pool error: owner task ended"
+    Then job "B" gets "ok 3"
     And job "A" gets "error pool error: lease timed out"
     When job "C" holds a resource for 10 ms
     And I wait for the jobs
-    Then job "C" gets "error pool error: owner task ended"
+    Then job "C" gets "ok 3"
 
   Scenario: An idle_ms on a pool that is not lazy is refused
     Then starting a pool with these settings fails with "pool error: idle_ms needs a lazy pool":

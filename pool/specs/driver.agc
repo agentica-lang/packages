@@ -2,8 +2,9 @@
 ## requests that `steps.agc` sends (`protocol.agc`), one JSON line in and one reply line out.
 ##
 ## A resource is a `Cell` with a number. The counters of the fake (`made`, `terminated`, `checkin_done`,
-## `checkin_crashed`, `checkin_timed_out`, `pings`, `active`, `peak`) say what the pool did with its resources.
-## `double_lease` counts the bodies that got a cell while another body still used it.
+## `checkin_crashed`, `checkin_timed_out`, `checkouts`, `pings`, `active`, `peak`) say what the pool did with its
+## resources. `double_lease` counts the bodies that got a cell while another body still used it, and `kinds` holds the
+## kind of each job's error.
 
 import Pool from "../pool"
 import Protocol from "protocol"
@@ -20,7 +21,7 @@ LOOP_NAP_MS = 5
 SETTING_NAMES = [
   "size", "max_overflow", "overflow_idle_ms", "checkout_ms", "lease_ms", "max_age_ms", "idle_ms", "max_waiting",
   "lazy", "health_ms", "keep_dirty", "dirty_done", "bad_ping_id", "init_fails_from", "init_crashes_at", "slow_init_at",
-  "slow_init_ms",
+  "slow_init_ms", "bad_checkout_id", "slow_ping_ms",
 ]
 
 # The resource of the pool.
@@ -39,13 +40,16 @@ struct Fake
   init_crashes_at: Int
   slow_init_at: Int
   slow_init_ms: Int
+  bad_checkout_id: Int
+  slow_ping_ms: Int
 end
 
 struct Driver
   stats: ATS[String, Int]
+  kinds: ATS[String, String]
   finished: Channel[String]
   pool: Optional[Pool.Pool[Fake, Cell]]
-  tasks: Map[String, Task[Void]]
+  tasks: Map[String, Task[Result[Void]]]
   results: Map[String, String]
   order: List[String]
 end
@@ -55,7 +59,9 @@ struct JobArgs
   name: String
   kind: String
   ms: Int
+  times: Int
   stats: ATS[String, Int]
+  kinds: ATS[String, String]
   finished: Channel[String]
 end
 
@@ -66,8 +72,9 @@ end
 
 def main() -> Void
   stats: ATS[String, Int] = ATS.new()
+  kinds: ATS[String, String] = ATS.new()
   finished: Channel[String] = Channel.new(5_000)
-  driver = Driver(stats: stats, finished: finished, pool: none, tasks: {}, results: {}, order: [])
+  driver = Driver(stats: stats, kinds: kinds, finished: finished, pool: none, tasks: {}, results: {}, order: [])
   line = IO.gets
   while line.ok?
     handled = handle(driver, line.unwrap_or(""))
@@ -90,13 +97,14 @@ def act(driver: Driver, req: Request) -> Handled
     "start" -> start(driver, req)
     "start_fails" -> start_fails(driver, req)
     "job" -> start_job(driver, req)
-    "flood" -> flood(driver, req.number, req.wait)
+    "flood" -> flood(driver, req)
     "cancel_job" -> cancel_job(driver, req.name)
     "wait_jobs" -> wait_jobs(driver)
     "sleep" -> slept(driver, req.number)
     "close" -> close(driver, req.number)
     "expect_job" -> expect_job(collect(driver), req)
-    "expect_timeout" -> expect_timeout(collect(driver), req.name)
+    "expect_timeout" -> expect_timeout(collect(driver), req)
+    "expect_kind" -> expect_kind(collect(driver), req)
     "expect_order" -> expect_order(collect(driver), req.text)
     "expect_count" -> expect_count(driver, req)
     _ -> Handled(driver: driver, reply: "unknown op #{req.op.inspect}")
@@ -123,9 +131,19 @@ def spec_of(driver: Driver, table: List[List[String]]) -> Result[Pool.Spec[Fake,
     init_crashes_at: try settings.get("init_crashes_at", "0").to_i,
     slow_init_at: try settings.get("slow_init_at", "0").to_i,
     slow_init_ms: try settings.get("slow_init_ms", "0").to_i,
+    bad_checkout_id: try settings.get("bad_checkout_id", "0").to_i,
+    slow_ping_ms: try settings.get("slow_ping_ms", "0").to_i,
   )
 
-  base = Pool.Spec(config: fake, init: &make, checkin: &check_in, terminate: &end_it, ping: &ping)
+  base = Pool.Spec(
+    config: fake,
+    init: &make,
+    checkin: &check_in,
+    terminate: &end_it,
+    ping: &ping,
+    checkout: some(&check_out),
+  )
+
   ok(
     base.with(
       size: try settings.get("size", base.size.to_s).to_i,
@@ -182,32 +200,36 @@ def start_job(driver: Driver, req: Request) -> Handled
         name: req.name,
         kind: req.kind,
         ms: req.number,
+        times: 1,
         stats: driver.stats,
+        kinds: driver.kinds,
         finished: driver.finished,
       )
 
-      run_fn: Fn[JobArgs, Void] = &run_job
+      run_fn: Fn[JobArgs, Result[Void]] = &run_job
       task = Task.spawn(run_fn, args)
       Task.sleep(JOB_GAP_MS)
       reply(driver.with(tasks: driver.tasks.put(req.name, task)), Protocol.OK)
   end
 end
 
-# Starts `count` callers at once that take a resource, hold it for `hold_ms` and give it back; they have no name, and
-# `flood_failed` counts the ones that got an error.
-def flood(driver: Driver, count: Int, hold_ms: Int) -> Handled
+# Starts `number` callers at once that take a resource (`times` times each, at least once), hold it for `wait` ms and
+# give it back; they have no name, and `flood_failed` counts the checkouts that got an error.
+def flood(driver: Driver, req: Request) -> Handled
   case driver.pool
     none -> reply(driver, "no pool is started")
     some(pool) ->
-      run_fn: Fn[JobArgs, Void] = &run_job
+      run_fn: Fn[JobArgs, Result[Void]] = &run_job
       tasks = driver.tasks
-      for i in 1..count
+      for i in 1..req.number
         args = JobArgs(
           pool: pool,
           name: "",
           kind: "holds",
-          ms: hold_ms,
+          ms: req.wait,
+          times: [req.times, 1].max.unwrap!,
           stats: driver.stats,
+          kinds: driver.kinds,
           finished: driver.finished,
         )
 
@@ -225,20 +247,30 @@ def cancel_job(driver: Driver, name: String) -> Handled
     some(task) ->
       Task.cancel(task)
       Task.sleep(JOB_GAP_MS)
-      # Awaiting a cancelled task halts, so `wait_jobs` must not see it.
+      # A cancelled job has no result to wait for.
       reply(driver.with(tasks: driver.tasks.delete(name)), Protocol.OK)
   end
 end
 
+# A job whose body crashed in its own task (`lease_ms` 0) ends with that crash, which is its result.
 def wait_jobs(driver: Driver) -> Handled
-  for task in driver.tasks.values
-    case Task.await(task, WAIT_JOBS_MS)
-      Await.Done(_) -> next
+  for name in driver.tasks.keys
+    case Task.await(driver.tasks.get(name).unwrap!, WAIT_JOBS_MS)
+      Await.Done(ended) -> note_crash(driver, name, ended)
       Await.TimedOut -> return reply(driver, "a job did not end within #{WAIT_JOBS_MS} ms")
     end
   end
 
-  reply(driver, Protocol.OK)
+  reply(driver.with(tasks: {}), Protocol.OK)
+end
+
+def note_crash(driver: Driver, name: String, ended: Result[Void]) -> Void
+  case ended
+    ok(_) -> return
+    error(e) ->
+      driver.kinds.put(name, e.kind)
+      _ = driver.finished.send("#{name} error #{e.message}", 1_000)
+  end
 end
 
 def slept(driver: Driver, ms: Int) -> Handled
@@ -280,14 +312,24 @@ def expect_job(driver: Driver, req: Request) -> Handled
   end
 end
 
-def expect_timeout(driver: Driver, name: String) -> Handled
-  case driver.results.get(name)
-    none -> reply(driver, "job #{name.inspect} has not ended")
+# `kind` `or_ok` lets the job succeed too.
+def expect_timeout(driver: Driver, req: Request) -> Handled
+  case driver.results.get(req.name)
+    none -> reply(driver, "job #{req.name.inspect} has not ended")
     some(result) ->
       message = result.split(" ").drop(1).join(" ")
       return reply(driver, Protocol.OK) if result.start_with?("error ") and Pool.timeout?(message)
 
+      return reply(driver, Protocol.OK) if req.kind == "or_ok" and result.start_with?("ok ")
+
       reply(driver, "not a pool timeout: #{result}")
+  end
+end
+
+def expect_kind(driver: Driver, req: Request) -> Handled
+  case driver.kinds.get(req.name)
+    error(_) -> reply(driver, "job #{req.name.inspect} has no error")
+    ok(kind) -> reply(driver, expected_prefix(kind, req.text))
   end
 end
 
@@ -344,38 +386,57 @@ def check_in(cell: Cell, outcome: Pool.Outcome) -> Result[Void]
   error("cell #{cell.id} is dirty")
 end
 
+def check_out(cell: Cell) -> Result[Void]
+  cell.fake.stats.add("checkouts", 1)
+  return error("cell #{cell.id} is refused") if cell.id == cell.fake.bad_checkout_id
+
+  ok()
+end
+
 def end_it(cell: Cell) -> Void
   cell.fake.stats.add("terminated", 1)
 end
 
 def ping(cell: Cell) -> Result[Void]
   cell.fake.stats.add("pings", 1)
+  if cell.fake.slow_ping_ms > 0
+    Task.sleep(cell.fake.slow_ping_ms)
+  end
+
   return error("cell #{cell.id} does not answer") if cell.id == cell.fake.bad_ping_id
 
   ok()
 end
 
-def run_job(args: JobArgs) -> Void
+def run_job(args: JobArgs) -> Result[Void]
   return loop_job(args) if args.kind == "loops"
 
-  result = Pool.with(args.pool) do |cell| use(args, cell) end
-  if args.name.empty?
-    if not result.ok?
-      args.stats.add("flood_failed", 1)
+  for _i in 1..args.times
+    result = Pool.with(args.pool) do |cell| use(args, cell) end
+    if args.name.empty?
+      if not result.ok?
+        args.stats.add("flood_failed", 1)
+      end
+    else
+      report(args, result)
     end
-
-    return
   end
 
+  ok()
+end
+
+def report(args: JobArgs, result: Result[Int]) -> Void
   case result
     ok(id) -> _ = args.finished.send("#{args.name} ok #{id}", 1_000)
-    error(message) -> _ = args.finished.send("#{args.name} error #{message}", 1_000)
+    error(e) ->
+      args.kinds.put(args.name, e.kind)
+      _ = args.finished.send("#{args.name} error #{e.message}", 1_000)
   end
 end
 
 # A caller that takes a resource again and again for `ms` milliseconds, as a busy server does. `loop_failed` counts
 # the errors.
-def loop_job(args: JobArgs) -> Void
+def loop_job(args: JobArgs) -> Result[Void]
   deadline = Time.monotonic_ms() + args.ms
   while Time.monotonic_ms() < deadline
     result = Pool.with(args.pool) do |cell| nap(cell) end
@@ -385,6 +446,7 @@ def loop_job(args: JobArgs) -> Void
   end
 
   _ = args.finished.send("#{args.name} ok 0", 1_000)
+  ok()
 end
 
 def nap(cell: Cell) -> Result[Int]
@@ -420,10 +482,25 @@ def use(args: JobArgs, cell: Cell) -> Result[Int]
       args.stats.add("active", -1)
       args.stats.add("cell #{cell.id}", -1)
       return error("the body failed")
+    "nests" ->
+      args.stats.add("active", -1)
+      args.stats.add("cell #{cell.id}", -1)
+      return nested(args)
     _ -> Task.sleep(args.ms)
   end
 
   args.stats.add("#{prefix}active", -1)
   args.stats.add("cell #{cell.id}", -1)
   ok(cell.id)
+end
+
+# A checkout inside the body, on the same pool: with every resource taken it waits its own `checkout_ms` and times out,
+# which the body reports as -1.
+def nested(args: JobArgs) -> Result[Int]
+  inner = Pool.with(args.pool) do |cell| ok(cell.id) end
+  case inner
+    ok(id) -> ok(id)
+    error(e) if e.is_a?("pool.timeout") -> ok(-1)
+    error(e) -> error(e)
+  end
 end
