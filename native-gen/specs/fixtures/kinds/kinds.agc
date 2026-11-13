@@ -1,6 +1,8 @@
 ## Every kind of argument that native-gen decodes, the names it changes and a resource. Each function answers with what
 ## it got, so the run shows that each wrapper passed its arguments on.
 
+private
+
 struct Point
   x: Int
   y: Int

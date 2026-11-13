@@ -1,6 +1,8 @@
 ## agentica's examples/native_module, on the header of native-gen: one call gives a struct, another reads a CSV text
 ## into rows of typed cells.
 
+private
+
 struct Summary
   count: Int
   min: Float
@@ -26,7 +28,7 @@ def main() -> Void
   puts(summary([]))
   case rows("name,qty,note\nkiwi,3,\napple,1.5,ripe\n")
     ok(table) -> table.each do |row| puts(row) end
-    error(message) -> puts(message)
+    error(e) -> puts(e.message)
   end
 
   puts(rows("a,b\n1\n"))

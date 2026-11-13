@@ -1,6 +1,8 @@
 ## Lists and Maps through the cursors and builders of the header: each function reads its arguments item by item and
 ## builds what it gives.
 
+private
+
 struct Point
   x: Int
   y: Int

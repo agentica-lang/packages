@@ -1,3 +1,5 @@
+private
+
 # A struct named as a type of the Rust prelude, which the Rust file uses.
 struct Vec
   x: Int

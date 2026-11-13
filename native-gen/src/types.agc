@@ -1,7 +1,7 @@
 ## The canonical types of std/analysis as trees (pure): `List[Map[String, Cell]]` is a list of maps of String to Cell.
 
 ## A canonical type: a name (`Int`, `Point`, a resource), or a List, Map, Optional or Result of types.
-export enum Type
+enum Type
   Named(String)
   ListOf(Type)
   MapOf(Type, Type)
@@ -10,7 +10,7 @@ export enum Type
 end
 
 ## The tree of the canonical type `text`.
-export def parse(text: String) -> Type
+def parse(text: String) -> Type
   return Type.ListOf(parse(inner(text, "List["))) if text.start_with?("List[")
 
   return Type.OptionalOf(parse(inner(text, "Optional["))) if text.start_with?("Optional[")
@@ -26,7 +26,7 @@ export def parse(text: String) -> Type
 end
 
 ## The canonical text of `type`, as std/analysis writes it.
-export def text(type: Type) -> String
+def text(type: Type) -> String
   case type
     Type.Named(name) -> name
     Type.ListOf(item) -> "List[#{text(item)}]"
@@ -37,7 +37,7 @@ export def text(type: Type) -> String
 end
 
 ## `type` as a part of a C name: `list_Float`, `map_String_list_Int`, `optional_Point`.
-export def mangled(type: Type) -> String
+def mangled(type: Type) -> String
   case type
     Type.Named(name) -> name
     Type.ListOf(item) -> "list_#{mangled(item)}"
@@ -48,7 +48,7 @@ export def mangled(type: Type) -> String
 end
 
 ## The types inside `type`, `type` included, each after the ones it holds.
-export def inside_out(type: Type) -> List[Type]
+def inside_out(type: Type) -> List[Type]
   case type
     Type.Named(_) -> [type]
     Type.ListOf(item) -> inside_out(item).push(type)
@@ -57,6 +57,8 @@ export def inside_out(type: Type) -> List[Type]
     Type.ResultOf(item) -> inside_out(item).push(type)
   end
 end
+
+private
 
 # The text between `start` and the last `]` of `text`.
 def inner(text: String, start: String) -> String = text.slice(start.length, text.length - start.length - 1)
