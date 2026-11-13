@@ -22,6 +22,7 @@ private
 MAX_SUBSCRIPTIONS = 64
 # A client that does not read for this long is cut off.
 WRITE_MS = 5_000
+REJECT_MS = 1_000
 PUMP_MS = 60_000
 # How often an idle loop looks at the hub: a hub that ended or crashed sends nothing more, so this is how its
 # connections find out.
@@ -305,9 +306,9 @@ def decide(line: Line, handler: Types.Handler, join: Protocol.Join, decision: Ty
   # The hub writes the confirmation, so it reaches the socket before any broadcast.
   return ok() if Hub.attach(line.mount.hub, line.connection, join.identifier, decision.streams, confirm).ok?
 
-  # The hub may have dropped the connection for a full queue, so the reject does not wait.
+  # A short wait: the hub may have dropped the connection for a full queue.
   try forget(line, handler, join.identifier, join.params)
-  _ = line.socket.outgoing.send(HTTP.Message.Text(Protocol.reject_subscription(join.identifier)), 0)
+  _ = line.socket.outgoing.send(HTTP.Message.Text(Protocol.reject_subscription(join.identifier)), REJECT_MS)
   ok()
 end
 
