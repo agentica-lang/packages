@@ -30,10 +30,8 @@ def inbox_of() -> Channel[Hubs.Event] = Channel.new(4)
 
 def line_of(capacity: Int) -> Channel[HTTP.Message] = Channel.new(capacity)
 
-# The message that the hub writes to a WebSocket for a text: framed once, as `Prepared`.
 def framed(text: String) -> HTTP.Message = HTTP.prepare(HTTP.Message.Text(text))
 
-# What the hub confirms an attach with: the text says which subscription, so a test sees whose it is.
 def confirm(identifier: String) -> String = "confirmed #{identifier}"
 
 def join(hub: Hubs.Hub, connection: Int, identity: String, outgoing: Channel[HTTP.Message]) -> Result[Void]
@@ -88,7 +86,6 @@ def main() -> Void
       try Hubs.stop(hub)
       Task.await(hub.task)
     end,
-    # The hub writes the confirmation itself, as it attaches, so a broadcast cannot come before it.
     Test.test("a broadcast gives each subscription of the topic its own identifier, behind its confirmation") do
       hub = try Hubs.start(HubOptions())
       ana = line_of(8)
@@ -141,7 +138,6 @@ def main() -> Void
         [framed(confirm("one")), framed(Protocol.message("one", "1")), framed(Protocol.message("one", "2"))],
       )
     end,
-    # The queue of the WebSocket holds the confirmation, so the first broadcast does not fit.
     Test.test("a full queue is one drop, a closed one none, and the others still hear the broadcast") do
       hub = try Hubs.start(HubOptions())
       slow = line_of(1)

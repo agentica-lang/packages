@@ -25,8 +25,7 @@ end
 
 def identifier(index: Int) -> String = "{\"channel\":\"RoomChannel\",\"room\":\"#{index}\"}"
 
-# The frames wait in the outgoing channels of the connections, so each holds every message of every identifier (and
-# the confirmation of each).
+# Each outgoing channel holds every message of every identifier, and the confirmations.
 def join(hub: Hubs.Hub, connection: Int, identifiers: Int, capacity: Int) -> Result[Channel[HTTP.Message]]
   inbox: Channel[Hubs.Event] = Channel.new(4)
   outgoing: Channel[HTTP.Message] = Channel.new(capacity)
@@ -35,7 +34,6 @@ def join(hub: Hubs.Hub, connection: Int, identifiers: Int, capacity: Int) -> Res
     try Hubs.attach(hub, connection, identifier(index), [TOPIC], Protocol.confirm_subscription(identifier(index)))
   end
 
-  # Not part of the measure: the confirmations are read here.
   for _ in 1..identifiers
     try outgoing.recv(60_000)
   end

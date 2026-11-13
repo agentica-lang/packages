@@ -10,9 +10,9 @@ import {HubOptions, Stats} from "types"
 CONNECTIONS = "connections"
 SUBSCRIPTIONS = "subscriptions"
 
-## What a connection task receives: a frame to write (the Action Cable ping; broadcasts go to the WebSocket itself), a
-## message of the client (from the pump), a WebSocket ping to write, and `Away` (`reconnect`): the connection ends on
-## purpose, with the `disconnect` frame that says whether the client may come back.
+## What a connection task receives: a frame to write, a message of the client (from the pump), a WebSocket ping to
+## write, and `Away` (`reconnect`): the connection ends on purpose, with the `disconnect` frame that says whether the
+## client may come back.
 enum Event
   Frame(String)
   Client(HTTP.Message)
@@ -76,9 +76,8 @@ def broadcast(hub: Hub, topic: String, payload: String) -> Result[Void]
   sent
 end
 
-## A connection of the person `identity` (`Identity.id`) joins: it gets the pings sent to `inbox`, the broadcasts on
-## `outgoing` (the channel of its WebSocket, to which the hub sends the framed message itself), and a WebSocket ping
-## every `every` beats.
+## A connection of the person `identity` (`Identity.id`) joins: it gets the pings on `inbox`, the broadcasts on
+## `outgoing` (its WebSocket queue), and a WebSocket ping every `every` beats.
 def register(
   hub: Hub,
   connection: Int,
@@ -98,11 +97,8 @@ def register(
   send(hub, HubMessage.Register(registration))
 end
 
-## The broadcasts of `topics` reach the subscription `identifier` of the connection, and the hub writes `confirm` (the
-## text of the confirmation frame) to the WebSocket of the connection as it attaches it, so that no broadcast can come
-## before it: the hub is one task and writes, in order, to the same channel. It waits for the hub to do so; an `error`
-## is a hub that did not attach it (full for `broadcast_wait_ms`, gone, not answering, or no such connection), and then
-## nothing was written.
+## The broadcasts of `topics` reach the subscription `identifier` of the connection. Waits until the hub has written
+## `confirm` to the WebSocket; an `error` means nothing was written.
 def attach(hub: Hub, connection: Int, identifier: String, topics: List[String], confirm: String) -> Result[Void]
   done: Channel[Bool] = Channel.new(1)
   attach = Attach(
@@ -172,7 +168,6 @@ BEAT_PENDING = "beat_pending"
 # connection whose inbox was too full to take the `Away` event.
 AWAY_PREFIX = "away:"
 HUB_INBOX = 4_096
-# How long an `attach` waits for the hub to handle it, after it was queued, and the slice it waits in.
 ATTACH_WAIT_MS = 5_000
 ATTACH_SLICE_MS = 100
 
@@ -191,9 +186,7 @@ struct Removal
   reconnect: Bool
 end
 
-# The topics whose broadcasts a subscription of a connection receives. The hub writes `confirm` to the connection and
-# then answers on `done` (false: it has no such connection), so that the connection knows the confirmation went out
-# before any broadcast of the subscription.
+# The topics whose broadcasts a subscription of a connection receives.
 struct Attach
   connection: Int
   identifier: String
@@ -225,10 +218,8 @@ enum HubMessage
 end
 
 # The subscribers of one identifier on a topic. The frame of a broadcast differs from one route to the next only in
-# the identifier, so it is made once per route and shared by every member. `members` finds a member by its connection
-# (to remove it); `fan` is the same members as a list, which a broadcast walks without building a list of the map. It
-# is made by `settled` when a broadcast finds `ready` false, so a change of members costs no more than the map update
-# (a hundred connections that end together do not rebuild it a hundred times).
+# the identifier, so it is made once per route and shared by every member. `fan` caches `members.values`; `settled`
+# rebuilds it on the next broadcast after a change (`ready` false).
 struct Route
   identifier: String
   members: Map[Int, Member]
@@ -236,15 +227,12 @@ struct Route
   ready: Bool
 end
 
-# What a broadcast needs of a subscriber: the connection number is in the value, `inbox` is where to say it is too
-# slow, and `outgoing` is the channel of its WebSocket, which the broadcast is written to.
 struct Member
   connection: Int
   inbox: Channel[Event]
   outgoing: Channel[HTTP.Message]
 end
 
-# The routes of one topic, by identifier, and their list in the same way as a route has its members (`ready`).
 struct Topic
   routes: Map[String, Route]
   fan: List[Route]
@@ -282,7 +270,6 @@ end
 # a message that is lost (an unsubscribe, a disconnect) leaves the hub routing to a connection that is gone.
 def send(hub: Hub, message: HubMessage) -> Result[Void] = hub.inbox.send(message, hub.options.broadcast_wait_ms)
 
-# Waits for the hub to answer an `attach`. A slice at a time, so that a hub that ended is noticed at once.
 def answered(hub: Hub, done: Channel[Bool]) -> Result[Void]
   waited = 0
   while waited < ATTACH_WAIT_MS
@@ -375,8 +362,7 @@ def admit(state: State, registration: Registration) -> State
   state.with(entries: state.entries.put(registration.connection, entry))
 end
 
-# The confirmation is written here, after the member is in and before the hub handles another message: a broadcast that
-# comes later is written behind it to the same channel, and the connection learns that on `done`.
+# The hub writes the confirmation itself, so no broadcast can reach the socket before it.
 def subscribe(state: State, attach: Attach, counters: ATS[String, Int]) -> State
   case state.entries.get(attach.connection)
     none ->
@@ -509,9 +495,7 @@ def leaves?(counters: ATS[String, Int], inbox: Channel[Event], event: Event) -> 
   true
 end
 
-# A broadcast or a confirmation that the WebSocket of the member did not take: its outgoing queue is full (a client too
-# slow for the traffic, which is cut off: its inbox is closed, so its task says goodbye after what is queued), or
-# closed (the connection is over, which is no drop).
+# A full WebSocket queue cuts the client off; a closed one is a connection already over (no drop).
 def lose(counters: ATS[String, Int], member: Member) -> Void
   if not member.outgoing.closed?
     cut_off(counters, member.inbox)
@@ -526,8 +510,6 @@ def cut_off(counters: ATS[String, Int], inbox: Channel[Event]) -> Void
   end
 end
 
-# The frame is built and framed for the WebSocket (`HTTP.prepare`) once per identifier, and the same `Prepared` message
-# goes to the outgoing channel of every member, so the server of each socket writes its bytes as they are.
 def fan_out(state: State, cast: Cast, counters: ATS[String, Int]) -> State
   case state.topics.get(cast.topic)
     none -> state
@@ -542,13 +524,11 @@ def fan_out(state: State, cast: Cast, counters: ATS[String, Int]) -> State
   end
 end
 
-# The connections that did not take the message.
 def deliver(topic: Topic, cast: Cast, counters: ATS[String, Int]) -> List[Int]
   gone: List[Int] = []
   for route in topic.fan
     framed = HTTP.prepare(HTTP.Message.Text(Protocol.message(route.identifier, cast.payload)))
     for member in route.fan
-      # The send is here, not in a function: this is the loop that runs once per subscriber per broadcast.
       if not member.outgoing.send(framed, 0).ok?
         lose(counters, member)
         gone = gone.push(member.connection)
@@ -559,7 +539,6 @@ def deliver(topic: Topic, cast: Cast, counters: ATS[String, Int]) -> List[Int]
   gone
 end
 
-# The topic with the lists of its routes and their members made, if a change had left them out.
 def settled(topic: Topic) -> Topic
   return topic if topic.ready
 

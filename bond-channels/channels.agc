@@ -114,7 +114,6 @@ end
 
 private
 
-# The most that `HTTP.WebSocketOptions.outgoing_queue` takes.
 MAX_OUTGOING_QUEUE = 1_048_576
 
 def min_of(a: Int, b: Int) -> Int

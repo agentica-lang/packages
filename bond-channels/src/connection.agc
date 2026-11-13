@@ -20,8 +20,7 @@ def handler_of(mount: Mount) -> Bond.WebSocketHandler = wrapping do |conn, socke
 private
 
 MAX_SUBSCRIPTIONS = 64
-# A client that does not read for this long is cut off by a write of this task; the hub cuts off one whose outgoing
-# queue (`MountOptions.inbox` messages, set in `mount`) is full.
+# A client that does not read for this long is cut off.
 WRITE_MS = 5_000
 PUMP_MS = 60_000
 # How often an idle loop looks at the hub: a hub that ended or crashed sends nothing more, so this is how its
@@ -300,9 +299,7 @@ def decide(line: Line, handler: Types.Handler, join: Protocol.Join, decision: Ty
   confirm = Protocol.confirm_subscription(join.identifier)
   return write(line, HTTP.Message.Text(confirm)) if decision.streams.empty?
 
-  # The hub writes the confirmation itself, as it attaches the subscription: it writes the broadcasts to the socket
-  # too, so it is the one place that can put the confirmation before them. A hub that does not take the message rejects
-  # the subscription: it could never hear a broadcast.
+  # The hub writes the confirmation, so it reaches the socket before any broadcast.
   attached = Hub.attach(line.mount.hub, line.connection, join.identifier, decision.streams, confirm)
   return refuse(line, handler, join) if not attached.ok?
 
