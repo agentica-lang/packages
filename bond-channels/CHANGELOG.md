@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-14
+
+Needs Agentica 0.31.0 and Bond 0.12.0.
+
 ### Changed
 
 - Broadcasts are framed once and written by the hub straight to each WebSocket, which costs less CPU per frame.
