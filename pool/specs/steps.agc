@@ -12,6 +12,9 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
+    BDD.step("the driver runs on {int} scheduler") do |ctx, args|
+      BDD.given_env(ctx, "AGENTICA_SCHEDULERS", args[0])
+    end,
     BDD.step("a pool with:") do |ctx, _args| send(ctx, Request(op: "start", table: BDD.table(ctx))) end,
     BDD.step("a pool started in a task of its own, with:") do |ctx, _args|
       send(ctx, Request(op: "start_owned", table: BDD.table(ctx)))
@@ -47,6 +50,12 @@ def main() -> Void
     job_step("job {string} checks out again inside its body", "nests"),
     BDD.step("the caller of job {string} is cancelled") do |ctx, args|
       send(ctx, Request(op: "cancel_job", name: args[0]))
+    end,
+    BDD.step("{int} callers are cancelled one after the other as their bodies crash {int} ms in") do |ctx, args|
+      send(ctx, Request(op: "race_crash", number: args[0].to_i!, wait: args[1].to_i!))
+    end,
+    BDD.step("the driver ends with code {int}") do |ctx, args|
+      BDD.then_exit(BDD.when_eof(ctx), args[0].to_i!, REPLY_MS)
     end,
     BDD.step("I wait for the jobs") do |ctx, _args| send(ctx, Request(op: "wait_jobs")) end,
     BDD.step("I wait {int} ms") do |ctx, args| send(ctx, Request(op: "sleep", number: args[0].to_i!)) end,

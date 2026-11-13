@@ -4,6 +4,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A body that crashes at the moment its caller is cancelled no longer goes unobserved: the caller watches the task of the body itself, so a crash whose notice came in counts as observed (it was a flaky `RUNTIME-TASK-CRASHED`, or "N task crashes were not observed", at exit).
+
+### Documented
+
+- `checkin` with `TimedOut` may come for a body that never ran: with `lease_ms` above 0 the task of the body is sent to the pool before the body starts, and a cancel in between ends it before its first step. The pool prefers one `checkin` too many to a resource that keeps what the body took, so a `checkin` that counts uses (a model, a counter) must not assume that the body ran.
+
 ## [0.1.1] - 2026-11-13
 
 Needs Agentica 0.31.0.
@@ -16,7 +24,7 @@ Needs Agentica 0.31.0.
 
 ### Documented
 
-- `checkin` runs at most once for each body that ran (the 0.1.0 entry said once): a caller cancelled with `lease_ms` 0 after it told the pool it is checking in, and before its `checkin` starts, has its resource ended with no `checkin`.
+- `checkin` runs at most once for each body that ran (the 0.1.0 entry said once; since the next release it may also run for a body that was cancelled before its first step): a caller cancelled with `lease_ms` 0 after it told the pool it is checking in, and before its `checkin` starts, has its resource ended with no `checkin`.
 - A `terminate` that never returns holds its place and the pool does not replace the resource, so each one makes the pool one resource smaller; `terminate` runs in the keeper, which owns the handles, so it cannot be bounded with a task.
 
 ## [0.1.0] - 2026-11-13

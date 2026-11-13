@@ -12,7 +12,7 @@ OK = "ok"
 ## `holds`, `probe`, `loops`, `crashes`, `fails`, `hangs` or `nests` (a checkout inside the body), number: the
 ## milliseconds a `holds` job keeps its resource, or a `loops` job runs, times: how many times a `holds` job takes one
 ## in turn), `flood` (number: the callers, wait: the milliseconds each one holds its resource, times: how many times
-## each takes one), `cancel_job` (name), `wait_jobs`, `sleep` (number), `close` (number: the drain in milliseconds), and
+## each takes one), `cancel_job` (name), `race_crash` (number: the callers, one after the other, wait: the milliseconds before the body of each crashes, which is when its caller is cancelled), `wait_jobs`, `sleep` (number), `close` (number: the drain in milliseconds), and
 ## the expectations `expect_job` (name, text: the start of its result), `expect_timeout` (name; kind `or_ok` lets it
 ## succeed too), `expect_kind` (name, text: the start of the kind of its error), `expect_order` (text: the names in the
 ## order they finished, joined by commas), `expect_count` (name: the counter, number: its value, kind: `is` or
