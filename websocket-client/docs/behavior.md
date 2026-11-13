@@ -60,7 +60,7 @@ For `wss`, the system trust is used. To trust another certificate, build a conte
 import WebSocket from "pkg/websocket-client/websocket"
 
 def connect_with_ca() -> Result[WebSocket.Client]
-  context = try TLS.client_context(TlsClientOptions(ca_file: "ca.pem"))
+  context = try TLS.client_context(TLS.ClientOptions(ca_file: "ca.pem"))
   WebSocket.connect("wss://localhost:8443/", WebSocket.Options(tls: some(context)))
 end
 ```

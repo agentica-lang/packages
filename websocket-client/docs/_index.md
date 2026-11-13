@@ -9,17 +9,17 @@ Use it to talk to any WebSocket server, or to test the one of your own app from 
 
 ## Install
 
-Needs Agentica 0.31.0-alpha.1 or later. Add it in a project with an `agentica.toml`:
+Needs Agentica 0.31.0 or later. Add it in a project with an `agentica.toml`:
 
 ```sh
-agentica add websocket-client https://github.com/agentica-lang/packages --tag websocket-client-0.3.0-alpha.1 --subdir websocket-client
+agentica add websocket-client https://github.com/agentica-lang/packages --tag websocket-client-0.3.0 --subdir websocket-client
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-websocket-client = { git = "https://github.com/agentica-lang/packages", tag = "websocket-client-0.3.0-alpha.1", subdir = "websocket-client" }
+websocket-client = { git = "https://github.com/agentica-lang/packages", tag = "websocket-client-0.3.0", subdir = "websocket-client" }
 ```
 
 The releases and their notes are in the [changelog](https://github.com/agentica-lang/packages/blob/main/websocket-client/CHANGELOG.md).
@@ -91,7 +91,7 @@ WebSocket.Handshake: Open(WebSocket.Client), Refused(status: Int, headers: List[
 WebSocket.Client(socket, protocol: String, options, status: Int, headers: List[HTTP.Header])
 WebSocket.Options(headers: List[HTTP.Header] = [], protocols: List[String] = [], max_message_bytes: Int = 1048576,
                   timeout_ms: Int = 30000, read_timeout_ms: Int = 30000, close_timeout_ms: Int = 5000,
-                  tls: Optional[TlsContext] = none)
+                  tls: Optional[TLS.Context] = none)
 ```
 
 [How it behaves](behavior.md) has what `receive` does with each frame, the limits, the errors, headers, subprotocols, `wss` and the use from several tasks.
