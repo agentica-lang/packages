@@ -71,6 +71,9 @@ def main() -> Void
     BDD.step("the jobs ended in this order: {string}") do |ctx, args|
       send(ctx, Request(op: "expect_order", text: args[0]))
     end,
+    BDD.step("the checkout and the body ran in one task") do |ctx, _args|
+      send(ctx, Request(op: "expect_one_task"))
+    end,
     BDD.step("the count {string} is {int}") do |ctx, args|
       send(ctx, Request(op: "expect_count", name: args[0], number: args[1].to_i!, kind: "is"))
     end,

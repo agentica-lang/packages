@@ -1,5 +1,6 @@
 ## Checkouts per second of a pool of 4 trivial resources: 20,000 in a row from one task, then 1,000 tasks doing 20
-## each, with the body in a task of its own (`lease_ms` 30000, the default) and in the caller (`lease_ms` 0). Run it
+## each, with the body in a task of its own (`lease_ms` 30000, the default) and in the caller (`lease_ms` 0), without
+## and with a `checkout` callback (the cost of the check before each body). Run it
 ## from the package folder: `agentica bench/checkout.agc`, with a run count as the argument to repeat it (default 1).
 
 import Pool from "../pool"
@@ -12,6 +13,7 @@ PER_TASK = 20
 SIZE = 4
 TASK_MS = 120_000
 LEASES = [30_000, 0]
+HOOKS = [false, true]
 
 struct Load
   pool: Pool.Pool[ATS[String, Int], Int]
@@ -27,19 +29,27 @@ def main() -> Void
 
   for run in 1..runs
     for lease_ms in LEASES
-      measure(run, lease_ms)
+      for hook in HOOKS
+        measure(run, lease_ms, hook)
+      end
     end
   end
 end
 
-def measure(run: Int, lease_ms: Int) -> Void
+def measure(run: Int, lease_ms: Int, hook: Bool) -> Void
   ids: ATS[String, Int] = ATS.new()
+  check: Optional[Fn[Int, Result[Void]]] = none
+  if hook
+    check = some(&alive)
+  end
+
   spec = Pool.Spec(
     config: ids,
     init: &make,
     checkin: &back,
     terminate: &stop,
     ping: &alive,
+    checkout: check,
     size: SIZE,
     lease_ms: lease_ms,
     checkout_ms: TASK_MS,
@@ -58,7 +68,10 @@ def measure(run: Int, lease_ms: Int) -> Void
   _ = Task.map((1..TASKS).to_a, TASKS, TASK_MS) do |_t| work(load) end
   concurrent = per_second(TASKS * PER_TASK, Time.monotonic_ms() - t1)
   lost = failed.get("failed").unwrap_or(0)
-  puts("run #{run} lease_ms #{lease_ms}: sequential #{sequential}/s, #{TASKS} tasks #{concurrent}/s, failed #{lost}")
+  puts(
+    "run #{run} lease_ms #{lease_ms} checkout #{hook}: sequential #{sequential}/s, #{TASKS} tasks #{concurrent}/s, failed #{lost}",
+  )
+
   Pool.close(pool, 1_000)
 end
 

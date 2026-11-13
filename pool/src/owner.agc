@@ -51,7 +51,10 @@ def own[A, W](spec: Types.Spec[A, W], counts: ATS[String, Int], chans: Chans[W])
     end
   end
 
-  _ = publish(core, state)
+  # The callers of `close` hear that it is over only after the last count is written, so `waiting` and `live` are 0
+  # when `close` returns.
+  closed = publish(core, state)
+  closed.dones.each do |done| _ = done.send(true, 0) end
 end
 
 private
@@ -417,7 +420,10 @@ def run[W](state: State[W], running: Types.Running) -> State[W]
   case state.slots.get(running.id)
     some(slot) if slot.phase == Phase.Lent and slot.seq == running.seq ->
       state.with(slots: state.slots.put(running.id, slot.with(runner: some(running.runner))))
-    _ -> state
+    # The lease is over (the drain of a close ended while `checkout` ran, or the caller ended): the body must not run.
+    _ ->
+      Task.cancel(running.runner)
+      state
   end
 end
 
@@ -714,10 +720,7 @@ def retire_free[W](state: State[W], id: Int, all: Bool) -> State[W]
   end
 end
 
-def finish[W](state: State[W]) -> State[W]
-  state.dones.each do |done| _ = done.send(true, 0) end
-  state.with(done: true)
-end
+def finish[W](state: State[W]) -> State[W] = state.with(done: true)
 
 # Writes the counts that changed, for the readers of `Pool.counts`. The line holds the tickets of callers that gave up
 # until they are dropped, so `waiting` may count them for a while.

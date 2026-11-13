@@ -83,6 +83,42 @@ Feature: Callers
     And the count "made" is 2
     And the count "terminated" reaches 1 within 2000 ms
 
+  # `checkout` runs in the task of the body (the caller's with lease_ms 0), so a check costs no task of its own.
+  Scenario Outline: The checkout runs in the task of the body (lease_ms <lease>)
+    Given a pool with:
+      | setting  | value   |
+      | size     | 1       |
+      | lease_ms | <lease> |
+    When job "A" holds a resource for 10 ms
+    And I wait for the jobs
+    Then job "A" succeeds
+    And the checkout and the body ran in one task
+
+    Examples:
+      | lease |
+      | 30000 |
+      | 0     |
+
+  # A checkout that crashes or hangs (for HOOK_MS, 5 s) does not reach the caller, and the resource is not lost: it is
+  # ended, and the caller gets the next one. The wait for a hang counts in checkout_ms.
+  Scenario Outline: A checkout that <bad> ends its resource, and the caller gets the next one (lease_ms above 0)
+    Given a pool with:
+      | setting         | value  |
+      | size            | 1      |
+      | checkout_ms     | 20000  |
+      | bad_checkout_id | 1      |
+      | checkout_fault  | <bad>  |
+    When job "A" holds a resource for 10 ms
+    And I wait for the jobs
+    Then job "A" gets "ok 2"
+    And the count "made" is 2
+    And the count "terminated" reaches 1 within 2000 ms
+
+    Examples:
+      | bad     |
+      | crashes |
+      | hangs   |
+
   # The resource comes back about when the deadline of B falls: B gets it or a timeout, and either way it is not lost.
   Scenario Outline: A caller whose deadline falls as a resource comes back gets it or a timeout (<hold> ms)
     Given a pool with:

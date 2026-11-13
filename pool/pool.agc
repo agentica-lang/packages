@@ -47,9 +47,9 @@ def start[A, W](spec: Types.Spec[A, W]) -> Result[Pool[A, W]]
 end
 
 ## Runs the body with a resource of the pool and gives its result. With `lease_ms` above 0 the body runs in a task of
-## the pool, so a crash in it is an `error` here, and one that runs past `lease_ms` is cancelled; `checkout` and
-## `checkin` run in tasks of their own, bounded. With 0 the body, `checkout` and `checkin` run in the caller, and a
-## crash in them is the caller's own. Errors, each with a kind: `pool error: checkout timed out after N ms` (`pool.timeout.checkout`;
+## the pool, so a crash in it is an `error` here, and one that runs past `lease_ms` is cancelled; `checkout` runs in
+## that task, before the body, and the caller waits for it for at most HOOK_MS, and `checkin` runs in a task of its own,
+## bounded. With 0 the body, `checkout` and `checkin` run in the caller, and a crash in them is the caller's own. Errors, each with a kind: `pool error: checkout timed out after N ms` (`pool.timeout.checkout`;
 ## the caller waited that long for a resource, with the last error of `init` as its cause if the pool could not make
 ## one), `pool error: lease timed out after N ms` (`pool.timeout.lease`), `pool error: queue full (max_waiting N)`
 ## (`pool.full`), `pool error: closed` and `pool error: owner task ended` (`pool.closed`). A caller that got one of
@@ -57,11 +57,11 @@ end
 def with[A, W, R](pool: Pool[A, W], body: Fn[W, Result[R]]) -> Result[R]
   return closed(pool) if pool.counts.has_key?(CLOSED)
 
-  checkout_ms = pool.spec.checkout_ms
-  lease = try take(pool, Time.monotonic_ms() + checkout_ms)
+  deadline = Time.monotonic_ms() + pool.spec.checkout_ms
+  lease = try take(pool, deadline)
   return in_caller(pool, lease, body) if pool.spec.lease_ms == 0
 
-  in_runner(pool, lease, body)
+  in_leased(pool, lease, body, deadline)
 end
 
 ## Refuses new callers, lets the running bodies and the callers in line finish for up to `drain_ms`, fails the rest
@@ -92,6 +92,8 @@ CLOSE_WAIT_MS = 8_000
 # A body that ran past `lease_ms` is cancelled and given a moment to stop before `checkin` sees it.
 CANCEL_GRACE_MS = 20
 OWNER_CHECK_MS = 200
+# How often the caller looks at the task of its body while `checkout` runs in it.
+VET_SLICE_MS = 20
 MAX_RESOURCES = 1_048_576
 CLOSED = "closed"
 CHECKOUT_TIMEOUT = "pool error: checkout timed out"
@@ -193,25 +195,23 @@ def granted[A, W](pool: Pool[A, W], grant: Types.Grant[W], deadline: Int) -> Res
   end
 end
 
-# `checkout` of the Spec, in the caller (`lease_ms` 0) or in a task of its own for HOOK_MS. A resource it refuses is
-# ended, and the caller waits again at the front of the line, in the same message, so that it keeps its place even
-# when the line is full.
+# `checkout` of the Spec for a body that runs in its caller (`lease_ms` 0): it runs here, unbounded. With `lease_ms`
+# above 0 it runs in the task of the body (`vetted?`). A resource it refuses is ended, and the caller waits again
+# at the
+# front of the line, in the same message, so that it keeps its place even when the line is full.
 def lendable[A, W](pool: Pool[A, W], lease: Types.Lease[W], deadline: Int) -> Result[Types.Lease[W]]
   case pool.spec.checkout
-    some(check) if not checked_out?(pool, check, lease.worker) ->
-      reply: Channel[Types.Grant[W]] = Channel.new(1)
-      give_back(pool, lease, Types.Return.Again(Types.Ticket(reply: reply, client: Task.current())))
-      return closed(pool) if pool.inbox.closed?
-
-      wait_grant(pool, reply, deadline)
+    some(check) if pool.spec.lease_ms == 0 and not check.call(lease.worker).ok? -> again(pool, lease, deadline)
     _ -> ok(lease)
   end
 end
 
-def checked_out?[A, W](pool: Pool[A, W], check: Fn[W, Result[Void]], worker: W) -> Bool
-  return check.call(worker).ok? if pool.spec.lease_ms == 0
+def again[A, W](pool: Pool[A, W], lease: Types.Lease[W], deadline: Int) -> Result[Types.Lease[W]]
+  reply: Channel[Types.Grant[W]] = Channel.new(1)
+  give_back(pool, lease, Types.Return.Again(Types.Ticket(reply: reply, client: Task.current())))
+  return closed(pool) if pool.inbox.closed?
 
-  Keeper.settled?(Task.spawn do check.call(worker) end)
+  wait_grant(pool, reply, deadline)
 end
 
 def give_up[A, W](pool: Pool[A, W], reply: Channel[Types.Grant[W]]) -> Result[Types.Lease[W]]
@@ -261,24 +261,75 @@ def in_caller[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], body: Fn[W, Resu
   result
 end
 
-# The body runs in a task of its own, which tells the owner who it is, so that a close can cancel it. Its own Result
-# goes inside another, so that a crash or a cancel (the outer error) is told apart from an error the body gave. The
-# keeper runs `checkin`, in a task of its own for HOOK_MS, after the caller has its result: one that crashes or hangs
-# ends the resource, never the caller.
-def in_runner[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], body: Fn[W, Result[R]]) -> Result[R]
+# A body that runs in a task of its own (`lease_ms` above 0): the resource is refused by `checkout` or the body runs. A
+# refused resource is ended, and the caller waits again at the front of the line for the next one.
+def in_leased[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], body: Fn[W, Result[R]], deadline: Int) -> Result[R]
+  case in_runner(pool, lease, body)
+    some(result) -> result
+    none ->
+      next = try again(pool, lease, deadline)
+      in_leased(pool, next, body, deadline)
+  end
+end
+
+# The body runs in a task of its own: first `checkout` when the Spec has one (the caller waits for that for at most
+# HOOK_MS), then it tells the owner who it is, so that a close can cancel it, then the body. Its own Result goes
+# inside another, so that a crash or a cancel (the outer error) is told apart from an error the body gave. The keeper
+# runs `checkin`, in a task of its own for HOOK_MS, after the caller has its result: one that crashes or hangs ends the
+# resource, never the caller. `none` is a resource that `checkout` refused, crashed on or hung on, and the caller never
+# saw it.
+def in_runner[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], body: Fn[W, Result[R]]) -> Optional[Result[R]]
+  verdict: Channel[Bool] = Channel.new(1)
   runner = Task.spawn do
-    _ = pool.inbox.send(Types.Msg.Run(Types.Running(id: lease.id, seq: lease.seq, runner: Task.current())), SEND_MS)
+    case pool.spec.checkout
+      some(check) ->
+        passed = check.call(lease.worker).ok?
+        _ = verdict.send(passed, 0)
+        return error("checkout refused") if not passed
+      none -> nil
+    end
+
+    # The owner learns who runs the body only now, so that a caller that ends during `checkout` has no `checkin` (its
+    # body never started); a lease that is over by now (the end of a drain) has the owner cancel this task, and a pool
+    # that is gone (its inbox is closed) runs no body.
+    told = pool.inbox.send(Types.Msg.Run(Types.Running(id: lease.id, seq: lease.seq, runner: Task.current())), SEND_MS)
+    return error("pool error: closed", kind: "pool.closed") if not told.ok?
+
     ok(body.call(lease.worker))
   end
 
+  return none if pool.spec.checkout.some? and not vetted?(verdict, runner)
+
   case Task.await(runner, pool.spec.lease_ms)
-    Await.Done(ran) -> ran_out(pool, lease, ran)
+    Await.Done(ran) -> some(ran_out(pool, lease, ran))
     Await.TimedOut ->
       Task.cancel(runner)
       Task.sleep(CANCEL_GRACE_MS)
       hand_in(lease, Types.Outcome.TimedOut)
-      error("#{LEASE_TIMEOUT} after #{pool.spec.lease_ms} ms", kind: "pool.timeout.lease")
+      some(error("#{LEASE_TIMEOUT} after #{pool.spec.lease_ms} ms", kind: "pool.timeout.lease"))
   end
+end
+
+# Whether `checkout` passed, as the runner says on `verdict`. A runner that ended without saying (a crash
+# in `checkout`)
+# or has not said within HOOK_MS (a hang, which is cancelled) did not pass. The caller looks at the runner every
+# VET_SLICE_MS, so a crash is heard at once and not at the end of HOOK_MS.
+def vetted?[R](verdict: Channel[Bool], runner: Task[Result[Result[R]]]) -> Bool
+  until = Time.monotonic_ms() + Keeper.HOOK_MS
+  while Time.monotonic_ms() < until
+    case verdict.recv((until - Time.monotonic_ms()).clamp(1, VET_SLICE_MS))
+      ok(passed) -> return passed
+      error(_) -> nil
+    end
+
+    case Task.await(runner, 1)
+      Await.Done(_) -> return verdict.recv(0).unwrap_or(false)
+      Await.TimedOut -> nil
+    end
+  end
+
+  Task.cancel(runner)
+  false
 end
 
 def ran_out[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], ran: Result[Result[R]]) -> Result[R]
@@ -287,6 +338,7 @@ def ran_out[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], ran: Result[Result
       hand_in(lease, Types.Outcome.Done)
       result
     error(e) if e.is_a?("task.cancelled") and pool.counts.has_key?(CLOSED) -> closed(pool)
+    error(e) if e.is_a?("pool.closed") -> closed(pool)
     error(e) ->
       hand_in(lease, Types.Outcome.Crashed)
       error(e)

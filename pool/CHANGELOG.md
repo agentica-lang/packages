@@ -4,6 +4,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- With `lease_ms` above 0, `checkout` runs in the task of the body, not in a task of its own, so a check costs no task. The caller still waits at most 5 seconds for it, and a `checkout` that refuses, crashes or hangs still ends the resource without reaching the caller, which gets the next resource at its place in line.
+- A body that runs in a task of the pool does not start when the drain of a close ended while its `checkout` ran: its caller gets `pool error: closed`.
+- `close` returns after the last count is written: `waiting` and `live` are 0 when it returns.
+
+### Documented
+
+- `checkin` runs at most once for each body that ran (the 0.1.0 entry said once): a caller cancelled with `lease_ms` 0 after it told the pool it is checking in, and before its `checkin` starts, has its resource ended with no `checkin`.
+- A `terminate` that never returns holds its place and the pool does not replace the resource, so each one makes the pool one resource smaller; `terminate` runs in the keeper, which owns the handles, so it cannot be bounded with a task.
+
 ## [0.1.0] - 2026-11-13
 
 Needs Agentica 0.31.0.
