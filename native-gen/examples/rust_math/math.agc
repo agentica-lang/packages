@@ -1,8 +1,6 @@
 ## A native module written in Rust: `rust/src/lib.rs` implements the block on the file that native-gen makes from it,
 ## and `cli.agc build math.agc` builds it into native/ and adds its entry to agentica.toml.
 
-private
-
 struct Point
   x: Float
   y: Float
