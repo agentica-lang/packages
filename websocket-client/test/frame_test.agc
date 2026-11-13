@@ -1,5 +1,7 @@
 import Frame from "../src/frame"
 
+private
+
 KEY = Bytes.from_list([0x37, 0xfa, 0x21, 0x3d]).unwrap!
 
 def hex(data: Bytes) -> String = OpenSSL.Digest.hexencode(data)

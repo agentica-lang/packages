@@ -8,7 +8,7 @@ import Gens from "gen"
 ## ```ruby
 ## Prop.cases(Prop.list(Prop.bool()), 3) # 15
 ## ```
-export def cases[T](gen: Gens.Gen[T], size: Int) -> Int = gen.count(size)
+def cases[T](gen: Gens.Gen[T], size: Int) -> Int = gen.count(size)
 
 ## Runs `law` on every value of `gen` up to `size` and returns `ok()` when all of them hold: "all N cases up to size k"
 ## (`Prop.cases` gives N), not that the law is proved, because a bigger size may still falsify it. A false law is an
@@ -20,12 +20,7 @@ export def cases[T](gen: Gens.Gen[T], size: Int) -> Int = gen.count(size)
 ## Prop.exhaustive(Prop.list(Prop.int(0, 9)), 2) do |xs| Prop.eq(xs.reverse, xs) end
 ## # error("falsified at size 2, counterexample [0,1]: expected [0,1], got [1,0]")
 ## ```
-export def exhaustive[T](
-  gen: Gens.Gen[T],
-  size: Int,
-  max_cases: Int = 10_000,
-  law: Fn[T, Result[Void]],
-) -> Result[Void]
+def exhaustive[T](gen: Gens.Gen[T], size: Int, max_cases: Int = 10_000, law: Fn[T, Result[Void]]) -> Result[Void]
   return error("Prop.exhaustive: size must be at least 0, got #{size}") if size < 0
 
   total = gen.count(size)
@@ -48,6 +43,8 @@ export def exhaustive[T](
 
   ok()
 end
+
+private
 
 # The case that failed is not the simplest one, as the cases of a size are not in order of size: the smaller sizes
 # run again, so the counterexample is from the smallest size that has one and every case below it passed.

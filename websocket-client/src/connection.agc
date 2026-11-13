@@ -10,6 +10,34 @@ import Frame from "frame"
 import Handshake from "handshake"
 import Types from "types"
 
+def connect(url: String, options: Types.Options) -> Result[Types.Client]
+  case prefixed(open(url, options, false))
+    ok(answer) ->
+      case answer
+        Types.Handshake.Open(client) -> ok(client)
+        Types.Handshake.Refused(status, _, _) -> error("websocket: the server answered #{status}, not 101")
+      end
+
+    error(reason) -> error(reason)
+  end
+end
+
+def handshake(url: String, options: Types.Options) -> Result[Types.Handshake] = prefixed(open(url, options, true))
+
+def send_data(client: Types.Client, opcode: Int, payload: Bytes) -> Result[Void]
+  prefixed(send_frame(client, opcode, payload, MAX_SEND))
+end
+
+def send_control(client: Types.Client, opcode: Int, payload: Bytes) -> Result[Void]
+  prefixed(send_frame(client, opcode, payload, Frame.CONTROL_BYTES))
+end
+
+def receive(client: Types.Client) -> Result[Types.Message] = prefixed(read_message(client))
+
+def close(client: Types.Client, code: Int, reason: String) -> Result[Void] = prefixed(shut(client, code, reason))
+
+private
+
 # TCP.send_bytes takes at most 1 MiB (1_048_576). A frame goes out in one send so that the frames of tasks that
 # write at
 # once never mix, which is why a message is capped at what one send holds: 1 MiB less the 14 bytes of the largest head.
@@ -29,40 +57,10 @@ enum Step
   Broke(String)
 end
 
-export def connect(url: String, options: Types.Options) -> Result[Types.Client]
-  case prefixed(open(url, options, false))
-    ok(answer) ->
-      case answer
-        Types.Handshake.Open(client) -> ok(client)
-        Types.Handshake.Refused(status, _, _) -> error("websocket: the server answered #{status}, not 101")
-      end
-
-    error(reason) -> error(reason)
-  end
-end
-
-export def handshake(url: String, options: Types.Options) -> Result[Types.Handshake]
-  prefixed(open(url, options, true))
-end
-
-export def send_data(client: Types.Client, opcode: Int, payload: Bytes) -> Result[Void]
-  prefixed(send_frame(client, opcode, payload, MAX_SEND))
-end
-
-export def send_control(client: Types.Client, opcode: Int, payload: Bytes) -> Result[Void]
-  prefixed(send_frame(client, opcode, payload, Frame.CONTROL_BYTES))
-end
-
-export def receive(client: Types.Client) -> Result[Types.Message] = prefixed(read_message(client))
-
-export def close(client: Types.Client, code: Int, reason: String) -> Result[Void]
-  prefixed(shut(client, code, reason))
-end
-
 def prefixed[T](result: Result[T]) -> Result[T]
   case result
     ok(value) -> ok(value)
-    error(reason) -> error("websocket: #{reason}")
+    error(e) -> error("websocket: #{e.message}")
   end
 end
 
@@ -97,12 +95,12 @@ def open(url: String, options: Types.Options, read_body: Bool) -> Result[Types.H
   end
 end
 
-def dial(target: Handshake.Target, options: Types.Options) -> Result[Socket]
+def dial(target: Handshake.Target, options: Types.Options) -> Result[TCP.Socket]
   return TCP.connect(target.host, target.port, options.timeout_ms) if not target.secure
 
   case options.tls
     some(context) -> TLS.connect(target.host, target.port, context, options.timeout_ms)
-    none -> TLS.connect(target.host, target.port, try TLS.client_context(TlsClientOptions()), options.timeout_ms)
+    none -> TLS.connect(target.host, target.port, try TLS.client_context(TLS.ClientOptions()), options.timeout_ms)
   end
 end
 
@@ -110,7 +108,7 @@ end
 # outside 200 to 599 that is not 101 is no final answer: it is an `error` (a 1xx is not skipped). Any other status but
 # 101 is a `Refused`, and `connect` (no `read_body`) stops at its head, so it never waits for a body that it drops.
 def upgrade(
-  socket: Socket,
+  socket: TCP.Socket,
   request: String,
   key: String,
   options: Types.Options,
@@ -146,7 +144,7 @@ end
 # The start of the body of a refused answer: `Content-Length` bytes, at most `MAX_BODY_BYTES`. The bytes that came
 # before the peer closed or the deadline hit are kept; a body that is missing is "". It never fails the call: the
 # status and the headers are the answer.
-def read_body_of(socket: Socket, headers: List[HTTP.Header], deadline: Int) -> String
+def read_body_of(socket: TCP.Socket, headers: List[HTTP.Header], deadline: Int) -> String
   size = Handshake.content_length(headers, Types.MAX_BODY_BYTES)
   return "" if size < 1
 
@@ -154,7 +152,7 @@ def read_body_of(socket: Socket, headers: List[HTTP.Header], deadline: Int) -> S
 end
 
 # Up to `count` bytes, fewer when the peer closes or the deadline comes first.
-def read_partial(socket: Socket, count: Int, deadline: Int) -> Bytes
+def read_partial(socket: TCP.Socket, count: Int, deadline: Int) -> Bytes
   parts: List[Bytes] = []
   have = 0
   while have < count
@@ -169,7 +167,7 @@ def read_partial(socket: Socket, count: Int, deadline: Int) -> Bytes
 end
 
 # The next bytes, or none for the end, a timeout or an error.
-def next_chunk(socket: Socket, want: Int, deadline: Int) -> Bytes
+def next_chunk(socket: TCP.Socket, want: Int, deadline: Int) -> Bytes
   case left(deadline)
     error(_) -> "".bytes
     ok(time) -> TCP.recv_bytes(socket, want, time).unwrap_or("".bytes)
@@ -208,7 +206,7 @@ def text_of(data: Bytes) -> String
 end
 
 # The lines of the head of the answer, up to the empty line.
-def read_answer(socket: Socket, deadline: Int) -> Result[List[String]]
+def read_answer(socket: TCP.Socket, deadline: Int) -> Result[List[String]]
   lines: List[String] = []
   size = 0
   while true
@@ -242,7 +240,7 @@ def left(deadline: Int) -> Result[Int]
 end
 
 # Bytes exactly as many as asked, or fewer when the server ended the connection first.
-def read_exact(socket: Socket, count: Int, deadline: Int) -> Result[Bytes]
+def read_exact(socket: TCP.Socket, count: Int, deadline: Int) -> Result[Bytes]
   parts: List[Bytes] = []
   have = 0
   while have < count
@@ -286,7 +284,7 @@ end
 def step_of(client: Types.Client, held: Int, deadline: Int) -> Step
   case read_frame(client, held, deadline)
     ok(step) -> step
-    error(reason) -> Step.Broke(reason)
+    error(e) -> Step.Broke(e.message)
   end
 end
 
@@ -331,8 +329,8 @@ def control(client: Types.Client, head: Frame.Head, payload: Bytes) -> Result[Op
   if head.opcode == Frame.PING
     case send_frame(client, Frame.PONG, payload, Frame.CONTROL_BYTES)
       ok(_) -> return ok(none)
-      error(reason) ->
-        case broke(client, reason)
+      error(e) ->
+        case broke(client, e.message)
           ok(message) -> return ok(some(message))
           error(text) -> return error(text)
         end

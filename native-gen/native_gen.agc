@@ -20,20 +20,14 @@ import Names from "src/names"
 import RustSide from "src/rust"
 import Scaffold from "src/scaffold"
 
-# How long cargo may build, and the bytes of one read of a copy.
-CARGO_MS = 3_600_000
-CHUNK = 1_048_576
-# The most bytes that `File.replace` writes.
-REPLACE_MAX = 16_777_216
-
 ## The header of the one `extern module` block of the file at `path`. Its C names start with `prefix`, by default the
 ## last part of the block's library name up to its first `.` (`stats` for "stats" and for "native/stats.so").
-export def header(path: String, prefix: String = "") -> Result[String] = header_in(Analysis.workspace(), path, prefix)
+def header(path: String, prefix: String = "") -> Result[String] = header_in(Analysis.workspace(), path, prefix)
 
 ## The Rust file of the one `extern module` block of the file at `path`, on the `agentica-native` crate: its types
 ## with their codecs, the trait the module implements and its tables. `prefix` names the trait, with its case kept
 ## (`StatsNative` for "stats", `MyDbNative` for "MyDb" or "my_db"); by default the one of `header`.
-export def rust(path: String, prefix: String = "") -> Result[String]
+def rust(path: String, prefix: String = "") -> Result[String]
   block = try block_in(Analysis.workspace(), path)
   rust_of(block, prefix, path)
 end
@@ -44,7 +38,7 @@ end
 ## `agentica.toml` for this system, and adds that entry when it is missing (`native/libLIBRARY.so` on linux). It gives
 ## one line per step, what it did or that it had nothing to do. With `check`, it only fails (`[NATIVE-GEN-STALE]`) when
 ## the Rust file is not the one the `.agc` gives.
-export def build(path: String, check: Bool = false) -> Result[List[String]]
+def build(path: String, check: Bool = false) -> Result[List[String]]
   root = try package_root(path)
   block = try block_in(Analysis.Workspace(version: 1, buffers: unbuilt(root)), path)
   name = block.library
@@ -62,7 +56,7 @@ export def build(path: String, check: Bool = false) -> Result[List[String]]
     case File.read_text(source)
       ok(kept) if kept == text -> return ok([])
       ok(_) -> return error("[NATIVE-GEN-STALE] #{source} is not the one #{path} gives; run build")
-      error(message) -> return error("[NATIVE-GEN-IO] #{source}: #{message}")
+      error(e) -> return error("[NATIVE-GEN-IO] #{source}: #{e.message}")
     end
   end
 
@@ -111,7 +105,7 @@ end
 ## none. It writes nothing when one of those files, or the entry, is there already (`[NATIVE-GEN-EXISTS]`). With
 ## `rust`, it writes a Rust module instead: `NAME.agc` and the crate `rust/` at the package root, the nearest folder up
 ## with an `agentica.toml` (the folder of `path` when there is none, which then gets one), and no entry.
-export def scaffold(path: String, rust: Bool = false) -> Result[Void]
+def scaffold(path: String, rust: Bool = false) -> Result[Void]
   name = last_part(path)
   folder = path.slice(0, path.length - name.length)
   if folder.empty?
@@ -152,6 +146,14 @@ export def scaffold(path: String, rust: Bool = false) -> Result[Void]
   try io(header_path, File.write_text(header_path, made))
   io(manifest, File.write_text(manifest, toml))
 end
+
+private
+
+# How long cargo may build, and the bytes of one read of a copy.
+CARGO_MS = 3_600_000
+CHUNK = 1_048_576
+# The most bytes that `File.replace` writes.
+REPLACE_MAX = 16_777_216
 
 # The Rust module `name` in `folder`: `NAME.agc` there, and the crate `rust/` at the package root, with the Rust file
 # made from the new `.agc`. The root is the nearest folder up from `folder` with an `agentica.toml`, as for `build`;
@@ -299,7 +301,7 @@ def cargo(crate: String, extension: String) -> Result[String]
   case ended
     ok(0) -> Build.library_in(lines, extension)
     ok(code) -> error("[NATIVE-GEN-CARGO] cargo build failed with exit code #{code}")
-    error(message) -> error("[NATIVE-GEN-CARGO] cargo build did not end: #{message}")
+    error(e) -> error("[NATIVE-GEN-CARGO] cargo build did not end: #{e.message}")
   end
 end
 
@@ -388,7 +390,7 @@ end
 def block_in(files: Analysis.Workspace, path: String) -> Result[Analysis.NativeBlock]
   case Analysis.native_modules(Analysis.open(files), path)
     ok(found) -> one_block(found.blocks, path)
-    error(message) -> error(diagnostic_text(message))
+    error(e) -> error(diagnostic_text(e.message))
   end
 end
 
@@ -414,7 +416,7 @@ end
 def manifest_parsed(path: String, text: String) -> Result[Toml.Value]
   case Toml.parse(text)
     ok(doc) -> ok(doc)
-    error(message) -> error("[NATIVE-GEN-MANIFEST] #{path} with [native.NAME] added is not TOML: #{message}")
+    error(e) -> error("[NATIVE-GEN-MANIFEST] #{path} with [native.NAME] added is not TOML: #{e.message}")
   end
 end
 
@@ -422,7 +424,7 @@ end
 def io[T](path: String, done: Result[T]) -> Result[T]
   case done
     ok(_) -> done
-    error(message) -> error("[NATIVE-GEN-IO] #{path}: #{message}")
+    error(e) -> error("[NATIVE-GEN-IO] #{path}: #{e.message}")
   end
 end
 
@@ -443,7 +445,7 @@ def prefix_of(block: Analysis.NativeBlock, prefix: String) -> Result[CHeader.Pre
 
   case CHeader.prefix(name)
     ok(names) -> ok(names)
-    error(message) -> error("[NATIVE-GEN-PREFIX] #{message}; choose another with --prefix")
+    error(e) -> error("[NATIVE-GEN-PREFIX] #{e.message}; choose another with --prefix")
   end
 end
 

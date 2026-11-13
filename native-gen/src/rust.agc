@@ -10,36 +10,19 @@ import Analysis from "std/analysis"
 import Names from "names"
 import Types from "types"
 
-# The Rust type of each scalar type of a signature.
-SCALARS = {"Int": "i64", "Float": "f64", "Bool": "bool", "String": "String", "Bytes": "Vec<u8>", "Void": "()"}
 # The words a Rust name cannot be (strict and reserved keywords of the 2024 edition), and `env`, the first parameter of
 # every method. Such a name gets a trailing `_`, as in the C header.
-export KEYWORDS = Set.new([
+KEYWORDS = Set.new([
   "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "crate", "do", "dyn", "else",
   "enum", "extern", "false", "final", "fn", "for", "gen", "if", "impl", "in", "let", "loop", "macro", "match", "mod",
   "move", "mut", "override", "priv", "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true",
   "try", "type", "typeof", "unsafe", "unsized", "use", "virtual", "where", "while", "yield", "env",
 ])
-# The names the file takes from the crate and from the prelude, which a type of the block cannot be.
-IMPORTS = [
-  "DecodeError", "Decoder", "Encoder", "Env", "Mode", "Module", "Raise", "ResourceArc", "Term", "sys", "types",
-]
-PRELUDE = ["Option", "Result", "String", "Vec", "Send", "Sync", "Some", "None", "Ok", "Err"]
-
-# The types of a block and what the Rust side needs of them: the row of each struct and enum, the resources, the
-# types each one names in its fields or payloads, and those that borrow the call.
-struct Plan
-  types: List[Analysis.NativeType]
-  rows: Map[String, Int]
-  resources: Set[String]
-  edges: Map[String, List[String]]
-  borrowing: Set[String]
-end
 
 ## The Rust file of `block`, declared in the file `source`, whose trait is `trait_name`. An error starts with its code:
 ## `[NATIVE-GEN-NAME]` when two of its names map to one Rust name, `[NATIVE-GEN-UNKNOWN]` for a mode, kind or API
 ## version that this version does not know.
-export def render(block: Analysis.NativeBlock, trait_name: String, source: String) -> Result[String]
+def render(block: Analysis.NativeBlock, trait_name: String, source: String) -> Result[String]
   if block.api_major != 1
     return error("[NATIVE-GEN-UNKNOWN] the block needs version #{block.api_major} of the native API")
   end
@@ -74,10 +57,30 @@ export def render(block: Analysis.NativeBlock, trait_name: String, source: Strin
 end
 
 ## The name of the trait of the prefix `lower`: `stats` is `StatsNative`, `my_db` is `MyDbNative`.
-export def trait_name(lower: String) -> String
+def trait_name(lower: String) -> String
   parts = lower.split("_").select do |part: String| !part.empty? end
   words = parts.map do |part: String| "#{part.slice(0, 1).upcase}#{part.slice(1, part.length - 1)}" end
   "#{words.join("")}Native"
+end
+
+private
+
+# The Rust type of each scalar type of a signature.
+SCALARS = {"Int": "i64", "Float": "f64", "Bool": "bool", "String": "String", "Bytes": "Vec<u8>", "Void": "()"}
+# The names the file takes from the crate and from the prelude, which a type of the block cannot be.
+IMPORTS = [
+  "DecodeError", "Decoder", "Encoder", "Env", "Mode", "Module", "Raise", "ResourceArc", "Term", "sys", "types",
+]
+PRELUDE = ["Option", "Result", "String", "Vec", "Send", "Sync", "Some", "None", "Ok", "Err"]
+
+# The types of a block and what the Rust side needs of them: the row of each struct and enum, the resources, the
+# types each one names in its fields or payloads, and those that borrow the call.
+struct Plan
+  types: List[Analysis.NativeType]
+  rows: Map[String, Int]
+  resources: Set[String]
+  edges: Map[String, List[String]]
+  borrowing: Set[String]
 end
 
 # A name of the block as a Rust name: `empty?` is `empty_p`, and a keyword or `env` gets a trailing `_`.

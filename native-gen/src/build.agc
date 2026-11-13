@@ -5,25 +5,14 @@ import Toml from "std/toml"
 
 ## What `build` writes for a module: the text of `agentica.toml` (the same text when its entry is there already) and
 ## the library's path from the package folder.
-export struct Plan
+struct Plan
   manifest: String
   file: String
 end
 
-# A line of `cargo build --message-format=json-render-diagnostics`; only a `compiler-artifact` has a target and files.
-struct Message
-  reason: String
-  target: Optional[Target]
-  filenames: Optional[List[String]]
-end
-
-struct Target
-  kind: List[String]
-end
-
 ## The library of the module `name` in `native/`, named as cargo names a cdylib on `os`: `native/libNAME.so` on
 ## linux, `native/libNAME.dylib` on macos, `native/NAME.dll` on windows.
-export def library_file(name: String, os: String) -> Result[String]
+def library_file(name: String, os: String) -> Result[String]
   ending = try extension(os)
   return ok("native/#{name}#{ending}") if os == "windows"
 
@@ -31,7 +20,7 @@ export def library_file(name: String, os: String) -> Result[String]
 end
 
 ## The ending of a cdylib on `os`: `.so`, `.dylib` or `.dll`.
-export def extension(os: String) -> Result[String]
+def extension(os: String) -> Result[String]
   case os
     "linux" -> ok(".so")
     "macos" -> ok(".dylib")
@@ -42,7 +31,7 @@ end
 
 ## The manifest `text` without its `native` table, for reading the `.agc` before its library is built: each library
 ## of the file is then a bare name, which a check does not open.
-export def without_native(text: String) -> Result[String]
+def without_native(text: String) -> Result[String]
   case Toml.parse(text)
     ok(Toml.Value.Table(entries)) -> Toml.encode(Toml.Value.Table(entries.delete("native")))
     ok(_) -> error("not a table")
@@ -55,7 +44,7 @@ end
 ## or in a new table at the end. A `build` table (C sources), an entry without `file` or with one outside `native/`, a
 ## table written another way and a manifest that is not TOML are `[NATIVE-GEN-MANIFEST]`. The lines it adds end as
 ## the text's lines do (CRLF or LF).
-export def plan(path: String, text: String, name: String, os: String) -> Result[Plan]
+def plan(path: String, text: String, name: String, os: String) -> Result[Plan]
   doc = try parsed(path, text)
   table = "native.#{name}"
   key = "#{table}.#{os}"
@@ -99,7 +88,7 @@ end
 
 ## The plan for the manifest `now`, read again before it is written: `planned`, made on the text `before`, when the
 ## file did not change meanwhile (cargo ran in between), or a new plan on `now`, which must name the same library file.
-export def replan(path: String, before: String, planned: Plan, now: String, name: String, os: String) -> Result[Plan]
+def replan(path: String, before: String, planned: Plan, now: String, name: String, os: String) -> Result[Plan]
   return ok(planned) if now == before
 
   again = try plan(path, now, name, os)
@@ -112,7 +101,7 @@ end
 
 ## The library that cargo built, from the lines it wrote with `--message-format=json-render-diagnostics`: the one file
 ## ending in `extension` of a `cdylib` target.
-export def library_in(lines: List[String], extension: String) -> Result[String]
+def library_in(lines: List[String], extension: String) -> Result[String]
   found = lines.flat_map do |line: String| cdylib_files(line, extension) end
   if found.size != 1
     return error(
@@ -121,6 +110,19 @@ export def library_in(lines: List[String], extension: String) -> Result[String]
   end
 
   ok(found[0])
+end
+
+private
+
+# A line of `cargo build --message-format=json-render-diagnostics`; only a `compiler-artifact` has a target and files.
+struct Message
+  reason: String
+  target: Optional[Target]
+  filenames: Optional[List[String]]
+end
+
+struct Target
+  kind: List[String]
 end
 
 # The files ending in `extension` of a message about a `cdylib` target; none for any other line.
@@ -166,6 +168,6 @@ end
 def parsed(path: String, text: String) -> Result[Toml.Value]
   case Toml.parse(text)
     ok(doc) -> ok(doc)
-    error(message) -> error("[NATIVE-GEN-MANIFEST] #{path} is not TOML: #{message}")
+    error(e) -> error("[NATIVE-GEN-MANIFEST] #{path} is not TOML: #{e.message}")
   end
 end

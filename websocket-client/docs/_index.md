@@ -91,7 +91,7 @@ WebSocket.Handshake: Open(WebSocket.Client), Refused(status: Int, headers: List[
 WebSocket.Client(socket, protocol: String, options, status: Int, headers: List[HTTP.Header])
 WebSocket.Options(headers: List[HTTP.Header] = [], protocols: List[String] = [], max_message_bytes: Int = 1048576,
                   timeout_ms: Int = 30000, read_timeout_ms: Int = 30000, close_timeout_ms: Int = 5000,
-                  tls: Optional[TlsContext] = none)
+                  tls: Optional[TLS.Context] = none)
 ```
 
 [How it behaves](behavior.md) has what `receive` does with each frame, the limits, the errors, headers, subprotocols, `wss` and the use from several tasks.

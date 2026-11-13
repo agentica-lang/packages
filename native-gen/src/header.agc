@@ -8,18 +8,14 @@ import Codecs from "codecs"
 import Collections from "collections"
 import Names from "names"
 
-# Prefixes that would put the header's names in the namespace of the C API (`an_`, `AN_`, `agentica_native_init`) or
-# of the helpers of native-gen (`ng_`).
-RESERVED_PREFIXES = Set.new(["an", "ng", "agentica"])
-
 ## The C names of one header: the prefix of its functions and the same in capitals for its macros and constants.
-export struct Prefix
+struct Prefix
   lower: String
   upper: String
 end
 
 ## The prefix `text` for C names, or an error when it is not a C identifier or is one of the C API's.
-export def prefix(text: String) -> Result[Prefix]
+def prefix(text: String) -> Result[Prefix]
   return error("the prefix #{text.inspect} is not a C identifier") if !Names.c_identifier?(text)
 
   lower = text.downcase
@@ -35,7 +31,7 @@ end
 ## The header of `block`, declared in the file `source` (its name only, so the text does not depend on where it ran).
 ## An error starts with its code: `[NATIVE-GEN-NAME]` when two of its names map to one C identifier,
 ## `[NATIVE-GEN-UNKNOWN]` for a mode or a type kind that this version does not know.
-export def render(block: Analysis.NativeBlock, names: Prefix, source: String) -> Result[String]
+def render(block: Analysis.NativeBlock, names: Prefix, source: String) -> Result[String]
   try Names.validate(block, "C identifier", &Names.parameter)
   for type in block.types
     for member in type.members
@@ -61,6 +57,12 @@ export def render(block: Analysis.NativeBlock, names: Prefix, source: String) ->
 
   ok("#{lines.join("\n")}\n")
 end
+
+private
+
+# Prefixes that would put the header's names in the namespace of the C API (`an_`, `AN_`, `agentica_native_init`) or
+# of the helpers of native-gen (`ng_`).
+RESERVED_PREFIXES = Set.new(["an", "ng", "agentica"])
 
 # Every C name the header declares at file scope, with the name of the block it comes from.
 def global_names(block: Analysis.NativeBlock, names: Prefix) -> List[Names.Named]

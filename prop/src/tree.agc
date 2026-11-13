@@ -3,34 +3,30 @@
 ## the work of the candidates tried. Every combinator builds the tree of its result from the trees of its parts, so a
 ## mapped, paired or listed value shrinks through the shrinking of its parts, with no inverse function.
 
-# Below this distance from the origin a float is only offered the origin: halving a float that is already tiny would
-# spend the whole budget on values nobody can tell apart.
-CLOSE = 0.000001
-
-export struct Tree[T]
+struct Tree[T]
   value: T
   shrinks: Fn[Optional[Candidates[T]]]
 end
 
 ## A lazy list of trees: the first one, and what follows it once asked.
-export struct Candidates[T]
+struct Candidates[T]
   first: Tree[T]
   rest: Fn[Optional[Candidates[T]]]
 end
 
 ## The tree of `value` whose candidates `shrinks` computes on demand.
-export def grow[T](value: T, shrinks: Fn[Optional[Candidates[T]]]) -> Tree[T] = Tree(value: value, shrinks: shrinks)
+def grow[T](value: T, shrinks: Fn[Optional[Candidates[T]]]) -> Tree[T] = Tree(value: value, shrinks: shrinks)
 
 ## A value that does not shrink.
-export def leaf[T](value: T) -> Tree[T] = grow(value) do none end
+def leaf[T](value: T) -> Tree[T] = grow(value) do none end
 
 ## The tree of `f` applied to every value of `tree`.
-export def map_tree[A, B](tree: Tree[A], f: Fn[A, B]) -> Tree[B]
+def map_tree[A, B](tree: Tree[A], f: Fn[A, B]) -> Tree[B]
   grow(f.call(tree.value)) do map_candidates(tree.shrinks()) do |child| map_tree(child, f) end end
 end
 
 ## The tree of `f(a, b)`: it shrinks `a` first, then `b`.
-export def zip_trees[A, B, C](a: Tree[A], b: Tree[B], f: Fn[A, B, C]) -> Tree[C]
+def zip_trees[A, B, C](a: Tree[A], b: Tree[B], f: Fn[A, B, C]) -> Tree[C]
   grow(f.call(a.value, b.value)) do
     append(map_candidates(a.shrinks()) do |child| zip_trees(child, b, f) end) do
       map_candidates(b.shrinks()) do |child| zip_trees(a, child, f) end
@@ -39,33 +35,39 @@ export def zip_trees[A, B, C](a: Tree[A], b: Tree[B], f: Fn[A, B, C]) -> Tree[C]
 end
 
 ## The tree of `some(value)`, which shrinks to `none` first, then as the tree of the value does.
-export def some_tree[T](tree: Tree[T]) -> Tree[Optional[T]]
+def some_tree[T](tree: Tree[T]) -> Tree[Optional[T]]
   absent: Tree[Optional[T]] = leaf(none)
   grow(some(tree.value)) do cons(absent) do map_candidates(tree.shrinks()) do |child| some_tree(child) end end end
 end
 
 ## An Int that shrinks toward `origin`: to it first, then by halving the distance.
-export def int_tree(n: Int, origin: Int) -> Tree[Int] = grow(n) do from_list(int_shrinks(n, origin), 0) end
+def int_tree(n: Int, origin: Int) -> Tree[Int] = grow(n) do from_list(int_shrinks(n, origin), 0) end
 
 ## A Float that shrinks toward `origin`: to it, to the whole number toward it, then by half the distance, a quarter,
 ## and so on. Every candidate is strictly closer to `origin` and between it and `x`, so it never goes back and never
 ## leaves the range of `x` and `origin`.
-export def float_tree(x: Float, origin: Float) -> Tree[Float] = grow(x) do from_list(float_shrinks(x, origin), 0) end
+def float_tree(x: Float, origin: Float) -> Tree[Float] = grow(x) do from_list(float_shrinks(x, origin), 0) end
 
 ## The tree of the list of values. It shrinks by dropping items (all of them, a half, one), then by shrinking one item.
-export def list_tree[T](trees: List[Tree[T]]) -> Tree[List[T]] = shaped(trees, false, 0)
+def list_tree[T](trees: List[Tree[T]]) -> Tree[List[T]] = shaped(trees, false, 0)
 
 ## The tree of the list of values, with as many items as `trees`: it shrinks only through the items.
-export def fixed_tree[T](trees: List[Tree[T]]) -> Tree[List[T]]
+def fixed_tree[T](trees: List[Tree[T]]) -> Tree[List[T]]
   grow(trees.map do |tree| tree.value end) do fixed_candidates(trees, 0) end
 end
 
 ## The tree of the alternative `index` (`make(index)` builds the tree of alternative `index`): it shrinks to the
 ## earlier alternatives first, as the simplest ones, then through its own shrinks.
-export def choice_tree[T](index: Int, make: Fn[Int, Tree[T]]) -> Tree[T]
+def choice_tree[T](index: Int, make: Fn[Int, Tree[T]]) -> Tree[T]
   chosen = make.call(index)
   grow(chosen.value) do append(earlier(make, 0, index)) do chosen.shrinks() end end
 end
+
+private
+
+# Below this distance from the origin a float is only offered the origin: halving a float that is already tiny would
+# spend the whole budget on values nobody can tell apart.
+CLOSE = 0.000001
 
 # The candidates that follow `first`, once asked: the one place where a lazy list is made lazy.
 def cons[T](first: Tree[T], rest: Fn[Optional[Candidates[T]]]) -> Optional[Candidates[T]]

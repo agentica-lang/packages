@@ -8,6 +8,8 @@ import NativeGen from "../native_gen"
 import Build from "../src/build"
 import Scaffold from "../src/scaffold"
 
+private
+
 # The name in the context of the header file that `--output` writes.
 WRITTEN = "written"
 # The name in the context of the folder that `native new` wrote a module in.
@@ -84,7 +86,7 @@ def package_copy(ctx: BDD.Context, args: List[String]) -> BDD.Context
       kept = BDD.set(made.ctx, SCAFFOLD, JSON.from(made.path))
       copied = copy_package(parts.take(parts.size - 1).join("/"), made.path, name)
       BDD.assert(kept, copied.ok?, "cannot copy the package of #{path}: #{copied.message}")
-    error(message) -> BDD.assert(ctx, false, message)
+    error(e) -> BDD.assert(ctx, false, e.message)
   end
 end
 
@@ -114,7 +116,7 @@ end
 def folder_step(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   case fresh_folder(ctx)
     ok(made) -> BDD.set(made.ctx, SCAFFOLD, JSON.from(made.path))
-    error(message) -> BDD.assert(ctx, false, message)
+    error(e) -> BDD.assert(ctx, false, e.message)
   end
 end
 
@@ -206,7 +208,7 @@ end
 def manifest_start(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   case File.read_text(in_folder(ctx, "agentica.toml"))
     ok(text) -> BDD.assert(ctx, text.start_with?(BDD.doc_string(ctx)), "agentica.toml changed: #{text}")
-    error(message) -> BDD.assert(ctx, false, "cannot read agentica.toml: #{message}")
+    error(e) -> BDD.assert(ctx, false, "cannot read agentica.toml: #{e.message}")
   end
 end
 
@@ -245,7 +247,7 @@ end
 def library_file(ctx: BDD.Context, args: List[String]) -> BDD.Context
   case Build.library_file(args[0], args[1])
     ok(file) -> BDD.assert(ctx, file == args[2], "the library is #{file}")
-    error(message) -> BDD.assert(ctx, message.start_with?(args[2]), message)
+    error(e) -> BDD.assert(ctx, e.message.start_with?(args[2]), e.message)
   end
 end
 
@@ -359,7 +361,7 @@ end
 def entry_refused(ctx: BDD.Context, args: List[String]) -> BDD.Context
   case planned(ctx, args[0], args[1])
     ok(plan) -> BDD.assert(ctx, false, "agentica.toml is: #{plan.manifest}")
-    error(message) -> BDD.assert(ctx, message.start_with?(args[2]), message)
+    error(e) -> BDD.assert(ctx, e.message.start_with?(args[2]), e.message)
   end
 end
 
@@ -370,7 +372,7 @@ def entry_crlf(ctx: BDD.Context, args: List[String]) -> BDD.Context
       lines = plan.manifest.split("\n")
       crlf = lines.take(lines.size - 1).all? do |line: String| line.end_with?("\r") end
       BDD.assert(ctx, crlf and plan.manifest.include?("linux = "), "agentica.toml is: #{plan.manifest.inspect}")
-    error(message) -> BDD.assert(ctx, false, message)
+    error(e) -> BDD.assert(ctx, false, e.message)
   end
 end
 
@@ -382,7 +384,7 @@ def replanned(ctx: BDD.Context, args: List[String]) -> BDD.Context
   now = args[2]
   case Build.plan(path, before, args[0], args[1])
     ok(plan) -> replan_matches(ctx, Build.replan(path, before, plan, now, args[0], args[1]), now, args[3])
-    error(message) -> BDD.assert(ctx, false, message)
+    error(e) -> BDD.assert(ctx, false, e.message)
   end
 end
 
@@ -392,7 +394,7 @@ def replan_matches(ctx: BDD.Context, again: Result[Build.Plan], now: String, wan
     ok(plan) if want == "added" ->
       BDD.assert(ctx, plan.manifest.start_with?(now) and plan.manifest.include?("linux = "), plan.manifest)
     ok(plan) -> BDD.assert(ctx, false, "agentica.toml is: #{plan.manifest}")
-    error(message) -> BDD.assert(ctx, message.start_with?(want), message)
+    error(e) -> BDD.assert(ctx, e.message.start_with?(want), e.message)
   end
 end
 
@@ -406,7 +408,7 @@ def entry_added(ctx: BDD.Context, args: List[String]) -> BDD.Context
   path = in_folder(ctx, "agentica.toml")
   case Build.plan(path, File.read_text(path).unwrap_or(""), args[0], args[1])
     ok(plan) -> BDD.assert(ctx, plan.manifest == BDD.doc_string(ctx), "agentica.toml is: #{plan.manifest}")
-    error(message) -> BDD.assert(ctx, false, message)
+    error(e) -> BDD.assert(ctx, false, e.message)
   end
 end
 
@@ -438,7 +440,7 @@ def in_folder(ctx: BDD.Context, name: String) -> String = Path.join([fresh_path(
 def fresh_cache(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   case fresh_folder(ctx)
     ok(made) -> BDD.given_env(made.ctx, "XDG_CACHE_HOME", made.path)
-    error(message) -> BDD.assert(ctx, false, message)
+    error(e) -> BDD.assert(ctx, false, e.message)
   end
 end
 
@@ -449,7 +451,7 @@ def fresh_output(ctx: BDD.Context, args: List[String]) -> BDD.Context
       path = Path.join([made.path, args[0]]).unwrap!
       kept = BDD.set(made.ctx, WRITTEN, JSON.from(path))
       BDD.given_argument(BDD.given_argument(kept, "--output"), path)
-    error(message) -> BDD.assert(ctx, false, message)
+    error(e) -> BDD.assert(ctx, false, e.message)
   end
 end
 
@@ -457,7 +459,7 @@ def written_header(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   path = JSON.string(BDD.get(ctx, WRITTEN).unwrap!).unwrap!
   case File.read_text(path)
     ok(text) -> BDD.assert(ctx, text.include?(BDD.doc_string(ctx)), "#{path} is not the header: #{text}")
-    error(message) -> BDD.assert(ctx, false, "cannot read #{path}: #{message}")
+    error(e) -> BDD.assert(ctx, false, "cannot read #{path}: #{e.message}")
   end
 end
 

@@ -4,32 +4,14 @@ import Gens from "gen"
 import Seeds from "seed"
 import Trees from "tree"
 
-# `Prop.assume` fails with this text, and a law that fails with exactly it is discarded, not falsified.
-DISCARD = "prop: case discarded"
-MAX_SEED = 2147483647
-
 ## How `Prop.check` runs: how many cases, a fixed seed (32 bits: a larger one is masked to them), how many discarded
 ## cases are too many, and the most laws run to shrink one counterexample (a law that is slow, or a shrink that goes on
 ## for long, still stops).
-export struct Config
+struct Config
   runs: Int = 100
   seed: Optional[Int] = none
   discards: Int = 1000
   shrinks: Int = 500
-end
-
-## The smallest counterexample found, and the message of the law for it.
-struct Shrunk[T]
-  value: T
-  message: String
-end
-
-## The first candidate that falsifies the law (or none), and how many laws were run to find out.
-struct Probe[T]
-  tree: Optional[Trees.Tree[T]]
-  message: String
-  used: Int
-  cut: Bool
 end
 
 ## Runs `law` on `config.runs` values of `gen` and returns `ok()`, or an `error` that names the shrunk counterexample
@@ -43,7 +25,7 @@ end
 ## Prop.check(Prop.int(0, 100), Prop.Config(seed: some(7))) do |n| Prop.eq(n < 50, true) end
 ## # error("falsified after 3 runs, shrunk to 50, seed 7: expected true, got false")
 ## ```
-export def check[T](gen: Gens.Gen[T], config: Config = Config(), law: Fn[T, Result[Void]]) -> Result[Void]
+def check[T](gen: Gens.Gen[T], config: Config = Config(), law: Fn[T, Result[Void]]) -> Result[Void]
   return error("Prop.check: runs must be at least 1, got #{config.runs}") if config.runs < 1
 
   seed = config.seed.unwrap_or(Random.int(0, MAX_SEED))
@@ -80,7 +62,7 @@ end
 ##   Prop.eq(n * 100 / n, 100)
 ## end # ok()
 ## ```
-export def assume(condition: Bool) -> Result[Void]
+def assume(condition: Bool) -> Result[Void]
   return ok() if condition
 
   error(DISCARD)
@@ -93,7 +75,7 @@ end
 ## Prop.eq([1, 2], [1, 2]) # ok()
 ## Prop.eq([1, 2], [2, 1]) # error("expected [2,1], got [1,2]")
 ## ```
-export def eq[T](actual: T, expected: T) -> Result[Void]
+def eq[T](actual: T, expected: T) -> Result[Void]
   got = JSON.encode(actual)
   want = JSON.encode(expected)
   return ok() if got == want
@@ -102,7 +84,27 @@ export def eq[T](actual: T, expected: T) -> Result[Void]
 end
 
 ## Whether `verdict` is the result of `Prop.assume` on a case it does not cover.
-export def discarded?(verdict: Result[Void]) -> Bool = not verdict.ok? and verdict.message == DISCARD
+def discarded?(verdict: Result[Void]) -> Bool = not verdict.ok? and verdict.message == DISCARD
+
+private
+
+# `Prop.assume` fails with this text, and a law that fails with exactly it is discarded, not falsified.
+DISCARD = "prop: case discarded"
+MAX_SEED = 2147483647
+
+## The smallest counterexample found, and the message of the law for it.
+struct Shrunk[T]
+  value: T
+  message: String
+end
+
+## The first candidate that falsifies the law (or none), and how many laws were run to find out.
+struct Probe[T]
+  tree: Optional[Trees.Tree[T]]
+  message: String
+  used: Int
+  cut: Bool
+end
 
 def count(n: Int, noun: String) -> String
   return "#{n} #{noun}" if n == 1

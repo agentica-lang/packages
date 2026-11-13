@@ -3,13 +3,7 @@
 import Outbox from "outbox"
 import {ClientParts, Conn} from "types"
 
-# How long the queued bytes get to be written after the handler returned or called `close`.
-DRAIN_MS = 30_000
-
-# TCP.recv_bytes takes at most 1 MiB.
-MAX_RECV = 1_048_576
-
-export struct Link
+struct Link
   conn: Conn
   handler: Fn[Conn, Void]
 end
@@ -17,7 +11,7 @@ end
 ## Starts the writer, runs the handler, then lets the writer finish what is queued and closes the socket. A crash or
 ## a cancel skips that: the writer is a task of this one, so it ends with it, and the supervisor closes the socket
 ## when the monitor tells it the task ended (the socket is owned by the supervisor, see server.agc).
-export def run(link: Link) -> Void
+def run(link: Link) -> Void
   case link.conn.inside
     ClientParts.Parts(socket, _, outbox) ->
       writer = Task.spawn(&Outbox.run, Outbox.Pipe(socket: socket, outbox: outbox))
@@ -38,7 +32,7 @@ export def run(link: Link) -> Void
   end
 end
 
-export def close(conn: Conn) -> Void
+def close(conn: Conn) -> Void
   case conn.inside
     ClientParts.Parts(socket, _, outbox) -> Outbox.finish(outbox, socket)
   end
@@ -46,7 +40,7 @@ end
 
 ## Tells dock that another task owns the connection, so the handler may return without closing it. Call it in the
 ## handler, before the connection is given away and before returning.
-export def hand_over(conn: Conn) -> Void
+def hand_over(conn: Conn) -> Void
   case conn.inside
     ClientParts.Parts(_, _, outbox) -> Outbox.hand_over(outbox)
   end
@@ -54,7 +48,7 @@ end
 
 ## After a hand-over, nobody reads the socket unless a task calls `recv`: a `recv` that gets the end of the client (empty
 ## bytes) or fails (the idle time passed, say) then closes the connection as `close` does, since no handler is left to.
-export def recv(conn: Conn, max_bytes: Int = 65_536) -> Result[Bytes]
+def recv(conn: Conn, max_bytes: Int = 65_536) -> Result[Bytes]
   case conn.inside
     ClientParts.Parts(socket, idle_ms, outbox) ->
       # A bad argument is the caller's mistake, not the end of the client: it must not close a handed over connection.
@@ -78,8 +72,16 @@ export def recv(conn: Conn, max_bytes: Int = 65_536) -> Result[Bytes]
   end
 end
 
-export def send(conn: Conn, bytes: Bytes) -> Result[Void]
+def send(conn: Conn, bytes: Bytes) -> Result[Void]
   case conn.inside
     ClientParts.Parts(socket, _, outbox) -> Outbox.push(outbox, socket, bytes)
   end
 end
+
+private
+
+# How long the queued bytes get to be written after the handler returned or called `close`.
+DRAIN_MS = 30_000
+
+# TCP.recv_bytes takes at most 1 MiB.
+MAX_RECV = 1_048_576

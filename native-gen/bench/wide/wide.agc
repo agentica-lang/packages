@@ -1,6 +1,8 @@
 ## The cost of the codecs on a struct of 26 fields: a call that only decodes it, one that decodes and makes it again,
 ## and a call with one Int as the floor. `agentica wide.agc [CALLS]` prints nanoseconds per call of each.
 
+private
+
 struct Wide
   a: Int
   b: Float

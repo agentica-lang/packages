@@ -1,3 +1,5 @@
+private
+
 # A variant named Self, a keyword of Rust.
 enum Who
   Self

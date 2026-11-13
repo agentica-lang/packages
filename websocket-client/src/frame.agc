@@ -7,32 +7,30 @@
 
 import Binary from "std/binary"
 
-KEY_BYTES = 4
-NO_BYTES = Bytes.from_list([]).unwrap!
 # The opcodes of RFC 6455 5.2.
-export CONTINUATION = 0
-export TEXT = 1
-export BINARY = 2
-export CLOSE = 8
-export PING = 9
-export PONG = 10
+CONTINUATION = 0
+TEXT = 1
+BINARY = 2
+CLOSE = 8
+PING = 9
+PONG = 10
 ## The most bytes of a control frame (RFC 6455 5.5).
-export CONTROL_BYTES = 125
+CONTROL_BYTES = 125
 ## The most bytes of the reason of a close frame: a control frame holds 125, and the code takes 2.
-export REASON_BYTES = 123
+REASON_BYTES = 123
 ## No status was sent: what a close frame with no payload means (never written on the wire).
-export CLOSE_NO_STATUS = 1005
-export CLOSE_NORMAL = 1000
-export CLOSE_PROTOCOL = 1002
+CLOSE_NO_STATUS = 1005
+CLOSE_NORMAL = 1000
+CLOSE_PROTOCOL = 1002
 ## 1006 is never sent: it is what the program is told when the connection ended with no close frame.
-export CLOSE_ABNORMAL = 1006
+CLOSE_ABNORMAL = 1006
 ## Data that is not valid for its type: a text message that is not UTF-8.
-export CLOSE_BAD_DATA = 1007
+CLOSE_BAD_DATA = 1007
 ## A message over the size cap.
-export CLOSE_TOO_BIG = 1009
+CLOSE_TOO_BIG = 1009
 
 ## A failed check: the close code to tell the server and why.
-export struct Problem
+struct Problem
   code: Int
   reason: String
 end
@@ -41,7 +39,7 @@ end
 ## (`tail_size`, `complete`). `length` holds the 7-bit length until the tail completes it, and is -1 for a 64-bit
 ## length that has its top bit set. `form` is the 7-bit length field as it came (126 and 127 announce a longer form).
 ## `key` is empty for a frame that is not masked.
-export struct Head
+struct Head
   fin: Bool
   opcode: Int
   masked: Bool
@@ -52,7 +50,7 @@ export struct Head
 end
 
 ## The frames of a message that arrives in fragments: its kind, whether one is open, the pieces so far and their size.
-export struct Assembly
+struct Assembly
   text: Bool
   open: Bool
   parts: List[Bytes]
@@ -60,21 +58,21 @@ export struct Assembly
 end
 
 ## What one data frame did to the message being assembled.
-export enum Taken
+enum Taken
   More(Assembly)
   Whole(Bool, Bytes)
   Broken(Problem)
 end
 
 ## What a close frame says: the server's code and reason, or a problem with the frame.
-export enum Closing
+enum Closing
   Peer(Int, String)
   Invalid(Problem)
 end
 
 ## A frame of a client: FIN set, the payload masked with the 4 bytes of `key`, which must be unpredictable (RFC 6455
 ## 5.3) and new for each frame.
-export def encode(opcode: Int, payload: Bytes, key: Bytes) -> Bytes
+def encode(opcode: Int, payload: Bytes, key: Bytes) -> Bytes
   size = payload.size
   first = Bytes.from_list([128 + opcode]).unwrap!
   length = NO_BYTES
@@ -90,7 +88,7 @@ export def encode(opcode: Int, payload: Bytes, key: Bytes) -> Bytes
 end
 
 ## The data with the mask taken on or off: each byte is xor-ed with the byte of the key at its place mod 4.
-export def mask(data: Bytes, key: Bytes) -> Bytes
+def mask(data: Bytes, key: Bytes) -> Bytes
   return data if key.empty? or data.empty?
 
   k = key.to_a
@@ -105,7 +103,7 @@ export def mask(data: Bytes, key: Bytes) -> Bytes
 end
 
 ## The first two bytes of a frame as a `Head` that has no tail yet.
-export def head_of(two: Bytes) -> Head
+def head_of(two: Bytes) -> Head
   first = two.at(0)
   second = two.at(1)
   Head(
@@ -120,7 +118,7 @@ export def head_of(two: Bytes) -> Head
 end
 
 ## The bytes after the first two: the extended length (2 or 8 bytes) and the mask (4 bytes when the frame is masked).
-export def tail_size(head: Head) -> Int
+def tail_size(head: Head) -> Int
   size = 0
   if head.length == 126
     size = 2
@@ -134,7 +132,7 @@ export def tail_size(head: Head) -> Int
 end
 
 ## The head with its length and mask, from the tail that `tail_size` counted.
-export def complete(head: Head, tail: Bytes) -> Head
+def complete(head: Head, tail: Bytes) -> Head
   length = head.length
   used = 0
   if head.length == 126
@@ -164,7 +162,7 @@ end
 ## What is wrong with a head whose tail was read, when something is, given the `held` bytes of the earlier fragments
 ## of the message and the `max` size of a message. A server that breaks one of these rules is answered with the code
 ## of the problem.
-export def check_head(head: Head, max: Int, held: Int) -> Optional[Problem]
+def check_head(head: Head, max: Int, held: Int) -> Optional[Problem]
   return some(Problem(code: CLOSE_PROTOCOL, reason: "reserved bits are set")) if head.reserved != 0
 
   return some(Problem(code: CLOSE_PROTOCOL, reason: "a server frame must not be masked")) if head.masked
@@ -184,15 +182,15 @@ export def check_head(head: Head, max: Int, held: Int) -> Optional[Problem]
 end
 
 ## True for the opcodes of control frames (close, ping, pong).
-export def control?(opcode: Int) -> Bool = opcode >= CLOSE
+def control?(opcode: Int) -> Bool = opcode >= CLOSE
 
 ## The state before the first frame of a message.
-export def new_assembly() -> Assembly = Assembly(text: false, open: false, parts: [], total: 0)
+def new_assembly() -> Assembly = Assembly(text: false, open: false, parts: [], total: 0)
 
 ## Adds a data frame (text, binary or continuation) to the message being assembled. The message is whole at its last
 ## frame, and a text message must then be UTF-8. A fragment that starts a message while another is open, or that
 ## continues none, breaks the protocol; so does a message past `max` bytes in all.
-export def take(assembly: Assembly, head: Head, payload: Bytes, max: Int) -> Taken
+def take(assembly: Assembly, head: Head, payload: Bytes, max: Int) -> Taken
   continuing = head.opcode == CONTINUATION
   if continuing and not assembly.open
     return Taken.Broken(Problem(code: CLOSE_PROTOCOL, reason: "a continuation with no message"))
@@ -218,7 +216,7 @@ end
 
 ## A close frame: no payload (no code), or a code of two bytes and a reason that is UTF-8. A code that no server may
 ## send (below 1000, 1004 to 1006, 1015 to 2999, past 4999) is a protocol error, as is one byte of payload.
-export def parse_close(payload: Bytes) -> Closing
+def parse_close(payload: Bytes) -> Closing
   return Closing.Peer(CLOSE_NO_STATUS, "") if payload.empty?
 
   return Closing.Invalid(Problem(code: CLOSE_PROTOCOL, reason: "a close frame of one byte")) if payload.size == 1
@@ -234,7 +232,7 @@ end
 
 ## The payload of a close frame to send: the code and the reason. A code that no peer may send, or a reason over 123
 ## bytes, is an `error`.
-export def close_payload(code: Int, reason: String) -> Result[Bytes]
+def close_payload(code: Int, reason: String) -> Result[Bytes]
   return error("invalid close code #{code}") if not valid_code?(code)
 
   return error("the close reason is at most #{REASON_BYTES} bytes") if reason.bytes.size > REASON_BYTES
@@ -243,11 +241,16 @@ export def close_payload(code: Int, reason: String) -> Result[Bytes]
 end
 
 ## True for a close code that a peer may send: 1000 to 1014 except 1004 to 1006, and 3000 to 4999.
-export def valid_code?(code: Int) -> Bool
+def valid_code?(code: Int) -> Bool
   return true if code >= 3000 and code <= 4999
 
   code >= 1000 and code <= 1014 and code != 1004 and code != 1005 and code != 1006
 end
+
+private
+
+KEY_BYTES = 4
+NO_BYTES = Bytes.from_list([]).unwrap!
 
 # RFC 6455 5.2: the shortest form of the length must be used (126 is for 126 to 65535, 127 for more).
 def long_form?(head: Head) -> Bool

@@ -6,23 +6,10 @@
 import Analysis from "std/analysis"
 import Names from "names"
 
-# The C type of a field or payload of each scalar type; others are a term or an embedded type.
-SCALARS = {"Int": "int64_t", "Float": "double", "Bool": "bool", "String": "ng_str", "Bytes": "ng_buf"}
-# The getter and the maker of `agentica_native.h` for each scalar type; those of SLICES take `data` and `len`.
-GETTERS = {
-  "Int": "an_get_int",
-  "Float": "an_get_float",
-  "Bool": "an_get_bool",
-  "String": "an_get_string",
-  "Bytes": "an_get_bytes",
-}
-MAKERS = {"Int": "an_int", "Float": "an_float", "Bool": "an_bool", "String": "an_string", "Bytes": "an_bytes"}
-SLICES = Set.new(["String", "Bytes"])
-
 ## The types of a block and what the C side needs of them: `lower` and `upper` the prefix of the C names, `read` the
 ## types the parameters reach (they get a `_get`), `made` those the results reach (`_make` and the constructors), and
 ## `edges` the types each one names in a field or payload, which decide what is embedded.
-export struct Plan
+struct Plan
   lower: String
   upper: String
   types: List[Analysis.NativeType]
@@ -32,7 +19,7 @@ export struct Plan
 end
 
 ## The codecs of the types of `block`, whose C names start with `lower` (and `upper` in capitals).
-export def of(block: Analysis.NativeBlock, lower: String, upper: String) -> Plan
+def of(block: Analysis.NativeBlock, lower: String, upper: String) -> Plan
   known = Set.new(block.types.map do |type: Analysis.NativeType| type.name end)
   read: Set[String] = Set.new([])
   made: Set[String] = Set.new([])
@@ -56,7 +43,7 @@ end
 
 ## The C type of a parameter, field or payload of type `type` in `owner` ("" for a parameter): a scalar, an embedded
 ## struct or enum, or a term.
-export def c_type(codecs: Plan, owner: String, type: String) -> String
+def c_type(codecs: Plan, owner: String, type: String) -> String
   return SCALARS[type] if SCALARS.has_key?(type)
 
   return "#{codecs.lower}_#{type}" if embedded?(codecs, owner, type)
@@ -66,13 +53,13 @@ end
 
 ## Whether a value of `type` in `owner` ("" for a parameter) is a C struct of the block, not a term: a struct or enum
 ## of the block that does not lead back to `owner`.
-export def embedded?(codecs: Plan, owner: String, type: String) -> Bool
+def embedded?(codecs: Plan, owner: String, type: String) -> Bool
   codecs.edges.has_key?(type) and !reaches?(codecs, type, owner)
 end
 
 ## The C names the codecs declare, with the names they come from, and the fields of each struct, which must differ
 ## within it.
-export def global_names(codecs: Plan) -> List[Names.Named]
+def global_names(codecs: Plan) -> List[Names.Named]
   p = codecs.lower
   named: List[Names.Named] = []
   for type in codecs.types
@@ -103,7 +90,7 @@ export def global_names(codecs: Plan) -> List[Names.Named]
 end
 
 ## The typedefs, in an order where each comes after the types it embeds, and the prototypes of the codecs.
-export def declarations(codecs: Plan) -> List[String]
+def declarations(codecs: Plan) -> List[String]
   return [] if codecs.types.empty?
 
   lines = [
@@ -123,7 +110,7 @@ end
 
 ## The definitions of the codecs, for the implementation part of the header, after the helpers of a failed decode when
 ## they read a type or `failing` (another part of the header reads with a path).
-export def definitions(codecs: Plan, failing: Bool) -> List[String]
+def definitions(codecs: Plan, failing: Bool) -> List[String]
   lines: List[String] = []
   if failing or !codecs.read.empty?
     lines = lines.concat(failures())
@@ -147,7 +134,7 @@ end
 
 ## The statements of a wrapper that decode argument `at` of `type` into `local`: a scalar answers an_badarg when it
 ## does not decode, a struct or enum fails the call with the path of the bad part. Nothing for a term.
-export def decode_argument(codecs: Plan, type: String, local: String, at: Int) -> List[String]
+def decode_argument(codecs: Plan, type: String, local: String, at: Int) -> List[String]
   declared = "  #{c_type(codecs, "", type)} #{local};"
   if SLICES.include?(type)
     into = "&#{local}.data, &#{local}.len"
@@ -171,7 +158,7 @@ end
 
 ## The C expression that reads the term `x` of `type` into `target` and is false, with `fail` set, when it does not
 ## decode. A term stays a term.
-export def decode_value(codecs: Plan, type: String, target: String) -> String
+def decode_value(codecs: Plan, type: String, target: String) -> String
   if SLICES.include?(type)
     return "#{GETTERS[type]}(env, x, &#{target}.data, &#{target}.len) || ng_expected(fail, \"#{type}\")"
   end
@@ -184,7 +171,7 @@ export def decode_value(codecs: Plan, type: String, target: String) -> String
 end
 
 ## The term of the C value `source` of `type` in `owner` ("" for an item of a List or Map).
-export def encoded(codecs: Plan, owner: String, type: String, source: String) -> String
+def encoded(codecs: Plan, owner: String, type: String, source: String) -> String
   return "#{MAKERS[type]}(env, #{source}.data, #{source}.len)" if SLICES.include?(type)
 
   return "#{MAKERS[type]}(env, #{source})" if MAKERS.has_key?(type)
@@ -193,6 +180,21 @@ export def encoded(codecs: Plan, owner: String, type: String, source: String) ->
 
   source
 end
+
+private
+
+# The C type of a field or payload of each scalar type; others are a term or an embedded type.
+SCALARS = {"Int": "int64_t", "Float": "double", "Bool": "bool", "String": "ng_str", "Bytes": "ng_buf"}
+# The getter and the maker of `agentica_native.h` for each scalar type; those of SLICES take `data` and `len`.
+GETTERS = {
+  "Int": "an_get_int",
+  "Float": "an_get_float",
+  "Bool": "an_get_bool",
+  "String": "an_get_string",
+  "Bytes": "an_get_bytes",
+}
+MAKERS = {"Int": "an_int", "Float": "an_float", "Bool": "an_bool", "String": "an_string", "Bytes": "an_bytes"}
+SLICES = Set.new(["String", "Bytes"])
 
 # Whether `to` is `from` or a type that `from` names in a field or payload, at any depth.
 def reaches?(codecs: Plan, from: String, to: String) -> Bool

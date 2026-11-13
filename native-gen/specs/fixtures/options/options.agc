@@ -1,6 +1,8 @@
 ## Optional and Result through the header: each one that is read is a C struct, each one that is made has a
 ## constructor, and each function gives back what it read.
 
+private
+
 struct Point
   x: Int
   y: Int

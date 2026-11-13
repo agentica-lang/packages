@@ -1,6 +1,8 @@
 ## The functions of the vm-check module against the real VM: every String of a large List made in one call, short or
 ## dirty, comes back whole, and the other functions give back what they read.
 
+private
+
 struct Point
   x: Int
   y: Int

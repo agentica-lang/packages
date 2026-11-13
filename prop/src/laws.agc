@@ -5,19 +5,6 @@
 import Checks from "check"
 import Gens from "gen"
 
-# Two values for the law of an operation, named like the first two of a `Triple`.
-struct Couple[T]
-  a: T
-  b: T
-end
-
-# Three values for the laws of an operation, named so a counterexample reads `{"a":1,"b":2,"c":3}`.
-struct Triple[T]
-  a: T
-  b: T
-  c: T
-end
-
 ## `decode(encode(x))` is `ok(x)`. `decode` returns a `Result`, as `JSON.decode` does; an `error` falsifies the law.
 ##
 ## ```ruby
@@ -27,7 +14,7 @@ end
 ##
 ## Prop.roundtrip(Prop.int(-1000, 1000), &show) do |text| text.to_i end # ok()
 ## ```
-export def roundtrip[T, E](
+def roundtrip[T, E](
   gen: Gens.Gen[T],
   encode: Fn[T, E],
   config: Checks.Config = Checks.Config(),
@@ -41,7 +28,7 @@ end
 ## ```ruby
 ## Prop.idempotent(Prop.list(Prop.int(-9, 9))) do |xs| xs.sort end # ok()
 ## ```
-export def idempotent[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), f: Fn[T, T]) -> Result[Void]
+def idempotent[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), f: Fn[T, T]) -> Result[Void]
   Checks.check(gen, config) do |value| settles(value, f) end
 end
 
@@ -54,7 +41,7 @@ end
 ##
 ## Prop.oracle(Prop.list(Prop.int(-9, 9)), &fast_sum) do |xs| xs.reduce(0) do |sum, x| sum + x end end # ok()
 ## ```
-export def oracle[A, B](
+def oracle[A, B](
   gen: Gens.Gen[A],
   fast: Fn[A, B],
   config: Checks.Config = Checks.Config(),
@@ -68,7 +55,7 @@ end
 ## ```ruby
 ## Prop.associative(Prop.string(3)) do |a, b| a + b end # ok()
 ## ```
-export def associative[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), op: Fn[T, T, T]) -> Result[Void]
+def associative[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), op: Fn[T, T, T]) -> Result[Void]
   triples = Gens.map(Gens.pair(gen, Gens.pair(gen, gen))) do |p| triple(p) end
   Checks.check(triples, config) do |t| groups_the_same(t, op) end
 end
@@ -78,7 +65,7 @@ end
 ## ```ruby
 ## Prop.commutative(Prop.int(-9, 9)) do |a, b| a * b end # ok()
 ## ```
-export def commutative[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), op: Fn[T, T, T]) -> Result[Void]
+def commutative[T](gen: Gens.Gen[T], config: Checks.Config = Checks.Config(), op: Fn[T, T, T]) -> Result[Void]
   couples = Gens.map(Gens.pair(gen, gen)) do |p| Couple(a: p.first, b: p.second) end
   Checks.check(couples, config) do |c| orders_the_same(c, op) end
 end
@@ -92,13 +79,28 @@ end
 ##
 ## Prop.preserves(Prop.list(Prop.int(-9, 9)), &reverse) do |xs| xs.sum end # ok(): a reverse keeps the sum
 ## ```
-export def preserves[T, M](
+def preserves[T, M](
   gen: Gens.Gen[T],
   f: Fn[T, T],
   config: Checks.Config = Checks.Config(),
   measure: Fn[T, M],
 ) -> Result[Void]
   Checks.check(gen, config) do |value| keeps(value, f, measure) end
+end
+
+private
+
+# Two values for the law of an operation, named like the first two of a `Triple`.
+struct Couple[T]
+  a: T
+  b: T
+end
+
+# Three values for the laws of an operation, named so a counterexample reads `{"a":1,"b":2,"c":3}`.
+struct Triple[T]
+  a: T
+  b: T
+  c: T
 end
 
 def round_trips[T, E](value: T, encode: Fn[T, E], decode: Fn[E, Result[T]]) -> Result[Void]

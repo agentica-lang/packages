@@ -6,22 +6,9 @@
 import CHeader from "header"
 import RustSide from "rust"
 
-# The names a crate cannot have: Rust's keywords, the crates of Rust's own library, and the crate it depends on.
-CRATES = Set.new(["test", "core", "std", "alloc", "proc_macro", "agentica_native"])
-# The letters of the name of a native library in `agentica.toml` that are also a C identifier: one lowercase letter,
-# then lowercase letters, digits and `_` (the manifest takes `-` too, which C does not).
-FIRST = Set.new("abcdefghijklmnopqrstuvwxyz".split(""))
-REST = Set.new("abcdefghijklmnopqrstuvwxyz0123456789_".split(""))
-MAX_NAME = 64
-# The names Windows keeps for devices: a library that builds is a file NAME.dll there.
-DEVICES = Set.new([
-  "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2",
-  "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
-])
-
 ## Why `name` cannot be a new module, or "": it is the `[native.NAME]` of `agentica.toml`, the library of the block
 ## and the start of its C names.
-export def name_problem(name: String) -> String
+def name_problem(name: String) -> String
   letters = name.split("")
   return "a module name has 1 to #{MAX_NAME} characters" if letters.empty? or letters.size > MAX_NAME
 
@@ -35,7 +22,7 @@ export def name_problem(name: String) -> String
 end
 
 ## Why `name` cannot be a new Rust module, or "": the rule of `name_problem`, and a name that cargo refuses for a crate.
-export def rust_name_problem(name: String) -> String
+def rust_name_problem(name: String) -> String
   problem = name_problem(name)
   if problem.empty? and (RustSide.KEYWORDS.include?(name) or CRATES.include?(name))
     return "a Rust module name cannot be a Rust keyword or the name of a crate of Rust (fn, test, std and the like)"
@@ -50,7 +37,7 @@ export def rust_name_problem(name: String) -> String
 end
 
 ## The `.agc` of the module `name`: the block, with one function to replace, and a `main` that calls it.
-export def program(name: String) -> String
+def program(name: String) -> String
   block_program(
     [
       "## The native module #{name}: its functions are written in C, in native/#{name}.c, on the header",
@@ -61,7 +48,7 @@ export def program(name: String) -> String
 end
 
 ## The `.agc` of the Rust module `name`: the block of `program`, its functions written in `rust/src/lib.rs`.
-export def rust_program(name: String) -> String
+def rust_program(name: String) -> String
   block_program(
     [
       "## The native module #{name}: its functions are written in Rust, in rust/src/lib.rs, on the file",
@@ -73,7 +60,7 @@ export def rust_program(name: String) -> String
 end
 
 ## The `Cargo.toml` of the Rust module `name`, on the `agentica-native` crate that native-gen puts in `deps/`.
-export def cargo_toml(name: String) -> String
+def cargo_toml(name: String) -> String
   [
     "[package]",
     "name = #{name.inspect}",
@@ -92,13 +79,13 @@ export def cargo_toml(name: String) -> String
 end
 
 ## The `.gitignore` of the crate: what cargo makes.
-export def gitignore() -> String = "target/\nCargo.lock\n"
+def gitignore() -> String = "target/\nCargo.lock\n"
 
 ## The `src/lib.rs` of the Rust module `name`: the method of the example function fails the call until it is written.
 ## The type that implements the trait is `Functions` whatever the name, so no name (`raise`, `result`) makes a type
 ## that clashes with an import or the prelude; and the crate is named `::agentica_native`, which only an extern crate
 ## can be, so the module `agentica_native` of the name `agentica` does not shadow it. No list of names is kept.
-export def lib_rs(name: String) -> String
+def lib_rs(name: String) -> String
   trait_name = RustSide.trait_name(name)
   [
     "//! The Rust side of #{name}.agc, on the file `src/#{name}_native.rs` that native-gen makes from its block. Each",
@@ -125,7 +112,7 @@ export def lib_rs(name: String) -> String
 end
 
 ## The C file of the module `name`, on its header: the body of each function fails the call until it is written.
-export def source(name: String, names: CHeader.Prefix) -> String
+def source(name: String, names: CHeader.Prefix) -> String
   [
     "/* The C side of #{name}.agc, on the header that native-gen makes from it. Each function fails the call until",
     "   it is written. */",
@@ -144,7 +131,7 @@ export def source(name: String, names: CHeader.Prefix) -> String
 end
 
 ## The `[native.NAME]` entry of `agentica.toml`, with the commands that make and check the header.
-export def entry(name: String, names: CHeader.Prefix) -> String
+def entry(name: String, names: CHeader.Prefix) -> String
   header = "native/#{names.lower}_native.h"
   [
     "",
@@ -157,6 +144,21 @@ export def entry(name: String, names: CHeader.Prefix) -> String
     "",
   ].join("\n")
 end
+
+private
+
+# The names a crate cannot have: Rust's keywords, the crates of Rust's own library, and the crate it depends on.
+CRATES = Set.new(["test", "core", "std", "alloc", "proc_macro", "agentica_native"])
+# The letters of the name of a native library in `agentica.toml` that are also a C identifier: one lowercase letter,
+# then lowercase letters, digits and `_` (the manifest takes `-` too, which C does not).
+FIRST = Set.new("abcdefghijklmnopqrstuvwxyz".split(""))
+REST = Set.new("abcdefghijklmnopqrstuvwxyz0123456789_".split(""))
+MAX_NAME = 64
+# The names Windows keeps for devices: a library that builds is a file NAME.dll there.
+DEVICES = Set.new([
+  "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2",
+  "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+])
 
 def block_program(doc: List[String], name: String) -> String
   (
