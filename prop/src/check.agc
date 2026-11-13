@@ -83,6 +83,16 @@ def eq[T](actual: T, expected: T) -> Result[Void]
   error("expected #{want}, got #{got}")
 end
 
+## `ok()` when `show` writes both values as the same text, else an `error` with both texts, as `Prop.eq` does. It is
+## `Prop.eq` for a type that JSON cannot encode (`Bytes`), with the `show` of its generator.
+def eq_shown[T](actual: T, expected: T, show: Fn[T, String]) -> Result[Void]
+  got = show.call(actual)
+  want = show.call(expected)
+  return ok() if got == want
+
+  error("expected #{want}, got #{got}")
+end
+
 ## Whether `verdict` is the result of `Prop.assume` on a case it does not cover.
 def discarded?(verdict: Result[Void]) -> Bool = not verdict.ok? and verdict.message == DISCARD
 

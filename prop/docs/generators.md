@@ -204,7 +204,7 @@ Prop.bytes(min: Int = 0, max: Int = 16) -> Gen[Bytes]
 
 Bytes of `min` up to `max` values from 0 to 255. Both are at most 1000, and a `min` below 0 or above `max` halts the test. They shrink to fewer bytes, down to `min`, and each byte toward 0.
 
-`Bytes` is not JSON, so `Prop.eq` cannot compare it (`CHECK-NOT-ENCODABLE`): compare `bytes.to_a`, or use `==` in a law that fails with `error(...)`. A counterexample of bytes is written as the list of their values. The six [laws](laws.md) compare with `Prop.eq` too, so they refuse a `Gen[Bytes]` (`CHECK-NOT-ENCODABLE`): state the law with `Prop.check`, for example a round trip as `Prop.check(Prop.bytes()) do |bytes| ... end` that returns `error(...)` when `decode(encode(bytes)) != bytes` (`==` works on `Bytes`).
+`Bytes` is not JSON, so `Prop.eq` cannot compare it (`CHECK-NOT-ENCODABLE`): compare `bytes.to_a`, or use `==` in a law that fails with `error(...)`. A counterexample of bytes is written as the list of their values. The [laws](laws.md) work with it: `Prop.roundtrip(Prop.bytes(), &encode, &decode)` compares the bytes as the text of the generator. Only the results of `Prop.oracle` and `Prop.preserves` go through `Prop.eq`, so return `bytes.to_a` from them.
 
 ```agentica
 import Prop from "pkg/prop/prop"
