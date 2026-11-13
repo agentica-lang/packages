@@ -300,6 +300,11 @@ def in_runner[A, W, R](pool: Pool[A, W], lease: Types.Lease[W], body: Fn[W, Resu
     ok(body.call(lease.worker))
   end
 
+  # A crash counts as observed once its notice went in (a monitor), so that the runner is watched from the moment it
+  # exists: a caller cancelled just as the body crashes would otherwise be gone before it awaited the runner, and the
+  # crash would be nobody's. The room is the one notice; nobody reads it.
+  noticed: Channel[TaskDown] = Channel.new(1)
+  Task.monitor(runner, noticed) do |down| down end
   return none if pool.spec.checkout.some? and not vetted?(verdict, runner)
 
   case Task.await(runner, pool.spec.lease_ms)

@@ -18,6 +18,7 @@ WAIT_JOBS_MS = 10_000
 POLL_MS = 20
 HANG_MS = 60_000
 LOOP_NAP_MS = 5
+RACE_GAP_MS = 10
 SETTING_NAMES = [
   "size", "max_overflow", "overflow_idle_ms", "checkout_ms", "lease_ms", "max_age_ms", "idle_ms", "max_waiting",
   "lazy", "health_ms", "keep_dirty", "dirty_done", "bad_ping_id", "init_fails_from", "init_crashes_at", "slow_init_at",
@@ -118,6 +119,7 @@ def act(driver: Driver, req: Request) -> Handled
     "job" -> start_job(driver, req)
     "flood" -> flood(driver, req)
     "cancel_job" -> cancel_job(driver, req.name)
+    "race_crash" -> race_crash(driver, req)
     "wait_jobs" -> wait_jobs(driver)
     "sleep" -> slept(driver, req.number)
     "close" -> close(driver, req.number)
@@ -304,6 +306,45 @@ def cancel_job(driver: Driver, name: String) -> Handled
       # A cancelled job has no result to wait for.
       reply(driver.with(tasks: driver.tasks.delete(name)), Protocol.OK)
   end
+end
+
+# `number` callers one after the other, each cancelled in the 2 ms after its body crashes (`wait` ms in): a crash that
+# lands as the caller goes. The crash must still be observed, or the driver ends with exit code 1.
+def race_crash(driver: Driver, req: Request) -> Handled
+  case driver.pool
+    none -> reply(driver, "no pool is started")
+    some(pool) ->
+      args = JobArgs(
+        pool: pool,
+        name: "race",
+        kind: "crashes_late",
+        ms: req.wait,
+        times: 1,
+        stats: driver.stats,
+        kinds: driver.kinds,
+        finished: driver.finished,
+      )
+
+      crash_fn: Fn[JobArgs, Result[Void]] = &crash_late
+      for i in 0...req.number
+        caller = Task.spawn(crash_fn, args)
+        Task.sleep(req.wait + i % 3)
+        Task.cancel(caller)
+        Task.sleep(RACE_GAP_MS)
+      end
+
+      reply(driver, Protocol.OK)
+  end
+end
+
+# A caller whose body crashes `ms` after it starts; the answer is nobody's, as its caller is cancelled by then.
+def crash_late(args: JobArgs) -> Result[Void]
+  _ = Pool.with(args.pool) do |_cell|
+    Task.sleep(args.ms)
+    ok("not a number".to_i!)
+  end
+
+  ok()
 end
 
 # A job whose body crashed in its own task (`lease_ms` 0) ends with that crash, which is its result.

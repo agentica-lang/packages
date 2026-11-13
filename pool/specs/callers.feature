@@ -22,6 +22,15 @@ Feature: Callers
     And I wait for the jobs
     Then job "D" fails with the kind "pool.closed"
 
+  Scenario: A body that crashes as its caller is cancelled is still observed
+    Given the driver runs on 1 scheduler
+    And a pool with:
+      | setting  | value |
+      | size     | 1     |
+      | lease_ms | 30000 |
+    When 60 callers are cancelled one after the other as their bodies crash 5 ms in
+    Then the driver ends with code 0
+
   Scenario Outline: A body that crashes in its caller (lease_ms 0) crashes it, and checkin decides (<keep_dirty>)
     Given a pool with:
       | setting    | value        |
