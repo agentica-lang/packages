@@ -58,6 +58,7 @@ Feature: Lifecycle
     And job "B" gets "error pool error: closed"
     And the count "terminated" is 2
 
+  # The body that the close cuts off has its checkin, as after a lease that timed out.
   Scenario: Closing fails the jobs that outlast the drain
     Given a pool with:
       | setting | value |
@@ -66,6 +67,7 @@ Feature: Lifecycle
     And I close the pool, giving the jobs 100 ms to finish
     And I wait for the jobs
     Then job "A" gets "error pool error: closed"
+    And the count "checkin_timed_out" is 1
     And the count "terminated" is 1
 
   Scenario: Closing with no time to drain fails the running job and the ones in line
