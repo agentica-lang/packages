@@ -13,11 +13,18 @@ REPLY_MS = 60_000
 def main() -> Void
   BDD.run([
     BDD.step("a pool with:") do |ctx, _args| send(ctx, Request(op: "start", table: BDD.table(ctx))) end,
+    BDD.step("a pool started in a task of its own, with:") do |ctx, _args|
+      send(ctx, Request(op: "start_owned", table: BDD.table(ctx)))
+    end,
+    BDD.step("the task that started the pool ends") do |ctx, _args| send(ctx, Request(op: "end_starter")) end,
     BDD.step("starting a pool with these settings fails with {string}:") do |ctx, args|
       send(ctx, Request(op: "start_fails", text: args[0], table: BDD.table(ctx)))
     end,
     BDD.step("job {string} holds a resource for {int} ms") do |ctx, args|
       send(ctx, Request(op: "job", name: args[0], kind: "holds", number: args[1].to_i!))
+    end,
+    BDD.step("job {string} holds a resource for {int} ms, {int} times") do |ctx, args|
+      send(ctx, Request(op: "job", name: args[0], kind: "holds", number: args[1].to_i!, times: args[2].to_i!))
     end,
     BDD.step("job {string} probes the pool for {int} ms") do |ctx, args|
       send(ctx, Request(op: "job", name: args[0], kind: "probe", number: args[1].to_i!))
@@ -28,12 +35,16 @@ def main() -> Void
     BDD.step("{int} callers each take a resource and hold it for {int} ms") do |ctx, args|
       send(ctx, Request(op: "flood", number: args[0].to_i!, wait: args[1].to_i!))
     end,
+    BDD.step("{int} callers each take a resource {int} times") do |ctx, args|
+      send(ctx, Request(op: "flood", number: args[0].to_i!, times: args[1].to_i!))
+    end,
     BDD.step("job {string} keeps taking a resource for {int} ms") do |ctx, args|
       send(ctx, Request(op: "job", name: args[0], kind: "loops", number: args[1].to_i!))
     end,
     job_step("job {string} crashes", "crashes"),
     job_step("job {string} returns an error", "fails"),
     job_step("job {string} never returns", "hangs"),
+    job_step("job {string} checks out again inside its body", "nests"),
     BDD.step("the caller of job {string} is cancelled") do |ctx, args|
       send(ctx, Request(op: "cancel_job", name: args[0]))
     end,
@@ -51,11 +62,23 @@ def main() -> Void
     BDD.step("job {string} fails with a pool timeout") do |ctx, args|
       send(ctx, Request(op: "expect_timeout", name: args[0]))
     end,
+    BDD.step("job {string} succeeds or fails with a pool timeout") do |ctx, args|
+      send(ctx, Request(op: "expect_timeout", name: args[0], kind: "or_ok"))
+    end,
+    BDD.step("job {string} fails with the kind {string}") do |ctx, args|
+      send(ctx, Request(op: "expect_kind", name: args[0], text: args[1]))
+    end,
     BDD.step("the jobs ended in this order: {string}") do |ctx, args|
       send(ctx, Request(op: "expect_order", text: args[0]))
     end,
     BDD.step("the count {string} is {int}") do |ctx, args|
       send(ctx, Request(op: "expect_count", name: args[0], number: args[1].to_i!, kind: "is"))
+    end,
+    BDD.step("the pool counts {int} {string} within {int} ms") do |ctx, args|
+      send(
+        ctx,
+        Request(op: "expect_pool_count", name: args[1], number: args[0].to_i!, kind: "is", wait: args[2].to_i!),
+      )
     end,
     BDD.step("the count {string} reaches {int} within {int} ms") do |ctx, args|
       send(

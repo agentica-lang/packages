@@ -50,11 +50,14 @@ dock/                a TCP server: dock.agc is the API (start, stop, wait, watch
                      the task of one client, src/outbox.agc its queue and writer, src/stats.agc the counters,
                      src/types.agc the records; test/dock_test.agc has the socket tests (real localhost sockets,
                      port 0)
-pool/                a generic pool of resources: pool.agc is the whole API and the code (start, with, close, timeout?;
-                     the owner task, the lease tasks and the health tick); specs/ has the features (checkout,
-                     lifecycle, outcomes), whose program under test is specs/driver.agc, a pool of fake resources with
-                     counters that a step program drives by JSON lines (specs/protocol.agc, specs/steps.agc);
-                     test/pool_test.agc has the unit test of `Pool.timeout?`
+pool/                a generic pool of resources: pool.agc is the API (start, with, close, timeout?) and the caller's
+                     side (the ticket, the body in the caller or in a task of its own); src/owner.agc the owner task
+                     (the line, the workers' states, the health tick, the close), src/keeper.agc the task of one
+                     resource (init, ping, checkin, terminate), src/types.agc the records and messages; specs/ has the features
+                     (checkout, callers, lifecycle, outcomes), whose program under test is specs/driver.agc, a pool of
+                     fake resources with counters that a step program drives by JSON lines (specs/protocol.agc,
+                     specs/steps.agc); test/pool_test.agc has the unit test of `Pool.timeout?`; bench/checkout.agc
+                     the checkouts per second
 prop/                property-based testing: prop.agc is the API (check, eq, assume, the generators, the laws, of,
                      exhaustive); src/gen.agc the generators (with their small cases), src/tree.agc the shrink trees,
                      src/seed.agc the seed hashing (pure), src/check.agc the runner and the shrinking, src/laws.agc
