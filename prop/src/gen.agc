@@ -36,10 +36,10 @@ def int(min: Int, max: Int) -> Gen[Int]
   high = max.clamp(-BOUND, BOUND)
   origin = 0.clamp(low, high)
   Gen(
-    make: making do |seed| Trees.int_tree(low + Seeds.draw(seed, high - low + 1), origin) end,
-    count: counting do |size| reach(high - origin, origin - low, size) end,
-    all: listing do |size| offsets(high - origin, origin - low, size).map do |step| origin + step end end,
-    show: showing do |n| JSON.encode(n) end,
+    make: ->(seed) { Trees.int_tree(low + Seeds.draw(seed, high - low + 1), origin) },
+    count: ->(size) { reach(high - origin, origin - low, size) },
+    all: ->(size) { offsets(high - origin, origin - low, size).map do |step| origin + step end },
+    show: ->(n) { JSON.encode(n) },
   )
 end
 
@@ -61,10 +61,10 @@ def float(min: Float, max: Float) -> Gen[Float]
   up = (high - origin).floor
   down = (origin - low).floor
   Gen(
-    make: making do |seed| Trees.float_tree(low + Seeds.unit(seed) * (high - low), origin) end,
-    count: counting do |size| reach(up, down, size) end,
-    all: listing do |size| offsets(up, down, size).map do |step| origin + step.to_f end end,
-    show: showing do |x| JSON.encode(x) end,
+    make: ->(seed) { Trees.float_tree(low + Seeds.unit(seed) * (high - low), origin) },
+    count: ->(size) { reach(up, down, size) },
+    all: ->(size) { offsets(up, down, size).map do |step| origin + step.to_f end },
+    show: ->(x) { JSON.encode(x) },
   )
 end
 
@@ -105,20 +105,20 @@ def list[T](gen: Gen[T], max_size: Int = 10) -> Gen[List[T]] = sized_list(gen, 0
 ## ```
 def optional[T](gen: Gen[T]) -> Gen[Optional[T]]
   Gen(
-    make: making do |seed|
+    make: ->(seed) {
       if Seeds.draw(Seeds.split(seed, 0), 2) == 0
         absent: Trees.Tree[Optional[T]] = Trees.leaf(none)
         return absent
       end
 
       Trees.some_tree(gen.make(Seeds.split(seed, 1)))
-    end,
-    count: counting do |size| saturate(1 + gen.count(size)) end,
-    all: listing do |size|
+    },
+    count: ->(size) { saturate(1 + gen.count(size)) },
+    all: ->(size) {
       absent: List[Optional[T]] = [none]
       absent.concat(gen.all(size).map do |value| some(value) end)
-    end,
-    show: showing do |value| show_optional(value) do |item| gen.show(item) end end,
+    },
+    show: ->(value) { show_optional(value) do |item| gen.show(item) end },
   )
 end
 
@@ -134,12 +134,7 @@ def one_of[T](items: List[T]) -> Gen[T]
   end
 
   chosen = map(int(0, items.size - 1)) do |i| items.at(i) end
-  Gen(
-    make: chosen.make,
-    count: counting do |_| items.size end,
-    all: listing do |_| items end,
-    show: showing do |value| JSON.encode(value) end,
-  )
+  Gen(make: chosen.make, count: ->(_) { items.size }, all: ->(_) { items }, show: ->(value) { JSON.encode(value) })
 end
 
 ## The values of `gen` through `f`. They shrink as the values of `gen` do.
@@ -147,7 +142,7 @@ end
 ## ```ruby
 ## Prop.sample(Prop.map(Prop.int(1, 5)) do |n| n * 10 end, 1) # [30, 20, 50, 40, 10]
 ## ```
-def map[A, B](gen: Gen[A], f: Fn[A, B]) -> Gen[B] = mapped(gen, f, showing do |value| JSON.encode(value) end)
+def map[A, B](gen: Gen[A], f: Fn[A, B]) -> Gen[B] = mapped(gen, f, ->(value) { JSON.encode(value) })
 
 ## The values of `gen` through `f`, written by `show` in a counterexample, for a result that JSON cannot encode (a
 ## struct with a `Bytes` field): `Prop.map` needs a result that JSON encodes. They shrink as the values of `gen` do.
@@ -169,14 +164,14 @@ def map_shown[A, B](gen: Gen[A], show: Fn[B, String], f: Fn[A, B]) -> Gen[B] = m
 ## ```
 def pair[A, B](a: Gen[A], b: Gen[B]) -> Gen[Pair[A, B]]
   Gen(
-    make: making do |seed|
+    make: ->(seed) {
       Trees.zip_trees(a.make(Seeds.split(seed, 0)), b.make(Seeds.split(seed, 1))) do |x, y|
         Pair(first: x, second: y)
       end
-    end,
-    count: counting do |size| saturate(a.count(size) * b.count(size)) end,
-    all: listing do |size| pairs(a.all(size), b.all(size)) end,
-    show: showing do |both| "{\"first\":#{a.show(both.first)},\"second\":#{b.show(both.second)}}" end,
+    },
+    count: ->(size) { saturate(a.count(size) * b.count(size)) },
+    all: ->(size) { pairs(a.all(size), b.all(size)) },
+    show: ->(both) { "{\"first\":#{a.show(both.first)},\"second\":#{b.show(both.second)}}" },
   )
 end
 
@@ -212,7 +207,7 @@ def bytes(min: Int = 0, max: Int = 16) -> Gen[Bytes]
   end
 
   values = sized_list(int(0, BYTE_MAX), min, max)
-  mapped(values, ->(items: List[Int]) { Bytes.from_list(items).unwrap! }, showing do |made| show_bytes(made) end)
+  mapped(values, ->(items: List[Int]) { Bytes.from_list(items).unwrap! }, ->(made) { show_bytes(made) })
 end
 
 ## The values that `gen` makes for `count` seeds from `seed` on: the first cases `Prop.check` runs with that seed.
@@ -230,22 +225,20 @@ def capped?(count: Int) -> Bool = count >= CAP
 ## `value`, always.
 def just[T](value: T) -> Gen[T]
   Gen(
-    make: making do |_| Trees.leaf(value) end,
-    count: counting do |_| 1 end,
-    all: listing do |_| [value] end,
-    show: showing do |made| JSON.encode(made) end,
+    make: ->(_) { Trees.leaf(value) },
+    count: ->(_) { 1 },
+    all: ->(_) { [value] },
+    show: ->(made) { JSON.encode(made) },
   )
 end
 
 ## One value of each of `gens`, in order: a list as long as `gens`, which shrinks only through its items.
 def sequence[T](gens: List[Gen[T]]) -> Gen[List[T]]
   Gen(
-    make: making do |seed|
-      Trees.fixed_tree((0...gens.size).to_a.map do |i| gens.at(i).make(Seeds.split(seed, i)) end)
-    end,
-    count: counting do |size| gens.reduce(1) do |total, gen| saturate(total * gen.count(size)) end end,
-    all: listing do |size| product(gens.map do |gen| gen.all(size) end) end,
-    show: showing do |values| show_items((0...gens.size).to_a.map do |i| gens.at(i).show(values.at(i)) end) end,
+    make: ->(seed) { Trees.fixed_tree((0...gens.size).to_a.map do |i| gens.at(i).make(Seeds.split(seed, i)) end) },
+    count: ->(size) { gens.reduce(1) do |total, gen| saturate(total * gen.count(size)) end },
+    all: ->(size) { product(gens.map do |gen| gen.all(size) end) },
+    show: ->(values) { show_items((0...gens.size).to_a.map do |i| gens.at(i).show(values.at(i)) end) },
   )
 end
 
@@ -257,13 +250,13 @@ def choose[T](gens: List[Gen[T]]) -> Gen[T]
   end
 
   Gen(
-    make: making do |seed|
+    make: ->(seed) {
       index = Seeds.draw(Seeds.split(seed, 0), gens.size)
       Trees.choice_tree(index) do |i| gens.at(i).make(Seeds.split(seed, i + 1)) end
-    end,
-    count: counting do |size| gens.reduce(0) do |total, gen| saturate(total + gen.count(size)) end end,
-    all: listing do |size| gens.reduce([]) do |all, gen| all.concat(gen.all(size)) end end,
-    show: showing do |value| JSON.encode(value) end,
+    },
+    count: ->(size) { gens.reduce(0) do |total, gen| saturate(total + gen.count(size)) end },
+    all: ->(size) { gens.reduce([]) do |all, gen| all.concat(gen.all(size)) end },
+    show: ->(value) { JSON.encode(value) },
   )
 end
 
@@ -284,20 +277,11 @@ MAX_SIZE = 1000
 # A count of cases stops growing here, so a product of counts never overflows an Int.
 CAP = 1_000_000_000
 
-# The three functions of a `Gen` are blocks: these hand a block back as the `Fn` value a field holds.
-def making[T](make: Fn[Int, Trees.Tree[T]]) -> Fn[Int, Trees.Tree[T]] = make
-
-def counting(count: Fn[Int, Int]) -> Fn[Int, Int] = count
-
-def listing[T](all: Fn[Int, List[T]]) -> Fn[Int, List[T]] = all
-
-def showing[T](show: Fn[T, String]) -> Fn[T, String] = show
-
 def mapped[A, B](gen: Gen[A], f: Fn[A, B], show: Fn[B, String]) -> Gen[B]
   Gen(
-    make: making do |seed| Trees.map_tree(gen.make(seed), f) end,
+    make: ->(seed) { Trees.map_tree(gen.make(seed), f) },
     count: gen.count,
-    all: listing do |size| gen.all(size).map do |value| f.call(value) end end,
+    all: ->(size) { gen.all(size).map do |value| f.call(value) end },
     show: show,
   )
 end
@@ -307,14 +291,14 @@ def sized_list[T](gen: Gen[T], min: Int, max: Int) -> Gen[List[T]]
   limit = max.clamp(0, MAX_SIZE)
   shortest = min.clamp(0, limit)
   Gen(
-    make: making do |seed|
+    make: ->(seed) {
       count = shortest + Seeds.draw(Seeds.split(seed, 0), limit - shortest + 1)
       trees = (0...count).to_a.map do |i| gen.make(Seeds.split(seed, i + 1)) end
       Trees.floored_list_tree(trees, shortest)
-    end,
-    count: counting do |size| lists_count(gen.count(size), shortest, reach_length(shortest, limit, size)) end,
-    all: listing do |size| lists_between(gen.all(size), shortest, reach_length(shortest, limit, size)) end,
-    show: showing do |items| show_items(items.map do |item| gen.show(item) end) end,
+    },
+    count: ->(size) { lists_count(gen.count(size), shortest, reach_length(shortest, limit, size)) },
+    all: ->(size) { lists_between(gen.all(size), shortest, reach_length(shortest, limit, size)) },
+    show: ->(items) { show_items(items.map do |item| gen.show(item) end) },
   )
 end
 
