@@ -93,14 +93,10 @@ end
 
 A client that sends `{"command":"message","identifier":"...","data":"{\"action\":\"say\",\"text\":\"yo\"}"}` makes every subscriber of the room hear `ana: yo`. Any other action gets `"unknown action NAME"` back, to that client only.
 
-The block of a handler is not a function you can store in a map directly, so give its type a name first, with a function that returns its argument:
+A function of a handler that needs more than its arguments, such as the hub, is a lambda:
 
 ```agentica {mode="fragment"}
-def leaving(f: Fn[Channels.Session, JSON.Value, Result[Void]]) -> Fn[Channels.Session, JSON.Value, Result[Void]]
-  return f
-end
-
-on_leave = leaving do |session, params| left(hub, session, params) end
+on_leave = ->(session, params) { left(hub, session, params) }
 ```
 
 ## What Action Cable only logs

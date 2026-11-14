@@ -67,14 +67,12 @@ def ask(process: Process, request: JSON.Value) -> Result[JSON.Value]
   JSON.parse(line)
 end
 
-def serving(f: Fn[JSON.Value, Result[JSON.Value]]) -> Fn[JSON.Value, Result[JSON.Value]] = f
-
 def listens(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   started = BDD.given_program(ctx, SERVER)
   line = BDD.read_line(started, START_MS).unwrap!
   port = line.split(" ").last.to_i!
   process = Process.spawn_captured("agentica", [PEER_PROGRAM, "#{port}"]).unwrap!
-  service = serving do |request| ask(process, request) end
+  service: Fn[JSON.Value, Result[JSON.Value]] = ->(request) { ask(process, request) }
   BDD.set(BDD.keep(started, PEER, service), PORT, JSON.from(port))
 end
 
