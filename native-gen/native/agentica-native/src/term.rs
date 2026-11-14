@@ -293,6 +293,52 @@ impl<'a> Env<'a> {
         if self.roots.is_null() { Mode::Dirty } else { Mode::Short }
     }
 
+    /// Runs `f` with the thread out of the collector's way (`an_blocking`, API 1.3) and gives its value: for a library
+    /// that switches to a stack of its own, or blocks a while, inside a short call. It runs on the calling thread, so
+    /// it stalls that scheduler as long as it runs. A dirty call runs on the compute pool, which the collector never
+    /// stops, so there it only runs `f`; a plain wait belongs in a dirty call and needs no `blocking`.
+    ///
+    /// `f` may use Rust memory and read the `&str` and `&[u8]` borrowed from the call's arguments; the contract covers
+    /// no other VM memory. `Send` keeps `Env`, `Term` and the walks out of it. A panic of `f` is caught and fails the
+    /// call as usual.
+    ///
+    /// ```compile_fail,E0277
+    /// # use agentica_native::*;
+    /// unsafe {
+    ///     call(std::ptr::null_mut(), 0, std::ptr::null(), Mode::Short, &[], |env, _| Ok(env.blocking(|| env.int(1))))
+    /// };
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// When the VM's API is older than 1.3, which a VM that loaded this module never is.
+    pub fn blocking<R, F: FnOnce() -> R + Send>(self, f: F) -> R {
+        struct Slot<F, R> {
+            f: Option<F>,
+            out: Option<std::thread::Result<R>>,
+        }
+
+        unsafe extern "C" fn trampoline<F: FnOnce() -> R, R>(arg: *mut c_void) {
+            // SAFETY: `arg` is the Slot of `blocking`, alive and used by nothing else while the VM runs this.
+            let slot = unsafe { &mut *(arg as *mut Slot<F, R>) };
+            if let Some(f) = slot.f.take() {
+                slot.out = Some(catch_unwind(AssertUnwindSafe(f)));
+            }
+        }
+
+        let api = self.api();
+        assert!(api.minor >= 3, "the VM's native API is 1.{}, and an_blocking needs 1.3", api.minor);
+        let mut slot = Slot { f: Some(f), out: None };
+        // SAFETY: the table has `blocking` (minor 3), the env is the VM's for this call, and the VM runs the
+        // trampoline on this thread before it returns, with the pointer of `slot`.
+        unsafe { (api.blocking)(self.raw, trampoline::<F, R>, &mut slot as *mut Slot<F, R> as *mut c_void) };
+        match slot.out {
+            Some(Ok(value)) => value,
+            Some(Err(payload)) => std::panic::resume_unwind(payload),
+            None => panic!("an_blocking did not run its function"),
+        }
+    }
+
     // SAFETY (each constructor below): the env is the VM's for this call, and every pointer passed is valid for the
     // length passed with it, or is a local of the constructor.
 

@@ -3,6 +3,8 @@
 use core::ffi::c_int;
 use std::sync::atomic::{AtomicI64, Ordering};
 
+use std::time::Duration;
+
 use agentica_native::{Encoder, Env, Mode, Module, Raise, ResourceArc, Term, call, sys, types};
 
 /// `n` Strings, kept in a Vec of terms until the List is built: the root list of the call keeps them alive while
@@ -163,6 +165,32 @@ unsafe extern "C" fn borrowed(env: *mut sys::an_env, argc: c_int, argv: *const s
     }
 }
 
+/// The sum of the bytes of `text`, summed in `Env::blocking` from the borrowed argument after a wait of `wait_ms`,
+/// while the other schedulers make Strings and collect: this scheduler's thread is marked blocked meanwhile.
+unsafe extern "C" fn checksum(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe {
+        call(env, argc, argv, Mode::Short, types(), |env, args| {
+            let (text, wait_ms): (&str, i64) = (args.decode(0)?, args.decode(1)?);
+            Ok(env.int(env.blocking(|| wait_and_sum(text, wait_ms))))
+        })
+    }
+}
+
+/// The same in a dirty call: the compute pool is not the collector's, so an_blocking only runs the closure there.
+unsafe extern "C" fn staged_checksum(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe {
+        call(env, argc, argv, Mode::Dirty, types(), |env, args| {
+            let (text, wait_ms): (&str, i64) = (args.decode(0)?, args.decode(1)?);
+            Ok(env.int(env.blocking(|| wait_and_sum(text, wait_ms))))
+        })
+    }
+}
+
+fn wait_and_sum(text: &str, wait_ms: i64) -> i64 {
+    std::thread::sleep(Duration::from_millis(wait_ms.try_into().unwrap_or(0)));
+    text.bytes().map(i64::from).sum()
+}
+
 /// The value of a `Counter` resource, which counts its drops in DROPPED.
 struct Counter(i64);
 
@@ -232,6 +260,8 @@ fn module() -> Module {
         .function("count", "(Counter) -> Int", count, Mode::Short)
         .function("dropped", "() -> Int", dropped, Mode::Short)
         .function("checked", "(Int) -> Int", checked, Mode::Dirty)
+        .function("checksum", "(String, Int) -> Int", checksum, Mode::Short)
+        .function("staged_checksum", "(String, Int) -> Int", staged_checksum, Mode::Dirty)
         .struct_type("Point", "x: Int, y: Int")
         .resource::<Counter>("Counter")
 }

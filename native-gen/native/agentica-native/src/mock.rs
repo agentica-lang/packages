@@ -35,7 +35,7 @@ pub const RESOURCE_ROWS: u32 = 2;
 /// The env of one mock call. It starts with the table pointer, as the VM's does.
 #[repr(C)]
 pub struct MockEnv {
-    api: *const an_api,
+    pub api: *const an_api,
     // Each value, and whether it is staged: a dirty call stages what its constructors make, except the values that
     // need no memory (the test's own values are arguments).
     values: RefCell<Vec<(V, bool)>>,
@@ -428,7 +428,27 @@ unsafe extern "C" fn get_resource(e: *mut an_env, t: an_term, type_: u32, state:
     })
 }
 
-static API: an_api = an_api {
+thread_local! {
+    static BLOCKED: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+/// Whether this thread is inside `blocking`, as the VM marks it for the collector.
+pub fn blocked() -> bool {
+    BLOCKED.get()
+}
+
+unsafe extern "C" fn blocking(_: *mut an_env, f: unsafe extern "C" fn(*mut c_void), arg: *mut c_void) {
+    BLOCKED.set(true);
+    unsafe { f(arg) };
+    BLOCKED.set(false);
+}
+
+/// The table of a VM of API 1.2, which has no `blocking`.
+pub static API_1_2: an_api = an_api { minor: 2, ..BASE };
+
+static API: an_api = BASE;
+
+const BASE: an_api = an_api {
     major: AN_API_MAJOR,
     minor: AN_API_MINOR,
     size: core::mem::size_of::<an_api>() as u32,
@@ -470,4 +490,5 @@ static API: an_api = an_api {
     get_payload,
     resource_new,
     get_resource,
+    blocking,
 };

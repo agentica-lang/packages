@@ -62,7 +62,7 @@ fn text(p: *const core::ffi::c_char) -> &'static str {
 fn the_tables_hold_each_row_in_order_and_init_builds_them_once() {
     let m = init_module();
     assert!(ptr::eq(m, init_module()));
-    assert_eq!((m.major, m.minor, m.size as usize), (1, 2, size_of::<sys::an_module>()));
+    assert_eq!((m.major, m.minor, m.size as usize), (1, 3, size_of::<sys::an_module>()));
     assert_eq!(text(m.name), "mock");
     // SAFETY: each table has its count of rows.
     let (functions, rows, resources) = unsafe {
