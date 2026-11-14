@@ -32,6 +32,8 @@ extern module "vm_check"
   def count(counter: Counter) -> Int
   def dropped() -> Int
   compute def checked(n: Int) -> Int
+  def checksum(text: String) -> Int
+  compute def staged_checksum(text: String, wait_ms: Int) -> Int
 end
 
 def main() -> Void
@@ -58,6 +60,10 @@ def main() -> Void
   puts([echo_rows(rows) == rows, echo_staged(rows) == rows])
   puts(echo_rows(rows))
   puts(describe(-7, 2.5, true, "héllo", Bytes.from_list([0, 255]).unwrap!))
+  # The dirty call waits in an_blocking while this task makes and collects Strings.
+  waiting = Task.spawn do staged_checksum("héllo", 50) end
+  puts(summary(strings(200000)))
+  puts([checksum("héllo"), Task.await(waiting)])
   # The end of a task frees the resources it made: each Counter is dropped once, after the program read them all.
   made = Task.spawn do
     counters = (0..999).to_a.map do |k| counter(k) end

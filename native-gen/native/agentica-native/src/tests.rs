@@ -231,3 +231,23 @@ fn a_map_of_more_pairs_than_the_stack_buffer_keeps_their_order() {
     let pairs: Vec<(V, V)> = (0..20).map(|n| (V::Int(n), V::Int(n * 10))).collect();
     assert_eq!(result, Ok(V::Map(pairs)));
 }
+
+#[test]
+fn blocking_runs_out_of_the_collectors_way_on_borrowed_arguments_and_fails_the_call_on_a_panic() {
+    for mode in [Mode::Short, Mode::Dirty] {
+        let summed =
+            run_or_raise(&MockEnv::new(mode == Mode::Dirty), mode, vec![V::Bytes(vec![1, 2, 3])], |env, args| {
+                let data: &[u8] = args.decode(0)?;
+                let (sum, inside) = env.blocking(|| (data.iter().map(|&b| i64::from(b)).sum::<i64>(), mock::blocked()));
+                assert!(inside && !mock::blocked());
+                Ok(env.int(sum))
+            });
+        assert_eq!(summed, Ok(V::Int(6)));
+    }
+    let panicked = run_or_raise(&MockEnv::new(false), Mode::Short, vec![], |env, _| env.blocking(|| panic!("inside")));
+    assert_eq!(panicked, Err("panic: inside".to_string()));
+    let mut old = MockEnv::new(false);
+    old.api = &mock::API_1_2;
+    let refused = run_or_raise(&old, Mode::Short, vec![], |env, _| Ok(env.int(env.blocking(|| 1))));
+    assert_eq!(refused, Err("panic: the VM's native API is 1.2, and an_blocking needs 1.3".to_string()));
+}

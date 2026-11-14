@@ -1,4 +1,4 @@
-//! The C API of `agentica_native.h` (version 1.2), as it is: the layouts of the tables and the opaque values. The
+//! The C API of `agentica_native.h` (version 1.3), as it is: the layouts of the tables and the opaque values. The
 //! safe types of the crate are built on it; a module never needs it directly.
 
 #![allow(non_camel_case_types)]
@@ -7,7 +7,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 
 /// `AN_API_MAJOR` and `AN_API_MINOR` of the header these layouts copy.
 pub const AN_API_MAJOR: u32 = 1;
-pub const AN_API_MINOR: u32 = 2;
+pub const AN_API_MINOR: u32 = 3;
 
 /// `AN_SHORT` and `AN_DIRTY`, the modes of `an_function.flags`.
 pub const AN_SHORT: c_uint = 0;
@@ -129,6 +129,7 @@ pub struct an_api {
     pub get_payload: unsafe extern "C" fn(E, T, u32, u32, *mut T) -> bool,
     pub resource_new: unsafe extern "C" fn(E, u32, *mut T) -> *mut c_void,
     pub get_resource: unsafe extern "C" fn(E, T, u32, *mut *mut c_void) -> bool,
+    pub blocking: unsafe extern "C" fn(E, unsafe extern "C" fn(*mut c_void), *mut c_void),
 }
 
 /// The one export of a module, `agentica_native_init`.
@@ -146,7 +147,7 @@ unsafe impl Sync for an_module {}
 const _: () = {
     use core::mem::size_of;
     assert!(size_of::<an_term>() == 16);
-    assert!(size_of::<an_api>() == 320);
+    assert!(size_of::<an_api>() == 328);
     assert!(size_of::<an_module>() == 80);
     assert!(size_of::<an_function>() == 32);
     assert!(size_of::<an_type>() == 24);

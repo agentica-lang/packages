@@ -3,6 +3,8 @@
 use core::ffi::c_int;
 use std::sync::atomic::{AtomicI64, Ordering};
 
+use std::time::Duration;
+
 use agentica_native::{Encoder, Env, Mode, Module, Raise, ResourceArc, Term, call, sys, types};
 
 /// `n` Strings, kept in a Vec of terms until the List is built: the root list of the call keeps them alive while
@@ -163,6 +165,34 @@ unsafe extern "C" fn borrowed(env: *mut sys::an_env, argc: c_int, argv: *const s
     }
 }
 
+/// The sum of the bytes of `text`, summed in `Env::blocking` from the borrowed argument.
+unsafe extern "C" fn checksum(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe {
+        call(env, argc, argv, Mode::Short, types(), |env, args| {
+            let text: &str = args.decode(0)?;
+            Ok(env.int(env.blocking(|| byte_sum(text))))
+        })
+    }
+}
+
+/// The same in a dirty call, after a wait of `wait_ms` in `Env::blocking`.
+unsafe extern "C" fn staged_checksum(env: *mut sys::an_env, argc: c_int, argv: *const sys::an_term) -> sys::an_term {
+    unsafe {
+        call(env, argc, argv, Mode::Dirty, types(), |env, args| {
+            let (text, wait_ms): (&str, i64) = (args.decode(0)?, args.decode(1)?);
+            let sum = env.blocking(|| {
+                std::thread::sleep(Duration::from_millis(wait_ms.try_into().unwrap_or(0)));
+                byte_sum(text)
+            });
+            Ok(env.int(sum))
+        })
+    }
+}
+
+fn byte_sum(text: &str) -> i64 {
+    text.bytes().map(i64::from).sum()
+}
+
 /// The value of a `Counter` resource, which counts its drops in DROPPED.
 struct Counter(i64);
 
@@ -232,6 +262,8 @@ fn module() -> Module {
         .function("count", "(Counter) -> Int", count, Mode::Short)
         .function("dropped", "() -> Int", dropped, Mode::Short)
         .function("checked", "(Int) -> Int", checked, Mode::Dirty)
+        .function("checksum", "(String) -> Int", checksum, Mode::Short)
+        .function("staged_checksum", "(String, Int) -> Int", staged_checksum, Mode::Dirty)
         .struct_type("Point", "x: Int, y: Int")
         .resource::<Counter>("Counter")
 }
