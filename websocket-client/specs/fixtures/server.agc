@@ -48,16 +48,12 @@ def say_protocol(ws: HTTP.WebSocket) -> Result[Void]
   echo(ws)
 end
 
-def session(f: Fn[HTTP.WebSocket, Result[Void]]) -> Fn[HTTP.WebSocket, Result[Void]] = f
-
 def route(request: HTTP.Request, _body: HTTP.RequestBody) -> Result[HTTP.Answer]
   options = HTTP.WebSocketOptions(protocols: PROTOCOLS)
   case request.path
     "/echo" -> ok(HTTP.Answer.Upgrade(try HTTP.accept_websocket(request, &echo, options)))
     "/headers" ->
-      ok(
-        HTTP.Answer.Upgrade(try HTTP.accept_websocket(request, session do |ws| say_headers(request, ws) end, options)),
-      )
+      ok(HTTP.Answer.Upgrade(try HTTP.accept_websocket(request, ->(ws) { say_headers(request, ws) }, options)))
     "/chat" -> ok(HTTP.Answer.Upgrade(try HTTP.accept_websocket(request, &say_protocol, options)))
     _ -> ok(HTTP.Answer.Whole(HTTP.Response(status: 404, headers: [], body: "not found".bytes)))
   end
