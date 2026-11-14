@@ -267,9 +267,9 @@ none
 Point(x: 2.0, y: 1.0)
 ```
 
-A native module cannot call back into Agentica: its functions get values and return values, and never run an Agentica function or block. Return the data, or a resource, and loop in Agentica. A plain `extern` block can pass a function of the program to C as a function pointer, with a [`callback`](https://agentica-lang.github.io/agentica/library/io-and-system/native/types/#callbacks) line.
+A native module cannot call back into Agentica: its functions get values and return values, and never call back into Agentica; a `def` must not wait (use a `compute def`). Return the data, or a resource, and loop in Agentica. A plain `extern` block can pass a function of the program to C as a function pointer, with a [`callback`](https://agentica-lang.github.io/agentica/library/io-and-system/native/types/#callbacks) line.
 
-A library that switches to a stack of its own (a coroutine, as the non-blocking calls of MariaDB Connector/C run), or a wait inside a `compute def`, runs in `env.blocking(|| ...)`, which gives the closure's value: the collector leaves the thread alone meanwhile. The closure may use Rust memory and read the `&str` and `&[u8]` of the call's arguments, never `env` or a term (its `Send` bound keeps them out). It runs on the calling thread, so in a `def` it stops that scheduler: keep it short there, and make a function that waits a `compute def`. It is `an_blocking` of Native API 1.3, so a module on the crate needs Agentica 0.29.0 or later.
+A `def` that calls a library that switches to a stack of its own (a coroutine, as the non-blocking calls of MariaDB Connector/C run), or that blocks for a while inside one, runs that part in `env.blocking(|| ...)`, which gives the closure's value: the collector leaves the thread alone meanwhile. The closure may use Rust memory and read the `&str` and `&[u8]` borrowed from the call's arguments, never `env` or a term (its `Send` bound keeps them out). It runs on the calling thread, so it still stops that scheduler: keep it short. A plain wait goes in a `compute def`, which runs on the compute pool and needs no `blocking`. It is `an_blocking` of Native API 1.3, so a module on the crate needs Agentica 0.30.0 or later (0.29.0 has API 1.3, but its `an_blocking` could lose a value on macOS x86_64).
 
 What `build` does, with paths from the package root:
 

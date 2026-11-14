@@ -293,12 +293,14 @@ impl<'a> Env<'a> {
         if self.roots.is_null() { Mode::Dirty } else { Mode::Short }
     }
 
-    /// Runs `f` with the thread out of the collector's way (`an_blocking`, API 1.3), in a short or a dirty call
-    /// alike, and gives its value: for a library that switches to a stack of its own, or a wait in a `compute def`.
-    /// It runs on the calling thread, so in a short call it stalls that scheduler as long as it runs.
+    /// Runs `f` with the thread out of the collector's way (`an_blocking`, API 1.3) and gives its value: for a library
+    /// that switches to a stack of its own, or blocks a while, inside a short call. It runs on the calling thread, so
+    /// it stalls that scheduler as long as it runs. A dirty call runs on the compute pool, which the collector never
+    /// stops, so there it only runs `f`; a plain wait belongs in a dirty call and needs no `blocking`.
     ///
-    /// `f` may use Rust memory and read the `&str` and `&[u8]` that the call's arguments lend, but must not reach the
-    /// VM: `Send` keeps `Env`, `Term` and the walks out of it. A panic of `f` is caught and fails the call as usual.
+    /// `f` may use Rust memory and read the `&str` and `&[u8]` borrowed from the call's arguments; the contract covers
+    /// no other VM memory. `Send` keeps `Env`, `Term` and the walks out of it. A panic of `f` is caught and fails the
+    /// call as usual.
     ///
     /// ```compile_fail,E0277
     /// # use agentica_native::*;

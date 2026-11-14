@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- `Env::blocking` of the `agentica-native` crate runs a closure out of the collector's way (`an_blocking`, Native API 1.3), for a library that switches stacks or a wait in a `compute def`. A module on the crate now declares API 1.3, so it needs Agentica 0.29.0 or later.
+- `Env::blocking` of the `agentica-native` crate runs a closure out of the collector's way (`an_blocking`, Native API 1.3), for a library that switches stacks, or blocks a while, inside a short `def`. A module on the crate now declares API 1.3, so it needs Agentica 0.30.0 or later.
 
 ## [0.4.0] - 2026-11-13
 
