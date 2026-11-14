@@ -40,7 +40,7 @@ def start(options: HubOptions) -> Result[Hub]
   end
 
   counters: ATS[String, Int] = ATS.new()
-  handler = handling do |state, message| handle(state, message, counters) end
+  handler: Fn[State, HubMessage, Actor.Step[State]] = ->(state, message) { handle(state, message, counters) }
   actor = Actor.start(Actor.Behaviour(init: &empty_state, handle: handler), Actor.Options(capacity: HUB_INBOX))
   # The hub and its ticker send through the channel itself, not `Actor.cast`, so a send keeps its "closed" and
   # "timed out" errors.
@@ -324,9 +324,6 @@ def empty_state() -> State
   empty_topics: Map[String, Topic] = {}
   State(entries: empty_entries, topics: empty_topics, beats: 0)
 end
-
-# A block can only follow a call, so this turns the block that holds the counters into the `Fn` of the behaviour.
-def handling(f: Fn[State, HubMessage, Actor.Step[State]]) -> Fn[State, HubMessage, Actor.Step[State]] = f
 
 # `Stop` ends the actor at once: the messages still queued behind it are dropped, as before.
 def handle(state: State, message: HubMessage, counters: ATS[String, Int]) -> Actor.Step[State]

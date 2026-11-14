@@ -100,8 +100,7 @@ def open(mount: Mount, socket: HTTP.WebSocket, identity: Types.Identity) -> Resu
   Hub.count(hub, Hub.CONNECTIONS, 1)
   pump = Task.spawn do pump(socket, inbox) end
   # The loop owns the inbox: it closes when the loop ends or crashes, so the hub sees "closed" and the pump stops.
-  body = looping do |owned| loop(line, owned) end
-  outcome = Task.await(Task.spawn_owning(body, inbox))
+  outcome = Task.await(Task.spawn_owning(->(owned) { loop(line, owned) }, inbox))
   Task.cancel(pump)
   if not outcome.ok?
     IO.warn("bond-channels: connection #{connection} ended with an error: #{outcome.message}")
@@ -113,10 +112,6 @@ def open(mount: Mount, socket: HTTP.WebSocket, identity: Types.Identity) -> Resu
   _ = Hub.disconnect(hub, connection)
   ok()
 end
-
-# A block cannot be assigned to a name: this gives it a typed parameter first, so that it is a function that takes
-# the inbox, which `Task.spawn_owning` hands over.
-def looping(body: Fn[Channel[Hub.Event], Result[Void]]) -> Fn[Channel[Hub.Event], Result[Void]] = body
 
 # The hub also pings the WebSocket, so that the pong of a quiet peer resets the idle clock of std/http: the Action
 # Cable ping is always something to write, so std/http would never ping by itself.

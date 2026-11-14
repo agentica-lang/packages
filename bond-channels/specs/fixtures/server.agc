@@ -105,20 +105,11 @@ def refused_subscribed(session: Channels.Session, params: JSON.Value) -> Result[
   ok(Channels.Subscription(rejected: true))
 end
 
-# A block follows a call, so these give the blocks of `handlers` a typed name first.
-def leaving(f: Fn[Channels.Session, JSON.Value, Result[Void]]) -> Fn[Channels.Session, JSON.Value, Result[Void]] = f
-
-def acting(
-  f: Fn[Channels.Session, JSON.Value, String, JSON.Value, Result[List[JSON.Value]]],
-) -> Fn[Channels.Session, JSON.Value, String, JSON.Value, Result[List[JSON.Value]]]
-  f
-end
-
 def readable?(session: Channels.Session, name: String) -> Bool = not name.start_with?("secret:")
 
 def handlers(hub: Channels.Hub, key: Bytes) -> Map[String, Channels.Handler]
-  left = leaving do |session, params| room_left(hub, session, params) end
-  acted = acting do |session, params, action, data| room_acted(hub, session, params, action, data) end
+  left = ->(session, params) { room_left(hub, session, params) }
+  acted = ->(session, params, action, data) { room_acted(hub, session, params, action, data) }
   {
     "RoomChannel": Channels.handler(&room_subscribed).with(unsubscribed: left, perform: acted),
     "WatchChannel": Channels.handler(&watch_subscribed),
@@ -165,23 +156,16 @@ def stop(hub: Channels.Hub, conn: Bond.Conn) -> Result[Bond.Conn]
   ok(Bond.text(conn, 200, "stopped"))
 end
 
-def serving(handler: Fn[Bond.Conn, Result[Bond.Conn]]) -> Fn[Bond.Conn, Result[Bond.Conn]] = handler
-
 def main() -> Void
   hub = Channels.start_hub(Channels.HubOptions(beat_ms: setting("BEAT_MS", DEFAULT_BEAT_MS))).unwrap!
-  say_it = serving do |conn| say(hub, conn) end
-  count_it = serving do |conn| counts(hub, conn) end
-  stop_it = serving do |conn| stop(hub, conn) end
-  disconnect_it = serving do |conn| disconnect(hub, conn) end
   key = Channels.stream_key("the secret of the specs").unwrap!
-  sign_it = serving do |conn| signed(key, conn) end
   app = (
     Bond.app()
-    |> Bond.get("/say", say_it)
-    |> Bond.get("/stats", count_it)
-    |> Bond.get("/stop", stop_it)
-    |> Bond.get("/disconnect", disconnect_it)
-    |> Bond.get("/signed", sign_it)
+    |> Bond.get("/say", ->(conn) { say(hub, conn) })
+    |> Bond.get("/stats", ->(conn) { counts(hub, conn) })
+    |> Bond.get("/stop", ->(conn) { stop(hub, conn) })
+    |> Bond.get("/disconnect", ->(conn) { disconnect(hub, conn) })
+    |> Bond.get("/signed", ->(conn) { signed(key, conn) })
   )
 
   options = Channels.MountOptions(

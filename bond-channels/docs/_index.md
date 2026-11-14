@@ -62,19 +62,14 @@ def say(hub: Channels.Hub, conn: Bond.Conn) -> Result[Bond.Conn]
   return ok(Bond.text(conn, 200, "sent"))
 end
 
-def serving(handler: Fn[Bond.Conn, Result[Bond.Conn]]) -> Fn[Bond.Conn, Result[Bond.Conn]]
-  return handler
-end
-
 def main() -> Void
   hub = Channels.start_hub().unwrap!
-  say_it = serving do |conn| say(hub, conn) end
   options = Channels.MountOptions(
     connect: &connect,
     handlers: {"RoomChannel": Channels.handler(&subscribed)},
   )
 
-  app = Bond.app() |> Bond.get("/say", say_it)
+  app = Bond.app() |> Bond.get("/say", ->(conn) { say(hub, conn) })
   mounted = Channels.mount(app, "/cable", hub, options).unwrap!
   server = Bond.start_with(mounted, "127.0.0.1", 0, HTTP.ServerOptions()).unwrap!
   puts("listening on #{Bond.local_port(server)}")

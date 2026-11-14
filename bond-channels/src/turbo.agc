@@ -11,17 +11,10 @@ def subscribing(
   key: Bytes,
   authorize: Fn[Types.Session, String, Bool],
 ) -> Fn[Types.Session, JSON.Value, Result[Types.Subscription]]
-  signed do |session, params| subscribe(key, authorize, session, params) end
+  ->(session, params) { subscribe(key, authorize, session, params) }
 end
 
 private
-
-# A block cannot be assigned to a name: this gives it a typed parameter first.
-def signed(
-  f: Fn[Types.Session, JSON.Value, Result[Types.Subscription]],
-) -> Fn[Types.Session, JSON.Value, Result[Types.Subscription]]
-  f
-end
 
 def subscribe(
   key: Bytes,
