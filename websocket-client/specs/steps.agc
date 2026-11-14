@@ -209,8 +209,6 @@ def options_of(ctx: BDD.Context) -> WebSocket.Options
   )
 end
 
-def serving(f: Fn[JSON.Value, Result[JSON.Value]]) -> Fn[JSON.Value, Result[JSON.Value]] = f
-
 def connect_to(ctx: BDD.Context, url: String) -> BDD.Context
   started = Time.monotonic_ms()
   result = WebSocket.connect(url, options_of(ctx))
@@ -222,7 +220,7 @@ def connect_to(ctx: BDD.Context, url: String) -> BDD.Context
 end
 
 def kept(ctx: BDD.Context, ws: WebSocket.Client) -> BDD.Context
-  service = serving do |request| drive(ws, request) end
+  service: Fn[JSON.Value, Result[JSON.Value]] = ->(request) { drive(ws, request) }
   BDD.set(BDD.keep(ctx, CLIENT, service), "protocol", JSON.from(ws.protocol))
 end
 
