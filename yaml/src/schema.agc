@@ -193,7 +193,7 @@ def radix_value(text: String, radix: Int) -> Result[JSON.Value]
   value = 0
   for c in text.bytes.drop(2)
     digit = hex_digit(c)
-    return error("the integer #{text} is out of range") if value > (9_223_372_036_854_775_807 - digit) / radix
+    return big_radix(text, radix) if value > (9_223_372_036_854_775_807 - digit) / radix
 
     value = value * radix + digit
   end
@@ -235,4 +235,28 @@ def float_value(text: String) -> Result[JSON.Value]
   return error("the float #{text} is out of range") if value - value != 0.0
 
   ok(JSON.from(value))
+end
+
+# A `0x` or `0o` integer outside 64 bits, as its exact decimal digits.
+def big_radix(text: String, radix: Int) -> Result[JSON.Value]
+  # The decimal digits, the lowest first.
+  digits = [0]
+  for c in text.bytes.drop(2)
+    carry = hex_digit(c)
+    next_digits: List[Int] = []
+    for d in digits
+      product = d * radix + carry
+      next_digits = next_digits.push(product % 10)
+      carry = product / 10
+    end
+
+    while carry > 0
+      next_digits = next_digits.push(carry % 10)
+      carry = carry / 10
+    end
+
+    digits = next_digits
+  end
+
+  JSON.parse(digits.reverse.map(->(d) { d.to_s }).join(""))
 end

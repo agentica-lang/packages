@@ -1,7 +1,7 @@
 Feature: Limits
   The options bound the nesting depth, the nodes that aliases add and the size of the text, so a hostile text fails
   fast with an error of kind `yaml.limit` instead of using the stack or the memory. The defaults are a depth of 256,
-  100,000 alias nodes and 4 MiB.
+  100,000 alias nodes, 10 MiB of alias bytes and 4 MiB of text.
 
   Scenario Outline: Deep nesting stops at the depth limit
     Given <text>
@@ -50,3 +50,29 @@ Feature: Limits
     And the options allow a depth of 5000
     When the text is parsed
     Then it fails with "argument"
+
+  Scenario: Aliases of a big scalar stop at the alias bytes limit
+    Given an anchor of 2000 bytes and 20 aliases of it
+    And the options allow 10000 alias bytes
+    When the text is parsed
+    Then it fails with "yaml.limit" at line 2, column 25
+
+  Scenario: The alias bytes limit can be raised
+    Given an anchor of 1000 bytes and 20 aliases of it
+    And the options allow 20000 alias bytes
+    When the text is parsed
+    Then it parses
+
+  Scenario: Aliases cannot nest deeper than the depth limit
+    Given a chain of 300 anchors, each in a list with the one before
+    When the text is parsed
+    Then it fails with "yaml.limit" at line 257, column 7
+
+  Scenario: Many lines that look like keys parse in time linear in the text
+    Given the Agentica program "fixtures/many_keys.agc"
+    Then the program exits with code 0 within 20000 milliseconds
+    And stdout is:
+      """
+      parsed 20000 lines in under 3000 ms
+
+      """

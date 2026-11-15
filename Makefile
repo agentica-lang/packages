@@ -14,7 +14,7 @@ EACH_PACKAGE = for p in $(PACKAGES); do a=$$($(AGENTICA_FOR) $$p); ( export PATH
 .PHONY: help install check fmt-check test doc-examples doc-examples-test site site-mounts site-serve site-tools
 
 help:
-	@echo "install    fetch the packages of each agentica.lock into deps/"
+	@echo "install    fetch the packages of each agentica.lock into deps/, and the test data of specs/fetch-suite.sh"
 	@echo "check      type-check every .agc file of each package"
 	@echo "fmt-check  fail when a file is not formatted (agentica fmt)"
 	@echo "test       run the features of specs/ and the tests of test/ of each package"
@@ -25,10 +25,11 @@ help:
 
 # A package with no dependencies has no lock and nothing to fetch. The peer of the specs of a package (a program that
 # uses another package) has a manifest of its own in specs/fixtures/ws_client, so that the package does not depend on
-# it.
+# it. specs/fetch-suite.sh fetches the test data a package does not commit (yaml: the yaml-test-suite).
 install:
 	@set -e; $(EACH_PACKAGE) \
 		if [ -f $$p/agentica.lock ]; then (cd $$p && agentica install); fi; \
+		if [ -x $$p/specs/fetch-suite.sh ]; then $$p/specs/fetch-suite.sh; fi; \
 		if [ -f $$p/specs/fixtures/ws_client/agentica.lock ]; then \
 			echo "== $$p peer"; (cd $$p/specs/fixtures/ws_client && agentica install); \
 		fi; \

@@ -160,17 +160,32 @@ def start_marker?(src: Source, pos: Int) -> Bool = document_marker?(src, pos) an
 
 def end_marker?(src: Source, pos: Int) -> Bool = document_marker?(src, pos) and src.bytes[pos] == DOT
 
-## A failed parse at `pos`, with its line and column (from 1, in characters).
-def fail[T](src: Source, pos: Int, message: String) -> Result[T] = failure(src, pos, message, "yaml.parse")
+## A failed parse at `pos`. The error keeps the offset; `located` turns it into a line and a column, once, at the API,
+## so a failure that the parser expects (a line that is not a key) costs nothing.
+def fail[T](src: Source, pos: Int, message: String) -> Result[T] = failure(pos, message, "yaml.parse")
 
 ## A limit of the options that the text passes.
-def over_limit[T](src: Source, pos: Int, message: String) -> Result[T] = failure(src, pos, message, "yaml.limit")
+def over_limit[T](src: Source, pos: Int, message: String) -> Result[T] = failure(pos, message, "yaml.limit")
+
+## The result with the offset of its error made a line and a column (from 1, in characters).
+def located[T](src: Source, result: Result[T]) -> Result[T]
+  case result
+    ok(value) -> ok(value)
+    error(e) if e.details.key?(OFFSET) -> at_line(src, e.details[OFFSET].to_i!, e.message, e.kind)
+    error(e) -> error(e)
+  end
+end
 
 private
 
 PADDING = Bytes.from_list([0, 0, 0, 0, 0]).unwrap!
+OFFSET = "offset"
 
-def failure[T](src: Source, pos: Int, message: String, kind: String) -> Result[T]
+def failure[T](pos: Int, message: String, kind: String) -> Result[T]
+  error(message, kind: kind, details: {OFFSET: "#{pos}"})
+end
+
+def at_line[T](src: Source, pos: Int, message: String, kind: String) -> Result[T]
   lines = String.from_bytes(src.bytes.take([pos, src.size].min.unwrap_or(0))).unwrap!.split("\n")
   line = lines.size
   col = lines.last.length + 1

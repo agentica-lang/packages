@@ -47,7 +47,10 @@ def stream(src: Source.Source) -> Result[List[Document]]
       if Source.end_marker?(src, pos)
         pos = try finish_line(src, pos + 3)
       elsif not Source.start_marker?(src, pos)
-        return Source.fail(src, pos, "expected the end of the document")
+        text = Source.skip_blanks(src, pos)
+        return Source.fail(src, text, "mapping values are not allowed here") if src.bytes[text] == Source.COLON
+
+        return Source.fail(src, text, "expected the end of the document")
       end
     end
   end

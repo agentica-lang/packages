@@ -1,21 +1,23 @@
-## Runs the cases of a copy of the yaml-test-suite: each folder with an `in.yaml` is a case, and holds `in.yaml` and either `in.json` (the values of its
-## documents, one JSON value after another) or `error` (the text must fail). It prints each case that does not pass,
-## then one line with the counts, and exits 1 when a case fails.
+## Runs the cases of the yaml-test-suite that `../fetch-suite.sh` unpacks. A case is a folder with an `in.yaml`
+## (`ID`, or `ID/NN` for a case of several parts) and either `in.json` (the values of its documents, one JSON value
+## after another) or `error` (the text must fail). The cases with neither, and the ones in `SKIPPED`, are out of the
+## scope of the package. It prints each case that does not pass, then one line with the counts, and exits 1 when a case
+## fails (2 when the suite is missing).
 ##
 ## ```sh
-## agentica specs/fixtures/suite.agc specs/fixtures/yaml-test-suite
+## agentica specs/fixtures/suite.agc .cache/yaml-test-suite-COMMIT
 ## ```
 
 import YAML from "../../yaml"
 
 def main() -> Void
-  args = System.args()
-  folder = "yaml-test-suite"
-  if not args.empty?
-    folder = args[0]
+  folder = System.args()[0]
+  if not File.stat("#{folder}/229Q/in.yaml").ok?
+    puts("the yaml-test-suite is missing in #{folder}: run `make install PACKAGES=yaml` in the repository")
+    System.exit(2)
   end
 
-  names = Dir.list(folder).unwrap!.sort.select do |name| File.stat("#{folder}/#{name}/in.yaml").ok? end
+  names = cases(folder)
   failures: List[String] = []
   for name in names
     failure = run_case("#{folder}/#{name}")
@@ -37,6 +39,50 @@ end
 
 private
 
+# Out of scope: custom and local tags, and the YAML 1.1 types !!set, !!omap and !!binary.
+SKIPPED = Set.new([
+  "5TYM",
+  "6CK3",
+  "6WLZ",
+  "7FWL",
+  "9WXW",
+  "C4HZ",
+  "CC74",
+  "CUP7",
+  "M5C3",
+  "P76L",
+  "UGM3",
+  "Z67P",
+  "Z9M4",
+  "2XXW",
+  "J7PZ",
+  "565N",
+])
+
+# The cases in scope, sorted: the folders with an answer (`in.json` or `error`) that SKIPPED does not name.
+def cases(folder: String) -> List[String]
+  found: List[String] = []
+  none_found: List[String] = []
+  for id in Dir.list(folder).unwrap_or(none_found).sort
+    # The ids are capitals and digits; `name/` and `tags/` index them again by name and by tag.
+    next if SKIPPED.include?(id) or id != id.upcase
+
+    if File.stat("#{folder}/#{id}/in.yaml").ok?
+      found = found.push(id)
+    else
+      for part in Dir.list("#{folder}/#{id}").unwrap_or(none_found).sort
+        found = found.push("#{id}/#{part}")
+      end
+    end
+  end
+
+  found.select do |name| answered?("#{folder}/#{name}") end
+end
+
+def answered?(path: String) -> Bool
+  File.stat("#{path}/in.yaml").ok? and (File.stat("#{path}/in.json").ok? or File.stat("#{path}/error").ok?)
+end
+
 # What is wrong with one case, or none when it passes.
 def run_case(folder: String) -> Optional[String]
   text = File.read_text("#{folder}/in.yaml").unwrap!
@@ -44,7 +90,8 @@ def run_case(folder: String) -> Optional[String]
   if File.stat("#{folder}/error").ok?
     return case parsed
       ok(values) -> some("parsed an invalid text to #{values}")
-      error(_) -> none
+      error(e) if e.kind == "yaml.parse" -> none
+      error(e) -> some("failed with #{e.kind}, not yaml.parse: #{e.message}")
     end
   end
 
@@ -81,22 +128,23 @@ def all_same?(actual: List[JSON.Value], expected: List[JSON.Value]) -> Bool
   true
 end
 
-# Equal JSON values, where an integer equals a float of the same value (the suite writes `1.0` as `1`).
+# Equal JSON values of one kind, where an integer equals a float of the same value (the suite writes `1.0` as `1`).
 def same?(actual: JSON.Value, expected: JSON.Value) -> Bool
+  return false if kind(actual) != kind(expected)
+
   case JSON.node(actual)
-    JSON.Node.Int(_), JSON.Node.Float(_) -> number(actual) == number(expected)
-    JSON.Node.Array(items) -> same_items?(items, JSON.list(expected).unwrap_or([]))
+    JSON.Node.Int(_), JSON.Node.Float(_) -> JSON.float(actual).unwrap! == JSON.float(expected).unwrap!
+    JSON.Node.Array(items) -> same_items?(items, JSON.list(expected).unwrap!)
     JSON.Node.Object(fields) -> same_fields?(fields, expected)
     _ -> JSON.encode(actual) == JSON.encode(expected)
   end
 end
 
-def number(value: JSON.Value) -> Float
-  case JSON.node(value)
-    JSON.Node.Int(n) -> n.to_f
-    JSON.Node.Float(x) -> x
-    _ -> -0.5
-  end
+def kind(value: JSON.Value) -> String
+  found = JSON.kind(value)
+  return "number" if found == "int" or found == "float"
+
+  found
 end
 
 def same_items?(actual: List[JSON.Value], expected: List[JSON.Value]) -> Bool

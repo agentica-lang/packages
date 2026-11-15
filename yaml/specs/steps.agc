@@ -15,9 +15,12 @@ def main() -> Void
     BDD.step("an alias bomb of {int} levels", &alias_bomb),
     BDD.step("a text of {int} bytes", &text_of_size),
     BDD.step("a mapping of {int} entries", &big_mapping),
+    BDD.step("an anchor of {int} bytes and {int} aliases of it", &big_anchor),
+    BDD.step("a chain of {int} anchors, each in a list with the one before", &anchor_chain),
     BDD.step("the options allow a depth of {int}", &allows_depth),
     BDD.step("the options allow {int} alias nodes", &allows_alias_nodes),
     BDD.step("the options allow {int} bytes", &allows_bytes),
+    BDD.step("the options allow {int} alias bytes", &allows_alias_bytes),
     BDD.step("the text is parsed", &parses),
     BDD.step("the stream is parsed", &parses_stream),
     BDD.step("it parses", &it_parses),
@@ -96,6 +99,21 @@ def big_mapping(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.set(ctx, TEXT, JSON.from(lines.join("\n")))
 end
 
+def big_anchor(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  aliases = List.repeat("*a", args[1].to_i!).join(", ")
+  BDD.set(ctx, TEXT, JSON.from("a: &a #{"x" * args[0].to_i!}\nb: [#{aliases}]"))
+end
+
+# Each anchor holds the one before in a list, so the last one nests as deep as the chain is long.
+def anchor_chain(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  lines = ["l0: &l0 [leaf]"]
+  for level in 1...args[0].to_i!
+    lines = lines.push("l#{level}: &l#{level} [*l#{level - 1}]")
+  end
+
+  BDD.set(ctx, TEXT, JSON.from(lines.join("\n")))
+end
+
 def options(ctx: BDD.Context) -> YAML.Options
   case BDD.get(ctx, OPTIONS)
     ok(value) -> JSON.decode(value, YAML.Options).unwrap!
@@ -113,6 +131,10 @@ end
 
 def allows_bytes(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.set(ctx, OPTIONS, JSON.from(options(ctx).with(max_bytes: args[0].to_i!)))
+end
+
+def allows_alias_bytes(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  BDD.set(ctx, OPTIONS, JSON.from(options(ctx).with(max_alias_bytes: args[0].to_i!)))
 end
 
 def parses(ctx: BDD.Context, _args: List[String]) -> BDD.Context

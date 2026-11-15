@@ -7,6 +7,8 @@ struct Options
   max_depth: Int = 256
   ## The most nodes that aliases may add to the documents, counted as if each alias were a copy of its anchor.
   max_alias_nodes: Int = 100_000
+  ## The most bytes of scalars and keys that aliases may add, counted the same way.
+  max_alias_bytes: Int = 10_485_760
   ## The most bytes of the text.
   max_bytes: Int = 4_194_304
 end
