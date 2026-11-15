@@ -70,6 +70,13 @@ websocket-client/    a WebSocket client (RFC 6455): websocket.agc is the API (co
                      fixtures/server.agc (the server of std/http, ws and wss; fixtures/cert.pem and key.pem are a
                      self-signed pair for localhost) and fixtures/raw_peer.agc (a TCP server that writes the hex
                      frames of a script and prints the frames it reads)
+yaml/                a YAML 1.2 parser: yaml.agc is the API (parse, parse_all, Options); src/scanner.agc the scalars,
+                     anchors and tags, src/parser.agc the documents and collections (a tree of src/types.agc nodes),
+                     src/composer.agc the tree to JSON (aliases, keys), src/schema.agc the core schema, src/source.agc
+                     the bytes and the errors (all pure); specs/ has the features; specs/fetch-suite.sh (run by
+                     `make install`) fetches the official yaml-test-suite at a pinned commit and sha256 into
+                     yaml/.cache/ (ignored), and specs/fixtures/suite.agc runs its cases in scope
+                     (specs/fixtures/README.md says which)
 ```
 
 ## Commands

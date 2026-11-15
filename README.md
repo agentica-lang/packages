@@ -21,6 +21,7 @@ prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.4.1", 
 | `dock` (`dock-0.3.0`) | A TCP server: an accept loop, a task per client that runs your handler, and the clean-up when a client ends or crashes (`dock/dock.agc`). [Docs](https://agentica-lang.github.io/packages/dock/) |
 | `pool` (`pool-0.1.2`) | A generic pool of resources in the style of NimblePool: long-lived resources lent to one caller at a time, with a line, a lease, a health tick and a close with a drain; a caller that ends never keeps its resource (`pool/pool`). [Docs](https://agentica-lang.github.io/packages/pool/) |
 | `websocket-client` (`websocket-client-0.3.0`) | A WebSocket client (RFC 6455) over `std` TCP and TLS: `ws://` and `wss://`, text and binary messages, fragments, pings, the close handshake, a size limit and a read timeout (`websocket-client/websocket`). [Docs](https://agentica-lang.github.io/packages/websocket-client/) |
+| `yaml` (unreleased) | A YAML 1.2 parser: one document or a stream to `JSON.Value`, with the core schema only, string keys, limits on depth, aliases and size, and errors with a line and a column (`yaml/yaml`). [Docs](https://agentica-lang.github.io/packages/yaml/) |
 | `cache` (planned) | Cache strategies (CLOCK, sampled LRU, TinyLFU) behind the `Cache` facade of `std/cache` |
 
 ## Tags
