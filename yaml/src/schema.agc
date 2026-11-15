@@ -41,6 +41,10 @@ TRUES = Set.new(["true", "True", "TRUE"])
 FALSES = Set.new(["false", "False", "FALSE"])
 INFINITIES = Set.new([".inf", ".Inf", ".INF", "+.inf", "+.Inf", "+.INF", "-.inf", "-.Inf", "-.INF"])
 NANS = Set.new([".nan", ".NaN", ".NAN"])
+# A `0x` or `0o` integer past 64 bits becomes decimal digits in time quadratic in its length, so it has a cap.
+MAX_RADIX_DIGITS = 256
+# The most characters of a scalar that an error shows.
+SHOWN = 80
 NUMBER_STARTS = Set.new("+-.0123456789".bytes.to_a)
 ZERO = 48
 NINE = 57
@@ -66,26 +70,26 @@ end
 def tagged_null(text: String) -> Result[JSON.Value]
   return ok(JSON.null()) if NULLS.include?(text)
 
-  error("!!null cannot be \"#{text}\"")
+  error("!!null cannot be \"#{cut(text)}\"")
 end
 
 def tagged_bool(text: String) -> Result[JSON.Value]
   return ok(JSON.from(true)) if TRUES.include?(text)
   return ok(JSON.from(false)) if FALSES.include?(text)
 
-  error("!!bool cannot be \"#{text}\"")
+  error("!!bool cannot be \"#{cut(text)}\"")
 end
 
 def tagged_int(text: String) -> Result[JSON.Value]
   return int_value(text) if int?(text)
 
-  error("!!int cannot be \"#{text}\"")
+  error("!!int cannot be \"#{cut(text)}\"")
 end
 
 def tagged_float(text: String) -> Result[JSON.Value]
   return float_value(text) if int?(text) or float?(text)
 
-  error("!!float cannot be \"#{text}\"")
+  error("!!float cannot be \"#{cut(text)}\"")
 end
 
 def digits?(bytes: List[Int], from: Int, low: Int, high: Int) -> Bool
@@ -193,7 +197,13 @@ def radix_value(text: String, radix: Int) -> Result[JSON.Value]
   value = 0
   for c in text.bytes.drop(2)
     digit = hex_digit(c)
-    return big_radix(text, radix) if value > (9_223_372_036_854_775_807 - digit) / radix
+    if value > (9_223_372_036_854_775_807 - digit) / radix
+      if text.length - 2 > MAX_RADIX_DIGITS
+        return error("the integer #{cut(text)} has more than #{MAX_RADIX_DIGITS} digits")
+      end
+
+      return big_radix(text, radix)
+    end
 
     value = value * radix + digit
   end
@@ -232,7 +242,7 @@ def float_value(text: String) -> Result[JSON.Value]
   end
 
   value = try "#{sign.replace("+", "")}#{whole}.#{fraction}#{exponent}".to_f
-  return error("the float #{text} is out of range") if value - value != 0.0
+  return error("the float #{cut(text)} is out of range") if value - value != 0.0
 
   ok(JSON.from(value))
 end
@@ -259,4 +269,10 @@ def big_radix(text: String, radix: Int) -> Result[JSON.Value]
   end
 
   JSON.parse(digits.reverse.map(->(d) { d.to_s }).join(""))
+end
+
+def cut(text: String) -> String
+  return text if text.length <= SHOWN
+
+  "#{text.slice(0, SHOWN)}..."
 end

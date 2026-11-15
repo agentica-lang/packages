@@ -76,3 +76,15 @@ Feature: Limits
       parsed 20000 lines in under 3000 ms
 
       """
+
+  Scenario Outline: A hex integer past 64 bits keeps its digits up to 256 of them
+    Given a hex integer of <digits> digits
+    When the text is parsed
+    Then <outcome>
+    And the parse took fewer than 2000000 steps
+
+    Examples:
+      | digits | outcome                                           |
+      | 256    | it parses                                         |
+      | 257    | it fails with "yaml.parse" at line 1, column 8    |
+      | 10000  | it fails with "yaml.parse" at line 1, column 8    |

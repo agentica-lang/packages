@@ -102,7 +102,7 @@ All of YAML 1.2 that has a JSON value:
 - every scalar style: plain, single-quoted, double-quoted with all its escapes, literal `|` and folded `>` with the chomping (`-`, `+`) and indentation indicators;
 - comments, anchors `&a` and aliases `*a`, documents, and the `%YAML` and `%TAG` directives.
 
-A plain scalar takes its type from the core schema: `null`, `~` and an empty value are null; `true` and `false` (also `True`, `TRUE`, ...) are booleans; `42`, `-7`, `0x1F` and `0o17` are integers (one past 64 bits keeps its exact digits); `1.5`, `.5` and `1e3` are floats; anything else is a string. `yes`, `no`, `on` and `off` are strings, as in YAML 1.2. A quoted or block scalar is always a string. The core tags pick a type: `!!str`, `!!int`, `!!float`, `!!bool`, `!!null`, `!!seq`, `!!map`, and `!` (a string).
+A plain scalar takes its type from the core schema: `null`, `~` and an empty value are null; `true` and `false` (also `True`, `TRUE`, ...) are booleans; `42`, `-7`, `0x1F` and `0o17` are integers (one past 64 bits keeps its exact digits, up to 256 digits for `0x` and `0o`, and a longer one is an error); `1.5`, `.5` and `1e3` are floats; anything else is a string. `yes`, `no`, `on` and `off` are strings, as in YAML 1.2. A quoted or block scalar is always a string. The core tags pick a type: `!!str`, `!!int`, `!!float`, `!!bool`, `!!null`, `!!seq`, `!!map`, and `!` (a string).
 
 ## Errors
 

@@ -16,7 +16,12 @@ mkdir -p .cache
 work=$(mktemp -d .cache/fetch.XXXXXX)
 trap 'rm -rf "$work"' EXIT
 curl -sSfL --retry 3 -o "$work/suite.tar.gz" "$URL"
-echo "$SHA256  $work/suite.tar.gz" | sha256sum -c --quiet -
+if command -v sha256sum >/dev/null; then
+  sum=$(sha256sum "$work/suite.tar.gz")
+else
+  sum=$(shasum -a 256 "$work/suite.tar.gz")
+fi
+[ "${sum%% *}" = "$SHA256" ] || { echo "the yaml-test-suite archive has sha256 ${sum%% *}, not $SHA256" >&2; exit 1; }
 mkdir "$work/suite"
 tar -xzf "$work/suite.tar.gz" -C "$work/suite" --strip-components=1
 mv "$work/suite" "$target"

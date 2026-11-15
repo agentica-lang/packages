@@ -15,6 +15,7 @@ def main() -> Void
     BDD.step("an alias bomb of {int} levels", &alias_bomb),
     BDD.step("a text of {int} bytes", &text_of_size),
     BDD.step("a mapping of {int} entries", &big_mapping),
+    BDD.step("a hex integer of {int} digits", &long_hex),
     BDD.step("an anchor of {int} bytes and {int} aliases of it", &big_anchor),
     BDD.step("a chain of {int} anchors, each in a list with the one before", &anchor_chain),
     BDD.step("the options allow a depth of {int}", &allows_depth),
@@ -97,6 +98,10 @@ def big_mapping(ctx: BDD.Context, args: List[String]) -> BDD.Context
   end
 
   BDD.set(ctx, TEXT, JSON.from(lines.join("\n")))
+end
+
+def long_hex(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  BDD.set(ctx, TEXT, JSON.from("value: 0x#{"F" * args[0].to_i!}"))
 end
 
 def big_anchor(ctx: BDD.Context, args: List[String]) -> BDD.Context
