@@ -10,4 +10,4 @@ Add it in a project with an `agentica.toml`:
 agentica add dock https://github.com/agentica-lang/packages --tag dock-0.3.0 --subdir dock
 ```
 
-The docs, with examples and the design: <https://agentica-lang.github.io/packages/dock/>.
+The docs, with examples and the design: <https://www.agentica-lang.com/packages/dock/>.
