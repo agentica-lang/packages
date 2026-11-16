@@ -15,7 +15,7 @@ OK = "ok"
 ## each takes one), `cancel_job` (name), `race_crash` (number: the callers, one after the other, wait: the milliseconds before the body of each crashes, which is when its caller is cancelled), `wait_jobs`, `sleep` (number), `close` (number: the drain in milliseconds), and
 ## the expectations `expect_job` (name, text: the start of its result), `expect_timeout` (name; kind `or_ok` lets it
 ## succeed too), `expect_kind` (name, text: the start of the kind of its error), `expect_order` (text: the names in the
-## order they finished, joined by commas), `expect_count` (name: the counter, number: its value, kind: `is` or
+## order they finished, joined by commas), `expect_count` (name: the counter, number: its value, kind: `is`, `at_most` or
 ## `reaches`, wait: the milliseconds to wait for it), and `expect_pool_count` (the same, for a count of the pool) and `expect_one_task` (the checkout and the body of the last
 ## resource lent ran in one task).
 struct Request
