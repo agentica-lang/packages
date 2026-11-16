@@ -483,7 +483,11 @@ def expect_one_task(driver: Driver) -> Handled
   reply(driver, "the checkout ran in task #{checkout} and the body in task #{body}")
 end
 
-def counted?(req: Request, value: Int) -> Bool = value == req.number or (req.kind == "reaches" and value > req.number)
+def counted?(req: Request, value: Int) -> Bool
+  return value <= req.number if req.kind == "at_most"
+
+  value == req.number or (req.kind == "reaches" and value > req.number)
+end
 
 # The fake resource: a numbered cell that counts what the pool does with it.
 def make(fake: Fake) -> Result[Cell]

@@ -88,6 +88,9 @@ def main() -> Void
     BDD.step("the count {string} is {int}") do |ctx, args|
       send(ctx, Request(op: "expect_count", name: args[0], number: args[1].to_i!, kind: "is"))
     end,
+    BDD.step("the count {string} is at most {int}") do |ctx, args|
+      send(ctx, Request(op: "expect_count", name: args[0], number: args[1].to_i!, kind: "at_most"))
+    end,
     BDD.step("the pool counts {int} {string} within {int} ms") do |ctx, args|
       send(
         ctx,

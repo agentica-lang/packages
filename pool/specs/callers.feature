@@ -175,7 +175,8 @@ Feature: Callers
     Then the count "body_ran" is 20000
     And the count "flood_failed" is 0
     And the count "double_lease" is 0
-    And the count "peak" is 4
+    # Bodies that give the resource back at once may never hold all 4 together: the bound is what holds.
+    And the count "peak" is at most 4
     And the count "made" is 4
 
     Examples:
