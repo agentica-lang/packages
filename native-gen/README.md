@@ -46,4 +46,4 @@ A module in Rust: `agentica deps/native-gen/cli.agc build math.agc` writes the R
 and `Cargo.toml`); the docs walk through it.
 
 The docs, with every C name, the header layout and the error codes:
-<https://agentica-lang.github.io/packages/native-gen/>.
+<https://www.agentica-lang.com/packages/native-gen/>.

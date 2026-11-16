@@ -4,7 +4,7 @@
 # <package>/docs folder) and passes it as a second config file, so a package adds its docs by having a docs/ folder.
 # The mounts are not in this file because the second file replaces a mount list instead of adding to it.
 _merge = "deep"
-baseURL = "https://agentica-lang.github.io/packages/"
+baseURL = "https://www.agentica-lang.com/packages/"
 locale = "en"
 title = "Agentica packages"
 theme = "docs-theme"

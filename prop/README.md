@@ -9,4 +9,4 @@ Add it in a project with an `agentica.toml`:
 agentica add prop https://github.com/agentica-lang/packages --tag prop-0.4.2 --subdir prop
 ```
 
-The docs, with examples, the install and the changelog: <https://agentica-lang.github.io/packages/prop/>.
+The docs, with examples, the install and the changelog: <https://www.agentica-lang.com/packages/prop/>.

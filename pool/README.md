@@ -11,4 +11,4 @@ Add it in a project with an `agentica.toml`:
 agentica add pool https://github.com/agentica-lang/packages --tag pool-0.1.3 --subdir pool
 ```
 
-The docs, with the example and every option: <https://agentica-lang.github.io/packages/pool/>.
+The docs, with the example and every option: <https://www.agentica-lang.com/packages/pool/>.
