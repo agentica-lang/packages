@@ -4,6 +4,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-16
+
+Needs Agentica 0.31.0 and Bond 0.13.0.
+
+### Changed
+
+- **Breaking:** needs Bond 0.13.0 (the package is pinned by that tag), which checks with Agentica 0.32.0. CI tests with Agentica 0.32.0.
+
 ## [0.5.0] - 2026-11-14
 
 Needs Agentica 0.31.0 and Bond 0.12.0.
