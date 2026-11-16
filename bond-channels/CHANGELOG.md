@@ -4,6 +4,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-16
+
+Needs Agentica 0.31.0 and Bond 0.14.0; CI runs it on Agentica 0.33.0.
+
+### Changed
+
+- Needs Bond 0.14.0 (the package is pinned by that tag): Bond reads the body of a request after the before filters, so the body of a request is empty in a before filter. The package reads no body.
+
 ## [0.6.1] - 2026-11-16
 
 Needs Agentica 0.31.0 and Bond 0.13.1; CI runs it on Agentica 0.33.0.
