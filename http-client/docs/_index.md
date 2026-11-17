@@ -68,6 +68,7 @@ HttpClient.patch(client: Client, url: String, body: Bytes, headers: List[HTTP.He
 HttpClient.close(client: Client, drain_ms: Int = 5000) -> Void
 ```
 
+- The API is the module `http_client.agc` (`pkg/http-client/http_client`); the modules under `src/` are internal and may change in any release.
 - A `url` that starts with `http://` or `https://` is used as it is; any other is a path (or a `?query`) joined to `base_url`. A URL with user info is refused.
 - The `headers` of a call go over the client's headers of the same name. std/http adds `Host` and `Content-Length`.
 - The client's `headers` go with every request, to whatever origin its URL names, not only to the one of `base_url`: give a secret such as `Authorization` to the calls that need it, or use a client per origin.

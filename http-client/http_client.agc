@@ -214,10 +214,12 @@ def jitter(backoff_ms: Int) -> Int = Random.int(backoff_ms / 2, backoff_ms)
 
 # One try of the hop, within what is left of the call.
 def once(client: Client, hop: Hop, deadline: Int) -> Result[Exchange.Response]
+  return timed_out(client) if deadline - Time.monotonic_ms() < 1
+
+  pool = try Pools.pool_for(client.pools, hop.target.origin, client.timeout_ms)
   left = deadline - Time.monotonic_ms()
   return timed_out(client) if left < 1
 
-  pool = try Pools.pool_for(client.pools, hop.target.origin, client.timeout_ms)
   call = Exchange.Call(
     method: hop.method,
     target: hop.target,

@@ -99,10 +99,11 @@ CLOSE_SLACK_MS = 8_000
 # How often the manager looks for pools to close.
 SWEEP_MS = 1_000
 
-# The pools by origin, and the tasks that close the pools the manager let go.
+# The pools by origin, the tasks that close the pools the manager let go (by task id), and the notices of their ends.
 struct State
   pools: Map[String, Entry]
-  closers: List[Task[Void]]
+  closers: Map[Int, Task[Result[Void]]]
+  ended: Channel[TaskDown]
 end
 
 # A pool, and the monotonic time after which no request uses it and its connections have been idle `idle_ms`.
@@ -118,7 +119,8 @@ def busy[T](cause: Error) -> Result[T]
 end
 
 def manage(settings: Settings, inbox: Channel[Msg]) -> Void
-  state = State(pools: {}, closers: [])
+  ended: Channel[TaskDown] = Channel.new(INBOX_SIZE)
+  state = State(pools: {}, closers: {}, ended: ended)
   swept = Time.monotonic_ms()
   while true
     case inbox.recv(SWEEP_MS)
@@ -126,7 +128,7 @@ def manage(settings: Settings, inbox: Channel[Msg]) -> Void
       ok(Msg.Close(closing)) ->
         inbox.close
         closers = state.pools.values.map { |entry| Task.spawn do shut(entry.pool, closing.drain_ms) end }
-        for closer in state.closers + closers
+        for closer in state.closers.values + closers
           _ = Task.await(closer, closing.drain_ms + CLOSE_SLACK_MS)
         end
 
@@ -166,32 +168,40 @@ end
 # closers that ended.
 def sweep(state: State, now: Int) -> State
   kept: Map[String, Entry] = {}
-  closers = state.closers.select { |closer| running?(closer) }
+  closers = without_ended(state.closers, state.ended)
   for origin in state.pools.keys
     entry = state.pools.get(origin).unwrap!
     if entry.until > now
       kept = kept.put(origin, entry)
     else
-      closers = closers.push(Task.spawn do shut(entry.pool, 0) end)
+      closer = Task.spawn do shut(entry.pool, 0) end
+      Task.monitor(closer, state.ended) do |notice| notice end
+      closers = closers.put(closer.id, closer)
     end
   end
 
-  State(pools: kept, closers: closers)
+  state.with(pools: kept, closers: closers)
 end
 
-def running?(task: Task[Void]) -> Bool
-  case Task.await(task, 0)
-    Await.Done(_) -> false
-    Await.TimedOut -> true
+# The closers whose end notice has not come yet. A notice means the task is gone.
+def without_ended(closers: Map[Int, Task[Result[Void]]], ended: Channel[TaskDown]) -> Map[Int, Task[Result[Void]]]
+  left = closers
+  notice = ended.recv(0)
+  while notice.ok?
+    left = left.delete(notice.unwrap!.task_id)
+    notice = ended.recv(0)
   end
+
+  left
 end
 
 # Closes the pool and waits for its owner task to end: `Pool.close` cancels it without waiting.
-def shut(pool: OriginPool, drain_ms: Int) -> Void
+def shut(pool: OriginPool, drain_ms: Int) -> Result[Void]
   ended: Channel[TaskDown] = Channel.new(1)
   Task.monitor(pool.owner, ended) do |notice| notice end
   Pool.close(pool, drain_ms)
   _ = ended.recv(CLOSE_SLACK_MS)
+  ok()
 end
 
 def start_pool(settings: Settings, origin: String) -> Result[OriginPool]
