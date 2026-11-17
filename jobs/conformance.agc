@@ -59,7 +59,7 @@ private
 CASE_MS = 120_000
 CLOSE_MS = 1_000
 MANUAL_UNIT_MS = 1_000
-REAL_UNIT_MS = 500
+REAL_UNIT_MS = 1_000
 
 def failed?(outcome: Outcome) -> Bool
   case outcome.status

@@ -47,7 +47,11 @@ def main() -> Void
       return Test.eq(verdict_of(Jobs.discard("no"), 1, 5), Settle.Verdict.Back(Jobs.Nack.Dead("no")))
     end,
     Test.test("another error retries after the backoff, and is dead on the last attempt") do
-      try Test.eq(verdict_of(error("boom"), 2, 5), Settle.Verdict.Back(Jobs.Nack.Retry(5_200)))
+      try Test.eq(
+        verdict_of(error("boom"), 2, 5),
+        Settle.Verdict.Back(Jobs.Nack.Retry(Jobs.Later(at_ms: 5_200, error: some("boom")))),
+      )
+
       return Test.eq(verdict_of(error("boom"), 5, 5), Settle.Verdict.Back(Jobs.Nack.Dead("boom")))
     end,
     Test.test("the default backoff doubles from 1 s, stays below 1 h and 20% of jitter, and never shrinks") do

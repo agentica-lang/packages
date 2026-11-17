@@ -48,11 +48,18 @@ struct Fetch
   wait_ms: Int = 0
 end
 
-## How a job goes back. `Retry(at_ms)`: run again at that time (on the last attempt the job is dead instead).
+## When a failed job runs again, and what went wrong. The handler of the next delivery reads `error` as the
+## `last_error` of its job.
+struct Later
+  at_ms: Int
+  error: Optional[String] = none
+end
+
+## How a job goes back. `Retry(later)`: run again at that time (on the last attempt the job is dead instead).
 ## `Release`: back now, and the attempt does not count (a stop that never started it). `Dead(reason)`: never again;
 ## kept as dead.
 enum Nack
-  Retry(Int)
+  Retry(Later)
   Release
   Dead(String)
 end
@@ -64,8 +71,9 @@ struct Counts
   dead: Int
 end
 
-## What a backend can say about itself. `has_clock`: it follows an injected clock (else the conformance cases on time
-## run on the real clock). `has_unique_keys` and `extendable`: it keeps unique keys, and `extend` moves a lease.
+## What a backend can prove in the conformance suite. `has_clock`: it follows an injected clock (else the cases on time
+## run on the real clock, with a unit of one second). `has_unique_keys`: it keeps unique keys. `extendable`: `extend`
+## moves a lease. A case that needs a capability the backend lacks is skipped.
 struct Caps
   has_clock: Bool = true
   has_unique_keys: Bool = true
@@ -85,6 +93,12 @@ struct Backend
   close: Fn[Int, Void]
 end
 
+## A clock that moves only when told: `now` reads it, `advance(ms)` moves it. Give `now` to a backend as its clock.
+struct Clock
+  now: Fn[Int]
+  advance: Fn[Int, Void]
+end
+
 ## The options of the memory backend. `max_jobs` is how many jobs may be live (ready, scheduled or leased) at once;
 ## past it `enqueue` fails with `jobs.full`. `max_dead` is how many dead jobs are kept; the oldest is dropped. `clock`
 ## gives Unix ms, and defaults to the wall clock.
@@ -92,12 +106,6 @@ struct MemoryOptions
   max_jobs: Int = 10_000
   max_dead: Int = 1_000
   clock: Optional[Fn[Int]] = none
-end
-
-## A clock that moves only when told: `now` reads it, `advance(ms)` moves it. Give `now` to a backend as its clock.
-struct Clock
-  now: Fn[Int]
-  advance: Fn[Int, Void]
 end
 
 ## `Ready` runs the jobs whose time has come; `All` also runs the ones that wait for a time, moving the manual clock of

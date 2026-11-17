@@ -5,23 +5,16 @@
 import BDD from "std/bdd"
 import Conformance from "../conformance"
 import Jobs from "../jobs"
+import Model from "model"
 import {Request} from "protocol"
 
 private
 
 REPLY_MS = 60_000
-MODEL = "specs/fixtures/model.py"
-MODEL_MS = 30_000
 LEASE_MS = 30_000
 OUTCOMES = "outcomes"
 REPLY = "reply"
 HEADER = [["setting", "value"]]
-
-# One call of the model's script: the request, and the reply that the model gave.
-struct Call
-  req: Request
-  reply: String
-end
 
 def main() -> Void
   BDD.run([
@@ -170,7 +163,7 @@ end
 
 # Sends the calls of a script to the driver, one after the other, and stops at the first reply that is not the model's.
 def agree_with_model(ctx: BDD.Context, count: Int, seed: Int) -> BDD.Context
-  calls = model_calls(count, seed)
+  calls = Model.script(seed, count)
   current = ctx
   position = 0
   for call in calls
@@ -187,17 +180,4 @@ def agree_with_model(ctx: BDD.Context, count: Int, seed: Int) -> BDD.Context
   end
 
   BDD.assert(current, calls.size == count + 1, "the model wrote #{calls.size} calls")
-end
-
-def model_calls(count: Int, seed: Int) -> List[Call]
-  process = Process.spawn_captured(
-    "python3",
-    [MODEL, "#{seed}", "#{count}"],
-    Process.Options(timeout_ms: MODEL_MS),
-  ).unwrap!
-
-  output = Process.output(process, MODEL_MS).unwrap!
-  _ = Process.wait(process, MODEL_MS)
-  lines = output.stdout.split("\n").select { |line| line != "" }
-  lines.map { |line| JSON.decode(line, Call).unwrap! }
 end
