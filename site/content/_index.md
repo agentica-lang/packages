@@ -16,3 +16,4 @@ That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 [dependencies]
 prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.3.0", subdir = "prop" }
 ```
+
