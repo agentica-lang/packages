@@ -13,58 +13,48 @@ MAX_LABEL_BYTES = 63
 ## The most bytes of a name on the wire, the length bytes and the end byte included.
 MAX_NAME_BYTES = 255
 
-## The most compression pointers that one name may follow. A pointer must go back, so a name always ends; this bounds
-## the work of a hostile message that chains pointers.
+## The most compression pointers that one name may follow.
 MAX_POINTERS = 32
 
 ## A name read from a message: its text, and the offset after it, where the next field starts. A name that ends with a
-## pointer ends after the two bytes of the first pointer.
+## pointer ends after the two bytes of that pointer.
 struct Read
   name: String
   next: Int
 end
 
-## Reads the name at `offset` of the message. An error for a name that runs past the data, a label type that the RFC
-## reserves, a pointer that does not go back, too many pointers and a name over 255 bytes.
-def decode(data: Bytes, offset: Int) -> Result[Read]
-  labels: List[String] = []
-  position = offset
-  after = -1
-  pointers = 0
-  total = 1
-  while true
-    return malformed("a name runs past the end of the message") if position >= data.size
-    first = data[position]
-    if first == 0
-      if after < 0
-        after = position + 1
-      end
-
-      break
-    elsif first >= POINTER
-      return malformed("a name runs past the end of the message") if position + 1 >= data.size
-      target = (first - POINTER) * 256 + data[position + 1]
-      return malformed("a compression pointer must go back") if target >= position
-      pointers += 1
-      return malformed("a name has more than #{MAX_POINTERS} compression pointers") if pointers > MAX_POINTERS
-      if after < 0
-        after = position + 2
-      end
-
-      position = target
-    elsif first > MAX_LABEL_BYTES
-      return malformed("a label has a reserved type")
-    else
-      return malformed("a label runs past the end of the message") if position + 1 + first > data.size
-      total += first + 1
-      return malformed("a name is over #{MAX_NAME_BYTES} bytes") if total > MAX_NAME_BYTES
-      labels = labels.push(escaped(data.slice(position + 1, first)))
-      position += first + 1
-    end
-  end
-
-  ok(Read(name: labels.join("."), next: after))
+## A name that was read, by the offset where it starts. Its `text` is the whole name, the pointers followed. `size` is
+## what the name takes on the wire without pointers, and `pointers` how many it follows.
+struct Entry
+  text: String
+  size: Int
+  pointers: Int
+  next: Int
 end
+
+## The names read so far in one message, by offset. A pointer must go before the name that holds it, so what a name
+## reads after its first pointer depends on the target alone: a message of many records that point at one long name
+## pays for that name once.
+struct Names
+  entries: Map[Int, Entry] = {}
+end
+
+## The name that `read` found, and the names to pass to the next `read` of the same message.
+struct Found
+  entry: Entry
+  names: Names
+end
+
+## Reads the name at `offset` of the message. An error for a name that runs past the data, a label type that the RFC
+## reserves, a pointer into the header or one that does not go before the name that holds it (so a name never reads a
+## byte twice, and a loop cannot happen), more than 32 pointers and a name over 255 bytes.
+def decode(data: Bytes, offset: Int) -> Result[Read]
+  found = try read(data, offset, Names())
+  ok(Read(name: found.entry.text, next: found.entry.next))
+end
+
+## Reads the name at `offset` like `decode`, with the names that the same message gave before.
+def read(data: Bytes, offset: Int, names: Names) -> Result[Found] = read_at(data, offset, names, 0)
 
 ## The bytes of a name: each label with its length, then the zero that ends it. An error for an empty label (`a..b`),
 ## a label over 63 bytes, a name over 255 bytes and a `\` that is followed by nothing or by a number over 255.
@@ -83,13 +73,21 @@ def encode(name: String) -> Result[Bytes]
   ok(Bytes.concat(parts.push(Bytes.from_list([0]).unwrap!)))
 end
 
-## Returns true when two names are the same: DNS compares the letters A to Z without case (RFC 4343).
-def same?(a: String, b: String) -> Bool = ascii_lower(a) == ascii_lower(b)
+## Returns true when two names are the same: they have the same bytes on the wire once the letters A to Z are lower
+## case, as DNS compares them (RFC 4343). So `example.com.` is `example.com`, `\065` is `a`, and a text that does not
+## encode is the same as nothing.
+def same?(a: String, b: String) -> Bool
+  left = encode(a)
+  right = encode(b)
+  return false if not left.ok? or not right.ok?
+  ascii_lower(left.unwrap!) == ascii_lower(right.unwrap!)
+end
 
 private
 
 # The two top bits of a length byte: 11 is a pointer, 01 and 10 are reserved.
 POINTER = 192
+HEADER_BYTES = 12
 BACKSLASH = 92
 DOT = 46
 DIGIT_ZERO = 48
@@ -106,10 +104,72 @@ struct Escape
   used: Int
 end
 
+def read_at(data: Bytes, offset: Int, names: Names, depth: Int) -> Result[Found]
+  return checked(names.entries[offset], names, depth) if names.entries.has_key?(offset)
+
+  labels: List[String] = []
+  position = offset
+  size = 0
+  tail = ""
+  pointers = 0
+  after = 0
+  known = names
+  while true
+    return malformed("a name runs past the end of the message") if position >= data.size
+    first = data[position]
+    if first == 0
+      size += 1
+      after = position + 1
+      break
+    elsif first >= POINTER
+      return malformed("a name runs past the end of the message") if position + 1 >= data.size
+      target = (first - POINTER) * 256 + data[position + 1]
+      return malformed("a compression pointer must go before its name") if target >= offset or target < HEADER_BYTES
+      return malformed("a name has more than #{MAX_POINTERS} compression pointers") if depth >= MAX_POINTERS
+      found = try read_at(data, target, known, depth + 1)
+      known = found.names
+      tail = found.entry.text
+      size += found.entry.size
+      pointers = found.entry.pointers + 1
+      after = position + 2
+      break
+    elsif first > MAX_LABEL_BYTES
+      return malformed("a label has a reserved type")
+    else
+      return malformed("a label runs past the end of the message") if position + 1 + first > data.size
+      size += first + 1
+      return malformed("a name is over #{MAX_NAME_BYTES} bytes") if size > MAX_NAME_BYTES
+      labels = labels.push(escaped(data.slice(position + 1, first)))
+      position += first + 1
+    end
+  end
+
+  entry = Entry(text: joined(labels, tail), size: size, pointers: pointers, next: after)
+  checked(entry, Names(entries: known.entries.put(offset, entry)), depth)
+end
+
+# A name that was read before still has to fit where it is read now: the pointers add up along the way.
+def checked(entry: Entry, names: Names, depth: Int) -> Result[Found]
+  return malformed("a name is over #{MAX_NAME_BYTES} bytes") if entry.size > MAX_NAME_BYTES
+  if depth + entry.pointers > MAX_POINTERS
+    return malformed("a name has more than #{MAX_POINTERS} compression pointers")
+  end
+
+  ok(Found(entry: entry, names: names))
+end
+
+def joined(labels: List[String], tail: String) -> String
+  own = labels.join(".")
+  return tail if own == ""
+  return own if tail == ""
+  "#{own}.#{tail}"
+end
+
 def malformed[T](message: String) -> Result[T] = error("dns: #{message}", kind: Types.MALFORMED)
 
 # Lower case for A to Z only: String.downcase would change letters that DNS does not.
-def ascii_lower(text: String) -> Bytes = Bytes.from_list(text.bytes.to_a.map { |b| lower(b) }).unwrap!
+# The length bytes of a name are under 64, so they are never in the range of A to Z.
+def ascii_lower(data: Bytes) -> Bytes = Bytes.from_list(data.to_a.map { |b| lower(b) }).unwrap!
 
 def lower(byte: Int) -> Int
   return byte + CASE_GAP if byte >= UPPER_A and byte <= UPPER_Z

@@ -6,6 +6,7 @@ TYPE_NS = 2
 TYPE_CNAME = 5
 TYPE_PTR = 12
 TYPE_AAAA = 28
+TYPE_OPT = 41
 
 ## The class of the Internet, the only one in use.
 CLASS_IN = 1
@@ -43,7 +44,8 @@ struct Question
   class: Int
 end
 
-## One record of an answer. `ttl` is in seconds; a value with the top bit set counts as 0 (RFC 2181 8).
+## One record of an answer. `ttl` is in seconds; a value with the top bit set counts as 0 (RFC 2181 8), except in an
+## OPT record (type 41), where it holds flags and is kept as it came.
 struct Record
   name: String
   type: Int

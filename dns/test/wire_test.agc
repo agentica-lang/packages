@@ -1,3 +1,4 @@
+import Binary from "std/binary"
 import Name from "../src/name"
 import Types from "../src/types"
 import Wire from "../src/wire"
@@ -88,7 +89,105 @@ def test_a_name_with_escapes_reads_back_as_it_was_written() -> Result[Void]
   Test.eq(read.next, written.size)
 end
 
-def test_names_are_compared_without_case() -> Result[Void]
+def test_names_are_compared_as_names() -> Result[Void]
   try Test.assert(Name.same?("Example.COM", "example.com"), "A to Z")
-  Test.assert(not Name.same?("example.com", "example.org"), "different names")
+  try Test.assert(Name.same?("example.com.", "example.com"), "a final dot")
+  try Test.assert(Name.same?("\\065", "a"), "an escaped letter")
+  try Test.assert(Name.same?("", "."), "the root")
+  try Test.assert(not Name.same?("example.com", "example.org"), "different names")
+  try Test.assert(not Name.same?("a..b", "a..b"), "a text that does not encode")
+  Test.assert(not Name.same?("a\\.b", "a.b"), "a dot inside a label")
+end
+
+def test_data_of_the_wrong_size_is_refused() -> Result[Void]
+  a = ONE_ANSWER + "00010001" + "00000000"
+  try Test.assert(not malformed?(a + "0004" + "01020304"), "an A of 4 bytes")
+  try Test.assert(malformed?(a + "0003" + "010203"), "an A of 3 bytes")
+  try Test.assert(malformed?(a + "0005" + "0102030405"), "an A of 5 bytes")
+  aaaa = ONE_ANSWER + "001c0001" + "00000000"
+  try Test.assert(not malformed?(aaaa + "0010" + "00000000000000000000000000000001"), "an AAAA of 16 bytes")
+  Test.assert(malformed?(aaaa + "000f" + "000000000000000000000000000001"), "an AAAA of 15 bytes")
+end
+
+def test_a_name_in_the_data_of_a_record_must_fill_it() -> Result[Void]
+  cname = ONE_ANSWER + "00050001" + "00000000"
+  try Test.assert(not malformed?(cname + "0001" + "00"), "a name that fills the data")
+  # The name ends after one byte and the data says four.
+  try Test.assert(malformed?(cname + "0004" + "00" + "010203"), "a name that ends before the data")
+  # The name needs two bytes and the data says one.
+  Test.assert(malformed?(cname + "0001" + "0100" + "00"), "a name that ends after the data")
+end
+
+def test_a_pointer_must_go_before_its_name() -> Result[Void]
+  # A label, then a pointer to the start of the same name: it loops.
+  try Test.assert(malformed?("abcd01000001000000000000" + "0161c00c" + "00010001"), "a loop")
+  # The pointer of the second question points at the middle of itself.
+  try Test.assert(malformed?(question_pair("0161" + "00", "0161c013")), "a pointer into its own name")
+  try Test.assert(not malformed?(question_pair("0161" + "00", "0161c00c")), "a pointer to the question before")
+  # Offset 0 to 11 is the header.
+  Test.assert(malformed?(question_pair("0161" + "00", "c005")), "a pointer into the header")
+end
+
+def test_a_name_follows_32_pointers_and_not_33() -> Result[Void]
+  try Test.assert(not malformed?(chain(33)), "32 pointers")
+  Test.assert(malformed?(chain(34)), "33 pointers")
+end
+
+def test_an_ipv4_mapped_address_ends_with_the_dotted_address() -> Result[Void]
+  aaaa = ONE_ANSWER + "001c0001" + "00000000" + "0010"
+  mapped = try Wire.decode(bytes_of(aaaa + "00000000000000000000ffff01020304"))
+  try Test.eq(mapped.answers[0].data, Types.Data.Aaaa("::ffff:1.2.3.4"))
+  other = try Wire.decode(bytes_of(aaaa + "0000000000000000000100000102ffff"))
+  Test.eq(other.answers[0].data, Types.Data.Aaaa("::1:0:102:ffff"))
+end
+
+def test_the_flags_of_an_opt_record_are_kept() -> Result[Void]
+  opt = try Wire.decode(bytes_of(ONE_ANSWER + "00290200" + "80000000" + "0000"))
+  Test.eq(opt.answers[0].ttl, 2_147_483_648)
+end
+
+def test_many_records_that_point_at_one_long_name_are_cheap() -> Result[Void]
+  name = "026162" * 30 + "00"
+  count = 3000
+  record = "c00c" + "00010001" + "00000000" + "0004" + "01020304"
+  rows: List[Bytes] = []
+  for _ in 0...count
+    rows = rows.push(bytes_of(record))
+  end
+
+  header = "abcd8180" + hex(try Binary.write_u16_be(1)) + hex(try Binary.write_u16_be(count)) + "00000000"
+  data = Bytes.concat([bytes_of(header + name + "00010001")] + rows)
+  before = System.Profile.steps()
+  message = try Wire.decode(data)
+  try Test.eq(message.answers.length, count)
+  try Test.eq(message.answers[count - 1].name, message.questions[0].name)
+  Test.assert(System.Profile.steps() - before < 1000 * count, "the work grows with the records, not with their names")
+end
+
+def test_a_name_that_pointers_make_longer_than_255_bytes_is_refused() -> Result[Void]
+  # Three labels of 63 bytes take 193 bytes with the end: a label of 61 bytes and a pointer to them make 255.
+  long = ("3f" + "61" * 63) * 3 + "00"
+  try Test.assert(not malformed?(question_pair(long, "3d" + "62" * 61 + "c00c")), "255 bytes")
+  Test.assert(malformed?(question_pair(long, "3e" + "62" * 62 + "c00c")), "256 bytes")
+end
+
+# Two questions: the first is `first` (a name as hex) and the type and class, the second is `second`.
+def question_pair(first: String, second: String) -> String
+  "abcd01000002000000000000" + first + "00010001" + second + "00010001"
+end
+
+# `count` questions in a row: the first is a label and the end of a name, each of the others a label and a pointer
+# to the
+# name before it, so the last one follows `count - 1` pointers.
+def chain(count: Int) -> String
+  text = "abcd0100" + hex(Binary.write_u16_be(count).unwrap!) + "000000000000" + "016100" + "00010001"
+  previous = 12
+  position = 12 + 7
+  for _ in 1...count
+    text = text + "0161" + hex(Binary.write_u16_be(49_152 + previous).unwrap!) + "00010001"
+    previous = position
+    position += 8
+  end
+
+  text
 end

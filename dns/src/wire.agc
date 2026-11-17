@@ -54,9 +54,9 @@ def decode(data: Bytes) -> Result[Types.Message]
   end
 
   asked = try read_questions(data, HEADER_BYTES, questions_count)
-  answers = try read_records(data, asked.next, answers_count)
-  authorities = try read_records(data, answers.next, authorities_count)
-  additionals = try read_records(data, authorities.next, additionals_count)
+  answers = try read_records(data, asked.next, answers_count, asked.names)
+  authorities = try read_records(data, answers.next, authorities_count, answers.names)
+  additionals = try read_records(data, authorities.next, additionals_count, authorities.names)
   ok(
     Types.Message(
       id: try Binary.read_u16_be(data, 0),
@@ -87,25 +87,40 @@ AA_BIT = 1_024
 TC_BIT = 512
 RD_BIT = 256
 RA_BIT = 128
-# A TTL with this bit set counts as 0 (RFC 2181 8).
+# A TTL with this bit set counts as 0 (RFC 2181 8), but the "TTL" of an OPT record (RFC 6891) holds flags.
 TTL_TOP_BIT = 2_147_483_648
 IPV4_BYTES = 4
 IPV6_BYTES = 16
 IPV6_GROUPS = 8
+# The first 12 bytes of an IPv4-mapped IPv6 address.
+MAPPED_PREFIX = Bytes.from_list([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255]).unwrap!
 
 struct Questions
   items: List[Types.Question]
   next: Int
+  names: Name.Names
 end
 
 struct Records
   items: List[Types.Record]
   next: Int
+  names: Name.Names
 end
 
 struct One
   record: Types.Record
   next: Int
+  names: Name.Names
+end
+
+struct Parsed
+  data: Types.Data
+  names: Name.Names
+end
+
+struct Nameful
+  name: String
+  names: Name.Names
 end
 
 def malformed[T](message: String) -> Result[T] = error("dns: #{message}", kind: Types.MALFORMED)
@@ -115,83 +130,92 @@ def bit?(flags: Int, bit: Int) -> Bool = flags.bit_and(bit) != 0
 def read_questions(data: Bytes, offset: Int, count: Int) -> Result[Questions]
   items: List[Types.Question] = []
   position = offset
+  names = Name.Names()
   for _ in 0...count
-    name = try Name.decode(data, position)
-    return malformed("a question runs past the end of the message") if name.next + 4 > data.size
+    found = try Name.read(data, position, names)
+    names = found.names
+    after = found.entry.next
+    return malformed("a question runs past the end of the message") if after + 4 > data.size
     items = items.push(
       Types.Question(
-        name: name.name,
-        type: try Binary.read_u16_be(data, name.next),
-        class: try Binary.read_u16_be(data, name.next + 2),
+        name: found.entry.text,
+        type: try Binary.read_u16_be(data, after),
+        class: try Binary.read_u16_be(data, after + 2),
       ),
     )
 
-    position = name.next + 4
+    position = after + 4
   end
 
-  ok(Questions(items: items, next: position))
+  ok(Questions(items: items, next: position, names: names))
 end
 
-def read_records(data: Bytes, offset: Int, count: Int) -> Result[Records]
+def read_records(data: Bytes, offset: Int, count: Int, known: Name.Names) -> Result[Records]
   items: List[Types.Record] = []
   position = offset
+  names = known
   for _ in 0...count
-    one = try read_record(data, position)
+    one = try read_record(data, position, names)
     items = items.push(one.record)
     position = one.next
+    names = one.names
   end
 
-  ok(Records(items: items, next: position))
+  ok(Records(items: items, next: position, names: names))
 end
 
-def read_record(data: Bytes, offset: Int) -> Result[One]
-  name = try Name.decode(data, offset)
-  fixed = name.next
+def read_record(data: Bytes, offset: Int, known: Name.Names) -> Result[One]
+  owner = try Name.read(data, offset, known)
+  fixed = owner.entry.next
   return malformed("a record runs past the end of the message") if fixed + 10 > data.size
   type = try Binary.read_u16_be(data, fixed)
   length = try Binary.read_u16_be(data, fixed + 8)
   start = fixed + 10
   return malformed("the data of a record runs past the end of the message") if length > data.size - start
   ttl = try Binary.read_u32_be(data, fixed + 4)
-  if ttl >= TTL_TOP_BIT
+  if ttl >= TTL_TOP_BIT and type != Types.TYPE_OPT
     ttl = 0
   end
 
+  parsed = try read_data(data, type, start, start + length, owner.names)
   record = Types.Record(
-    name: name.name,
+    name: owner.entry.text,
     type: type,
     class: try Binary.read_u16_be(data, fixed + 2),
     ttl: ttl,
-    data: try read_data(data, type, start, start + length),
+    data: parsed.data,
   )
 
-  ok(One(record: record, next: start + length))
+  ok(One(record: record, next: start + length, names: parsed.names))
 end
 
-# The data of a record between `start` and `stop`. A name inside it may point anywhere before it, and must end where
+# The data of a record between `start` and `stop`. A name inside it may point to any name before it, and must end where
 # the data ends.
-def read_data(data: Bytes, type: Int, start: Int, stop: Int) -> Result[Types.Data]
+def read_data(data: Bytes, type: Int, start: Int, stop: Int, names: Name.Names) -> Result[Parsed]
   if type == Types.TYPE_A
     return malformed("the data of an A record must be #{IPV4_BYTES} bytes") if stop - start != IPV4_BYTES
-    return ok(Types.Data.A(ipv4(data.slice(start, IPV4_BYTES))))
+    return ok(Parsed(data: Types.Data.A(ipv4(data.slice(start, IPV4_BYTES))), names: names))
   elsif type == Types.TYPE_AAAA
     return malformed("the data of an AAAA record must be #{IPV6_BYTES} bytes") if stop - start != IPV6_BYTES
-    return ok(Types.Data.Aaaa(ipv6(data.slice(start, IPV6_BYTES))))
+    return ok(Parsed(data: Types.Data.Aaaa(ipv6(data.slice(start, IPV6_BYTES))), names: names))
   elsif type == Types.TYPE_CNAME
-    return ok(Types.Data.Cname(try name_data(data, start, stop)))
+    named = try name_data(data, start, stop, names)
+    return ok(Parsed(data: Types.Data.Cname(named.name), names: named.names))
   elsif type == Types.TYPE_NS
-    return ok(Types.Data.Ns(try name_data(data, start, stop)))
+    named = try name_data(data, start, stop, names)
+    return ok(Parsed(data: Types.Data.Ns(named.name), names: named.names))
   elsif type == Types.TYPE_PTR
-    return ok(Types.Data.Ptr(try name_data(data, start, stop)))
+    named = try name_data(data, start, stop, names)
+    return ok(Parsed(data: Types.Data.Ptr(named.name), names: named.names))
   end
 
-  ok(Types.Data.Other(data.slice(start, stop - start)))
+  ok(Parsed(data: Types.Data.Other(data.slice(start, stop - start)), names: names))
 end
 
-def name_data(data: Bytes, start: Int, stop: Int) -> Result[String]
-  name = try Name.decode(data, start)
-  return malformed("a name in the data of a record ends outside the data") if name.next != stop
-  ok(name.name)
+def name_data(data: Bytes, start: Int, stop: Int, names: Name.Names) -> Result[Nameful]
+  found = try Name.read(data, start, names)
+  return malformed("a name in the data of a record ends outside the data") if found.entry.next != stop
+  ok(Nameful(name: found.entry.text, names: found.names))
 end
 
 def ipv4(bytes: Bytes) -> String
@@ -200,8 +224,10 @@ def ipv4(bytes: Bytes) -> String
 end
 
 # The text of RFC 5952: lower case, no leading zeros, and the first of the longest runs of two or more zero groups
-# written as `::`.
+# written as `::`. An IPv4-mapped address (`::ffff:` and four bytes) ends with the dotted address (section 5).
 def ipv6(bytes: Bytes) -> String
+  return "::ffff:#{ipv4(bytes.drop(12))}" if bytes.take(12) == MAPPED_PREFIX
+
   groups: List[Int] = []
   for index in 0...IPV6_GROUPS
     groups = groups.push(bytes[index * 2] * 256 + bytes[index * 2 + 1])
