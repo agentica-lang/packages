@@ -37,9 +37,8 @@ OK = "ok"
 ## - the expectations, on a request's outcome: `expect_status` (number), `expect_body` (text), `expect_size` (number:
 ##   the bytes of the body), `expect_header` (text: `name: value`), `expect_url` (text, where `{a}` is the address of
 ##   `a`), `expect_decoded` (text: `name age` of the person that the JSON body decodes to, or the kind of the error),
-##   `expect_kind` (text: the start of the kind of its error), `expect_within` (number: it ended within that many ms),
-##   `expect_first_within` (number: the first piece or event of a stream came within that many ms) and `expect_after`
-##   (number: it took that many ms or more).
+##   `expect_kind` (text: the start of the kind of its error), `expect_within` (number: it ended within that many ms)
+##   and `expect_after` (number: it took that many ms or more).
 struct Request
   op: String
   name: String = ""

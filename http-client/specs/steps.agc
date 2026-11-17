@@ -121,9 +121,6 @@ def main() -> Void
     BDD.step("{string} does not decode") do |ctx, args|
       send(ctx, Request(op: "expect_decoded", name: args[0], text: "http_client.decode"))
     end,
-    BDD.step("the first piece of {string} came within {int} ms") do |ctx, args|
-      send(ctx, Request(op: "expect_first_within", name: args[0], number: args[1].to_i!))
-    end,
     BDD.step("{string} took at least {int} ms") do |ctx, args|
       send(ctx, Request(op: "expect_after", name: args[0], number: args[1].to_i!))
     end,

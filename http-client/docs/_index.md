@@ -7,7 +7,7 @@ description: An HTTP client with a pool of keep-alive connections per origin, an
 
 ## Install
 
-Needs Agentica 0.33.1, and is tested on 0.33.x only: until 0.34.0 it sets the timeout of each call, and on the opt-in dial path (`resolver` or `public_only`) the address and server name of a connection, through fields of std/http's `Connection` that may change. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
+Needs Agentica 0.34.0, which has the per-call timeouts and `connect_to` of std/http. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
 agentica add http-client https://github.com/agentica-lang/packages --tag http-client-0.1.0 --subdir http-client
@@ -197,7 +197,7 @@ A 301, 302, 303, 307 or 308 with a `Location` is followed, at most `max_redirect
 
 ## Resolving and public_only
 
-By default std/http resolves the host of each connection, as it always does. A client with a `resolver` or with `public_only: true` takes the dial path instead: it resolves the host itself, with `resolver` (`DNS.lookup`, the system resolver, when none), and connects to one of its addresses, tried in order within `connect_timeout_ms`: each address gets an equal share of the time left, so one that never answers leaves time for the next. A resolver that has not answered within `connect_timeout_ms` is an `http_client.timeout.connect` error. The URL host still names the server: std/http writes it in `Host`, and for `https` it is the TLS server name and the name the certificate is checked against. A resolver is any `Fn[String, Result[List[String]]]`, such as `DNS.lookuper(resolver)` of the [dns](https://www.agentica-lang.com/packages/dns/) package. On the dial path its answers are kept `dns_cache_ms` (10 seconds by default, as aiosonic's `ttl_dns_cache`; 0 for no cache), shared by every connection of the client. Without `resolver` or `public_only`, `dns_cache_ms` has no effect until std/http has `connect_to` (agentica#1556, planned for 0.34.0). A host that does not resolve is an `http_client.dns` error.
+By default std/http resolves the host of each connection, as it always does. A client with a `resolver` or with `public_only: true` takes the dial path instead: it resolves the host itself, with `resolver` (`DNS.lookup`, the system resolver, when none), and connects to one of its addresses, tried in order within `connect_timeout_ms`: each address gets an equal share of the time left, so one that never answers leaves time for the next. A resolver that has not answered within `connect_timeout_ms` is an `http_client.timeout.connect` error. The URL host still names the server: std/http writes it in `Host`, and for `https` it is the TLS server name and the name the certificate is checked against. A resolver is any `Fn[String, Result[List[String]]]`, such as `DNS.lookuper(resolver)` of the [dns](https://www.agentica-lang.com/packages/dns/) package. On the dial path its answers are kept `dns_cache_ms` (10 seconds by default, as aiosonic's `ttl_dns_cache`; 0 for no cache), shared by every connection of the client. Without `resolver` or `public_only`, `dns_cache_ms` has no effect, since std/http resolves the host. A host that does not resolve is an `http_client.dns` error.
 
 With `public_only: true` the client refuses every address that is not public: loopback, private, link-local, carrier-grade NAT, documentation, multicast and the other special ranges, IPv4 and IPv6 (an IPv6 address that carries an IPv4 one is judged by it). A host with no public address is an `http_client.address_denied` error, and nothing is sent. This is the guard of a server that fetches URLs its users give (webhooks, link previews) against server-side request forgery (SSRF):
 
@@ -205,7 +205,7 @@ With `public_only: true` the client refuses every address that is not public: lo
 - Each redirect is a new connection and is checked the same way.
 - A `proxy` resolves the host itself, so `new` refuses a `resolver` or `public_only` together with one (`argument`).
 
-Until std/http has `connect_to`, the dial path opens the connection to the address with std/http, does the TLS handshake for `https` itself, and then sets the `host`, `socket` and `scheme` fields of std/http's `Connection`. Those fields may change, which is why the dial path is opt-in and why the package is tested on 0.33.x only. With `connect_to` the client will pass the address to std/http instead, with the same behavior.
+The client gives std/http the address with `connect_to`, so the connection goes to the address that was checked while std/http uses the URL host for `Host`, the TLS server name and the certificate check. An address that std/http refuses as a `connect_to` (IPv4-mapped, `0.0.0.0` and `::`) is not a destination for the client either: it is an error of that connect.
 
 ## The pool
 

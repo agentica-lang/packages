@@ -1,9 +1,10 @@
 ## One request on a link of the pool: on the link's idle connection or a new one, send, read the whole body, and leave
 ## the connection in the link when it can take the next request.
 ##
-## Until Agentica 0.34.0 (agentica#1710) a `HTTP.Connection` has one timeout, `options.timeout_ms`, for each call on
-## it. `waiting` gives each call its own on a copy of the connection; the copy shares the socket and the state. The
-## call that sends the request also reads the response head, so `read_timeout_ms` covers the send too.
+## A `HTTP.Connection` takes its timeouts from its options: `timeout_ms` for each `send_request` (the write and the
+## head) and `read_timeout_ms` for each `read_body`. `sending` and `reading` give each call its own on a copy of the
+## connection; the copy shares the socket and the state. The call that sends the request also reads the response head,
+## so the client's `read_timeout_ms` covers the send too.
 
 import HTTP from "std/http"
 import Link from "link"
@@ -171,7 +172,7 @@ end
 def exchange(held: Held, call: Call) -> Attempt
   case next_wait(call, call.read_timeout_ms, "timeout.read")
     ok(wait) ->
-      head = HTTP.send_request(waiting(held, wait), call.method, call.target.target, call.body, call.headers)
+      head = HTTP.send_request(sending(held, wait), call.method, call.target.target, call.body, call.headers)
       sent(held, call, wait, head)
     error(e) -> Attempt.Refused(error(e))
   end
@@ -270,7 +271,7 @@ end
 # The next piece of a streamed body, empty at its end. A read that fails once the client closed is that close.
 def next_piece(held: Held, call: Call, stopping: Channel[Bool]) -> Result[Bytes]
   wait = Wait(ms: call.read_timeout_ms, kind: "timeout.read")
-  case HTTP.read_body(waiting(held, wait), READ_BYTES)
+  case HTTP.read_body(reading(held, wait), READ_BYTES)
     ok(piece) -> ok(piece)
     error(e) if stopping.closed? -> failure("the client is closed", "closed", some(e))
     error(e) -> read_failure(e, wait, "the body did not come")
@@ -296,7 +297,7 @@ def read_all(held: Held, call: Call) -> Result[Bytes]
   while true
     wait = try next_wait(call, call.read_timeout_ms, "timeout.read")
     piece = NO_BYTES
-    case HTTP.read_body(waiting(held, wait), READ_BYTES)
+    case HTTP.read_body(reading(held, wait), READ_BYTES)
       ok(read) -> piece = read
       error(e) -> return read_failure(e, wait, "the body did not come")
     end
@@ -314,8 +315,12 @@ def read_all(held: Held, call: Call) -> Result[Bytes]
   ok(Bytes.concat(pieces))
 end
 
-def waiting(held: Held, wait: Wait) -> HTTP.Connection
+def sending(held: Held, wait: Wait) -> HTTP.Connection
   held.conn.with(options: held.conn.options.with(timeout_ms: wait.ms))
+end
+
+def reading(held: Held, wait: Wait) -> HTTP.Connection
+  held.conn.with(options: held.conn.options.with(read_timeout_ms: wait.ms))
 end
 
 # The wait of the next call: `limit_ms`, or less when the whole request has less left.

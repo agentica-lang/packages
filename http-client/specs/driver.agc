@@ -527,12 +527,6 @@ def check(req: Request, outcome: Outcome) -> String
     return "#{req.name} took #{outcome.elapsed} ms"
   end
 
-  if req.op == "expect_first_within"
-    return Protocol.OK if outcome.first > 0 and outcome.first < req.number
-
-    return "the first piece of #{req.name} took #{outcome.first} ms"
-  end
-
   if req.op == "expect_after"
     return Protocol.OK if outcome.elapsed >= req.number
 

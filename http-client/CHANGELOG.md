@@ -4,6 +4,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Needs Agentica 0.34.0.
+
+### Changed
+
+- The dial path (`resolver` and `public_only`) connects with std/http's `connect_to` instead of setting fields of its `Connection`, so it no longer depends on them, and the "tested on 0.33.x only" note is gone (#154).
+- The connect, the head and each read of a body take std/http's own timeouts (`connect_timeout_ms`, `timeout_ms` and `read_timeout_ms` of the connection) instead of a timeout set on a copy of the connection for each call.
+
 ## [0.1.0] - 2026-11-17
 
 Needs Agentica 0.33.1, and is tested on 0.33.x only.
