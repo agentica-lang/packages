@@ -139,13 +139,14 @@ def chunked(socket: TCP.Socket, number: Int, wait_ms: Int, pieces: List[String])
     "transfer-encoding: chunked",
   ]
 
-  head = "#{lines.join(CRLF)}#{CRLF}#{CRLF}"
-  return false if not TCP.send(socket, head, STEP_MS).ok?
-
+  # The head goes in one write with the first piece: a write of its own could hold that piece back until the client
+  # acknowledges the head (Nagle), and the first two pieces would come as one.
+  before = "#{lines.join(CRLF)}#{CRLF}#{CRLF}"
   for piece in pieces
     text = piece.replace("_", " ").replace("\\n", "\n")
-    return false if not TCP.send(socket, "#{format("%x", text.bytesize)}#{CRLF}#{text}#{CRLF}", STEP_MS).ok?
+    return false if not TCP.send(socket, "#{before}#{format("%x", text.bytesize)}#{CRLF}#{text}#{CRLF}", STEP_MS).ok?
 
+    before = ""
     Task.sleep(wait_ms)
   end
 
