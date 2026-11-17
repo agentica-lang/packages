@@ -1,8 +1,8 @@
 ## The peer of the transport scenarios: a nameserver that answers with the bytes that a script says, so a scenario can
-## send what no real server sends. It listens on 127.0.0.1 and a free port, which it says on its first line
-## (`listening on PORT`), over TCP, or over TLS when the environment variables `TLS_CERT` and `TLS_KEY` (PEM files) are
-## set. It does not use the codec of the package: it only cuts the query in the parts that a script may put in an answer.
-## The script is the program arguments, one operation each:
+## send what no real server sends. It listens on 127.0.0.1 and a free port, which it says on its first line (`listening
+## on PORT`), over TCP, or over TLS when the environment variables `TLS_CERT` and `TLS_KEY` (PEM files) are set. It
+## does not use the codec of the package: it only cuts the query in the parts that a script may put in an answer. The
+## script is the program arguments, one operation each:
 ##
 ##   accept                  closes the client and waits for the next one (the first client is accepted at the start)
 ##   read                    reads one query (the 2-byte length and the message) and prints `query HEX`, with `ID`

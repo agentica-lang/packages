@@ -203,6 +203,27 @@ def test_pointers_to_many_label_starts_cost_the_bytes_of_the_names() -> Result[V
   Test.assert(System.Profile.steps() - before < 1000 * count, "the work grows with the bytes, not with their names")
 end
 
+def test_pointers_into_the_middle_of_labels_cost_the_bytes_of_the_names() -> Result[Void]
+  # 40 names of 127 labels `01 02`. A pointer to a `02` reads it as a label of 2 bytes, which leads to the other
+  # chain of
+  # places: those are not the label starts of the first reading, and the name that they make must not be read again.
+  names = 40
+  question = "0102" * 127 + "00" + "00010001"
+  rows: List[Bytes] = []
+  for index in 0...4000
+    offset = 12 + ((index / 126) % names) * 259 + (index % 126) * 2 + 1
+    owner = hex(try Binary.write_u16_be(49_152 + offset))
+    rows = rows.push(bytes_of(owner + "00100001" + "0000003c" + "0000"))
+  end
+
+  header = "abcd8180" + hex(try Binary.write_u16_be(names)) + hex(try Binary.write_u16_be(4000)) + "00000000"
+  data = Bytes.concat([bytes_of(header + question * names)] + rows)
+  before = System.Profile.steps()
+  message = try Wire.decode(data)
+  try Test.eq(message.answers.length, 4000)
+  Test.assert(System.Profile.steps() - before < 1500 * 4000, "the work grows with the bytes, not with their names")
+end
+
 def test_a_chain_of_pointers_that_nobody_read_is_cut_before_it_is_followed() -> Result[Void]
   # A record of an unknown type holds 3000 names, each a pointer to the one before. The owner of the next record points
   # at the last of them: the 33rd pointer ends the walk, whatever the length of the chain.

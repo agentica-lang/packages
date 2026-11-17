@@ -1,6 +1,6 @@
-## A DNS client over TCP and TLS (RFC 1035, 7766 and 7858): it asks the nameservers that you choose, in order, and reads
-## the answers with a codec of its own. There is no UDP in `std`, so a query goes over a stream, with the length in
-## front.
+## A DNS client over TCP and TLS (RFC 1035, 7766 and 7858): it asks the nameservers that you choose, in order, and
+## reads the answers with a codec of its own. There is no UDP in `std`, so a query goes over a stream, with the length
+## in front.
 ##
 ## ```ruby
 ## import DNS from "pkg/dns/dns"
@@ -14,6 +14,7 @@
 
 import Client from "src/client"
 import Name from "src/name"
+import Resolv from "src/resolv"
 import Types from "src/types"
 import Wire from "src/wire"
 
@@ -58,8 +59,8 @@ def resolver(servers: List[Types.Server], options: Types.Options = Types.Options
 end
 
 ## The addresses of a host as text, the IPv4 ones first and then the IPv6 ones, with the CNAMEs followed: the shape of
-## the `resolver:` of http-client. An `error` of the kind `dns.no_address` for a host that exists and has none; the other
-## kinds are those of `query`.
+## the `resolver:` of http-client. An `error` of the kind `dns.no_address` for a host that exists and has none; the
+## other kinds are those of `query`.
 def lookup(resolver: Types.Resolver, host: String) -> Result[List[String]] = Client.lookup(resolver, host)
 
 ## `lookup` of a resolver as a function, for an option that takes one.
@@ -85,15 +86,26 @@ end
 def same_name?(a: String, b: String) -> Bool = Name.same?(a, b)
 
 ## The bytes of a query for one question of the class IN, with the flag that asks the server to recurse unless
-## `recursion_desired` is false. `name` is text without the final dot (`\.` writes a dot inside a label, `\DDD` a byte).
-## An `error` of the kind `dns.malformed` for an id or type outside 16 bits, an empty label, a label over 63 bytes and a
-## name over 255.
+## `recursion_desired` is false. `name` is text without the final dot (`\.` writes a dot inside a label, `\DDD` a
+## byte). An `error` of the kind `dns.malformed` for an id or type outside 16 bits, an empty label, a label over 63
+## bytes and a name over 255.
 def encode_query(id: Int, name: String, type: Int, recursion_desired: Bool = true) -> Result[Bytes]
   Wire.encode_query(id, name, type, recursion_desired)
 end
 
 ## Reads a message. An `error` of the kind `dns.malformed` for bytes that break RFC 1035: a message under 12 or over
-## 65535 bytes, counts that the bytes cannot hold, a name or a length that runs past the end, a compression pointer that
-## does not go before its name, a label of a reserved type, and an A or AAAA record whose data is not 4 or 16 bytes. A,
-## AAAA, CNAME, NS and PTR records are decoded; the data of any other type is `Data.Other` with the bytes as they came.
+## 65535 bytes, counts that the bytes cannot hold, a name or a length that runs past the end, a compression pointer
+## that does not go before its name, a label of a reserved type, and an A or AAAA record whose data is not 4 or 16
+## bytes. A, AAAA, CNAME, NS and PTR records are decoded; the data of any other type is `Data.Other` with the bytes as
+## they came.
 def decode(data: Bytes) -> Result[Types.Message] = Wire.decode(data)
+
+## The nameservers of a `resolv.conf` as `Tcp` servers on port 53, at most 3, in order. It is opt-in: no function reads
+## the file unless you call this one. An `error` when the file cannot be read, and of the kind `dns.malformed` when it
+## has no
+## `nameserver` line. Not every system resolver answers over TCP, so pass the result to `resolver` only when yours
+## does.
+def system_servers(path: String = "/etc/resolv.conf") -> Result[List[Types.Server]] = Resolv.read(path)
+
+## The nameservers of the text of a `resolv.conf`, as `system_servers` reads them.
+def parse_resolv_conf(text: String) -> List[Types.Server] = Resolv.parse(text)

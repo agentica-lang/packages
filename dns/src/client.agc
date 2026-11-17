@@ -12,7 +12,8 @@ MAX_CNAMES = 32
 MAX_SERVERS = 16
 
 ## Makes a resolver. An `error` for no server, more than 16, a server with no host or a port outside 1 to 65535, a
-## timeout outside 1 to `MAX_TIMEOUT_MS`, `max_cnames` outside 0 to 32, and a system trust that cannot be loaded.
+## timeout outside 1 to `MAX_TIMEOUT_MS`, `max_cnames` outside 0 to 32, and, when a server is `Tls`, a system trust
+## that cannot be loaded.
 def resolver(servers: List[Types.Server], options: Types.Options) -> Result[Types.Resolver]
   return malformed("a resolver needs at least one nameserver") if servers.empty?
   return malformed("a resolver has at most #{MAX_SERVERS} nameservers") if servers.length > MAX_SERVERS
@@ -28,7 +29,7 @@ def resolver(servers: List[Types.Server], options: Types.Options) -> Result[Type
     return malformed("max_cnames must be from 0 to #{MAX_CNAMES}")
   end
 
-  ok(Types.Resolver(servers: servers, options: options, context: try context_of(options)))
+  ok(Types.Resolver(servers: servers, options: options, context: try context_of(servers, options)))
 end
 
 ## Asks the nameservers in order until one gives an answer, and returns that message, checked: it is a response to this
@@ -50,9 +51,9 @@ def query(resolver: Types.Resolver, name: String, type: Int) -> Result[Types.Mes
   last
 end
 
-## The addresses of `type` (`TYPE_A` or `TYPE_AAAA`) of a name, with the CNAMEs followed: the ones that the answer holds,
-## and, when the chain leaves the answer, a new query for its end. An empty list for a name that exists and has no
-## address of that type; an `error` of the kind `dns.cname_limit` for too many CNAMEs or a loop of them.
+## The addresses of `type` (`TYPE_A` or `TYPE_AAAA`) of a name, with the CNAMEs followed: the ones that the answer
+## holds, and, when the chain leaves the answer, a new query for its end. An empty list for a name that exists and has
+## no address of that type; an `error` of the kind `dns.cname_limit` for too many CNAMEs or a loop of them.
 def addresses(resolver: Types.Resolver, name: String, type: Int) -> Result[List[Types.Address]]
   return malformed("addresses takes TYPE_A or TYPE_AAAA") if type != Types.TYPE_A and type != Types.TYPE_AAAA
 
@@ -75,24 +76,42 @@ def addresses(resolver: Types.Resolver, name: String, type: Int) -> Result[List[
 end
 
 ## The addresses of a host as text, the IPv4 ones first and then the IPv6 ones: the shape of the `resolver:` of
-## http-client. An `error` when neither kind can be asked, and of the kind `dns.no_address` when the host has no address.
+## http-client. The A query goes first; when the name does not exist the AAAA query is not made. One kind that fails
+## does not hide the other, but when there is no address the `error` is the one that failed (the A one first), and
+## `dns.no_address` when both were answered with none.
+##
+## The time is bounded: each query takes at most one `timeout_ms` for each nameserver, and each CNAME that leaves an
+## answer adds one more query, so `lookup` takes at most `2 * (max_cnames + 1) * servers * timeout_ms`.
 def lookup(resolver: Types.Resolver, host: String) -> Result[List[String]]
   four = addresses(resolver, host, Types.TYPE_A)
-  six = addresses(resolver, host, Types.TYPE_AAAA)
   case four
-    error(e) -> return error(e) if not six.ok?
+    error(e) -> return error(e) if e.is_a?(Types.NXDOMAIN)
     ok(_) -> nil
   end
 
+  six = addresses(resolver, host, Types.TYPE_AAAA)
   nothing: List[Types.Address] = []
   found = four.unwrap_or(nothing) + six.unwrap_or(nothing)
-  return error("dns: #{host} has no address", kind: Types.NO_ADDRESS) if found.empty?
+  if found.empty?
+    case four
+      error(e) -> return error(e)
+      ok(_) -> nil
+    end
+
+    case six
+      error(e) -> return error(e)
+      ok(_) -> nil
+    end
+
+    return error("dns: #{host} has no address", kind: Types.NO_ADDRESS)
+  end
 
   ok(found.map { |a| a.address })
 end
 
 private
 
+HTTPS = "https://"
 # A TTL that no record has: the top of the 32 bits.
 NO_TTL = 4_294_967_295
 
@@ -114,7 +133,16 @@ def check_server(server: Types.Server) -> Result[Void]
   case server
     Types.Server.Tcp(host, port) -> check_endpoint(host, port)
     Types.Server.Tls(host, port, _) -> check_endpoint(host, port)
+    Types.Server.Https(url) -> check_url(url)
   end
+end
+
+def check_url(url: String) -> Result[Void]
+  if not url.start_with?(HTTPS) or url.length == HTTPS.length
+    return malformed("the URL of a DNS over HTTPS server must start with #{HTTPS}")
+  end
+
+  ok()
 end
 
 def check_endpoint(host: String, port: Int) -> Result[Void]
@@ -123,15 +151,32 @@ def check_endpoint(host: String, port: Int) -> Result[Void]
   ok()
 end
 
-def context_of(options: Types.Options) -> Result[TLS.Context]
+# The trust is loaded only when a server needs it.
+def context_of(servers: List[Types.Server], options: Types.Options) -> Result[Optional[TLS.Context]]
   case options.tls
-    some(context) -> ok(context)
-    none -> TLS.client_context(TLS.ClientOptions())
+    some(context) -> return ok(some(context))
+    none -> nil
+  end
+
+  needed = servers.any? do |server| secure?(server) end
+  return ok(none) if not needed
+
+  ok(some(try TLS.client_context(TLS.ClientOptions())))
+end
+
+def secure?(server: Types.Server) -> Bool
+  case server
+    Types.Server.Tls(_, _, _) -> true
+    _ -> false
   end
 end
 
 def ask(resolver: Types.Resolver, server: Types.Server, name: String, type: Int) -> Result[Types.Message]
-  id = try random_id()
+  id = 0
+  if not https?(server)
+    id = try random_id()
+  end
+
   query = try Wire.encode_query(id, name, type)
   answer = try Transport.exchange(server, query, resolver.options.timeout_ms, resolver.context)
   message = try Wire.decode(answer)
@@ -140,17 +185,25 @@ def ask(resolver: Types.Resolver, server: Types.Server, name: String, type: Int)
   ok(message)
 end
 
+# The id of a query over HTTPS is 0, so that the answers can be cached (RFC 8484 4.1).
+def https?(server: Types.Server) -> Bool
+  case server
+    Types.Server.Https(_) -> true
+    _ -> false
+  end
+end
+
 def random_id() -> Result[Int]
   bytes = OpenSSL.Random.random_bytes(2)
   ok(bytes[0] * 256 + bytes[1])
 end
 
-# The answer must be a response to this query. A server that fails may leave out the question, so only an answer with
-# NOERROR must have it.
+# The answer must be a response to this query. A server that fails may leave out the question; NOERROR and NXDOMAIN,
+# which say something about the name, must have it.
 def check_answer(message: Types.Message, id: Int, name: String, type: Int) -> Result[Void]
   return mismatch("the id of the answer is not the id of the query") if message.id != id
   return mismatch("the answer is not a response") if not message.response
-  return ok() if message.questions.empty? and message.rcode != Types.RCODE_NOERROR
+  return ok() if message.questions.empty? and may_lack_question?(message.rcode)
 
   return mismatch("the answer has #{message.questions.length} questions, not 1") if message.questions.length != 1
   asked = message.questions[0]
@@ -160,6 +213,8 @@ def check_answer(message: Types.Message, id: Int, name: String, type: Int) -> Re
 
   ok()
 end
+
+def may_lack_question?(rcode: Int) -> Bool = rcode != Types.RCODE_NOERROR and rcode != Types.RCODE_NXDOMAIN
 
 def mismatch[T](message: String) -> Result[T] = error("dns: #{message}", kind: Types.MISMATCH)
 
@@ -204,7 +259,9 @@ end
 
 def cname_of(answers: List[Types.Record], owner: String) -> Optional[Types.Record]
   for record in answers
-    return some(record) if record.type == Types.TYPE_CNAME and Name.same?(record.name, owner)
+    if record.type == Types.TYPE_CNAME and record.class == Types.CLASS_IN and Name.same?(record.name, owner)
+      return some(record)
+    end
   end
 
   none
@@ -220,7 +277,7 @@ end
 def addresses_of(answers: List[Types.Record], owner: String, type: Int, ttl: Int) -> List[Types.Address]
   found: List[Types.Address] = []
   for record in answers
-    if record.type == type and Name.same?(record.name, owner)
+    if record.type == type and record.class == Types.CLASS_IN and Name.same?(record.name, owner)
       text = address_text(record.data)
       if text != ""
         found = found.push(Types.Address(address: text, type: type, ttl: smaller(ttl, record.ttl)))

@@ -25,7 +25,8 @@ MAX_MESSAGE_BYTES = 65_535
 ## The kinds of the errors of the package, for `e.is_a?("dns.nxdomain")`. A message that breaks RFC 1035.
 MALFORMED = "dns.malformed"
 
-## The name does not exist (NXDOMAIN): the one answer that ends the search, since the next nameserver would say the same.
+## The name does not exist (NXDOMAIN): the one answer that ends the search, since the next nameserver would say the
+## same.
 NXDOMAIN = "dns.nxdomain"
 
 ## The nameserver failed (SERVFAIL), or answered with a code that has no kind of its own.
@@ -53,11 +54,18 @@ NO_ADDRESS = "dns.no_address"
 ## The most that a timeout may be, in milliseconds: one day.
 MAX_TIMEOUT_MS = 86_400_000
 
-## A nameserver. `Tcp` is DNS over TCP (RFC 7766): the host (a name or an address) and the port, 53 for most. `Tls` is DNS
-## over TLS (RFC 7858): the host, the port (853 for most) and the name that the certificate must have, "" for the host.
+## The most bytes of an answer over HTTPS: the 16-bit length of a message over TCP.
+MAX_ANSWER_BYTES = 65_535
+
+## A nameserver. `Tcp` is DNS over TCP (RFC 7766): the host (a name or an address) and the port, 53 for most. `Tls` is
+## DNS over TLS (RFC 7858): the host, the port (853 for most) and the name that the certificate must have, "" for the
+## host.
+## `Https` is DNS over HTTPS (RFC 8484): the whole `https://` URL of the server, such as
+## `https://dns.example/dns-query`.
 enum Server
   Tcp(String, Int)
   Tls(String, Int, String)
+  Https(String)
 end
 
 ## What a resolver takes. `timeout_ms` is how long each nameserver has for the whole exchange (connect, send and read),
@@ -73,7 +81,7 @@ end
 struct Resolver
   servers: List[Server]
   options: Options
-  context: TLS.Context
+  context: Optional[TLS.Context]
 end
 
 ## An address of an answer: its text, `TYPE_A` or `TYPE_AAAA`, and its TTL in seconds (the smallest of the chain of
@@ -95,8 +103,8 @@ enum Data
   Other(Bytes)
 end
 
-## A question: a name, a type and a class. A name is text without the final dot ("" is the root); a dot inside a label is
-## written `\.`, a backslash `\\`, and a byte that is not printable ASCII `\DDD` with its decimal value.
+## A question: a name, a type and a class. A name is text without the final dot ("" is the root); a dot inside a label
+## is written `\.`, a backslash `\\`, and a byte that is not printable ASCII `\DDD` with its decimal value.
 struct Question
   name: String
   type: Int

@@ -183,3 +183,85 @@ Feature: Asking nameservers over TCP and TLS
       | tcp  | PORT |      |
     When the resolver asks for the "A" addresses of "example.com"
     Then it fails with "dns.cname_limit"
+
+  Scenario: A record of another owner is not an address of the name
+    Given the peer listens with the script "read / send ID 8180 0001 0001 0000 0000 QUESTION 056f746865720474657374 00 0001 0001 0000012c 0004 c0000201"
+    And the nameservers are:
+      | kind | port | name |
+      | tcp  | PORT |      |
+    When the resolver asks for the "A" addresses of "example.com"
+    Then it gives ""
+
+  Scenario: A record that is not of the class IN is not an address
+    Given the peer listens with the script "read / send ID 8180 0001 0001 0000 0000 QUESTION c00c 0001 0003 0000012c 0004 c0000201"
+    And the nameservers are:
+      | kind | port | name |
+      | tcp  | PORT |      |
+    When the resolver asks for the "A" addresses of "example.com"
+    Then it gives ""
+
+  Scenario: A CNAME that is not of the class IN is not followed
+    Given the peer listens with the script "read / send ID 8180 0001 0002 0000 0000 QUESTION c00c 0005 0003 0000003c 0013 05616c696173076578616d706c65036e657400 c029 0001 0001 0000012c 0004 c0000202"
+    And the nameservers are:
+      | kind | port | name |
+      | tcp  | PORT |      |
+    When the resolver asks for the "A" addresses of "example.com"
+    Then it gives ""
+
+  Scenario: An answer to another type of question is not an answer
+    Given the peer listens with the script "read / send ID 8180 0001 0000 0000 0000 076578616d706c6503636f6d00 001c0001"
+    And the nameservers are:
+      | kind | port | name |
+      | tcp  | PORT |      |
+    When the resolver asks for the "A" addresses of "example.com"
+    Then it fails with "dns.mismatch"
+
+  Scenario: A name error with no question does not end the search
+    Given the peer listens with the script "read / send ID 8183 0000 0000 0000 0000 / accept / read / send ID 8180 0001 0001 0000 0000 QUESTION c00c 0001 0001 0000012c 0004 c0000201"
+    And the nameservers are:
+      | kind | port | name |
+      | tcp  | PORT |      |
+      | tcp  | PORT |      |
+    When the resolver asks for the "A" addresses of "example.com"
+    Then it gives "192.0.2.1/300"
+
+  Scenario: A server that times out is followed by the next one, which may be the same peer in its backlog
+    Given the peer listens with the script "read / sleep 700 / accept / read / send ID 8180 0001 0001 0000 0000 QUESTION c00c 0001 0001 0000012c 0004 c0000201"
+    And the nameservers are:
+      | kind | port | name |
+      | tcp  | PORT |      |
+      | tcp  | PORT |      |
+    And each nameserver has 500 milliseconds
+    When the resolver asks for the "A" addresses of "example.com"
+    Then it gives "192.0.2.1/300"
+
+  Scenario: A lookup that has no address reports the kind that failed, not that there is none
+    Given the peer listens with the script "read / send ID 8180 0001 0000 0000 0000 QUESTION / accept / read / send ID 8182 0001 0000 0000 0000 QUESTION"
+    And the nameservers are:
+      | kind | port | name |
+      | tcp  | PORT |      |
+    When the resolver looks up "example.com"
+    Then it fails with "dns.servfail"
+
+  Scenario: A lookup of a name that does not exist asks only for the IPv4 addresses
+    Given the peer listens with the script "read / send ID 8183 0001 0000 0000 0000 QUESTION / accept / read / send ID 8180 0001 0001 0000 0000 QUESTION c00c 001c 0001 0000003c 0010 20010db8000000000000000000000001"
+    And the nameservers are:
+      | kind | port | name |
+      | tcp  | PORT |      |
+    When the resolver looks up "example.com"
+    Then it fails with "dns.nxdomain"
+
+  Scenario Outline: A chain of two CNAMEs is followed only when the limit allows it
+    Given the peer listens with the script "read / send ID 8180 0001 0003 0000 0000 QUESTION c00c 0005 0001 0000003c 0008 0162 0474657374 00 c029 0005 0001 0000003c 0008 0163 0474657374 00 c03d 0001 0001 0000012c 0004 c0000204"
+    And the nameservers are:
+      | kind | port | name |
+      | tcp  | PORT |      |
+    And the resolver allows <limit> CNAMEs
+    When the resolver asks for the "A" addresses of "example.com"
+    Then <outcome>
+
+    Examples:
+      | limit | outcome                       |
+      | 2     | it gives "192.0.2.4/60"       |
+      | 1     | it fails with "dns.cname_limit" |
+      | 0     | it fails with "dns.cname_limit" |

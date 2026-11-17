@@ -24,12 +24,14 @@ struct Read
 end
 
 ## A name that was read, by the offset where it starts. Its `text` is the whole name, the pointers followed. `size` is
-## what the name takes on the wire without pointers, and `pointers` how many it follows.
+## what the name takes on the wire without pointers, `pointers` how many it follows, and `first` where the first of
+## them goes (-1 for none): the name may be the end of another one only if that is before the other.
 struct Entry
   text: String
   size: Int
   pointers: Int
   next: Int
+  first: Int
 end
 
 ## The names read so far in one message, by offset. A pointer must go before the name that holds it, so what a name
@@ -116,9 +118,21 @@ def read_at(data: Bytes, offset: Int, names: Names, depth: Int) -> Result[Found]
   base = 1
   pointers = 0
   after = 0
+  jump = -1
   known = names
   while true
     return malformed("a name runs past the end of the message") if position >= data.size
+    if position != offset and known.entries.has_key?(position) and known.entries[position].first < offset
+      # The rest of this name is a name that was read before, at a place that is not a label start of this one.
+      ahead = known.entries[position]
+      tail = ahead.text
+      base = ahead.size
+      pointers = ahead.pointers
+      after = ahead.next
+      jump = ahead.first
+      break
+    end
+
     first = data[position]
     if first == 0
       after = position + 1
@@ -134,6 +148,7 @@ def read_at(data: Bytes, offset: Int, names: Names, depth: Int) -> Result[Found]
       base = found.entry.size
       pointers = found.entry.pointers + 1
       after = position + 2
+      jump = target
       break
     elsif first > MAX_LABEL_BYTES
       return malformed("a label has a reserved type")
@@ -152,12 +167,12 @@ def read_at(data: Bytes, offset: Int, names: Names, depth: Int) -> Result[Found]
   text = tail
   total = base
   entries = known.entries
-  top = Entry(text: tail, size: base, pointers: pointers, next: after)
+  top = Entry(text: tail, size: base, pointers: pointers, next: after, first: jump)
   index = labels.length - 1
   while index >= 0
     text = joined([labels[index]], text)
     total += lengths[index]
-    top = Entry(text: text, size: total, pointers: pointers, next: after)
+    top = Entry(text: text, size: total, pointers: pointers, next: after, first: jump)
     entries = entries.put(starts[index], top)
     index -= 1
   end
