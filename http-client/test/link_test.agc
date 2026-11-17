@@ -1,3 +1,4 @@
+import Dial from "../src/dial"
 import HTTP from "std/http"
 import Link from "../src/link"
 import Pool from "pkg/pool/pool"
@@ -10,6 +11,8 @@ def crash() -> Result[Void]
   ok()
 end
 
+def no_address(_host: String) -> Result[List[String]] = ok([])
+
 def crashed_link() -> Link.Link
   inbox: Channel[Link.Order] = Channel.new(1)
   task = Task.spawn do Link.guard(inbox, &crash) end
@@ -19,7 +22,10 @@ end
 
 def test_a_link_whose_task_crashed_fails_at_once_and_its_pool_replaces_it() -> Result[Void]
   link = crashed_link()
-  spec = Link.spec(Link.Origin(url: "http://127.0.0.1:9", options: HTTP.ClientOptions()), 1, 100, 1_000, 1_000)
+  cache: ATS[String, Dial.Resolved] = ATS.new()
+  dialer = Dial.Dialer(resolver: &no_address, cache: cache, cache_ms: 0, public_only: false)
+  origin = Link.Origin(url: "http://127.0.0.1:9", options: HTTP.ClientOptions(), dialer: dialer)
+  spec = Link.spec(origin, 1, 100, 1_000, 1_000)
   began = Time.monotonic_ms()
   try Test.eq(Link.take(link).some?, false)
   try Test.error?(Link.connect(link, 10_000))
