@@ -46,7 +46,7 @@ end
 
 A query that fails goes on to the next server: a timeout, a broken connection, SERVFAIL, REFUSED, a cut answer, an answer that is not for the query. When all fail, the error of the last one is the result. NXDOMAIN ends the search, since the next server would say the same.
 
-Every answer is checked: its id is the one of the query, it has the QR flag, and its question is the one asked (the names compare without case).
+Every answer is checked: its id is the one of the query, it has the QR flag, and its question is the one asked (the names compare without case, as `DNS.same_name?(a, b)` does: `example.com.` is `EXAMPLE.com`).
 
 ## Errors
 
