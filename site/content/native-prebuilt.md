@@ -7,11 +7,11 @@ A package with a native module (`[native.NAME]` with a `build` table in `agentic
 
 - it builds the module on the five targets with the toolchains of Agentica's own releases: zig cc against glibc 2.28 on `linux-x86_64` and `linux-arm64`, Apple clang with `MACOSX_DEPLOYMENT_TARGET=12.0` on `macos-x86_64` and `macos-arm64`, and MSYS2 UCRT64 gcc on `windows-x86_64`;
 - the compiler gets the same arguments as Agentica's own build of the `build` table, then `extra-args`, and the library is stripped;
-- it checks each library: glibc 2.28 at most on Linux, `minos` 12.0 on macOS, only Windows and UCRT DLLs on Windows, and one export, `agentica_native_init`; then it loads it in a plain process;
+- it checks each library: glibc 2.28 at most and only glibc's libraries with no RPATH on Linux, `minos` 12.0 and only system libraries on macOS, only Windows and UCRT DLLs on Windows, and one export, `agentica_native_init`; then it loads it in a plain process;
 - it runs `agentica native source NAME` and uploads `lib{name}-{api}-{target}{ext}` to the release `native-<source>` of your repository, which it creates when it is missing (on the tag `native-<source>` when that exists, else at the commit of the run);
 - it prints the `prebuilt` row with its `sha256` table, ready to paste under `[native.NAME]`, in the job summary.
 
-The files are named by the source key, which covers the `build` table and the files of `native/`. When the committed `agentica.toml` has a `prebuilt` row with this key, the row pins the release: each file it names must be there with its `sha256`, or the run fails, and the files are kept. A target the row leaves out, or every target when there is no row, gets the fresh build, which replaces a file of the same name. The job summary always shows the row of the fresh build, and after an upload the row of the release.
+The files are named by the source key, which covers the `build` table and the files of `native/`. When the committed `agentica.toml` has a `prebuilt` row with this key and API, the row pins the release: each file it names must be there with its `sha256`, or the run fails, and the files are kept. A target the row leaves out, or every target when there is no row, gets the fresh build; it replaces a file of the same name only in a run on the default branch or on the tag `native-<source>`, and elsewhere the run fails. Every check comes before the first upload. The job summary always shows the row of the fresh build, and after an upload the row of the release. A run for a pull request never uploads, whatever the caller passes.
 
 ## Use
 
@@ -75,4 +75,4 @@ Adding the row does not change the source key, since the key covers only the `bu
 
 The outputs are `source`, `api` and `prebuilt` (the row).
 
-Only `native/` and the `build` table make the source key. `prepare` must not change them (the run fails if `git status` shows a change there), and a source it fetches, `extra-args` or a new toolchain gives new files only with a change to `native/`: write the pin of a fetched source (its version and hash) in a file of `native/`.
+Only `native/` and the `build` table make the source key. `prepare` must not change them (the run fails when a file there, ignored ones too, has other bytes after it), and a source it fetches, `extra-args` or a new toolchain gives new files only with a change to `native/`: write the pin of a fetched source (its version and hash) in a file of `native/`.

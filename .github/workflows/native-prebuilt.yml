@@ -11,9 +11,9 @@ name: Native prebuilt
 # The compiler gets the arguments of Agentica's own build of the `build` table (compiler/packages/native_build.agc of
 # agentica), then `extra-args`; each library is stripped, checked (glibc floor, minos, exports, imported DLLs) and
 # loaded. The last job prints the `prebuilt` row with its sha256 table, ready to paste. The build jobs read only;
-# `publish` takes the caller's permissions, and uploading needs `contents: write` there. A file the release already
-# has is kept only when the committed `prebuilt` row of this source key names its sha256; without a row the fresh
-# build replaces it.
+# `publish` takes the caller's permissions, and uploading needs `contents: write` there; a pull request never uploads.
+# A file the release already has is kept when the committed `prebuilt` row of this source key and API pins it (and
+# must match), and replaced by the fresh build only on the default branch or the tag native-<source>.
 on:
   workflow_call:
     inputs:
@@ -75,7 +75,7 @@ jobs:
       source: ${{ steps.source.outputs.source }}
       api: ${{ steps.source.outputs.api }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -107,7 +107,7 @@ jobs:
 
       - name: Check out Agentica at the commit
         if: inputs.agentica-commit != ''
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: agentica-lang/agentica
           ref: ${{ inputs.agentica-commit }}
@@ -180,7 +180,7 @@ jobs:
           EOF
           head -n 100 "$RUNNER_TEMP"/plan/args-*
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-prebuilt-${{ inputs.module }}-plan
           path: ${{ runner.temp }}/plan
@@ -233,11 +233,11 @@ jobs:
       run:
         shell: ${{ matrix.system == 'windows' && 'msys2 {0}' || 'bash' }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: native-prebuilt-${{ inputs.module }}-plan
           path: ${{ inputs.directory }}/.native-prebuilt/plan
@@ -308,6 +308,30 @@ jobs:
           test "$(command -v gcc)" = /ucrt64/bin/gcc
           echo "CC=gcc" >> "$GITHUB_ENV"
 
+      # The source key covers native/ and the build table only: a prepare step that changed them would build other
+      # sources than the key names. A digest of every file there (ignored ones too) and of each link, before and
+      # after prepare.
+      - name: Hash native/ and agentica.toml
+        working-directory: ${{ inputs.directory }}
+        env:
+          PYTHON: ${{ matrix.system == 'windows' && 'python' || 'python3' }}
+        run: |
+          cat > .native-prebuilt/covered.py <<'EOF'
+          import hashlib, os
+          paths = ["agentica.toml"]
+          for root, dirs, files in os.walk("native"):
+              paths += [os.path.join(root, name) for name in dirs + files]
+          for path in sorted(paths):
+              if os.path.islink(path):
+                  print("link", path, os.readlink(path))
+              elif os.path.isfile(path):
+                  with open(path, "rb") as f:
+                      print("file", path, hashlib.sha256(f.read()).hexdigest())
+              else:
+                  print("other", path)
+          EOF
+          $PYTHON -I .native-prebuilt/covered.py > .native-prebuilt/covered-before
+
       - name: Prepare
         if: inputs.prepare != ''
         working-directory: ${{ inputs.directory }}
@@ -317,13 +341,21 @@ jobs:
           PYTHON: ${{ matrix.system == 'windows' && 'python' || 'python3' }}
         run: eval "$PREPARE"
 
-      # The source key covers native/ and the build table only: a prepare step that changed them would build other
-      # sources than the key names.
-      - name: Check that native/ and agentica.toml are as committed
+      - name: Check that prepare left native/ and agentica.toml alone
         working-directory: ${{ inputs.directory }}
+        env:
+          PYTHON: ${{ matrix.system == 'windows' && 'python' || 'python3' }}
         run: |
           changed=$(git status --porcelain -- native agentica.toml)
-          [ -z "$changed" ] || { echo "prepare changed what the source key covers:" >&2; echo "$changed" >&2; exit 1; }
+          [ -z "$changed" ] || { echo "native/ or agentica.toml differ from the commit:" >&2; echo "$changed" >&2; exit 1; }
+          $PYTHON -I .native-prebuilt/covered.py > .native-prebuilt/covered-after
+          before=$(cat .native-prebuilt/covered-before)
+          after=$(cat .native-prebuilt/covered-after)
+          if [ "$before" != "$after" ]; then
+            printf 'prepare changed native/ or agentica.toml, which the source key covers.\nBefore:\n%s\nAfter:\n%s\n' \
+              "$before" "$after" >&2
+            exit 1
+          fi
 
       - name: Build ${{ env.FILE }}
         working-directory: ${{ inputs.directory }}
@@ -370,11 +402,19 @@ jobs:
               machine=$([ "$arch" = x86_64 ] && echo 'Advanced Micro Devices X86-64' || echo AArch64)
               header=$(readelf -h "$FILE")
               grep -q "Machine:[[:space:]]*$machine" <<< "$header" || die "not an $arch ELF"
-              newest=$({ objdump -T "$FILE" | grep -o 'GLIBC_[0-9.]*' || true; } | sort -uV | tail -n 1)
+              symbols=$(objdump -T "$FILE")
+              newest=$({ grep -o 'GLIBC_[0-9.]*' <<< "$symbols" || true; } | sort -uV | tail -n 1)
               echo "needs ${newest:-no versioned glibc symbol}"
               if [ -n "$newest" ] && [ "$(printf '%s\n' "$newest" "GLIBC_$VM_GLIBC" | sort -V | tail -n 1)" != "GLIBC_$VM_GLIBC" ]; then
                 die "needs $newest, newer than GLIBC_$VM_GLIBC"
               fi
+              dynamic=$(readelf -d "$FILE")
+              needed=$(sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' <<< "$dynamic")
+              echo "needs libraries: $(tr '\n' ' ' <<< "$needed")"
+              allowed='^(libc[.]so[.]6|libm[.]so[.]6|libdl[.]so[.]2|libpthread[.]so[.]0|librt[.]so[.]1|ld-linux-(x86-64|aarch64)[.]so[.][12])$'
+              bad=$(grep -vE "$allowed" <<< "$needed" || true)
+              [ -z "$bad" ] || die "needs libraries outside glibc: $bad"
+              if grep -qE '[(](RPATH|RUNPATH)[)]' <<< "$dynamic"; then die "has an RPATH or RUNPATH"; fi
               exports=$(nm -D --defined-only "$FILE" | awk '{ print $3 }')
               ;;
             macos)
@@ -382,12 +422,14 @@ jobs:
               build=$(vtool -arch "$arch" -show-build "$FILE")
               minos=$(awk '$1 == "minos" { print $2 }' <<< "$build")
               [ "$minos" = "$MACOSX_DEPLOYMENT_TARGET" ] || die "has minos '$minos', not $MACOSX_DEPLOYMENT_TARGET"
-              # The libraries it loads, not its own install name (which otool -L lists first).
-              libs=$(otool -l "$FILE" | awk '/cmd LC_(LOAD|LOAD_WEAK|REEXPORT|LAZY_LOAD)_DYLIB$/ { f = 1 } f && $1 == "name" { print $2; f = 0 }')
+              # The libraries it loads: every LC_*DYLIB command but LC_ID_DYLIB, its own install name.
+              commands=$(otool -l "$FILE")
+              libs=$(awk '$1 == "cmd" { f = $2 ~ /^LC_.*DYLIB$/ && $2 != "LC_ID_DYLIB" } f && $1 == "name" { print $2; f = 0 }' <<< "$commands")
               echo "libraries: $(tr '\n' ' ' <<< "$libs")"
               grep -qx '/usr/lib/libSystem.B.dylib' <<< "$libs" || die "does not link libSystem"
               bad=$(grep -vE '^(/usr/lib/|/System/Library/)' <<< "$libs" || true)
-              [ -z "$bad" ] || die "links libraries outside the system: $bad"
+              dots=$(grep -E '(^|/)[.][.](/|$)' <<< "$libs" || true)
+              [ -z "$bad$dots" ] || die "links libraries outside the system: $(tr '\n' ' ' <<< "$bad$dots")"
               codesign --verify --strict "$FILE" || die "has no valid code signature"
               exports=$(nm -gU "$FILE" | awk '{ print $3 }' | sed 's/^_//')
               ;;
@@ -400,6 +442,8 @@ jobs:
               bad=$(grep -vE "$allowed" <<< "$dlls" || true)
               [ -z "$bad" ] || die "imports DLLs that Windows does not provide: $bad"
               exports=$(sed -n '/\[Ordinal\/Name Pointer\] Table/,/^$/p' <<< "$private" | awk '/^[[:space:]]+\[/ { print $NF }')
+              addresses=$(sed -n '/^Export Address Table -- /,/^$/p' <<< "$private" | grep -c '^[[:space:]]*\[' || true)
+              [ "$addresses" = 1 ] || die "has $addresses entries in its Export Address Table, not 1"
               ;;
           esac
           echo "exports: $(tr '\n' ' ' <<< "$exports")"
@@ -418,7 +462,7 @@ jobs:
         working-directory: ${{ inputs.directory }}/.native-prebuilt/dist
         run: python -I -c "$env:LOAD" "$env:FILE"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-prebuilt-${{ inputs.module }}-${{ matrix.target }}
           path: ${{ inputs.directory }}/.native-prebuilt/dist/${{ env.FILE }}
@@ -445,13 +489,13 @@ jobs:
       TARGETS: linux-x86_64 linux-arm64 macos-x86_64 macos-arm64 windows-x86_64
       URL: https://github.com/${{ github.repository }}/releases/download/native-{source}/lib{name}-{api}-{target}{ext}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: native-prebuilt-${{ inputs.module }}-*-*
+          pattern: native-prebuilt-${{ inputs.module }}-{linux-x86_64,linux-arm64,macos-x86_64,macos-arm64,windows-x86_64}
           path: ${{ runner.temp }}/built
           merge-multiple: true
 
@@ -478,9 +522,11 @@ jobs:
           echo "$row"
           printf 'The fresh build of `[native.%s]`:\n\n```toml\n%s\n```\n' "$MODULE" "$row" >> "$GITHUB_STEP_SUMMARY"
 
-      # The committed row of this source key, when there is one, pins the release: a file the release has must have
-      # the row's sha256, and a file the row names must be there. A target the row leaves out, or every target without
-      # a row, gets the fresh build, which replaces a file of the same name.
+      # Every check comes before the first write. The files the release has are downloaded, each into a new folder,
+      # and the script below decides from them, the fresh files and the committed row of this source key and API: a
+      # file the row pins must be on the release with the row's sha256 (it is kept); a file the row does not pin is
+      # uploaded, and replaces one of the same name only on the default branch or the tag native-<source>.
+      # .github/scripts/native-prebuilt-plan-test.py runs the script on made-up inputs.
       - name: Upload to the release ${{ env.TAG }}
         id: upload
         if: ${{ !inputs.dry-run }}
@@ -488,47 +534,100 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MANIFEST: ${{ github.workspace }}/${{ inputs.directory }}/agentica.toml
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
+          case $GITHUB_EVENT_NAME in
+            pull_request | pull_request_target) echo "a pull request never uploads: pass dry-run: true" >&2; exit 1 ;;
+          esac
           # Run by the push of a tag native-*, the tag must name these sources: the release goes on it.
           if [ "$GITHUB_REF_TYPE" = tag ] && [[ "$GITHUB_REF_NAME" == native-* ]] && [ "$GITHUB_REF_NAME" != "$TAG" ]; then
             echo "the tag $GITHUB_REF_NAME is not $TAG, the source key of these sources" >&2
             exit 1
           fi
-          python3 -I - "$MANIFEST" "$MODULE" "$SOURCE" > "$RUNNER_TEMP/pinned" <<'EOF'
-          import sys, tomllib
-          manifest, name, source = sys.argv[1:]
+          may_replace=no
+          if [ "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH" ] || [ "$GITHUB_REF" = "refs/tags/$TAG" ]; then may_replace=yes; fi
+
+          work="$RUNNER_TEMP/release"
+          mkdir "$work" "$work/held"
+          if gh api "repos/$REPO/releases/tags/$TAG" > "$work/release.json" 2> "$work/error"; then
+            exists=yes
+            jq -r '.assets[].name' "$work/release.json" > "$work/assets"
+          elif grep -q 'HTTP 404' "$work/error"; then
+            exists=no
+            : > "$work/assets"
+          else
+            cat "$work/error" >&2
+            exit 1
+          fi
+          for file in *; do
+            if grep -qxF "$file" "$work/assets"; then
+              mkdir "$work/held/$file.d"
+              gh release download "$TAG" --repo "$REPO" --pattern "$file" --dir "$work/held/$file.d"
+              mv "$work/held/$file.d/$file" "$work/held/$file"
+              rmdir "$work/held/$file.d"
+            fi
+          done
+
+          python3 -I - "$MANIFEST" "$MODULE" "$SOURCE" "$API" "$may_replace" "$work/assets" "$work/held" . \
+            "$URL" "$work/plan" > "$work/row" <<'PLAN'
+          import hashlib, os, sys, tomllib
+
+          manifest, module, source, api, may_replace, assets, held, built, url, plan = sys.argv[1:]
+          extensions = {"linux-x86_64": ".so", "linux-arm64": ".so", "macos-x86_64": ".dylib", "macos-arm64": ".dylib",
+                        "windows-x86_64": ".dll"}
+
+          def sha256(path):
+              with open(path, "rb") as f:
+                  return hashlib.sha256(f.read()).hexdigest()
+
           with open(manifest, "rb") as f:
-              row = tomllib.load(f).get("native", {}).get(name, {}).get("prebuilt", {})
-          if row.get("source") == source:
-              for target, digest in row.get("sha256", {}).items():
-                  print(target, digest)
-          EOF
-          if ! gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+              row = tomllib.load(f).get("native", {}).get(module, {}).get("prebuilt", {})
+          pins = row.get("sha256", {}) if row.get("source") == source and row.get("api") == api else {}
+          with open(assets) as f:
+              on_release = set(f.read().split())
+          problems, actions, table = [], [], []
+          for target, ext in extensions.items():
+              name = f"lib{module}-{api}-{target}{ext}"
+              fresh = sha256(os.path.join(built, name))
+              pinned = pins.get(target)
+              if pinned:
+                  if name not in on_release:
+                      problems.append(f"agentica.toml pins {name}, which the release does not have")
+                      continue
+                  held_digest = sha256(os.path.join(held, name))
+                  if held_digest != pinned:
+                      problems.append(f"the release has {name} with sha256 {held_digest}, agentica.toml pins {pinned}")
+                      continue
+                  print(f"{name}: kept, pinned {pinned}, fresh build {fresh}", file=sys.stderr)
+                  if fresh != pinned:
+                      print(f"::warning::{name}: the fresh build differs from the pinned file, which stays", file=sys.stderr)
+                  table.append((target, pinned))
+              elif name in on_release and may_replace != "yes":
+                  problems.append(f"the release has {name}, which agentica.toml does not pin: only a run on the "
+                                  "default branch or on the tag native-<source> replaces it")
+              else:
+                  actions.append(("replace" if name in on_release else "upload", name))
+                  table.append((target, fresh))
+          if problems:
+              for problem in problems:
+                  print(f"::error::{problem}", file=sys.stderr)
+              sys.exit(1)
+          with open(plan, "w") as f:
+              f.writelines(f"{action} {name}\n" for action, name in actions)
+          digests = ", ".join(f'{target} = "{digest}"' for target, digest in table)
+          print(f'prebuilt = {{ url = "{url}", source = "{source}", api = "{api}", sha256 = {{ {digests} }} }}')
+          PLAN
+
+          if [ "$exists" = no ]; then
             gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" --title "$TAG" \
               --notes "Prebuilt native modules of the sources with key $SOURCE (native API $API)."
           fi
-          assets=$(gh release view "$TAG" --repo "$REPO" --json assets -q '.assets[].name')
-          entries=()
-          for target in $TARGETS; do
-            file=$(ls "lib$MODULE-$API-$target".*)
-            pinned=$(awk -v t="$target" '$1 == t { print $2 }' "$RUNNER_TEMP/pinned")
-            if [ -n "$pinned" ]; then
-              grep -qxF "$file" <<< "$assets" || { echo "$TAG has no $file, which agentica.toml pins" >&2; exit 1; }
-              kept="$RUNNER_TEMP/kept-$target"
-              mkdir "$kept"
-              gh release download "$TAG" --repo "$REPO" --pattern "$file" --dir "$kept"
-              got=$(sha256sum "$kept/$file" | cut -d' ' -f1)
-              [ "$got" = "$pinned" ] || { echo "$TAG has $file with sha256 $got, agentica.toml pins $pinned" >&2; exit 1; }
-              echo "$file: kept, as agentica.toml pins it"
-              sum=$pinned
-            else
-              gh release upload "$TAG" --repo "$REPO" --clobber "$file"
-              sum=$(sha256sum "$file" | cut -d' ' -f1)
-            fi
-            entries+=("$target = \"$sum\"")
-          done
-          table=$(printf '%s, ' "${entries[@]}")
-          row="prebuilt = { url = \"$URL\", source = \"$SOURCE\", api = \"$API\", sha256 = { ${table%, } } }"
+          while read -r action file; do
+            flags=()
+            [ "$action" = replace ] && flags=(--clobber)
+            gh release upload "$TAG" --repo "$REPO" "${flags[@]}" "$file"
+          done < "$work/plan"
+          row=$(cat "$work/row")
           echo "prebuilt=$row" >> "$GITHUB_OUTPUT"
           echo "$row"
           printf '\nThe files of the release %s, the row for `[native.%s]`:\n\n```toml\n%s\n```\n' "$TAG" "$MODULE" "$row" \

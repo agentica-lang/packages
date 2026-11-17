@@ -7,11 +7,13 @@ on:
   pull_request:
     paths:
       - '.github/workflows/native-prebuilt*.yml'
+      - '.github/scripts/native-prebuilt*'
       - '.github/native-prebuilt-example/**'
   push:
     branches: [main]
     paths:
       - '.github/workflows/native-prebuilt*.yml'
+      - '.github/scripts/native-prebuilt*'
       - '.github/native-prebuilt-example/**'
   workflow_dispatch:
 
@@ -19,6 +21,17 @@ permissions:
   contents: read
 
 jobs:
+  # The upload plan of the publish job on made-up releases: a pinned file kept, a pinned file that differs or is
+  # missing, an unpinned one off and on the default branch, and a row of another API.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 -I .github/scripts/native-prebuilt-plan-test.py
+
   prebuilt:
     uses: ./.github/workflows/native-prebuilt.yml
     with:
@@ -41,13 +54,13 @@ jobs:
       SOURCE: ${{ needs.prebuilt.outputs.source }}
       API: ${{ needs.prebuilt.outputs.api }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: native-prebuilt-twice-*-*
+          pattern: native-prebuilt-twice-{linux-x86_64,linux-arm64,macos-x86_64,macos-arm64,windows-x86_64}
           path: ${{ runner.temp }}/built
           merge-multiple: true
 
@@ -75,7 +88,7 @@ jobs:
 
       # The commit of the `prebuilt` job above.
       - name: Check out Agentica
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: agentica-lang/agentica
           ref: 45e6c4a8d0b71954da19c9c03b49fadc46fedc02
