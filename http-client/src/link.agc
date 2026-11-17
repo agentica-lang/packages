@@ -113,6 +113,7 @@ ORDER_MS = 5_000
 ANSWER_MS = 1_000
 # The link task waits for orders in long naps, until the pool ends it.
 NAP_MS = 3_600_000
+WATCHER_END_MS = 1_000
 
 # A connection that waits for the next request, with the watcher task that reads its socket meanwhile: an idle
 # keep-alive connection has nothing to read, so a read that ends (the server closed it, or wrote bytes out of turn)
@@ -216,19 +217,22 @@ def watch(held: Held) -> Idle
   Idle(held: held, watcher: watcher, ended: ended)
 end
 
-# The watcher stops first, so that the request has the socket alone. A watcher that ended before that saw the socket
-# close or bytes arrive: that connection is ended, never reused.
+# The watcher stops before the request has the socket: the link waits for the notice of its end, since a cancel that
+# has not landed yet would let it read the first byte of the response. A watcher that ended on its own saw the socket
+# close or bytes arrive: that connection is ended, never reused, and so is one whose watcher does not stop.
 #
-# A server may close the connection just between the look at `ended` and the cancel: its notice is then lost, and the
-# request that sends on it gets a network error. That is the same failure as a server that closes an idle connection
-# just as a request arrives, which no client can tell apart, and the window here is a few instructions wide, while
-# servers close idle connections after seconds.
+# A server may still close the connection just as the request is sent; the request then gets a network error, as
+# with any client, and an idempotent one goes again.
 def awake(idle: Optional[Idle]) -> Optional[Held]
   case idle
     some(waiting) ->
-      dead = waiting.ended.recv(0).ok?
       Task.cancel(waiting.watcher)
-      if dead or expired?(waiting.held)
+      quiet = case waiting.ended.recv(WATCHER_END_MS)
+        ok(down) -> down.reason == TaskExit.Cancelled
+        error(_) -> false
+      end
+
+      if not quiet or expired?(waiting.held)
         HTTP.finish(waiting.held.conn)
         return none
       end
