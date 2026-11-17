@@ -100,7 +100,8 @@ def resolved(dialer: Dialer, host: String, deadline: Int) -> Result[List[String]
 
   addresses: List[String] = []
   case asked(dialer, host, deadline)
-    ok(found) -> addresses = found.select { |address| Address.parse(address).some? }
+    ok(found) ->
+      addresses = found.select { |address| Address.parse(address).some? }.map { |address| Address.unmapped(address) }
     error(e) if e.is_a?("net.timeout") -> return error(e)
     error(e) -> return error("http_client: cannot resolve #{host}: #{e.message}", kind: "http_client.dns", cause: e)
   end

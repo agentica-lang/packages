@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Needs Agentica 0.34.0.
 
+### Fixed
+
+- A resolver answer that is an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`) connects to its IPv4 address, since std/http's `connect_to` refuses a mapped one.
+- The probe after a failed send waits at most the read timeout of the call, not std/http's 300 s default.
+
 ### Changed
 
 - The dial path (`resolver` and `public_only`) connects with std/http's `connect_to` instead of setting fields of its `Connection`, so it no longer depends on them, and the "tested on 0.33.x only" note is gone (#154).

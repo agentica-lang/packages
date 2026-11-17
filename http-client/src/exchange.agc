@@ -190,7 +190,7 @@ def sent(held: Held, call: Call, wait: Wait, head: Result[HTTP.ResponseHead]) ->
         error(e) -> Attempt.Failed(error(e))
       end
 
-    error(e) if HTTP.read_body(held.conn, 1).ok? ->
+    error(e) if HTTP.read_body(reading(held, wait), 1).ok? ->
       return Attempt.Stale(error(e)) if e.is_a?("http.closed")
 
       Attempt.Refused(error("http_client: #{e.message}", kind: "argument", cause: e))
