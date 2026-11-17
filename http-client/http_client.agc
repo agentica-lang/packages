@@ -1,0 +1,180 @@
+## An HTTP client with a pool of keep-alive connections per origin, in the spirit of Elixir's Req: make a `Client`
+## once with `new`, send requests with `get`, `post` and the others, and `close` it at the end.
+##
+## Each origin (scheme, host and port) has a pool of `pool_size` connections, made when a request first needs one. A
+## request waits at most `pool_timeout_ms` for a free connection, at most `connect_timeout_ms` to connect, at most
+## `read_timeout_ms` for each read, and at most `timeout_ms` in all. A connection is kept for the next request only
+## when its response was read to its end and the server did not close it.
+
+import Exchange from "src/exchange"
+import HTTP from "std/http"
+import Pool from "pkg/pool/pool"
+import Pools from "src/pools"
+import Url from "src/url"
+
+export Exchange.Response
+
+## A client. The public fields apply to each request, and `client.with(...)` gives a client with other values that
+## shares the pools: `client.with(read_timeout_ms: 500)`. `headers` go with every request, under the headers of the
+## call.
+struct Client
+  base_url: String
+  headers: List[HTTP.Header]
+  connect_timeout_ms: Int
+  read_timeout_ms: Int
+  timeout_ms: Int
+  max_body_bytes: Int
+
+  private
+
+  pools: Pools.Pools
+  options: HTTP.ClientOptions
+end
+
+## Makes a client. `base_url` is joined to the URL of a request that is a path (`/todos`); the pool settings are
+## `pool_size` connections per origin, `pool_timeout_ms` of wait for one, and `idle_ms` after which an unused one is
+## closed. `proxy` (`http://host:port`) and `tls` (a client `TLS.Context`, the system trust when none) are those of
+## std/http's `ClientOptions`. Make it in a task that lives as long as the client, such as `main`.
+def new(
+  base_url: String = "",
+  headers: List[HTTP.Header] = [],
+  connect_timeout_ms: Int = 10_000,
+  read_timeout_ms: Int = 30_000,
+  timeout_ms: Int = 60_000,
+  max_body_bytes: Int = 16_777_216,
+  pool_size: Int = 10,
+  pool_timeout_ms: Int = 5_000,
+  idle_ms: Int = 30_000,
+  proxy: String = "",
+  tls: Optional[TLS.Context] = none,
+) -> Result[Client]
+  if connect_timeout_ms < 1 or read_timeout_ms < 1 or timeout_ms < 1 or pool_timeout_ms < 1 or idle_ms < 1
+    return argument("the timeouts and idle_ms must be at least 1")
+  end
+
+  return argument("pool_size and max_body_bytes must be at least 1") if pool_size < 1 or max_body_bytes < 1
+
+  if not base_url.empty?
+    _ = try Url.resolve("", base_url)
+  end
+
+  settings = Pools.Settings(
+    size: pool_size,
+    wait_ms: pool_timeout_ms,
+    idle_ms: idle_ms,
+    health_ms: [idle_ms, HEALTH_MS].min.unwrap!,
+  )
+
+  ok(
+    Client(
+      base_url: base_url,
+      headers: headers,
+      connect_timeout_ms: connect_timeout_ms,
+      read_timeout_ms: read_timeout_ms,
+      timeout_ms: timeout_ms,
+      max_body_bytes: max_body_bytes,
+      pools: Pools.start(settings),
+      options: HTTP.ClientOptions(max_body_bytes: MAX_REQUEST_BODY, proxy: proxy, tls: tls),
+    ),
+  )
+end
+
+## Sends a request and gives the whole response. A 4xx or 5xx is a response, not an error. An error has a kind:
+## `http_client.timeout.pool`, `.connect`, `.read` or `.request` (all `http_client.timeout`), `http_client.pool_full`
+## (1000 requests wait already), `http_client.network`, `http_client.too_large` (a body over `max_body_bytes`),
+## `http_client.closed` or `argument` (a bad URL or header).
+def request(
+  client: Client,
+  method: String,
+  url: String,
+  body: Bytes,
+  headers: List[HTTP.Header] = [],
+) -> Result[Exchange.Response]
+  target = try Url.resolve(client.base_url, url)
+  pool = try Pools.pool_for(client.pools, target.origin)
+  call = Exchange.Call(
+    method: method,
+    target: target,
+    headers: merge(client.headers, headers),
+    body: body,
+    connect_timeout_ms: client.connect_timeout_ms,
+    read_timeout_ms: client.read_timeout_ms,
+    deadline: Time.monotonic_ms() + client.timeout_ms,
+    max_body_bytes: client.max_body_bytes,
+    options: client.options,
+  )
+
+  # A task of its own, so that `timeout_ms` can cancel the request wherever it is; the pool then ends its connection.
+  running = Task.spawn do Pool.with(pool) do |link| Exchange.run(link, call) end end
+  case Task.await(running, client.timeout_ms)
+    Await.Done(result) -> pool_failure(result)
+    Await.TimedOut ->
+      Task.cancel(running)
+      Exchange.failure("the request timed out after #{client.timeout_ms} ms", "timeout.request")
+  end
+end
+
+## A `GET` request.
+def get(client: Client, url: String, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
+  request(client, "GET", url, NO_BODY, headers)
+end
+
+## A `HEAD` request: the response has no body.
+def head(client: Client, url: String, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
+  request(client, "HEAD", url, NO_BODY, headers)
+end
+
+## A `DELETE` request.
+def delete(client: Client, url: String, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
+  request(client, "DELETE", url, NO_BODY, headers)
+end
+
+## A `POST` request with `body`.
+def post(client: Client, url: String, body: Bytes, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
+  request(client, "POST", url, body, headers)
+end
+
+## A `PUT` request with `body`.
+def put(client: Client, url: String, body: Bytes, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
+  request(client, "PUT", url, body, headers)
+end
+
+## A `PATCH` request with `body`.
+def patch(client: Client, url: String, body: Bytes, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
+  request(client, "PATCH", url, body, headers)
+end
+
+## Closes the pools: the requests in flight have `drain_ms` to end, then their connections close. A request after the
+## close is an `http_client.closed` error.
+def close(client: Client, drain_ms: Int = 5_000) -> Void
+  Pools.close(client.pools, drain_ms)
+end
+
+private
+
+NO_BODY = "".bytes
+# The largest request body that std/http sends.
+MAX_REQUEST_BODY = 67_108_864
+# The health tick of each pool checks its idle connections and closes those unused for `idle_ms`.
+HEALTH_MS = 5_000
+
+def argument[T](text: String) -> Result[T] = error("http_client: #{text}", kind: "argument")
+
+# The headers of the call replace those of the client with the same name; the case of a name does not matter.
+def merge(base: List[HTTP.Header], extra: List[HTTP.Header]) -> List[HTTP.Header]
+  names = extra.map { |header| header.name.downcase }
+  kept = base.select { |header| not names.include?(header.name.downcase) }
+  kept + extra
+end
+
+# The pool's own errors, in the client's kinds.
+def pool_failure(result: Result[Exchange.Response]) -> Result[Exchange.Response]
+  case result
+    error(e) if e.is_a?("pool.timeout.checkout") -> Exchange.failure("no connection was free", "timeout.pool", some(e))
+    error(e) if e.is_a?("pool.closed") -> Exchange.failure("the client is closed", "closed", some(e))
+    error(e) if e.is_a?("pool.full") ->
+      Exchange.failure("too many requests wait for a connection", "pool_full", some(e))
+    error(e) if e.is_a?("task") -> Exchange.failure("the request ended", "network", some(e))
+    _ -> result
+  end
+end
