@@ -98,6 +98,7 @@ def run(driver: Driver, req: Request) -> Handled
     "stream_first" -> send(driver, req)
     "events" -> send(driver, req)
     "events_closed" -> send(driver, req)
+    "events_abandoned" -> send(driver, req)
     "start" -> started(driver, req)
     "wait" -> waited(driver, req.name)
     "cancel" ->
@@ -362,6 +363,23 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
         events = HttpClient.get_events(client, url, headers: headers)
         pause(req.number)
         done = read_events(events, began, req.pace)
+      "events_abandoned" ->
+        result: Result[HttpClient.Response] = error("no stream")
+        case HttpClient.stream(client, "GET", url, headers: headers)
+          ok(streamed) ->
+            crash = req.kind == "crash"
+            reader: Task[Result[Void]] = Task.spawn do abandoned(streamed, crash) end
+            if not crash
+              pause(req.number)
+              Task.cancel(reader)
+            end
+
+            _ = Task.await(reader, WAIT_MS)
+            result = ok(HttpClient.Response(status: 200, headers: [], body: "".bytes, url: url))
+          error(e) -> result = error(e)
+        end
+
+        done = Outcome(result: result, elapsed: 0)
       "events_closed" ->
         result: Result[HttpClient.Response] = error("no events")
         case HttpClient.get_events(client, url, headers: headers)
@@ -422,6 +440,19 @@ def read_stream(streamed: Result[HttpClient.Stream], began: Int, first_only: Boo
       Outcome(result: ok(response), elapsed: 0, first: first)
     error(e) -> Outcome(result: error(e), elapsed: 0)
   end
+end
+
+# Reads one event in a task of its own, then crashes, or waits to be cancelled: either way the relay of the events ends
+# with this task.
+def abandoned(stream: HttpClient.Stream, crash: Bool) -> Result[Void]
+  events = HttpClient.events(stream)
+  _ = events.recv(WAIT_MS)
+  if crash
+    _ = "not a number".to_i!
+  end
+
+  Task.sleep(LINGER_MS)
+  ok()
 end
 
 # Waits `ms`, or not at all: even a sleep of 0 hands the turn to the other tasks.

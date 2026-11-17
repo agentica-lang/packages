@@ -47,6 +47,7 @@ struct Stream
   read_timeout_ms: Int
   pools: Pools.Pools
   relayed: Channel[Bool]
+  relay_down: Channel[Bool]
 end
 
 ## A client. The public fields apply to each request, and `client.with(...)` gives a client with other values that
@@ -234,6 +235,7 @@ def stream(
           read_timeout_ms: client.read_timeout_ms,
           pools: client.pools,
           relayed: Channel.new(1),
+          relay_down: Channel.new(1),
         ),
       )
   end
@@ -242,19 +244,29 @@ end
 ## The server-sent events of `stream`, read by a task of their own: `ok(event)` for each, then one `error` if the body
 ## fails or is cut short, an event is over `max_event_bytes` (`http_client.too_large`), or the reader took no event
 ## for `read_timeout_ms` (`http_client.timeout.read`); the channel closes at the end of the body. Closing it early
-## closes the body. It reads the body whatever the status and type of the response; `get_events` checks them. The
-## client does not reconnect: a reader that wants to goes again with the `last-event-id` header, from the `id` of the
-## last event.
+## closes the body, and so does the end of the task that called `events` (its relay ends with it). It reads the body
+## whatever the status and type of the response; `get_events` checks them. A stream has one reader of events: a second
+## call gives a channel with an `argument` error. The client does not reconnect: a reader that wants to goes again
+## with the `last-event-id` header, from the `id` of the last event.
 def events(stream: Stream, max_event_bytes: Int = 1_048_576) -> Channel[Result[Sse.Event]]
   out: Channel[Result[Sse.Event]] = Channel.new(EVENT_PLACES)
+  if stream.relayed.closed?
+    refused: Result[Sse.Event] = argument("the events of this stream are read already")
+    _ = out.send(refused, 0)
+    out.close
+    return out
+  end
+
   stream.relayed.close
-  Task.spawn do relay(stream, out, max_event_bytes) end
+  relaying = Task.spawn do relay(stream, out, max_event_bytes) end
+  Task.monitor(relaying, stream.relay_down) do |_down| true end
   out
 end
 
 ## A `GET` request whose body comes as a stream of server-sent events, with `accept: text/event-stream` unless
 ## `headers` name another. A response that is not a 2xx with `content-type: text/event-stream` is an
-## `http_client.events` error that names its status and type, and its body is closed.
+## `http_client.events` error that names its status and type in its message, and its body is closed: to branch on the
+## status, call `stream` and then `events`.
 def get_events(
   client: Client,
   url: String,
@@ -421,11 +433,13 @@ CANCEL_MS = 1_000
 EVENT_STREAM = HTTP.Header(name: "accept", value: "text/event-stream")
 # The events read and not yet given that the relay holds before it stops reading the body; the channel of the events
 # holds one, and a place for the error that ends it. A piece of the body comes within `read_timeout_ms`, or the body
-# ends: the relay waits that long, and a little more. It looks at its channels every `RELAY_POLL_MS` while it waits.
+# ends: the relay waits that long, and a little more. It looks at its channels every `RELAY_POLL_MS` while it holds
+# events, and every `RELAY_IDLE_MS` while it waits for the body alone, which is when a reader's close is seen.
 EVENTS = 16
 EVENT_PLACES = 2
 RELAY_SLACK_MS = 1_000
 RELAY_POLL_MS = 5
+RELAY_IDLE_MS = 100
 
 # What a try gives: the response, whole, or its head and the stream of its body.
 struct Got
@@ -586,7 +600,12 @@ def relay_step(stream: Stream, out: Channel[Result[Sse.Event]], state: Relaying,
     return ok(state)
   end
 
-  case stream.body.recv(RELAY_POLL_MS)
+  wait_ms = RELAY_POLL_MS
+  if state.pending.empty?
+    wait_ms = RELAY_IDLE_MS
+  end
+
+  case stream.body.recv(wait_ms)
     ok(item) ->
       fed = try Sse.feed(state.parser, try item, max_bytes)
       ok(state.with(parser: fed.parser, pending: state.pending + fed.events, heard_at: now))
@@ -659,6 +678,7 @@ def arrived(client: Client, running: Task[Result[Exchange.Response]], arrival: E
         read_timeout_ms: client.read_timeout_ms,
         pools: client.pools,
         relayed: head.relayed,
+        relay_down: head.relay_down,
       )
 
       ok(Got(response: response, stream: some(streamed)))

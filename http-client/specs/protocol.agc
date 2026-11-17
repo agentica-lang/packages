@@ -25,8 +25,9 @@ OK = "ok"
 ## - `stream` and `stream_first` (name, kind: the method, text: the URL, header) stream a response and read its
 ##   pieces to the end, or close it after the first one, and `events` (name, text: the URL, header) reads the
 ##   server-sent events of a `GET`; `stream` and `events` wait `number` ms before they read and `pace` ms after each
-##   piece or event, and `events_closed` closes the events after `number` ms; the outcome is a
-##   response whose body is the pieces, or `event:data` of each event (a newline as `/`) joined by `|`;
+##   piece or event, `events_closed` closes the events after `number` ms, and `events_abandoned` (kind: `cancel` or
+##   `crash`) reads them in a task that is cancelled after `number` ms or crashes after the first event; the outcome
+##   is a response whose body is the pieces, or `event:data` of each event (a newline as `/`) joined by `|`;
 ## - `asked` (number) checks how many questions the resolver got in all;
 ## - `dead_port` (name) gives a peer name to a port where nobody listens, and `read` (name, number) waits until the
 ##   raw peer has read that many requests, and `read_only` also that it reads no other one;

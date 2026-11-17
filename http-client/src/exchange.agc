@@ -21,13 +21,14 @@ end
 ## The head of a streamed response, and the channel of its body: `ok(piece)` for each piece as it comes, then one
 ## `error` if the body fails or is cut short, and the close at its end. The body holds one piece at a time, which the
 ## reader has `read_timeout_ms` to take, unless `relayed` is closed: the reader is then the relay of the events, which
-## holds its own reader to that time.
+## holds its own reader to that time. `relay_down` gets a value when that relay task ends, however it ends.
 struct Head
   status: Int
   headers: List[HTTP.Header]
   url: String
   body: Channel[Result[Bytes]]
   relayed: Channel[Bool]
+  relay_down: Channel[Bool]
 end
 
 ## What reaches the caller of a try: the head of a streamed response, and the end of the task of the try.
@@ -211,7 +212,16 @@ end
 def streamed(held: Held, call: Call, response: Response, streaming: Streaming) -> Result[Void]
   body: Channel[Result[Bytes]] = Channel.new(BODY_PLACES)
   relayed: Channel[Bool] = Channel.new(1)
-  head = Head(status: response.status, headers: response.headers, url: response.url, body: body, relayed: relayed)
+  relay_down: Channel[Bool] = Channel.new(1)
+  head = Head(
+    status: response.status,
+    headers: response.headers,
+    url: response.url,
+    body: body,
+    relayed: relayed,
+    relay_down: relay_down,
+  )
+
   _ = streaming.arrivals.send(Arrival.Head(head), 0)
   case pump(held, call, head, streaming.stopping)
     ok(_) ->
@@ -236,9 +246,10 @@ def pump(held: Held, call: Call, head: Head, stopping: Channel[Bool]) -> Result[
 end
 
 # Gives `piece` once the reader took the last one, given at `given_at`, and says when. A reader that took nothing for
-# `wait_ms` is an `http_client.timeout.read` error, and a closed body or client an `http_client.closed` one.
+# `wait_ms` is an `http_client.timeout.read` error, and a closed body or client an `http_client.closed` one. A relay
+# that ended without closing the body (its task was cancelled, or crashed) counts as a closed body.
 def hand(head: Head, piece: Bytes, given_at: Int, wait_ms: Int, stopping: Channel[Bool]) -> Result[Int]
-  while not head.body.empty? and not head.body.closed? and not stopping.closed?
+  while not head.body.empty? and not head.body.closed? and not stopping.closed? and head.relay_down.empty?
     if not head.relayed.closed? and Time.monotonic_ms() - given_at >= wait_ms
       return failure("the reader took no piece for #{wait_ms} ms", "timeout.read")
     end
@@ -247,6 +258,7 @@ def hand(head: Head, piece: Bytes, given_at: Int, wait_ms: Int, stopping: Channe
   end
 
   return failure("the reader closed the stream", "closed") if head.body.closed?
+  return failure("the reader of the events ended", "closed") if not head.relay_down.empty?
   return failure("the client is closed", "closed") if stopping.closed?
 
   case head.body.send(ok(piece), 0)

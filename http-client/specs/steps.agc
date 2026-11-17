@@ -60,6 +60,12 @@ def main() -> Void
     BDD.step("{string} reads the events of {string} taking one every {int} ms") do |ctx, args|
       send(ctx, Request(op: "events", name: args[0], text: args[1], pace: args[2].to_i!))
     end,
+    BDD.step("{string} reads the events of {string} in a task that is cancelled after {int} ms") do |ctx, args|
+      send(ctx, Request(op: "events_abandoned", name: args[0], kind: "cancel", text: args[1], number: args[2].to_i!))
+    end,
+    BDD.step("{string} reads the events of {string} in a task that crashes after the first") do |ctx, args|
+      send(ctx, Request(op: "events_abandoned", name: args[0], kind: "crash", text: args[1]))
+    end,
     BDD.step("{string} closes the events of {string} after {int} ms") do |ctx, args|
       send(ctx, Request(op: "events_closed", name: args[0], text: args[1], number: args[2].to_i!))
     end,

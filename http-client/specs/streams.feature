@@ -77,6 +77,34 @@ Feature: Streamed bodies and server-sent events
     When "e" reads the events of "/events" taking one every 40 ms
     Then "e" has a body of 399 bytes
 
+  Scenario: A steady reader of events slower than a fast server gets every event
+    Given the raw peer "a" listens with the script:
+      """
+      repeat 20 40 data:_x\n\n
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | read_timeout_ms | 300   |
+    When "e" reads the events of "/events" taking one every 150 ms
+    Then "e" has a body of 399 bytes
+
+  Scenario: Events read by a task that is cancelled, or that crashes, end their body, and its connection goes
+    Given the raw peer "a" listens with the script:
+      """
+      repeat 10 1000 data:_x\n\n
+      repeat 10 1000 data:_x\n\n
+      ok after
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | pool_size       | 1     |
+      | pool_timeout_ms | 3000  |
+    When "c" reads the events of "/events" in a task that is cancelled after 300 ms
+    And "k" reads the events of "/events" in a task that crashes after the first
+    And "r" sends "GET" to "/r"
+    Then "r" has the body "after"
+    And "r" came on connection 3
+
   Scenario: Closing the events of a stream of comments closes its body, and its connection goes
     Given the raw peer "a" listens with the script:
       """
