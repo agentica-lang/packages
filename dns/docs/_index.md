@@ -1,9 +1,9 @@
 ---
 title: dns
-description: A DNS client in Agentica. This first part is the codec of RFC 1035, which writes a query and reads an answer with compressed names, with limits on every size.
+description: A DNS client in Agentica that asks the nameservers you choose over TCP and TLS, follows CNAMEs, and reads answers with a bounded codec of RFC 1035.
 ---
 
-`dns` is a DNS client written in Agentica, for programs that must ask a nameserver they choose. The transports (TCP, TLS and HTTPS) come in the next releases. This one has the codec: pure functions on `Bytes`, so it works with any transport.
+`dns` is a DNS client written in Agentica, for programs that must ask a nameserver they choose. It sends each query over TCP (RFC 7766) or over TLS (RFC 7858, DoT), because `std` has no UDP. It tries the nameservers in order, checks every answer against its query, follows CNAMEs, and gives the addresses with their TTLs. The codec of RFC 1035 under it is also public: pure functions on `Bytes`.
 
 ## Install
 
@@ -21,6 +21,51 @@ dns = { git = "https://github.com/agentica-lang/packages", tag = "dns-0.1.0", su
 ```
 
 ## Example
+
+A resolver of two nameservers, one over TCP and one over TLS (DoT) with the name that its certificate must have:
+
+```agentica {mode="check"}
+import DNS from "pkg/dns/dns"
+
+def main() -> Void
+  servers = [DNS.Server.Tcp("9.9.9.9", 53), DNS.Server.Tls("1.1.1.1", 853, "one.one.one.one")]
+  resolver = DNS.resolver(servers, DNS.Options(timeout_ms: 2000)).unwrap!
+  for address in DNS.addresses(resolver, "example.com", DNS.TYPE_A).unwrap!
+    puts("#{address.address} for #{address.ttl} seconds")
+  end
+
+  puts(DNS.lookup(resolver, "example.com").unwrap!)
+end
+```
+
+`DNS.lookup` gives the addresses as text, IPv4 first, and `DNS.lookuper(resolver)` is the same as a function, the shape of the `resolver:` option of http-client.
+
+## Nameservers
+
+`DNS.Server.Tcp(host, port)` is DNS over TCP, and `DNS.Server.Tls(host, port, name)` is DNS over TLS: `name` is what the certificate must have, `""` for the host. A resolver has 1 to 16 servers and asks them in order, each with `timeout_ms` for the whole exchange (connect, send and read). `Options.tls` is the client context for the TLS servers, the system trust by default.
+
+A query that fails goes on to the next server: a timeout, a broken connection, SERVFAIL, REFUSED, a cut answer, an answer that is not for the query. When all fail, the error of the last one is the result. NXDOMAIN ends the search, since the next server would say the same.
+
+Every answer is checked: its id is the one of the query, it has the QR flag, and its question is the one asked (the names compare without case, as `DNS.same_name?(a, b)` does: `example.com.` is `EXAMPLE.com`).
+
+## Errors
+
+An `error` has a kind, tested with `e.is_a?("dns.nxdomain")`:
+
+| Kind | When |
+|---|---|
+| `dns.nxdomain` | the name does not exist |
+| `dns.servfail` | SERVFAIL, or any other code of the server |
+| `dns.refused` | the server refused the query |
+| `dns.truncated` | the answer has the TC flag |
+| `dns.timeout` | no answer in time |
+| `dns.network` | the connection or the TLS handshake failed, or ended before the whole answer |
+| `dns.mismatch` | the answer is not for the query |
+| `dns.malformed` | bytes that break RFC 1035, or an argument that does not fit |
+| `dns.cname_limit` | more CNAMEs than `max_cnames` (8 by default), or a loop |
+| `dns.no_address` | `lookup` of a name that has no address |
+
+## The codec
 
 `DNS.encode_query` writes a query and `DNS.decode` reads any message, here the query itself:
 
