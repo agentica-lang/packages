@@ -4,12 +4,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-17
+
+Needs Agentica 0.33.1.
+
 ### Added
 
-- `DNS.resolver`, `DNS.query`, `DNS.addresses`, `DNS.lookup` and `DNS.lookuper`: queries over TCP (`Server.Tcp`) and TLS (`Server.Tls`), nameservers tried in order with a timeout each, answers checked (id, QR, question), CNAME chains followed up to `max_cnames`, `DNS.same_name?` (names compared as DNS does), and the kinds `dns.nxdomain`, `dns.servfail`, `dns.refused`, `dns.truncated`, `dns.timeout`, `dns.network`, `dns.mismatch`, `dns.cname_limit` and `dns.no_address`.
-- The codec of RFC 1035: `DNS.encode_query` and `DNS.decode`, with name compression (a pointer must go before its name, so no name reads a byte twice), a name read once per place, and bounded sizes.
-- `DNS.lookup` does not ask for IPv6 after NXDOMAIN, reports the error that failed rather than `dns.no_address`, and has a documented time bound.
-- Only records of the class IN are addresses or CNAMEs, and an NXDOMAIN answer needs its question.
-- `DNS.Server.Https(url)`: DNS over HTTPS (RFC 8484), a POST of `application/dns-message` with the id 0.
-- `DNS.system_servers` and `DNS.parse_resolv_conf`: the nameservers of a `resolv.conf`, read only when asked.
-- A nameserver of a `resolv.conf` must be an IP address, and a line may end with CR.
+- A DNS client that asks the nameservers you choose, in order, each with its own timeout: `DNS.resolver`, `DNS.query`, `DNS.addresses`, `DNS.lookup` and `DNS.lookuper` (the shape of the `resolver:` of http-client).
+- Transports: DNS over TCP (`Server.Tcp`, RFC 7766), over TLS (`Server.Tls`, RFC 7858, with the certificate name apart from the address) and over HTTPS (`Server.Https`, RFC 8484).
+- Every answer is checked for its id, the QR flag and its question; the names compare without case (`DNS.same_name?`).
+- A and AAAA addresses with their TTLs, with CNAME chains followed up to `max_cnames`; only records of the class IN whose owner is in the chain.
+- Kinds of errors: `dns.nxdomain` (ends the search), `dns.servfail`, `dns.refused`, `dns.truncated`, `dns.timeout`, `dns.network`, `dns.mismatch`, `dns.malformed`, `dns.cname_limit` and `dns.no_address`.
+- `DNS.system_servers` and `DNS.parse_resolv_conf`: the nameservers of a `resolv.conf` (IP addresses only), read only when asked.
+- The codec of RFC 1035, public: `DNS.encode_query` and `DNS.decode`. Name compression is read with a pointer that must go before its name and never into the header, at most 32 pointers, labels of 63 bytes and names of 255; counts and lengths are checked against the bytes; each name is read once per place, so a hostile message costs in proportion to its size.
