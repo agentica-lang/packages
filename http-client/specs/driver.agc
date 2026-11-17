@@ -98,6 +98,7 @@ def run(driver: Driver, req: Request) -> Handled
     "stream_first" -> send(driver, req)
     "events" -> send(driver, req)
     "events_closed" -> send(driver, req)
+    "events_twice" -> send(driver, req)
     "events_abandoned" -> send(driver, req)
     "start" -> started(driver, req)
     "wait" -> waited(driver, req.name)
@@ -380,6 +381,15 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
         end
 
         done = Outcome(result: result, elapsed: 0)
+      "events_twice" ->
+        case HttpClient.stream(client, "GET", url, headers: headers)
+          ok(streamed) ->
+            first = HttpClient.events(streamed)
+            done = read_events(ok(HttpClient.events(streamed)), began, 0)
+            first.close
+          error(e) -> done = Outcome(result: error(e), elapsed: 0)
+        end
+
       "events_closed" ->
         result: Result[HttpClient.Response] = error("no events")
         case HttpClient.get_events(client, url, headers: headers)

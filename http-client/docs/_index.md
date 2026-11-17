@@ -7,7 +7,7 @@ description: An HTTP client with a pool of keep-alive connections per origin, an
 
 ## Install
 
-Needs Agentica 0.33.1, and is tested on 0.33.x only: until 0.34.0 it sets the timeout of each call, and on the opt-in dial path (`resolver` or `public_only`) the address and server name of a connection, through fields of std/http's `Connection` that may change. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`, once it is released:
+Needs Agentica 0.33.1, and is tested on 0.33.x only: until 0.34.0 it sets the timeout of each call, and on the opt-in dial path (`resolver` or `public_only`) the address and server name of a connection, through fields of std/http's `Connection` that may change. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
 agentica add http-client https://github.com/agentica-lang/packages --tag http-client-0.1.0 --subdir http-client
