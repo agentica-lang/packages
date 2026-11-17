@@ -50,10 +50,14 @@ dock/                a TCP server: dock.agc is the API (start, stop, wait, watch
                      the task of one client, src/outbox.agc its queue and writer, src/stats.agc the counters,
                      src/types.agc the records; test/dock_test.agc has the socket tests (real localhost sockets,
                      port 0)
-dns/                 a DNS client: dns.agc is the API (encode_query, decode); src/wire.agc the messages, src/name.agc the
-                     names and their compression (all pure), src/types.agc the records; test/ has the unit tests;
-                     specs/codec.feature checks the codec against specs/fixtures/dns_peer.py (an independent encoder
-                     and decoder in Python's standard library, which also writes random and damaged messages)
+dns/                 a DNS client: dns.agc is the API (resolver, query, addresses, lookup, lookuper, encode_query, decode);
+                     src/client.agc the servers in order, the checks of the answer and the CNAMEs, src/transport.agc one
+                     query over TCP or TLS, src/wire.agc the messages, src/name.agc the names and their compression (the
+                     last two pure), src/types.agc the records; test/ has the unit tests; specs/codec.feature checks the
+                     codec against specs/fixtures/dns_peer.py (an independent encoder and decoder in Python's standard
+                     library, which also writes random and damaged messages); specs/transport.feature runs the resolver
+                     against fixtures/dns_tcp_peer.agc (answers the hex bytes of a script, over TCP or, with TLS_CERT and
+                     TLS_KEY, over TLS; ca.pem signed server.pem for dns.test, key server.key, made for the specs only)
 pool/                a generic pool of resources: pool.agc is the API (start, with, close, timeout?) and the caller's
                      side (the ticket, the body in the caller or in a task of its own); src/owner.agc the owner task
                      (the line, the workers' states, the health tick, the close), src/keeper.agc the task of one

@@ -22,7 +22,7 @@ prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.4.2", 
 | `pool` (`pool-0.1.3`) | A generic pool of resources in the style of NimblePool: long-lived resources lent to one caller at a time, with a line, a lease, a health tick and a close with a drain; a caller that ends never keeps its resource (`pool/pool`). [Docs](https://www.agentica-lang.com/packages/pool/) |
 | `websocket-client` (`websocket-client-0.3.0`) | A WebSocket client (RFC 6455) over `std` TCP and TLS: `ws://` and `wss://`, text and binary messages, fragments, pings, the close handshake, a size limit and a read timeout (`websocket-client/websocket`). [Docs](https://www.agentica-lang.com/packages/websocket-client/) |
 | `yaml` (unreleased) | A YAML 1.2 parser: one document or a stream to `JSON.Value`, with the core schema only, string keys, limits on depth, aliases and size, and errors with a line and a column (`yaml/yaml`). [Docs](https://www.agentica-lang.com/packages/yaml/) |
-| `dns` (unreleased) | A DNS client: the codec of RFC 1035 with name compression and bounded sizes (`dns/dns`); the TCP, TLS and HTTPS transports are next. [Docs](https://www.agentica-lang.com/packages/dns/) |
+| `dns` (unreleased) | A DNS client: queries over TCP and TLS to the nameservers you choose, tried in order, with CNAMEs followed, addresses with their TTLs, distinct errors, and a bounded codec of RFC 1035 (`dns/dns`); DNS over HTTPS is next. [Docs](https://www.agentica-lang.com/packages/dns/) |
 | `cache` (planned) | Cache strategies (CLOCK, sampled LRU, TinyLFU) behind the `Cache` facade of `std/cache` |
 
 ## Tags
