@@ -1,8 +1,9 @@
 ## Where a redirect leads: the next hop of a request after a 301, 302, 303, 307 or 308 with a `Location`.
 ##
 ## A 303 turns the method into GET (HEAD stays HEAD), and so do a 301 and a 302 for a POST, as browsers and Req do; a
-## 307 and a 308 keep the method and the body. A hop that turns into GET has no body and no `Content-Type`. A hop to
-## another origin than the first request's goes without `Authorization`, `Cookie` and `Proxy-Authorization`.
+## 307 and a 308 keep the method and the body (to another origin too). A hop that turns into GET has no body and no
+## `Content-Type`. A hop to another origin than the first request's goes without `Authorization` and `Cookie`, and
+## without `Proxy-Authorization` unless a proxy carries every hop. A redirect from https to http is refused.
 
 import Exchange from "exchange"
 import HTTP from "std/http"
@@ -24,11 +25,18 @@ def location(response: Exchange.Response) -> Optional[String]
   some(values[0])
 end
 
-## The hop after `hop` was answered with `status` and `location`. `first` is the target of the first hop. A `Location`
-## that does not read as an http or https URL is an `http_client.redirect.location` error.
-def next(first: Url.Target, hop: Hop, status: Int, location: String) -> Result[Hop]
+## The hop after `hop` was answered with `status` and `location`. `first` is the target of the first hop, and
+## `proxied` says that a proxy carries every hop. A `Location` that does not read as an http or https URL, that has a
+## space or a control character, or that goes from https to http is an `http_client.redirect.location` error.
+def next(first: Url.Target, hop: Hop, status: Int, location: String, proxied: Bool) -> Result[Hop]
   target = Url.follow(hop.target, location)
-  return Exchange.failure("the redirect to #{location} cannot be followed", "redirect.location") if not target.ok?
+  if not target.ok? or not plain?(target.unwrap!.target)
+    return Exchange.failure("the redirect to #{location} cannot be followed", "redirect.location")
+  end
+
+  if hop.target.scheme == "https" and target.unwrap!.scheme == "http"
+    return Exchange.failure("the redirect to #{location} leaves https", "redirect.location")
+  end
 
   method = next_method(hop.method, status)
   headers = hop.headers
@@ -40,6 +48,9 @@ def next(first: Url.Target, hop: Hop, status: Int, location: String) -> Result[H
 
   if target.unwrap!.origin != first.origin
     headers = without(headers, CREDENTIALS)
+    if not proxied
+      headers = without(headers, ["proxy-authorization"])
+    end
   end
 
   ok(Hop(method: method, target: target.unwrap!, headers: headers, body: body))
@@ -48,7 +59,7 @@ end
 private
 
 REDIRECTS = [301, 302, 303, 307, 308]
-CREDENTIALS = ["authorization", "cookie", "proxy-authorization"]
+CREDENTIALS = ["authorization", "cookie"]
 NO_BODY = "".bytes
 
 def next_method(method: String, status: Int) -> String
@@ -57,6 +68,9 @@ def next_method(method: String, status: Int) -> String
 
   method
 end
+
+# A request target with no space and no control character, as std/http writes it.
+def plain?(target: String) -> Bool = target.bytes.to_a.all? { |byte| byte > 32 and byte != 127 }
 
 def without(headers: List[HTTP.Header], names: List[String]) -> List[HTTP.Header]
   headers.select { |header| not names.include?(header.name.downcase) }

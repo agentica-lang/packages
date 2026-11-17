@@ -1,5 +1,6 @@
 ## When a request goes again, and after how long: only an idempotent method, after a transient error (a connect or
-## read timeout, a broken connection) or a transient status (408, 429, 500, 502, 503, 504), at most `retries` times.
+## read timeout, a broken connection) or a transient status (408, 429, 500, 502, 503, 504), at most `max_retries` times
+## in all the hops of a call.
 ## The wait doubles from `delay_ms` on each try, up to `max_delay_ms`, with jitter; a `Retry-After` of the response
 ## (seconds or an HTTP date) is waited as it is, and one over `max_delay_ms` gives the response back instead.
 
@@ -8,7 +9,7 @@ import HTTP from "std/http"
 
 ## The retry settings of a client.
 struct Policy
-  retries: Int
+  max_retries: Int
   delay_ms: Int
   max_delay_ms: Int
 end
@@ -23,7 +24,7 @@ def wait_ms(
   now_ms: Int,
   jitter: Fn[Int, Int],
 ) -> Optional[Int]
-  return none if tries >= policy.retries or not IDEMPOTENT.include?(method)
+  return none if tries >= policy.max_retries or not IDEMPOTENT.include?(method.upcase)
 
   case result
     ok(response) if TRANSIENT_STATUSES.include?(response.status) ->
@@ -43,7 +44,13 @@ def backoff_ms(policy: Policy, tries: Int) -> Int
   wait = policy.delay_ms
   doubled = 0
   while doubled < tries and wait < policy.max_delay_ms
-    wait = wait * 2
+    # Past half of the most, the double is over it: the most is the wait, and no product can overflow.
+    if wait > policy.max_delay_ms / 2
+      wait = policy.max_delay_ms
+    else
+      wait = wait * 2
+    end
+
     doubled = doubled + 1
   end
 
@@ -82,7 +89,9 @@ def http_date_ms(text: String) -> Optional[Int]
 
   day = numbers[0]
   year = numbers[1]
-  return none if day < 1 or day > 31 or year < 1970 or numbers[2] > 23 or numbers[3] > 59 or numbers[4] > 60
+  if day < 1 or day > 31 or year < 1970 or year > MAX_YEAR or numbers[2] > 23 or numbers[3] > 59 or numbers[4] > 60
+    return none
+  end
 
   days = days_from_civil(year, month.unwrap! + 1, day)
   some((((days * 24 + numbers[2]) * 60 + numbers[3]) * 60 + numbers[4]) * 1000)
@@ -96,6 +105,8 @@ TRANSIENT_KINDS = ["http_client.timeout.connect", "http_client.timeout.read", "h
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 # Past a day the wait is long enough, and the product stays far from overflow.
 MAX_SECONDS = 86_400
+# The last year of an HTTP date that is read: four digits, and far from overflow.
+MAX_YEAR = 9_999
 
 def transient?(e: Error) -> Bool = TRANSIENT_KINDS.any? { |kind| e.is_a?(kind) }
 

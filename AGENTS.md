@@ -40,7 +40,8 @@ http-client/         an HTTP/1.1 client: http_client.agc is the API (new, reques
                      peers, driven by JSON lines from specs/steps.agc); the peers are programs the driver starts: fixtures/server.agc (the server of
                      std/http, for the normal flows) and fixtures/raw_peer.agc (a TCP server that reads requests by
                      hand and writes the answers of a script: slow heads, stalls, closes, and which connection served
-                     each); test/ the unit tests (URL, retry policy, link, a client's checks) and a reuse stress test
+                     each); test/ the unit tests (URL, retry policy, redirects, link, a client's checks) and a
+                     reuse test (many requests on one connection, no task left after close)
 native-gen/          the C header of an `extern module` block: cli.agc is the command, native_gen.agc the API
                      (`header`), src/header.agc the text of the header, src/codecs.agc the C values of the structs and
                      enums, src/collections.agc the Lists, Maps, Optionals and Results, src/types.agc the type

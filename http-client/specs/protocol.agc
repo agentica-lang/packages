@@ -11,7 +11,7 @@ OK = "ok"
 ## - `peer` (name: the peer, kind: `server` for `fixtures/server.agc` or `raw` for `fixtures/raw_peer.agc`, text: the
 ##   script of a raw peer, one answer per line) starts a peer;
 ## - `client` (name: the peer of `base_url`, table: a header row, then a setting and a value per row) makes the client,
-##   with `retries` 0 and `retry_delay_ms` 10 unless a row sets them, so that only the scenarios of retries retry;
+##   with `max_retries` 0 and `retry_delay_ms` 10 unless a row sets them, so that only the scenarios of retries retry;
 ## - `send` and `start` (name: the request, kind: the method, text: the URL, where `{a}` is the address of the peer
 ##   `a`, body, header: `name: value` or "") send a request and wait for it, or let it run; `wait` (name) waits for
 ##   one that runs, and `cancel` (name) cancels its task, which stays after the request until then;

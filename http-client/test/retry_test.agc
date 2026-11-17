@@ -5,7 +5,7 @@ import UTC from "std/utc"
 
 private
 
-POLICY = Retry.Policy(retries: 3, delay_ms: 100, max_delay_ms: 1_000)
+POLICY = Retry.Policy(max_retries: 3, delay_ms: 100, max_delay_ms: 1_000)
 DAYS = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"]
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -33,6 +33,7 @@ def test_only_an_idempotent_request_after_a_transient_failure_goes_again() -> Re
   try Test.eq(wait("PUT", answer(429), 2), some(400))
   try Test.eq(wait("GET", answer(503), 3), none)
   try Test.eq(wait("POST", answer(503), 0), none)
+  try Test.eq(wait("get", answer(503), 0), some(100))
   try Test.eq(wait("GET", answer(404), 0), none)
   try Test.eq(wait("GET", error("down", kind: "http_client.network"), 0), some(100))
   try Test.eq(wait("GET", error("slow", kind: "http_client.timeout.read"), 0), some(100))
@@ -40,8 +41,10 @@ def test_only_an_idempotent_request_after_a_transient_failure_goes_again() -> Re
   Test.eq(wait("GET", error("big", kind: "http_client.too_large"), 0), none)
 end
 
-def test_the_backoff_doubles_up_to_the_most() -> Result[Void]
-  Test.eq([0, 1, 2, 3, 4, 40].map { |tries| Retry.backoff_ms(POLICY, tries) }, [100, 200, 400, 800, 1_000, 1_000])
+def test_the_backoff_doubles_up_to_the_most_and_never_overflows() -> Result[Void]
+  try Test.eq([0, 1, 2, 3, 4, 40].map { |tries| Retry.backoff_ms(POLICY, tries) }, [100, 200, 400, 800, 1_000, 1_000])
+  huge = Retry.Policy(max_retries: 3, delay_ms: 4_000_000_000_000_000_000, max_delay_ms: 9_000_000_000_000_000_000)
+  Test.eq(Retry.backoff_ms(huge, 3), 9_000_000_000_000_000_000)
 end
 
 def test_retry_after_is_waited_unless_it_is_over_the_most() -> Result[Void]
@@ -57,6 +60,8 @@ def test_an_http_date_reads_back_as_the_time_it_was_written_from() -> Result[Voi
 
   try Test.eq(Retry.http_date_ms("Sun, 06 Nov 1994 08:49:37 GMT"), some(784_111_777_000))
   try Test.eq(Retry.http_date_ms("Sunday, 06-Nov-94 08:49:37 GMT"), none)
+  try Test.eq(Retry.http_date_ms("Sun, 06 Nov 99999999999999 08:49:37 GMT"), none)
+  try Test.eq(Retry.http_date_ms("Fri, 31 Dec 9999 23:59:59 GMT"), some(253_402_300_799_000))
   headers = [HTTP.Header(name: "retry-after", value: http_date(10_000))]
   Test.eq(Retry.retry_after_ms(headers, 4_000), some(6_000))
 end

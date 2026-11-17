@@ -23,12 +23,11 @@ struct Held
   expires_at: Int
 end
 
-## A link: the inbox of its task, which holds the connection, and the notice of that task's end. A link whose task
-## ended (a crash) answers nothing: it fails at once, and its health check tells the pool to replace it.
+## A link: its task, which holds the connection, and the inbox of that task, which closes when the task ends. A link
+## whose task ended (a crash) answers nothing: it fails at once, and its health check tells the pool to replace it.
 struct Link
   inbox: Channel[Order]
-  task: Task[Void]
-  down: Channel[TaskDown]
+  task: Task[Result[Void]]
 end
 
 ## An order for the task of a link, from the request that has the link leased or from the pool's keeper.
@@ -99,11 +98,12 @@ def release(link: Link) -> Void
   _ = link.inbox.send(Order.Release, ORDER_MS)
 end
 
-## A link of the task that serves `inbox`, watched for its end.
-def watched(inbox: Channel[Order], task: Task[Void]) -> Link
-  down: Channel[TaskDown] = Channel.new(1)
-  Task.monitor(task, down) do |notice| notice end
-  Link(inbox: inbox, task: task, down: down)
+## Runs `body`, the work of a link task, in a task of its own, whose crash ends only it, and closes the inbox when it
+## ends, so that the link fails at once from then on.
+def guard(inbox: Channel[Order], body: Fn[Result[Void]]) -> Result[Void]
+  ran = Task.await(Task.spawn do body.call() end)
+  inbox.close
+  ran
 end
 
 private
@@ -114,14 +114,14 @@ ANSWER_MS = 1_000
 # The link task waits for orders in long naps, until the pool ends it.
 NAP_MS = 3_600_000
 WATCHER_END_MS = 1_000
+STOP_MS = 1_000
 
 # A connection that waits for the next request, with the watcher task that reads its socket meanwhile: an idle
 # keep-alive connection has nothing to read, so a read that ends (the server closed it, or wrote bytes out of turn)
-# marks it dead, and `ended` gets the notice of the watcher.
+# marks it dead.
 struct Idle
   held: Held
   watcher: Task[Result[Bytes]]
-  ended: Channel[TaskDown]
 end
 
 # What the link task holds: a connection that waits, and one that a request uses. At most one is there.
@@ -132,8 +132,8 @@ end
 
 def make(origin: Origin) -> Result[Link]
   inbox: Channel[Order] = Channel.new(8)
-  task = Task.spawn do run(origin, inbox) end
-  ok(watched(inbox, task))
+  task = Task.spawn do guard(inbox, -> { run(origin, inbox) }) end
+  ok(Link(inbox: inbox, task: task))
 end
 
 # A request that timed out or crashed may have left the connection anywhere, and a link whose task ended serves
@@ -153,32 +153,41 @@ def ping(link: Link) -> Result[Void]
   ok()
 end
 
-# The notice stays in `down` once it came, for the next look.
-def down?(link: Link) -> Bool
-  case link.down.recv(0)
-    ok(notice) ->
-      _ = link.down.send(notice, 0)
-      true
-    error(_) -> false
+# The guard of the link task closes the inbox when the task ends, and so does `stop`.
+def down?(link: Link) -> Bool = link.inbox.closed?
+
+# Whether the task ended within `wait_ms`. An await, not a monitor: its answer means the task is gone, so a close
+# that waited for it leaves no task behind.
+def ended?[R](task: Task[Result[R]], wait_ms: Int) -> Bool
+  case Task.await(task, wait_ms)
+    Await.Done(_) -> true
+    Await.TimedOut -> false
   end
 end
 
+# The link task ends on its own once its inbox is closed, after the order in hand; one that does not within STOP_MS
+# (a connect) is cancelled. Either way `stop` returns once it is gone, with its watcher.
 def stop(link: Link) -> Void
   link.inbox.close
-  Task.cancel(link.task)
+  if not ended?(link.task, STOP_MS)
+    Task.cancel(link.task)
+    _ = ended?(link.task, STOP_MS)
+  end
 end
 
-def run(origin: Origin, inbox: Channel[Order]) -> Void
+def run(origin: Origin, inbox: Channel[Order]) -> Result[Void]
   slot = Slot(idle: none, busy: none)
-  while true
+  open = true
+  while open
     case inbox.recv(NAP_MS)
       ok(order) -> slot = obey(origin, slot, order)
-      error(e) if e.is_a?("channel.closed") ->
-        drop_all(slot)
-        return
+      error(e) if e.is_a?("channel.closed") -> open = false
       error(_) -> nil
     end
   end
+
+  drop_all(slot)
+  ok()
 end
 
 def obey(origin: Origin, slot: Slot, order: Order) -> Slot
@@ -210,14 +219,9 @@ def open(origin: Origin, wait_ms: Int) -> Result[Held]
   ok(Held(conn: conn, expires_at: 0))
 end
 
-def watch(held: Held) -> Idle
-  watcher = Task.spawn do TCP.recv_bytes(held.conn.socket, 1) end
-  ended: Channel[TaskDown] = Channel.new(1)
-  Task.monitor(watcher, ended) do |down| down end
-  Idle(held: held, watcher: watcher, ended: ended)
-end
+def watch(held: Held) -> Idle = Idle(held: held, watcher: Task.spawn do TCP.recv_bytes(held.conn.socket, 1) end)
 
-# The watcher stops before the request has the socket: the link waits for the notice of its end, since a cancel that
+# The watcher stops before the request has the socket: the link waits for its end, since a cancel that
 # has not landed yet would let it read the first byte of the response. A watcher that ended on its own saw the socket
 # close or bytes arrive: that connection is ended, never reused, and so is one whose watcher does not stop.
 #
@@ -227,9 +231,9 @@ def awake(idle: Optional[Idle]) -> Optional[Held]
   case idle
     some(waiting) ->
       Task.cancel(waiting.watcher)
-      quiet = case waiting.ended.recv(WATCHER_END_MS)
-        ok(down) -> down.reason == TaskExit.Cancelled
-        error(_) -> false
+      quiet = case Task.await(waiting.watcher, WATCHER_END_MS)
+        Await.Done(error(e)) if e.is_a?("task.cancelled") -> true
+        _ -> false
       end
 
       if not quiet or expired?(waiting.held)
@@ -246,8 +250,12 @@ end
 def checked(idle: Optional[Idle]) -> Optional[Idle]
   case idle
     some(waiting) ->
-      if waiting.ended.recv(0).ok? or expired?(waiting.held)
-        Task.cancel(waiting.watcher)
+      dead = ended?(waiting.watcher, 1)
+      if dead or expired?(waiting.held)
+        if not dead
+          stop_watcher(waiting)
+        end
+
         HTTP.finish(waiting.held.conn)
         return none
       end
@@ -259,10 +267,15 @@ end
 
 def expired?(held: Held) -> Bool = held.expires_at > 0 and Time.monotonic_ms() >= held.expires_at
 
+def stop_watcher(waiting: Idle) -> Void
+  Task.cancel(waiting.watcher)
+  _ = ended?(waiting.watcher, WATCHER_END_MS)
+end
+
 def drop_all(slot: Slot) -> Void
   case slot.idle
     some(waiting) ->
-      Task.cancel(waiting.watcher)
+      stop_watcher(waiting)
       HTTP.finish(waiting.held.conn)
     none -> nil
   end

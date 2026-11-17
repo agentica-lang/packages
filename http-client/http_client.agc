@@ -3,7 +3,7 @@
 ##
 ## Each origin (scheme, host and port) has a pool of `pool_size` connections, made when a request first needs one. A
 ## request waits at most `pool_timeout_ms` for a free connection, at most `connect_timeout_ms` to connect, at most
-## `read_timeout_ms` for each read, and at most `timeout_ms` in all for each try. A connection is kept for the next
+## `read_timeout_ms` for each read, and at most `timeout_ms` for the whole call. A connection is kept for the next
 ## request only when its response was read to its end and the server did not close it. An idempotent request goes
 ## again after a transient error or status (`src/retry.agc`), and a redirect is followed (`src/redirect.agc`).
 
@@ -28,7 +28,7 @@ struct Client
   read_timeout_ms: Int
   timeout_ms: Int
   max_body_bytes: Int
-  retries: Int
+  max_retries: Int
   retry_delay_ms: Int
   max_retry_delay_ms: Int
   max_redirects: Int
@@ -36,12 +36,14 @@ struct Client
   private
 
   pools: Pools.Pools
+  proxied: Bool
 end
 
 ## Makes a client. `base_url` is joined to the URL of a request that is a path (`/todos`); the pool settings are
 ## `pool_size` connections per origin, `pool_timeout_ms` of wait for one, and `idle_ms` after which an unused one is
-## closed. An idempotent request is tried again at most `retries` times, after `retry_delay_ms` doubled on each try
-## (at most `max_retry_delay_ms`); at most `max_redirects` redirects are followed (0 gives the redirect back). `proxy`
+## closed. An idempotent request is tried again at most `max_retries` times in all, after `retry_delay_ms` doubled on
+## each try (at most `max_retry_delay_ms`); at most `max_redirects` redirects are followed (0 gives the redirect back).
+## `timeout_ms` bounds the whole call, its tries, waits and redirects included. `proxy`
 ## (`http://host:port`) and `tls` (a client `TLS.Context`, the system trust when none) are those of std/http's
 ## `ClientOptions`. Make it in a task that lives as long as the client, such as `main`.
 def new(
@@ -51,7 +53,7 @@ def new(
   read_timeout_ms: Int = 30_000,
   timeout_ms: Int = 60_000,
   max_body_bytes: Int = 16_777_216,
-  retries: Int = 3,
+  max_retries: Int = 3,
   retry_delay_ms: Int = 500,
   max_retry_delay_ms: Int = 30_000,
   max_redirects: Int = 10,
@@ -79,11 +81,12 @@ def new(
     read_timeout_ms: read_timeout_ms,
     timeout_ms: timeout_ms,
     max_body_bytes: max_body_bytes,
-    retries: retries,
+    max_retries: max_retries,
     retry_delay_ms: retry_delay_ms,
     max_retry_delay_ms: max_retry_delay_ms,
     max_redirects: max_redirects,
     pools: Pools.start(settings),
+    proxied: not proxy.empty?,
   )
 
   case valid(client)
@@ -110,14 +113,31 @@ def request(
 ) -> Result[Exchange.Response]
   try valid(client)
   target = try Url.resolve(client.base_url, url)
+  deadline = Time.monotonic_ms() + client.timeout_ms
+  policy = Retry.Policy(
+    max_retries: client.max_retries,
+    delay_ms: client.retry_delay_ms,
+    max_delay_ms: client.max_retry_delay_ms,
+  )
+
   hop = Hop(method: method, target: target, headers: merge(client.headers, headers), body: body)
+  tries = 0
   redirects = 0
   while redirects <= client.max_redirects
-    response = try retried(client, hop)
+    result = once(client, hop, deadline)
+    case Retry.wait_ms(policy, hop.method, result, tries, Time.now_ms(), &jitter)
+      some(ms) if Time.monotonic_ms() + ms < deadline ->
+        Task.sleep(ms)
+        tries = tries + 1
+        next
+      _ -> nil
+    end
+
+    response = try result
     location = Redirect.location(response)
     return ok(response) if client.max_redirects == 0 or not location.some?
 
-    hop = try Redirect.next(target, hop, response.status, location.unwrap!)
+    hop = try Redirect.next(target, hop, response.status, location.unwrap!, client.proxied)
     redirects = redirects + 1
   end
 
@@ -167,6 +187,8 @@ NO_BODY = "".bytes
 MAX_REQUEST_BODY = 67_108_864
 # The health tick of each pool checks its idle connections and closes those unused for `idle_ms`.
 HEALTH_MS = 5_000
+# How long a try that ran out of time has to end once cancelled.
+CANCEL_MS = 1_000
 
 def argument[T](text: String) -> Result[T] = error("http_client: #{text}", kind: "argument")
 
@@ -177,8 +199,8 @@ def valid(client: Client) -> Result[Void]
   end
 
   return argument("max_body_bytes must be at least 1") if client.max_body_bytes < 1
-  if client.retries < 0 or client.retry_delay_ms < 0 or client.max_retry_delay_ms < 0 or client.max_redirects < 0
-    return argument("retries, retry_delay_ms, max_retry_delay_ms and max_redirects must be at least 0")
+  if client.max_retries < 0 or client.retry_delay_ms < 0 or client.max_retry_delay_ms < 0 or client.max_redirects < 0
+    return argument("max_retries, retry_delay_ms, max_retry_delay_ms and max_redirects must be at least 0")
   end
 
   return ok() if client.base_url.empty?
@@ -187,31 +209,14 @@ def valid(client: Client) -> Result[Void]
   ok()
 end
 
-# The hop, tried again while the retry policy says so.
-def retried(client: Client, hop: Hop) -> Result[Exchange.Response]
-  policy = Retry.Policy(
-    retries: client.retries,
-    delay_ms: client.retry_delay_ms,
-    max_delay_ms: client.max_retry_delay_ms,
-  )
-
-  tries = 0
-  result = once(client, hop)
-  wait = Retry.wait_ms(policy, hop.method, result, tries, Time.now_ms(), &jitter)
-  while wait.some?
-    Task.sleep(wait.unwrap!)
-    tries = tries + 1
-    result = once(client, hop)
-    wait = Retry.wait_ms(policy, hop.method, result, tries, Time.now_ms(), &jitter)
-  end
-
-  result
-end
-
 # Between half the backoff and all of it, so that clients that failed together do not come back together.
 def jitter(backoff_ms: Int) -> Int = Random.int(backoff_ms / 2, backoff_ms)
 
-def once(client: Client, hop: Hop) -> Result[Exchange.Response]
+# One try of the hop, within what is left of the call.
+def once(client: Client, hop: Hop, deadline: Int) -> Result[Exchange.Response]
+  left = deadline - Time.monotonic_ms()
+  return timed_out(client) if left < 1
+
   pool = try Pools.pool_for(client.pools, hop.target.origin, client.timeout_ms)
   call = Exchange.Call(
     method: hop.method,
@@ -220,18 +225,23 @@ def once(client: Client, hop: Hop) -> Result[Exchange.Response]
     body: hop.body,
     connect_timeout_ms: client.connect_timeout_ms,
     read_timeout_ms: client.read_timeout_ms,
-    deadline: Time.monotonic_ms() + client.timeout_ms,
+    deadline: deadline,
     max_body_bytes: client.max_body_bytes,
   )
 
   # A task of its own, so that `timeout_ms` can cancel the request wherever it is; the pool then ends its connection.
   running = Task.spawn do Pool.with(pool) do |link| Exchange.run(link, call) end end
-  case Task.await(running, client.timeout_ms)
+  case Task.await(running, left)
     Await.Done(result) -> pool_failure(result)
     Await.TimedOut ->
       Task.cancel(running)
-      Exchange.failure("the request timed out after #{client.timeout_ms} ms", "timeout.request")
+      _ = Task.await(running, CANCEL_MS)
+      timed_out(client)
   end
+end
+
+def timed_out[T](client: Client) -> Result[T]
+  Exchange.failure("the request timed out after #{client.timeout_ms} ms", "timeout.request")
 end
 
 # The headers of the call replace those of the client with the same name; the case of a name does not matter.

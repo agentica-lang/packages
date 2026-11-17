@@ -149,7 +149,7 @@ def make_client(driver: Driver, req: Request) -> Handled
     read_timeout_ms: settings.get("read_timeout_ms").unwrap_or(30_000),
     timeout_ms: settings.get("timeout_ms").unwrap_or(60_000),
     max_body_bytes: settings.get("max_body_bytes").unwrap_or(16_777_216),
-    retries: settings.get("retries").unwrap_or(0),
+    max_retries: settings.get("max_retries").unwrap_or(0),
     retry_delay_ms: settings.get("retry_delay_ms").unwrap_or(10),
     max_retry_delay_ms: settings.get("max_retry_delay_ms").unwrap_or(30_000),
     max_redirects: settings.get("max_redirects").unwrap_or(10),

@@ -4,17 +4,17 @@ import Pool from "pkg/pool/pool"
 
 private
 
-def crash() -> Void
+def crash() -> Result[Void]
   empty: List[Int] = []
   puts(empty[1])
+  ok()
 end
 
 def crashed_link() -> Link.Link
   inbox: Channel[Link.Order] = Channel.new(1)
-  link = Link.watched(inbox, Task.spawn do crash() end)
-  notice = link.down.recv(5_000).unwrap!
-  _ = link.down.send(notice, 0)
-  link
+  task = Task.spawn do Link.guard(inbox, &crash) end
+  _ = Task.await(task, 5_000)
+  Link.Link(inbox: inbox, task: task)
 end
 
 def test_a_link_whose_task_crashed_fails_at_once_and_its_pool_replaces_it() -> Result[Void]
