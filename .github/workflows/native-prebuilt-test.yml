@@ -1,0 +1,120 @@
+name: Native prebuilt test
+
+# Runs native-prebuilt.yml on the module of .github/native-prebuilt-example with dry-run, so nothing is uploaded: the
+# five builds (with a prepare step and extra arguments, as a package that links a fetched source), the load of each
+# library, and the `prebuilt` row, which must read back as the table the manifest takes.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/native-prebuilt*.yml'
+      - '.github/scripts/native-prebuilt*'
+      - '.github/native-prebuilt-example/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/native-prebuilt*.yml'
+      - '.github/scripts/native-prebuilt*'
+      - '.github/native-prebuilt-example/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The upload plan of the publish job on made-up releases: a pinned file kept, a pinned file that differs or is
+  # missing, an unpinned one off and on the default branch, and a row of another API.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 -I .github/scripts/native-prebuilt-plan-test.py
+
+  prebuilt:
+    uses: ./.github/workflows/native-prebuilt.yml
+    with:
+      module: twice
+      directory: .github/native-prebuilt-example
+      # agentica master with `agentica native source` (agentica#1786); a release once 0.34.0 ships.
+      agentica-commit: 45e6c4a8d0b71954da19c9c03b49fadc46fedc02
+      prepare: mkdir -p gen && $PYTHON -I -c "open('gen/factor.c', 'w').write('int twice_factor(void) { return 2; }\\n')"
+      extra-args: -DTWICE_LINKED gen/factor.c
+      dry-run: true
+
+  # The row against the files the build jobs made, and through Agentica's own reader: the example's manifest with the
+  # row appended must give the same source key and a URL per target.
+  check:
+    needs: prebuilt
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ROW: ${{ needs.prebuilt.outputs.prebuilt }}
+      SOURCE: ${{ needs.prebuilt.outputs.source }}
+      API: ${{ needs.prebuilt.outputs.api }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: native-prebuilt-twice-{linux-x86_64,linux-arm64,macos-x86_64,macos-arm64,windows-x86_64}
+          path: ${{ runner.temp }}/built
+          merge-multiple: true
+
+      - name: Compare the row with the built files
+        env:
+          BUILT: ${{ runner.temp }}/built
+        run: |
+          python3 -I - <<'EOF'
+          import hashlib, os, re, tomllib
+          row = tomllib.loads(os.environ["ROW"])["prebuilt"]
+          print(row)
+          url = "https://github.com/agentica-lang/packages/releases/download/native-{source}/lib{name}-{api}-{target}{ext}"
+          assert row["url"] == url, row["url"]
+          assert row["source"] == os.environ["SOURCE"] and re.fullmatch(r"[0-9a-f]{16}", row["source"])
+          assert row["api"] == os.environ["API"] and re.fullmatch(r"[0-9]+\.[0-9]+", row["api"])
+          ext = {"linux-x86_64": ".so", "linux-arm64": ".so", "macos-x86_64": ".dylib", "macos-arm64": ".dylib",
+                 "windows-x86_64": ".dll"}
+          assert list(row["sha256"]) == list(ext), row["sha256"]
+          built = os.environ["BUILT"]
+          assert len(os.listdir(built)) == 5, os.listdir(built)
+          for target, digest in row["sha256"].items():
+              with open(f"{built}/libtwice-{row['api']}-{target}{ext[target]}", "rb") as f:
+                  assert hashlib.sha256(f.read()).hexdigest() == digest, target
+          EOF
+
+      # The commit of the `prebuilt` job above.
+      - name: Check out Agentica
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: agentica-lang/agentica
+          ref: 45e6c4a8d0b71954da19c9c03b49fadc46fedc02
+          path: .agentica
+          persist-credentials: false
+
+      - name: Build Agentica
+        working-directory: .agentica
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libssl-dev libgc-dev zlib1g-dev pkg-config
+          git submodule update --init --depth 1
+          make -j"$(nproc)" dist/agentica
+
+      - name: Read the row with Agentica
+        working-directory: .github/native-prebuilt-example
+        run: |
+          printf '%s\n' "$ROW" >> agentica.toml
+          ../../.agentica/dist/agentica --json native source twice > "$RUNNER_TEMP/source.json"
+          cat "$RUNNER_TEMP/source.json"
+          python3 -I - "$RUNNER_TEMP/source.json" <<'EOF'
+          import json, os, sys
+          answer = json.load(open(sys.argv[1]))
+          assert answer["source"] == os.environ["SOURCE"] and answer["api"] == os.environ["API"], answer
+          base = f"https://github.com/agentica-lang/packages/releases/download/native-{answer['source']}/libtwice-{answer['api']}-"
+          ext = {"linux-x86_64": ".so", "linux-arm64": ".so", "macos-x86_64": ".dylib", "macos-arm64": ".dylib",
+                 "windows-x86_64": ".dll"}
+          assert answer["urls"] == {t: base + t + e for t, e in ext.items()}, answer["urls"]
+          EOF

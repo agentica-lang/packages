@@ -16,3 +16,5 @@ That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 [dependencies]
 prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.3.0", subdir = "prop" }
 ```
+
+A package with a native module can ship prebuilt libraries for the five targets with the reusable workflow of this repository: [Prebuilt native modules](native-prebuilt.md).

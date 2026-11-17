@@ -38,4 +38,8 @@ Each package needs its own Agentica version, written in `PACKAGE/AGENTICA_VERSIO
 
 The docs are at <https://www.agentica-lang.com/packages/>. Each package keeps its pages in its own `PACKAGE/docs/` folder (an `_index.md` at least), and `make site` builds them into one Hugo site in `site/public` (it needs the docs theme, `git submodule update --init`, plus Hugo, Dart Sass and Node; `make site-serve` previews it).
 
+## Prebuilt native modules
+
+`.github/workflows/native-prebuilt.yml` is a reusable workflow that builds the native module of a package on the five targets and uploads the files of its `prebuilt` table to a release of that package: [docs](https://www.agentica-lang.com/packages/native-prebuilt/).
+
 Rules for contributors and agents: `AGENTS.md`.
