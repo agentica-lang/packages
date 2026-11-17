@@ -77,6 +77,36 @@ def main() -> Void
         ],
       )
     end,
+    Test.test(
+      "the model takes a batch whole or not at all, several jobs in a fetch, and keeps the error of a retry",
+    ) do
+      calls = [
+        start(4),
+        Request(op: "enqueue_all", queue: "q", text: "a,b,c"),
+        Request(op: "enqueue_all", queue: "q", text: "d,e"),
+        Request(op: "fetch", queue: "q", name: "w", number: 5_000, max: 2),
+        Request(op: "retry", name: "w/2", number: 0, text: "boom"),
+        Request(op: "fetch", queue: "q", name: "x", number: 5_000, max: 3),
+        Request(op: "ack", name: "x/2"),
+        Request(op: "retry", name: "x", number: 0),
+        Request(op: "fetch", queue: "q", name: "y", number: 5_000),
+      ]
+
+      return Test.eq(
+        Model.replies(calls),
+        [
+          "ok",
+          "ok 1,2,3",
+          "error jobs.full",
+          "ok a attempt 1, b attempt 1",
+          "ok",
+          "ok b attempt 2 last_error boom, c attempt 1",
+          "ok",
+          "ok",
+          "ok b attempt 3 last_error boom",
+        ],
+      )
+    end,
     Test.test("a seed gives the same script, and the script answers with its own replies") do
       first = Model.script(7, 200)
       try Test.eq(first.map(->(call) { call.reply }), Model.script(7, 200).map(->(call) { call.reply }))

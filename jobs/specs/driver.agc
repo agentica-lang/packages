@@ -1,8 +1,9 @@
 ## The program under test of the features: it holds one memory backend, a clock, and the leases that the steps named,
 ## and runs the requests that `steps.agc` sends (`protocol.agc`), one JSON line in and one reply line out.
 ##
-## Replies: `ok`, `ok ID` (an enqueue; `ok ID duplicate` for one that was), `ok PAYLOAD attempt N` (a fetch; `ok none`
-## when it gave no job), `ready N scheduled N leased N dead N` (counts), `done N retried N dead N` (a drain), and
+## Replies: `ok`, `ok ID` (an enqueue; `ok ID duplicate` for one that was), `ok PAYLOAD attempt N` (a fetch, with
+## ` last_error TEXT` when the job has one, and `, ` between the jobs when it gave more than one; `ok none` when it
+## gave none), `ready N scheduled N leased N dead N` (counts), `done N retried N dead N` (a drain), and
 ## `error KIND` for a failed call.
 ##
 ## The payload of a job says what a drain does with it: `ok` acks it, `fail` returns an error, `discard` discards it,
@@ -15,7 +16,9 @@ import {Request} from "protocol"
 private
 
 POLL_MS = 20
+PARK_MS = 100
 WAIT_FETCH_MS = 3_600_000
+DRAIN_RUNS = 1_000
 
 struct Driver
   backend: Optional[Jobs.Backend]
@@ -97,6 +100,7 @@ def start(driver: Driver, req: Request) -> Handled
     max_jobs: number(values, "max_jobs", 10_000),
     max_dead: number(values, "max_dead", 1_000),
     clock: some(clock.now),
+    fetch_timeout_ms: fetch_timeout(values),
   )
 
   case Jobs.memory(options)
@@ -110,6 +114,13 @@ def if_manual(values: Map[String, String]) -> Jobs.Clock
   case values.get("clock", "manual")
     "wall" -> Jobs.Clock(now: &Time.now_ms, advance: ->(_ms) { nil })
     _ -> Jobs.manual_clock()
+  end
+end
+
+def fetch_timeout(values: Map[String, String]) -> Optional[Int]
+  case values.get("fetch_timeout_ms")
+    some(text) -> some(text.to_i.unwrap_or(0))
+    none -> none
   end
 end
 
@@ -173,17 +184,36 @@ def enqueued_text(added: Jobs.Enqueued) -> String
 end
 
 def fetch(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
-  leases = Jobs.fetch(backend, Jobs.Fetch(queue: req.queue, lease_ms: req.number))
+  leases = Jobs.fetch(backend, Jobs.Fetch(queue: req.queue, max: req.max, lease_ms: req.number))
   case leases
     error(e) -> Handled(driver: driver, reply: failure(e))
     ok(found) if found.empty? -> Handled(driver: driver, reply: "ok none")
-    ok(found) -> kept(driver, req.name, found[0])
+    ok(found) -> kept(driver, req.name, found)
   end
 end
 
-def kept(driver: Driver, name: String, lease: Jobs.Lease) -> Handled
+# The first lease is kept as `name`, the next ones as `name/2`, `name/3`...
+def kept(driver: Driver, name: String, leases: List[Jobs.Lease]) -> Handled
+  held = driver.held
+  for position in 0...leases.size
+    held = held.put(lease_name(name, position), leases[position])
+  end
+
+  Handled(driver: driver.with(held: held), reply: "ok #{leases.map(->(lease) { lease_text(lease) }).join(", ")}")
+end
+
+def lease_name(name: String, position: Int) -> String
+  return name if position == 0
+
+  "#{name}/#{position + 1}"
+end
+
+def lease_text(lease: Jobs.Lease) -> String
   text = String.from_bytes(lease.job.payload).unwrap_or("?")
-  Handled(driver: driver.with(held: driver.held.put(name, lease)), reply: "ok #{text} attempt #{lease.job.attempt}")
+  case lease.job.last_error
+    some(why) -> "#{text} attempt #{lease.job.attempt} last_error #{why}"
+    none -> "#{text} attempt #{lease.job.attempt}"
+  end
 end
 
 def with_lease(driver: Driver, name: String, run: Fn[Jobs.Lease, Result[Void]]) -> Handled
@@ -199,7 +229,14 @@ end
 
 def retry(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
   at_ms = driver.clock.now.call() + req.number
-  with_lease(driver, req.name, ->(lease) { Jobs.nack(backend, lease, Jobs.Nack.Retry(Jobs.Later(at_ms: at_ms))) })
+  later = Jobs.Later(at_ms: at_ms, error: why(req.text))
+  with_lease(driver, req.name, ->(lease) { Jobs.nack(backend, lease, Jobs.Nack.Retry(later)) })
+end
+
+def why(text: String) -> Optional[String]
+  return none if text == ""
+
+  some(text)
 end
 
 def release(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
@@ -232,8 +269,11 @@ end
 
 # A fetch that waits: it runs in a task of the driver until `wait_end`.
 def wait(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
-  fetch_args = Jobs.Fetch(queue: req.queue, lease_ms: 60_000, wait_ms: WAIT_FETCH_MS)
+  wait_ms = if_given(req.number, WAIT_FETCH_MS)
+  fetch_args = Jobs.Fetch(queue: req.queue, lease_ms: 60_000, wait_ms: wait_ms)
   task = Task.spawn do Jobs.fetch(backend, fetch_args) end
+  # The fetch is parked before the next request, so the waiting fetches keep the order of their steps.
+  Task.sleep(PARK_MS)
   Handled(driver: driver.with(waiting: driver.waiting.put(req.name, task)), reply: "ok")
 end
 
@@ -264,21 +304,40 @@ def waited_text(driver: Driver, name: String, result: Result[List[Jobs.Lease]]) 
   case result
     error(e) -> Handled(driver: driver, reply: failure(e))
     ok(found) if found.empty? -> Handled(driver: driver, reply: "ok none")
-    ok(found) -> kept(driver, name, found[0])
+    ok(found) -> kept(driver, name, found)
   end
 end
 
 def drain(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
-  plan = Jobs.Drain(queue: req.queue, due: due_of(req.kind), clock: some(driver.clock))
+  plan = Jobs.Drain(
+    queue: req.queue,
+    due: due_of(req.kind),
+    max_runs: if_given(req.number, DRAIN_RUNS),
+    clock: clock_for(driver, req.kind),
+  )
+
   drained = Jobs.drain(backend, plan) do |job| behave(job) end
   answer(driver, drained, ->(d) { "done #{d.done} retried #{d.retried} dead #{d.dead}" })
 end
 
 def due_of(kind: String) -> Jobs.Due
   case kind
-    "all" -> Jobs.Due.All
-    _ -> Jobs.Due.Ready
+    "ready" -> Jobs.Due.Ready
+    _ -> Jobs.Due.All
   end
+end
+
+def clock_for(driver: Driver, kind: String) -> Optional[Jobs.Clock]
+  return none if kind == "all without clock"
+
+  some(driver.clock)
+end
+
+# The number of a request, or the default when the request has none.
+def if_given(value: Int, default: Int) -> Int
+  return default if value == 0
+
+  value
 end
 
 def behave(job: Jobs.Job) -> Result[Void]
@@ -292,5 +351,5 @@ def behave(job: Jobs.Job) -> Result[Void]
 end
 
 def stress(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
-  Handled(driver: driver, reply: Stress.run(backend, driver.clock, req.number, req.wait))
+  Handled(driver: driver, reply: Stress.run(backend, driver.clock, req.number, req.wait, req.wait_ms))
 end

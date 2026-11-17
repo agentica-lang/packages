@@ -36,9 +36,15 @@ def main() -> Void
     BDD.step("I fetch a job of {string} as {string}, leased for {int} ms") do |ctx, args|
       ask(ctx, Request(op: "fetch", queue: args[0], name: args[1], number: args[2].to_i!))
     end,
+    BDD.step("I fetch {int} jobs of {string} as {string}") do |ctx, args|
+      ask(ctx, Request(op: "fetch", queue: args[1], name: args[2], number: LEASE_MS, max: args[0].to_i!))
+    end,
     BDD.step("I ack {string}") do |ctx, args| ask(ctx, Request(op: "ack", name: args[0])) end,
     BDD.step("I retry {string} in {int} ms") do |ctx, args|
       ask(ctx, Request(op: "retry", name: args[0], number: args[1].to_i!))
+    end,
+    BDD.step("I retry {string} in {int} ms, with the error {string}") do |ctx, args|
+      ask(ctx, Request(op: "retry", name: args[0], number: args[1].to_i!, text: args[2]))
     end,
     BDD.step("I release {string}") do |ctx, args| ask(ctx, Request(op: "release", name: args[0])) end,
     BDD.step("I kill {string}") do |ctx, args| ask(ctx, Request(op: "kill", name: args[0])) end,
@@ -51,15 +57,30 @@ def main() -> Void
     BDD.step("a fetch of {string} starts to wait as {string}") do |ctx, args|
       ask(ctx, Request(op: "wait", queue: args[0], name: args[1]))
     end,
+    BDD.step("a fetch of {string} starts to wait as {string} for {int} ms") do |ctx, args|
+      ask(ctx, Request(op: "wait", queue: args[0], name: args[1], number: args[2].to_i!))
+    end,
+    BDD.step("the fetch {string} ends") do |ctx, args| ask(ctx, Request(op: "wait_end", name: args[0])) end,
     BDD.step("the clock moves {int} ms at a time until the fetch {string} ends") do |ctx, args|
       ask(ctx, Request(op: "wait_end", name: args[1], number: args[0].to_i!))
     end,
     BDD.step("I drain {string}") do |ctx, args| ask(ctx, Request(op: "drain", queue: args[0], kind: "ready")) end,
+    BDD.step("I drain {string}, at most {int} jobs") do |ctx, args|
+      ask(ctx, Request(op: "drain", queue: args[0], kind: "ready", number: args[1].to_i!))
+    end,
+    BDD.step("I drain {string}, with the jobs that wait for a time, and no clock") do |ctx, args|
+      ask(ctx, Request(op: "drain", queue: args[0], kind: "all without clock"))
+    end,
     BDD.step("I drain {string}, with the jobs that wait for a time") do |ctx, args|
       ask(ctx, Request(op: "drain", queue: args[0], kind: "all"))
     end,
     BDD.step("{int} consumers work off {int} jobs of one queue while producers add them") do |ctx, args|
       ask(ctx, Request(op: "stress", number: args[0].to_i!, wait: args[1].to_i!))
+    end,
+    BDD.step(
+      "{int} consumers that wait {int} ms work off {int} jobs of one queue while producers add them",
+    ) do |ctx, args|
+      ask(ctx, Request(op: "stress", number: args[0].to_i!, wait_ms: args[1].to_i!, wait: args[2].to_i!))
     end,
     BDD.step("the memory backend answers like the model on {int} random calls from seed {int}") do |ctx, args|
       agree_with_model(ctx, args[0].to_i!, args[1].to_i!)

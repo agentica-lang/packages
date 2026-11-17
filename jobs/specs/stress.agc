@@ -4,16 +4,19 @@
 ## come back for the next round. The run checks that:
 ## - no job runs twice at the same time (a counter of the runs of each job never goes above 1);
 ## - every job runs at least once, and is acked in the end (none is lost);
-## - a dropped job ran again, with a higher attempt.
+## - a dropped job ran again, and was acked with a higher attempt.
+##
+## With a `wait_ms` the consumers fetch with a wait, so many fetches are parked at once and compete for each job.
 
 import Jobs from "../jobs"
 
 ## Runs the stress and gives `ok`, or what the backend got wrong.
-def run(backend: Jobs.Backend, clock: Jobs.Clock, consumers: Int, jobs: Int) -> String
+def run(backend: Jobs.Backend, clock: Jobs.Clock, consumers: Int, jobs: Int, wait_ms: Int) -> String
   running: ATS[String, Int] = ATS.new()
   acked: ATS[String, Int] = ATS.new()
+  dropped: ATS[String, Int] = ATS.new()
   problems: ATS[String, Int] = ATS.new()
-  work = Work(backend: backend, running: running, acked: acked, problems: problems)
+  work = Work(backend: backend, running: running, acked: acked, dropped: dropped, problems: problems, wait_ms: wait_ms)
   rounds = 0
   while rounds < MAX_ROUNDS and not finished?(backend, jobs, acked)
     play(work, rounds == 0, consumers, jobs)
@@ -37,7 +40,9 @@ struct Work
   backend: Jobs.Backend
   running: ATS[String, Int]
   acked: ATS[String, Int]
+  dropped: ATS[String, Int]
   problems: ATS[String, Int]
+  wait_ms: Int
 end
 
 struct Shift
@@ -105,7 +110,7 @@ end
 def consume(work: Work, producing: ATS[String, Int], me: Int) -> Void
   idle = false
   while not idle
-    case Jobs.fetch(work.backend, Jobs.Fetch(queue: QUEUE, lease_ms: LEASE_MS))
+    case Jobs.fetch(work.backend, Jobs.Fetch(queue: QUEUE, lease_ms: LEASE_MS, wait_ms: work.wait_ms))
       error(_) -> problem(work, "a fetch failed")
       ok(leases) if leases.empty? -> idle = producing.get("left").unwrap_or(0) == 0
       ok(leases) -> handle(work, leases[0], me)
@@ -128,7 +133,10 @@ def handle(work: Work, lease: Jobs.Lease, me: Int) -> Void
 
   Task.sleep(0)
   _ = work.running.add(id, -1)
-  return if dropped?(lease, me)
+  if dropped?(lease, me)
+    work.dropped.put(id, 1)
+    return
+  end
 
   case Jobs.ack(work.backend, lease)
     ok(_) -> work.acked.put(id, lease.job.attempt)
@@ -141,6 +149,16 @@ def dropped?(lease: Jobs.Lease, me: Int) -> Bool
 end
 
 def verdict(work: Work, jobs: Int, rounds: Int) -> String
+  for id in work.dropped.keys
+    if work.acked.get(id).unwrap_or(0) < 2
+      problem(work, "the dropped job #{id} was not acked with a higher attempt")
+    end
+  end
+
+  if work.dropped.size == 0
+    problem(work, "no job was dropped")
+  end
+
   return "ok" if work.problems.size == 0 and work.acked.size == jobs
 
   "#{work.acked.size} of #{jobs} jobs acked after #{rounds} rounds; problems: #{work.problems.to_map}"

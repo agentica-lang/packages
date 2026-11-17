@@ -91,11 +91,14 @@ end
 
 ## The options of the memory backend. `max_jobs` is how many jobs may be live (ready, scheduled or leased) at once;
 ## past it `enqueue` fails with `jobs.full`. `max_dead` is how many dead jobs are kept; the oldest is dropped. `clock`
-## gives Unix ms, and defaults to the wall clock.
+## gives Unix ms, and defaults to the wall clock. `fetch_timeout_ms` is the longest a caller waits for a fetch, its
+## `wait_ms` included (none: that `wait_ms` and 10 s more); a caller that gave up leaves its fetch parked, and the jobs
+## that the fetch would have got stay in the queue.
 struct MemoryOptions
   max_jobs: Int = 10_000
   max_dead: Int = 1_000
   clock: Optional[Fn[Int]] = none
+  fetch_timeout_ms: Optional[Int] = none
 end
 
 ## `Ready` runs the jobs whose time has come; `All` also runs the ones that wait for a time, moving the manual clock of

@@ -33,6 +33,21 @@ Feature: Jobs.drain
     And I drain "q", with the jobs that wait for a time
     Then the reply is "done 1 retried 3 dead 1"
 
+  Scenario: A drain stops after max_runs jobs
+    Given a memory backend on a manual clock
+    When I enqueue "ok" into "q"
+    And I enqueue "ok" into "q"
+    And I drain "q", at most 1 jobs
+    Then the reply is "done 1 retried 0 dead 0"
+    When I ask for the counts of "q"
+    Then the reply is "ready 1 scheduled 0 leased 0 dead 0"
+
+  Scenario: Draining the jobs that wait for a time needs the clock that the backend follows
+    Given a memory backend on a manual clock
+    When I enqueue "ok" into "q"
+    And I drain "q", with the jobs that wait for a time, and no clock
+    Then the reply is "error argument"
+
   Scenario: A job that is not due is left alone
     Given a memory backend on a manual clock
     When I enqueue "ok" into "q" with:

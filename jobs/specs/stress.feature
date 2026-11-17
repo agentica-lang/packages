@@ -9,6 +9,11 @@ Feature: Many consumers on one queue
     When 16 consumers work off 400 jobs of one queue while producers add them
     Then the reply is "ok"
 
+  Scenario: 16 consumers that wait for jobs compete for them and none is lost or run twice at once
+    Given a memory backend on a manual clock
+    When 16 consumers that wait 200 ms work off 400 jobs of one queue while producers add them
+    Then the reply is "ok"
+
   Scenario: A single consumer works off the same jobs
     Given a memory backend on a manual clock
     When 1 consumers work off 400 jobs of one queue while producers add them

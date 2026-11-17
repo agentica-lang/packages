@@ -1,6 +1,6 @@
 Feature: The memory backend
-  The memory backend keeps its jobs in one actor, so its limits and its clock are its own rules. The contract that every
-  backend shares is in conformance.feature. The clock is manual: a step moves it, and no step sleeps.
+  The memory backend keeps its jobs in one actor: its limits, its clock and the fetches that wait are its own rules. The
+  clock is manual unless a scenario says it is the wall clock: a step moves it, and no step sleeps.
 
   Scenario: A job is delivered, acked and gone
     Given a memory backend on a manual clock
@@ -97,6 +97,87 @@ Feature: The memory backend
     And the clock moves 3600000 ms at a time until the fetch "w" ends
     Then the reply is "ok none"
 
+  Scenario: Fetches that wait are served oldest first, and the one behind a served fetch is served next
+    Given a memory backend on a manual clock
+    When a fetch of "q" starts to wait as "first"
+    And a fetch of "q" starts to wait as "second"
+    And I enqueue "one" into "q"
+    And the fetch "first" ends
+    Then the reply is "ok one attempt 1"
+    When I enqueue "two" into "q"
+    And the fetch "second" ends
+    Then the reply is "ok two attempt 1"
+
+  Scenario: Fetches that wait end in the order of their deadlines, each at its own time
+    Given a memory backend on a manual clock
+    When a fetch of "q" starts to wait as "late" for 300000 ms
+    And a fetch of "q" starts to wait as "soon" for 100000 ms
+    And a fetch of "q" starts to wait as "middle" for 200000 ms
+    And the clock moves 100000 ms
+    And the fetch "soon" ends
+    Then the reply is "ok none"
+    When I enqueue "x" into "q"
+    And the fetch "late" ends
+    Then the reply is "ok x attempt 1"
+    When I ack "late"
+    And the clock moves 100000 ms
+    And the fetch "middle" ends
+    Then the reply is "ok none"
+
+  Scenario: A fetch that waits ends at its wait_ms of real time, on a clock that nobody moves
+    Given a memory backend on a manual clock
+    When a fetch of "q" starts to wait as "w" for 300 ms
+    And the fetch "w" ends
+    Then the reply is "ok none"
+
+  Scenario: A fetch that waits on the wall clock gets a job that comes before its time
+    Given a memory backend on the wall clock
+    When a fetch of "q" starts to wait as "w" for 5000 ms
+    And I enqueue "in time" into "q"
+    And the fetch "w" ends
+    Then the reply is "ok in time attempt 1"
+
+  Scenario: A job that a caller that gave up would have got stays in the queue, and its attempt is not counted
+    Given a memory backend on a manual clock with:
+      | setting          | value |
+      | fetch_timeout_ms | 200   |
+    When a fetch of "q" starts to wait as "w"
+    And the fetch "w" ends
+    Then the reply is "error jobs.timeout"
+    When I enqueue "x" into "q"
+    And I ask for the counts of "q"
+    Then the reply is "ready 1 scheduled 0 leased 0 dead 0"
+    When I fetch a job of "q" as "a"
+    Then the reply is "ok x attempt 1"
+
+  Scenario: A retry gives its error to the next delivery
+    Given a memory backend on a manual clock
+    When I enqueue "a" into "q"
+    And I fetch a job of "q" as "a"
+    And I retry "a" in 0 ms, with the error "boom"
+    And I fetch a job of "q" as "b"
+    Then the reply is "ok a attempt 2 last_error boom"
+
+  Scenario: A fetch can take several jobs, and each has its own lease
+    Given a memory backend on a manual clock
+    When I enqueue the jobs "a,b,c" into "q" in one batch
+    And I fetch 2 jobs of "q" as "x"
+    Then the reply is "ok a attempt 1, b attempt 1"
+    When I ack "x/2"
+    And I ask for the counts of "q"
+    Then the reply is "ready 1 scheduled 0 leased 1 dead 0"
+
+  Scenario Outline: A memory backend with an option that cannot work is refused
+    Given a memory backend on a manual clock with:
+      | setting   | value   |
+      | <setting> | <value> |
+    Then the reply is "error argument"
+
+    Examples:
+      | setting  | value |
+      | max_jobs | 0     |
+      | max_dead | -1    |
+
   Scenario: The wall clock runs the jobs that are due now
     Given a memory backend on the wall clock
     When I enqueue "now" into "q"
@@ -123,3 +204,18 @@ Feature: The memory backend
       | 3    |
       | 4    |
       | 5    |
+      | 6    |
+      | 7    |
+      | 8    |
+      | 9    |
+      | 10   |
+      | 11   |
+      | 12   |
+      | 13   |
+      | 14   |
+      | 15   |
+      | 16   |
+      | 17   |
+      | 18   |
+      | 19   |
+      | 20   |
