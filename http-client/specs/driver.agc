@@ -9,7 +9,7 @@ import {Request} from "protocol"
 private
 
 # The peers are programs of their own, so that they share nothing with the client under test.
-PEERS = {"server": "fixtures/server.agc", "raw": "fixtures/raw_peer.agc"}
+PEERS = {"server": "fixtures/server.agc", "tls_server": "fixtures/server.agc", "raw": "fixtures/raw_peer.agc"}
 PEER_START_MS = 60_000
 WAIT_MS = 30_000
 QUIET_MS = 500
@@ -36,6 +36,7 @@ struct Driver
   running: Map[String, Running]
   outcomes: Map[String, Outcome]
   stop: Channel[Bool]
+  asked: ATS[String, Int]
 end
 
 struct Handled
@@ -45,7 +46,18 @@ end
 
 def main() -> Void
   stop: Channel[Bool] = Channel.new(1)
-  driver = Driver(peers: {}, processes: {}, seen: {}, client: none, running: {}, outcomes: {}, stop: stop)
+  asked: ATS[String, Int] = ATS.new()
+  driver = Driver(
+    peers: {},
+    processes: {},
+    seen: {},
+    client: none,
+    running: {},
+    outcomes: {},
+    stop: stop,
+    asked: asked,
+  )
+
   line = IO.gets
   while line.ok?
     handled = handle(driver, line.unwrap_or(""))
@@ -85,6 +97,14 @@ def run(driver: Driver, req: Request) -> Handled
       TCP.close_listener(listener)
       done(driver.with(peers: driver.peers.put(req.name, address)))
     "read" -> read_requests(driver, req)
+    "asked" ->
+      times = driver.asked.to_map.values.sum
+      if times == req.number
+        done(driver)
+      else
+        failed(driver, "the resolver was asked #{times} times")
+      end
+
     "read_only" ->
       handled = read_requests(driver, req)
       if handled.reply == Protocol.OK
@@ -114,6 +134,10 @@ def failed(driver: Driver, text: String) -> Handled = Handled(driver: driver, re
 def start_peer(driver: Driver, req: Request) -> Handled
   program = PEERS.get(req.kind).unwrap_or("")
   script = req.text.split("\n").select { |line| not line.strip.empty? }
+  if req.kind == "tls_server"
+    script = ["tls"]
+  end
+
   agentica = System.env("HTTP_CLIENT_AGENTICA").unwrap_or("agentica")
   case Process.spawn(agentica, [program] + script)
     ok(peer) ->
@@ -134,12 +158,24 @@ def make_client(driver: Driver, req: Request) -> Handled
   base = driver.peers.get(req.name).unwrap_or("")
   settings: Map[String, Int] = {}
   headers: List[HTTP.Header] = []
+  names: Map[String, List[String]] = {}
+  tls: Optional[TLS.Context] = none
   for row in req.table.drop(1)
     if row[0] == "header"
       headers = headers.push(header(row[1]))
+    elsif row[0] == "resolve"
+      pair = row[1].split("=")
+      names = names.put(pair[0], pair[1].split(","))
+    elsif row[0] == "ca"
+      tls = some(TLS.client_context(TLS.ClientOptions(ca_file: row[1])).unwrap!)
     else
       settings = settings.put(row[0], row[1].to_i!)
     end
+  end
+
+  resolver: Optional[Fn[String, Result[List[String]]]] = none
+  if not names.empty?
+    resolver = some(resolver_of(names, driver.asked))
   end
 
   made = HttpClient.new(
@@ -156,11 +192,28 @@ def make_client(driver: Driver, req: Request) -> Handled
     pool_size: settings.get("pool_size").unwrap_or(10),
     pool_timeout_ms: settings.get("pool_timeout_ms").unwrap_or(5_000),
     idle_ms: settings.get("idle_ms").unwrap_or(30_000),
+    resolver: resolver,
+    dns_cache_ms: settings.get("dns_cache_ms").unwrap_or(10_000),
+    public_only: settings.get("public_only").unwrap_or(0) == 1,
+    tls: tls,
   )
 
   case made
     ok(client) -> done(driver.with(client: some(client)))
     error(e) -> failed(driver, "the client was not made: #{e.message}")
+  end
+end
+
+# A resolver that knows only `names` and counts each question in `asked`.
+def resolver_of(names: Map[String, List[String]], asked: ATS[String, Int]) -> Fn[String, Result[List[String]]]
+  ->(host) { answer(names, asked, host) }
+end
+
+def answer(names: Map[String, List[String]], asked: ATS[String, Int], host: String) -> Result[List[String]]
+  _ = asked.add(host, 1)
+  case names.get(host)
+    some(addresses) -> ok(addresses)
+    none -> error("network: host not found: #{host}", kind: "net.host_not_found")
   end
 end
 
@@ -289,7 +342,8 @@ end
 def addressed(driver: Driver, text: String) -> String
   done_text = text
   for name in driver.peers.keys
-    done_text = done_text.replace("{#{name}}", driver.peers.get(name).unwrap_or(""))
+    address = driver.peers.get(name).unwrap_or("")
+    done_text = done_text.replace("{#{name}}", address).replace("{#{name}:port}", address.split(":").last)
   end
 
   done_text

@@ -111,6 +111,7 @@ def connect(link: Link.Link, call: Call) -> Result[Held]
   wait = try next_wait(call, call.connect_timeout_ms, "timeout.connect")
   case Link.connect(link, wait.ms)
     ok(held) -> ok(held)
+    error(e) if e.is_a?("http_client") -> error(e)
     error(e) if e.is_a?("net.timeout") -> failure("connecting to #{call.target.origin} timed out", wait.kind, some(e))
     error(e) -> failure("cannot connect to #{call.target.origin}", "network", some(e))
   end

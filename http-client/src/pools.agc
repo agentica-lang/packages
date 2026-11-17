@@ -3,6 +3,7 @@
 ## a request asks it for the pool of its origin. A pool that no request wanted for `timeout_ms` and `idle_ms` has no
 ## request left and no connection worth keeping: the manager closes it, and the next request starts a new one.
 
+import Dial from "dial"
 import HTTP from "std/http"
 import Link from "link"
 import Pool from "pkg/pool/pool"
@@ -16,6 +17,7 @@ struct Settings
   idle_ms: Int
   health_ms: Int
   options: HTTP.ClientOptions
+  dialer: Dial.Dialer
 end
 
 ## The manager of the pools of a client.
@@ -205,6 +207,6 @@ def shut(pool: OriginPool, drain_ms: Int) -> Result[Void]
 end
 
 def start_pool(settings: Settings, origin: String) -> Result[OriginPool]
-  config = Link.Origin(url: origin, options: settings.options)
+  config = Link.Origin(url: origin, options: settings.options, dialer: settings.dialer)
   Pool.start(Link.spec(config, settings.size, settings.wait_ms, settings.idle_ms, settings.health_ms))
 end

@@ -7,13 +7,15 @@
 ## Making a link never connects, so the wait for a pooled connection is only the wait for a free slot; the request
 ## that gets an empty slot asks its link task to connect.
 
+import Dial from "dial"
 import HTTP from "std/http"
 import Pool from "pkg/pool/pool"
 
-## The origin of a pool, and the options (proxy, TLS) its connections are opened with.
+## The origin of a pool, the options (proxy, TLS) its connections are opened with, and how its host is resolved.
 struct Origin
   url: String
   options: HTTP.ClientOptions
+  dialer: Dial.Dialer
 end
 
 ## A connection that a request borrows, and when it expires (monotonic ms, 0 for never), from the
@@ -215,7 +217,7 @@ def obey(origin: Origin, slot: Slot, order: Order) -> Slot
 end
 
 def open(origin: Origin, wait_ms: Int) -> Result[Held]
-  conn = try HTTP.start(origin.url, origin.options.with(timeout_ms: wait_ms))
+  conn = try Dial.connect(origin.dialer, origin.url, origin.options, wait_ms)
   ok(Held(conn: conn, expires_at: 0))
 end
 

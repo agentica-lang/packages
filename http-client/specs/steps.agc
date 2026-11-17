@@ -15,6 +15,12 @@ def main() -> Void
     BDD.step("the server {string} listens") do |ctx, args|
       send(ctx, Request(op: "peer", name: args[0], kind: "server"))
     end,
+    BDD.step("the TLS server {string} listens") do |ctx, args|
+      send(ctx, Request(op: "peer", name: args[0], kind: "tls_server"))
+    end,
+    BDD.step("the resolver was asked {int} times") do |ctx, args|
+      send(ctx, Request(op: "asked", number: args[0].to_i!))
+    end,
     BDD.step("the raw peer {string} listens with the script:") do |ctx, args|
       send(ctx, Request(op: "peer", name: args[0], kind: "raw", text: BDD.doc_string(ctx)))
     end,

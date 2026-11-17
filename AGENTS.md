@@ -29,19 +29,21 @@ bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub,
                      not depend on it; fixtures/turbo_vectors.json is what Rails signed), bench/fanout.py measures
                      memory per socket and the hub's fan-out by hand, bench/hub_fanout.agc the hub alone (steps and
                      time per frame)
-http-client/         an HTTP/1.1 client: http_client.agc is the API (new, request, get, post, ..., close);
-                     src/url.agc the URL against base_url (pure), src/pools.agc the manager task that starts one
-                     `pool` per origin (and closes those unused), src/link.agc the resource of a pool (a slot for
-                     one keep-alive connection, run by a task of its own that opens and owns the connection and
-                     watches it while idle), src/exchange.agc one request on a link (connect, send, read, the
-                     timeouts, when a connection is reused), src/retry.agc when and after how long a request goes
-                     again, src/redirect.agc the next hop of a redirect; specs/ has the features (client, retries,
-                     redirects), whose program under test is specs/driver.agc (a client, its requests and the
-                     peers, driven by JSON lines from specs/steps.agc); the peers are programs the driver starts: fixtures/server.agc (the server of
-                     std/http, for the normal flows) and fixtures/raw_peer.agc (a TCP server that reads requests by
-                     hand and writes the answers of a script: slow heads, stalls, closes, and which connection served
-                     each); test/ the unit tests (URL, retry policy, redirects, link, a client's checks) and a
-                     reuse test (many requests on one connection, no task left after close)
+http-client/         an HTTP/1.1 client: http_client.agc is the API (new, request, get, post, ..., close); src/url.agc
+                     the URL against base_url (pure), src/pools.agc the manager task that starts one `pool` per origin
+                     (and closes those unused), src/link.agc the resource of a pool (a slot for one keep-alive
+                     connection, run by a task of its own that opens and owns the connection and watches it while idle),
+                     src/exchange.agc one request on a link (connect, send, read, the timeouts, when a connection is
+                     reused), src/retry.agc when and after how long a request goes again, src/redirect.agc the next hop
+                     of a redirect, src/dial.agc the opt-in dial path (the resolver, its cache and the connect to a
+                     checked address), src/address.agc which IP addresses are public (pure); specs/ has the features
+                     (client, retries, redirects, dns), whose program under test is specs/driver.agc (a client, its
+                     requests and the peers, driven by JSON lines from specs/steps.agc); the peers are programs the
+                     driver starts: fixtures/server.agc (the server of std/http, for the normal flows, or over HTTPS
+                     with fixtures/tls/, a certificate for api.test and its CA) and fixtures/raw_peer.agc (a TCP server
+                     that reads requests by hand and writes the answers of a script: slow heads, stalls, closes, and
+                     which connection served each); test/ the unit tests (URL, addresses, retry policy, redirects, link,
+                     a client's checks) and a reuse test (many requests on one connection, no task left after close)
 native-gen/          the C header of an `extern module` block: cli.agc is the command, native_gen.agc the API
                      (`header`), src/header.agc the text of the header, src/codecs.agc the C values of the structs and
                      enums, src/collections.agc the Lists, Maps, Optionals and Results, src/types.agc the type
