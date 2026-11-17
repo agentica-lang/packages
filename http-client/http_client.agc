@@ -44,10 +44,11 @@ end
 ## `pool_size` connections per origin, `pool_timeout_ms` of wait for one, and `idle_ms` after which an unused one is
 ## closed. An idempotent request is tried again at most `max_retries` times in all, after `retry_delay_ms` doubled on
 ## each try (at most `max_retry_delay_ms`); at most `max_redirects` redirects are followed (0 gives the redirect back).
-## `timeout_ms` bounds the whole call, its tries, waits and redirects included. A host is resolved by `resolver` (the
-## system's `DNS.lookup` when none, or one such as `DNS.lookuper` of the dns package), whose answers are kept
-## `dns_cache_ms` (0 for none); `public_only` refuses every address that is not public (loopback, private, link-local
-## and the other special ranges), checked on the address the connection goes to. `proxy` (`http://host:port`) and
+## `timeout_ms` bounds the whole call, its tries, waits and redirects included. With a `resolver` (one such as
+## `DNS.lookuper` of the dns package) or `public_only`, the client resolves a host itself (with the system's
+## `DNS.lookup` when no resolver is given) and keeps the answers `dns_cache_ms` (0 for none); `public_only` refuses
+## every address that is not public (loopback, private, link-local and the other special ranges), checked on the
+## address the connection goes to. With neither, std/http resolves the host and `dns_cache_ms` has no effect. `proxy` (`http://host:port`) and
 ## `tls` (a client `TLS.Context`, the system trust when none) are those of std/http's `ClientOptions`; a proxy
 ## resolves the host itself, so it is refused with a `resolver` or `public_only`. Make the client in a task that lives
 ## as long as it does, such as `main`.
@@ -80,6 +81,7 @@ def new(
 
   cache: ATS[String, Dial.Resolved] = ATS.new()
   dialer = Dial.Dialer(
+    own: resolver.some? or public_only,
     resolver: resolver.unwrap_or(&system_lookup),
     cache: cache,
     cache_ms: dns_cache_ms,

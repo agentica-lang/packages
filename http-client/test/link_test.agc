@@ -23,7 +23,7 @@ end
 def test_a_link_whose_task_crashed_fails_at_once_and_its_pool_replaces_it() -> Result[Void]
   link = crashed_link()
   cache: ATS[String, Dial.Resolved] = ATS.new()
-  dialer = Dial.Dialer(resolver: &no_address, cache: cache, cache_ms: 0, public_only: false)
+  dialer = Dial.Dialer(own: false, resolver: &no_address, cache: cache, cache_ms: 0, public_only: false)
   origin = Link.Origin(url: "http://127.0.0.1:9", options: HTTP.ClientOptions(), dialer: dialer)
   spec = Link.spec(origin, 1, 100, 1_000, 1_000)
   began = Time.monotonic_ms()

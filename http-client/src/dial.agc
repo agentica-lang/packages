@@ -1,11 +1,15 @@
-## How a link reaches its origin: the host resolved by the client's resolver (through its DNS cache), the addresses
-## kept by the `public_only` filter, then a connection to one of them, tried in order.
+## How a link reaches its origin. A client with neither `resolver` nor `public_only` connects through std/http as it
+## is, which resolves the host itself. One with either takes the dial path: the host resolved by the client's resolver
+## (through its DNS cache), the addresses kept by the `public_only` filter, then a connection to one of them, tried in
+## order.
 ##
 ## The connection goes to the very address that was checked, so the filter holds against a DNS answer that changes
 ## (rebinding). Until std/http has `connect_to` (agentica#1556), `connect` opens a plain connection to the address
 ## with `HTTP.start`, upgrades it to TLS for `https` with the URL host as the server name (SNI and certificate check),
-## and sets the URL host on the connection, which std/http writes in `Host`. With `connect_to` this becomes
-## `HTTP.start(url, options.with(connect_to: address))`, and the rest of the module stays.
+## and sets the URL host on the connection, which std/http writes in `Host`: it relies on the `host`, `socket` and
+## `scheme` fields of std's `Connection`, which is why the dial path is opt-in. With `connect_to` this becomes
+## `HTTP.start(url, options.with(connect_to: address))`, and the rest of the module stays; the dial path may then be
+## the default for every client.
 ##
 ## A host that is an IP literal is not resolved: std/http connects to it as it is, after the filter. With a `proxy`
 ## the proxy reaches the host, so the client refuses a resolver or `public_only` together with one.
@@ -14,9 +18,10 @@ import Address from "address"
 import HTTP from "std/http"
 import Url from "url"
 
-## How a client resolves and filters: the resolver, the cache it shares between its links (`cache_ms` 0 for none),
-## and whether only public addresses may be reached.
+## How a client resolves and filters: whether it takes the dial path at all (`own`), the resolver, the cache it
+## shares between its links (`cache_ms` 0 for none), and whether only public addresses may be reached.
 struct Dialer
+  own: Bool
   resolver: Fn[String, Result[List[String]]]
   cache: ATS[String, Resolved]
   cache_ms: Int
@@ -33,7 +38,7 @@ end
 ## `http_client.dns` error, and one with no address the filter keeps an `http_client.address_denied` error; the
 ## errors of the connect itself are std/http's.
 def connect(dialer: Dialer, url: String, options: HTTP.ClientOptions, wait_ms: Int) -> Result[HTTP.Connection]
-  return HTTP.start(url, options.with(timeout_ms: wait_ms)) if not options.proxy.empty?
+  return HTTP.start(url, options.with(timeout_ms: wait_ms)) if not dialer.own or not options.proxy.empty?
 
   target = try Url.resolve("", url)
   host = Address.unbracketed(target.host)

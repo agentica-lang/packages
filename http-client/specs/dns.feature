@@ -1,8 +1,9 @@
 Feature: Resolving and filtering addresses
-  The client resolves a host with its resolver (the system's by default), keeps the answers `dns_cache_ms`, and with
-  `public_only` refuses every address that is not public. The connection goes to the address it checked, and the URL
-  host still names the server: in `Host`, and for TLS in the server name and the certificate check. The resolver of
-  these scenarios knows only the names of its `resolve` rows. The TLS server has a certificate for `api.test` alone.
+  By default std/http resolves the host. With a `resolver` or `public_only`, the client resolves it itself (with the
+  system's resolver when none is given), keeps the answers `dns_cache_ms`, and with `public_only` refuses every
+  address that is not public. The connection goes to the address it checked, and the URL host still names the server:
+  in `Host`, and for TLS in the server name and the certificate check. The resolver of these scenarios knows only the
+  names of its `resolve` rows. The TLS server has a certificate for `api.test` alone.
 
   Scenario: A name goes to the address its resolver gives, and Host names the host
     Given the server "a" listens
@@ -13,7 +14,7 @@ Feature: Resolving and filtering addresses
     Then "r" has the body "api.test:{a:port}"
     And the resolver was asked 1 times
 
-  Scenario: Without a resolver the system one resolves the host
+  Scenario: Without a resolver or public_only std/http resolves the host
     Given the server "a" listens
     And a client of "a" with:
       | setting | value |
@@ -97,4 +98,12 @@ Feature: Resolving and filtering addresses
       | setting     | value |
       | public_only | 1     |
     When "r" sends "GET" to "{a}/hello"
+    Then "r" fails with the kind "http_client.address_denied"
+
+  Scenario: public_only alone resolves with the system resolver and refuses localhost
+    Given the server "a" listens
+    And a client of "a" with:
+      | setting     | value |
+      | public_only | 1     |
+    When "r" sends "GET" to "http://localhost:{a:port}/hello"
     Then "r" fails with the kind "http_client.address_denied"
