@@ -49,6 +49,13 @@ http-client/         an HTTP/1.1 client: http_client.agc is the API (new, reques
                      that reads requests by hand and writes the answers of a script: slow heads, stalls, closes, and
                      which connection served each); test/ the unit tests (URL, addresses, retry policy, redirects, link,
                      a client's checks) and a reuse test (many requests on one connection, no task left after close)
+jobs/                jobs to produce and consume, with the backend swappable: jobs.agc is the API (the `Backend`
+                     record, enqueue, fetch, ack, nack, extend, counts, close, discard, json, decode, manual_clock);
+                     src/types.agc the records, src/store.agc the jobs of a memory backend and their rules (pure: each
+                     function takes the store and the time), src/settle.agc what happens to a job after its handler
+                     (the backoff, ack, retry or dead); test/jobs_test.agc and test/store_test.agc have the unit tests
+                     of the helpers and of what no call shows (the reason of a dead job, the delivery that is taken
+                     back)
 native-gen/          the C header of an `extern module` block: cli.agc is the command, native_gen.agc the API
                      (`header`), src/header.agc the text of the header, src/codecs.agc the C values of the structs and
                      enums, src/collections.agc the Lists, Maps, Optionals and Results, src/types.agc the type
