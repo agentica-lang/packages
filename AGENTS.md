@@ -13,7 +13,10 @@ tools/               doc_examples.agc: runs the `agentica` blocks of the docs (t
                      fixtures/doc_examples: a page where it must fail; agentica-for.sh: the binary of a package's
                      Agentica version (the rules are in its header)
 .github/workflows/   ci.yml: the changed packages grouped by Agentica version, one job per version that installs that
-                     release and runs the five targets; pages.yml: the site (pinned Hugo and Dart Sass)
+                     release and runs the five targets; pages.yml: the site (pinned Hugo and Dart Sass);
+                     native-prebuilt.yml: the reusable workflow that builds a package's native module on the five
+                     targets and uploads its prebuilt files (site/content/native-prebuilt.md), which
+                     native-prebuilt-test.yml runs with dry-run on .github/native-prebuilt-example
 .github/scripts/     changed-packages.sh: which packages a list of changed files marks (the rules are in its header)
 site/                the Hugo site: hugo.toml, content/_index.md (the home), layouts/ (overrides: the home's list of
                      packages, and links written as files that fail when missing); the look, the layouts and the

@@ -1,0 +1,5 @@
+# The module that .github/workflows/native-prebuilt-test.yml builds with the reusable workflow native-prebuilt.yml.
+name = "native-prebuilt-example"
+
+[native.twice]
+build = { sources = ["native/twice.c"] }
