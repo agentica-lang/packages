@@ -24,6 +24,28 @@ def resolve(base_url: String, url: String) -> Result[Target]
   parse(join(base_url, url))
 end
 
+## The target of a `Location` read against the URL of the response that sent it (RFC 3986, section 5.2): an absolute
+## URL, `//host/path`, an absolute path, a `?query`, or a path relative to the folder of `base`, with its `.` and `..`
+## segments taken out. A fragment is dropped. Another scheme or a bad URL is an `argument` error.
+def follow(base: Target, location: String) -> Result[Target]
+  reference = before(location.strip, "#")
+  return parse(reference) if absolute?(reference)
+  return parse("#{base.scheme}:#{reference}") if reference.start_with?("//")
+
+  base_path = before(base.target, "?")
+  return ok(base) if reference.empty?
+  return ok(base.with(target: "#{base_path}#{reference}")) if reference.start_with?("?")
+
+  path = before(reference, "?")
+  query = reference.slice(path.length, reference.length - path.length)
+  if not path.start_with?("/")
+    segments = base_path.split("/")
+    path = "#{segments.take(segments.size - 1).join("/")}/#{path}"
+  end
+
+  ok(base.with(target: "#{without_dots(path)}#{query}"))
+end
+
 ## The URL written back whole, as the response names it.
 def to_s(target: Target) -> String = "#{target.origin}#{target.target}"
 
@@ -118,6 +140,25 @@ def port_number(text: String) -> Result[Int]
     ok(port) if port >= 1 and port <= MAX_PORT and text.length <= 5 -> ok(port)
     _ -> argument("bad port #{text}")
   end
+end
+
+# `path` (from `/`) without its `.` and `..` segments; a path that ends in one of them ends with `/`.
+def without_dots(path: String) -> String
+  pieces = path.split("/").drop(1)
+  kept: List[String] = []
+  for piece in pieces
+    if piece == ".."
+      kept = kept.take([kept.size - 1, 0].max.unwrap!)
+    elsif piece != "."
+      kept = kept.push(piece)
+    end
+  end
+
+  if not pieces.empty? and (pieces.last == "." or pieces.last == "..")
+    kept = kept.push("")
+  end
+
+  "/#{kept.join("/")}"
 end
 
 # The part of `text` before the first `mark`, or all of it.

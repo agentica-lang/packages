@@ -149,6 +149,10 @@ def make_client(driver: Driver, req: Request) -> Handled
     read_timeout_ms: settings.get("read_timeout_ms").unwrap_or(30_000),
     timeout_ms: settings.get("timeout_ms").unwrap_or(60_000),
     max_body_bytes: settings.get("max_body_bytes").unwrap_or(16_777_216),
+    retries: settings.get("retries").unwrap_or(0),
+    retry_delay_ms: settings.get("retry_delay_ms").unwrap_or(10),
+    max_retry_delay_ms: settings.get("max_retry_delay_ms").unwrap_or(30_000),
+    max_redirects: settings.get("max_redirects").unwrap_or(10),
     pool_size: settings.get("pool_size").unwrap_or(10),
     pool_timeout_ms: settings.get("pool_timeout_ms").unwrap_or(5_000),
     idle_ms: settings.get("idle_ms").unwrap_or(30_000),
@@ -219,10 +223,7 @@ end
 
 def start_request(driver: Driver, req: Request) -> Result[Running]
   client = try driver.client.to_result("no client")
-  url = req.text
-  for name in driver.peers.keys
-    url = url.replace("{#{name}}", driver.peers.get(name).unwrap_or(""))
-  end
+  url = addressed(driver, req.text)
 
   headers: List[HTTP.Header] = []
   if not req.header.empty?
@@ -243,7 +244,7 @@ end
 
 def expect(driver: Driver, req: Request) -> Handled
   case driver.outcomes.get(req.name)
-    some(outcome) -> Handled(driver: driver, reply: check(req, outcome))
+    some(outcome) -> Handled(driver: driver, reply: check(req.with(text: addressed(driver, req.text)), outcome))
     none -> failed(driver, "no outcome for #{req.name}")
   end
 end
@@ -251,6 +252,12 @@ end
 def check(req: Request, outcome: Outcome) -> String
   if req.op == "expect_within"
     return Protocol.OK if outcome.elapsed < req.number
+
+    return "#{req.name} took #{outcome.elapsed} ms"
+  end
+
+  if req.op == "expect_after"
+    return Protocol.OK if outcome.elapsed >= req.number
 
     return "#{req.name} took #{outcome.elapsed} ms"
   end
@@ -267,12 +274,23 @@ def check_response(req: Request, response: HttpClient.Response) -> String
     "expect_status" if response.status == req.number -> Protocol.OK
     "expect_body" if String.from_bytes(response.body).unwrap_or("") == req.text -> Protocol.OK
     "expect_header" if has_header?(response, header(req.text)) -> Protocol.OK
+    "expect_url" if response.url == req.text -> Protocol.OK
     _ ->
       text = String.from_bytes(response.body).unwrap_or("<binary>")
-      "#{req.name}: #{response.status} #{response.headers} #{text}"
+      "#{req.name}: #{response.status} #{response.url} #{response.headers} #{text}"
   end
 end
 
 def has_header?(response: HttpClient.Response, wanted: HTTP.Header) -> Bool
   HTTP.header_values(response.headers, wanted.name).include?(wanted.value)
+end
+
+# `text` with `{name}` replaced by the address of the peer `name`.
+def addressed(driver: Driver, text: String) -> String
+  done_text = text
+  for name in driver.peers.keys
+    done_text = done_text.replace("{#{name}}", driver.peers.get(name).unwrap_or(""))
+  end
+
+  done_text
 end

@@ -59,6 +59,12 @@ def main() -> Void
     BDD.step("{string} fails with the kind {string}") do |ctx, args|
       send(ctx, Request(op: "expect_kind", name: args[0], text: args[1]))
     end,
+    BDD.step("{string} ended at {string}") do |ctx, args|
+      send(ctx, Request(op: "expect_url", name: args[0], text: args[1]))
+    end,
+    BDD.step("{string} took at least {int} ms") do |ctx, args|
+      send(ctx, Request(op: "expect_after", name: args[0], number: args[1].to_i!))
+    end,
     BDD.step("{string} ended within {int} ms") do |ctx, args|
       send(ctx, Request(op: "expect_within", name: args[0], number: args[1].to_i!))
     end,

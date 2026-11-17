@@ -10,6 +10,8 @@
 ##   until-close BODY       a 200 with no length: BODY, then the connection closes
 ##   stray MS BODY          a 200, then MS later a byte out of turn on the idle connection
 ##   continue-close         a `100 Continue`, then the connection closes
+##   drop                   no answer: the connection closes
+##   after CODE SECONDS     CODE with `Retry-After: SECONDS` and an empty body
 ##   keep-alive SECONDS BODY  a 200 with `Keep-Alive: timeout=SECONDS`
 ##   slow-head MS BODY      waits MS before it writes the head of a 200
 ##   stall MS BODY          writes the head of a 200 and half of BODY, waits MS, then writes the rest
@@ -149,12 +151,19 @@ def write_answer(socket: TCP.Socket, number: Int, request: Request, answer: List
     "slow-head" -> wait_ms = answer[1].to_i!
     "stall" -> wait_ms = answer[1].to_i!
     "stray" -> wait_ms = answer[1].to_i!
+    "after" ->
+      status = answer[1].to_i!
+      extra = "retry-after: #{answer[2]}"
+      declared = ""
+      body = ""
     _ -> nil
   end
 
   if op == "slow-head"
     Task.sleep(wait_ms)
   end
+
+  return false if op == "drop"
 
   if op == "continue-close"
     _ = TCP.send(socket, "HTTP/1.1 100 Continue#{CRLF}#{CRLF}", STEP_MS)
