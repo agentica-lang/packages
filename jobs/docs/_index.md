@@ -67,7 +67,7 @@ Jobs.manual_clock() -> Clock
 
 - `NewJob` has the `queue`, the `payload`, `max_attempts` (5), `run_at_ms` (0 is now; a later Unix time schedules the job), a `unique_key` and a `meta` map. To schedule a job there is no second function: set `run_at_ms`.
 - `Fetch` has the `queue`, `max` jobs (1), `lease_ms` (30 s) and `wait_ms` (0: do not wait). No job in time gives `ok([])`.
-- `Nack` says how a job goes back: `Retry(at_ms)` runs it again at that time, `Release` gives it back now without counting the attempt, and `Dead(reason)` keeps it as dead and never runs it again.
+- `Nack` says how a job goes back: `Retry(Later(at_ms: ..., error: ...))` runs it again at that time, and the handler of the next delivery reads the `error` as the `last_error` of its job, `Release` gives it back now without counting the attempt, and `Dead(reason)` keeps it as dead and never runs it again.
 - `Counts` has the `ready`, `scheduled`, `leased` and `dead` jobs of a queue.
 
 The pages: [the contract](contract.md) says what every backend guarantees and how to write one, and [testing](testing.md) is for the tests of an app.

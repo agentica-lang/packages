@@ -168,8 +168,9 @@ end
 def nack(store: Store, held: Types.Lease, how: Types.Nack) -> Result[Store]
   entry = try owned(store, held)
   case how
-    Types.Nack.Retry(_) if entry.job.attempt >= entry.job.max_attempts -> ok(kill(store, entry, "no attempts left"))
-    Types.Nack.Retry(at_ms) -> ok(requeue(store, entry, at_ms))
+    Types.Nack.Retry(later) if entry.job.attempt >= entry.job.max_attempts ->
+      ok(kill(store, entry, later.error.unwrap_or("no attempts left")))
+    Types.Nack.Retry(later) -> ok(requeue(store, failed(entry, later.error), later.at_ms))
     Types.Nack.Release ->
       ok(requeue(store, entry.with(job: entry.job.with(attempt: entry.job.attempt - 1)), entry.job.run_at_ms))
     Types.Nack.Dead(reason) -> ok(kill(store, entry, reason))
@@ -372,6 +373,14 @@ def kill(store: Store, entry: Entry, reason: String) -> Store
   gone = finish(store, entry)
   buried = gone.dead.push(entry.with(job: entry.job.with(last_error: some(reason)), lease: none))
   gone.with(dead: buried.drop((buried.size - store.max_dead).clamp(0, buried.size)))
+end
+
+# A failed delivery keeps what went wrong, for the next one; a retry that says nothing leaves the last reason.
+def failed(entry: Entry, reason: Optional[String]) -> Entry
+  case reason
+    some(_) -> entry.with(job: entry.job.with(last_error: reason))
+    none -> entry
+  end
 end
 
 def requeue(store: Store, entry: Entry, run_at_ms: Int) -> Store
