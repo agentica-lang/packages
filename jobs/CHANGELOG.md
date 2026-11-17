@@ -13,5 +13,5 @@ Needs Agentica 0.34.0.
 - `Jobs.memory`: a backend in one actor, with leases that run out, retries, scheduled jobs, unique keys held until the job is done, a fetch that waits, `max_jobs` (`jobs.full`) and `max_dead`; acked jobs are deleted and dead jobs are kept.
 - `Jobs.Caps` and `Backend.caps`: `has_clock` says whether a backend follows an injected clock.
 - The conformance suite, `jobs/conformance`: 24 cases that every backend must pass, run with `Conformance.run_all` on a fresh backend and a manual clock each. A backend that cannot follow an injected clock runs the time cases on the real clock.
-- `Jobs.manual_clock`, a clock that moves only when told, and `Jobs.drain`, which runs the jobs of a queue in the caller for the tests of an app.
+- `Jobs.manual_clock`, a clock that moves only when told, and `Jobs.drain`, which runs the jobs of a queue in the caller for the tests of an app. It logs (`std/logger`) a job that failed and will run again as a `warning`, and a dead job as an `err`, with the queue, the id and the attempt.
 - `Jobs.Later`: a `Retry` says when the job runs again and what went wrong, and the next delivery shows it as `last_error`.

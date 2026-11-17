@@ -63,7 +63,7 @@ jobs/                jobs to produce and consume, with the backend swappable: jo
                      lines, specs/protocol.agc, specs/steps.agc), specs/stress.agc the consumers and producers, and
                      specs/model.agc an independent model of the contract (plain lists, written from docs/contract.md,
                      nothing of src/) that the memory feature compares the backend with on random calls;
-                     test/jobs_test.agc, test/store_test.agc (the guarantees of the store: leases, expiry, unique
+                     test/jobs_test.agc, test/drain_test.agc (what a drain logs), test/store_test.agc (the guarantees of the store: leases, expiry, unique
                      keys, batches, the last error) and test/model_test.agc have the unit tests
 native-gen/          the C header of an `extern module` block: cli.agc is the command, native_gen.agc the API
                      (`header`), src/header.agc the text of the header, src/codecs.agc the C values of the structs and

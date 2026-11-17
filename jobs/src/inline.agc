@@ -1,5 +1,6 @@
 ## `Jobs.drain`: the jobs of a queue run one at a time in the caller, for an app's tests.
 
+import Logger from "std/logger"
 import Settle from "settle"
 import Types from "types"
 
@@ -24,6 +25,7 @@ def drain(backend: Types.Backend, options: Types.Drain, handle: Fn[Types.Job, Re
     held = leases[0]
     verdict = Settle.settle(now.call(), held.job, handle.call(held.job), backoff)
     try Settle.apply(backend, held, verdict)
+    log_verdict(held.job, verdict)
     drained = tally(drained, verdict)
     runs += 1
   end
@@ -70,6 +72,16 @@ def waiting?(backend: Types.Backend, options: Types.Drain) -> Result[Bool]
   end
 
   ok(true)
+end
+
+# A job that fails is a recovered problem while it will run again, and a failure that is given up when it is dead.
+def log_verdict(job: Types.Job, verdict: Settle.Verdict) -> Void
+  fields = {"queue": job.queue, "id": job.id, "attempt": job.attempt.to_s}
+  case verdict
+    Settle.Verdict.Back(Types.Nack.Retry(_)) -> Logger.warning("job failed, it will run again", fields)
+    Settle.Verdict.Back(Types.Nack.Dead(_)) -> Logger.err("job dead", fields)
+    _ -> nil
+  end
 end
 
 def tally(drained: Types.Drained, verdict: Settle.Verdict) -> Types.Drained

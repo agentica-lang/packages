@@ -6,7 +6,7 @@ weight: 3
 
 An app test enqueues jobs, drains the queue in the test itself, and checks what the handlers did. The memory backend stands in for the backend of production, and a manual clock moves time by hand, so nothing sleeps.
 
-`Jobs.manual_clock()` gives a `Clock`: `now` reads it and `advance(ms)` moves it. Pass `now` as the `clock` of the backend. `Jobs.drain` runs the jobs of a queue one at a time in the caller, with the rules of a pipeline: `ok` acks the job, `Jobs.discard(reason)` makes it dead, and any other error runs it again after a backoff, or makes it dead on its last attempt. It gives how many jobs were acked, put back and made dead.
+`Jobs.manual_clock()` gives a `Clock`: `now` reads it and `advance(ms)` moves it. Pass `now` as the `clock` of the backend. `Jobs.drain` runs the jobs of a queue one at a time in the caller, with the rules of a pipeline: `ok` acks the job, `Jobs.discard(message)` makes it dead, and any other error runs it again after a backoff, or makes it dead on its last attempt. It gives how many jobs were acked, put back and made dead, and logs with `std/logger` a job that will run again (a `warning`) and a dead one (an `err`), with the queue, the id and the attempt.
 
 With `due: Jobs.Due.Ready` (the default) it runs the jobs whose time has come. With `Jobs.Due.All` it also runs the ones that wait for a time, moving the manual clock that you give it in `clock`, so a retry runs too.
 
