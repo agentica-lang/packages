@@ -105,6 +105,16 @@ Feature: Streamed bodies and server-sent events
     Then "r" has the body "after"
     And "r" came on connection 3
 
+  Scenario: A stream has one reader of events: a second events call is an argument error
+    Given the raw peer "a" listens with the script:
+      """
+      repeat 10 20 data:_x\n\n
+      """
+    And a client of "a" with:
+      | setting | value |
+    When "e" reads the events of "/events" a second time
+    Then "e" fails with the kind "argument"
+
   Scenario: Closing the events of a stream of comments closes its body, and its connection goes
     Given the raw peer "a" listens with the script:
       """
