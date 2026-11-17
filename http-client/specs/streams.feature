@@ -3,19 +3,17 @@ Feature: Streamed bodies and server-sent events
   server sends them. `HttpClient.get_events` reads such a body as server-sent events. The raw peer's `chunks` answer
   sends each piece as a chunk, a while apart.
 
-  Scenario: The pieces of a body come as the server sends them, and the connection is kept after the end
+  Scenario: The first piece of a body comes before the server sends the rest, and the connection is kept after the end
     Given the raw peer "a" listens with the script:
       """
-      chunks 300 one,two,three
+      hold one,two,three
       ok after
       """
     And a client of "a" with:
       | setting | value |
-    When "s" streams "GET" from "/s"
+    When "s" streams "GET" from "/s" and releases the raw peer "a" after the first piece
     And "r" sends "GET" to "/r"
     Then "s" has the body "onetwothree"
-    And the first piece of "s" came within 250 ms
-    And "s" took at least 600 ms
     And "s" came on connection 1
     And "r" came on connection 1
 

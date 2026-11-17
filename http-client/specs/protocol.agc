@@ -22,8 +22,9 @@ OK = "ok"
 ##   `a` and `{a:port}` its port alone, body, json: JSON text, param: `name=value`, header: `name: value`) send a
 ##   request and wait for it, or let it run; `wait` (name) waits for one that runs, and `cancel` (name) cancels its
 ##   task, which stays after the request until then;
-## - `stream` and `stream_first` (name, kind: the method, text: the URL, header) stream a response and read its
-##   pieces to the end, or close it after the first one, and `events` (name, text: the URL, header) reads the
+## - `stream`, `stream_first` and `stream_released` (name, kind: the method, text: the URL, header, and release: the
+##   raw peer that `stream_released` asks to go on, with a request to `/release`, once the first piece came) stream a
+##   response and read its pieces to the end, or close it after the first one, and `events` (name, text: the URL, header) reads the
 ##   server-sent events of a `GET`; `stream` and `events` wait `number` ms before they read and `pace` ms after each
 ##   piece or event, `events_closed` closes the events after `number` ms, `events_abandoned` (kind: `cancel` or
 ##   `crash`) reads them in a task that is cancelled after `number` ms or crashes after the first event, and
@@ -49,6 +50,7 @@ struct Request
   pace: Int = 0
   json: String = ""
   param: String = ""
+  release: String = ""
   number: Int = 0
   table: List[List[String]] = []
 end
