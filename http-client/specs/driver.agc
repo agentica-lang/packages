@@ -96,6 +96,7 @@ def run(driver: Driver, req: Request) -> Handled
     "send" -> send(driver, req)
     "stream" -> send(driver, req)
     "stream_first" -> send(driver, req)
+    "stream_released" -> send(driver, req)
     "events" -> send(driver, req)
     "events_closed" -> send(driver, req)
     "events_twice" -> send(driver, req)
@@ -358,8 +359,12 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
       "stream" ->
         streamed = HttpClient.stream(client, req.kind, url, headers: headers)
         pause(req.number)
-        done = read_stream(streamed, began, false, req.pace)
-      "stream_first" -> done = read_stream(HttpClient.stream(client, req.kind, url, headers: headers), began, true, 0)
+        done = read_stream(streamed, began, false, req.pace, "")
+      "stream_first" ->
+        done = read_stream(HttpClient.stream(client, req.kind, url, headers: headers), began, true, 0, "")
+      "stream_released" ->
+        released = HttpClient.stream(client, req.kind, url, headers: headers)
+        done = read_stream(released, began, false, 0, addressed(driver, "{#{req.release}}/release"))
       "events" ->
         events = HttpClient.get_events(client, url, headers: headers)
         pause(req.number)
@@ -414,7 +419,13 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
 end
 
 # Reads the pieces of the stream to its end, or only its first one before it closes the body.
-def read_stream(streamed: Result[HttpClient.Stream], began: Int, first_only: Bool, pace_ms: Int) -> Outcome
+def read_stream(
+  streamed: Result[HttpClient.Stream],
+  began: Int,
+  first_only: Bool,
+  pace_ms: Int,
+  release_url: String,
+) -> Outcome
   case streamed
     ok(stream) ->
       pieces: List[Bytes] = []
@@ -428,6 +439,9 @@ def read_stream(streamed: Result[HttpClient.Stream], began: Int, first_only: Boo
 
         if first == 0
           first = Time.monotonic_ms() - began
+          if not release_url.empty?
+            _ = HTTP.get_response(release_url)
+          end
         end
 
         pause(pace_ms)

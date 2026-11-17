@@ -48,6 +48,11 @@ def main() -> Void
     BDD.step("{string} streams {string} from {string} and closes it after the first piece") do |ctx, args|
       send(ctx, Request(op: "stream_first", name: args[0], kind: args[1], text: args[2]))
     end,
+    BDD.step(
+      "{string} streams {string} from {string} and releases the raw peer {string} after the first piece",
+    ) do |ctx, args|
+      send(ctx, Request(op: "stream_released", name: args[0], kind: args[1], text: args[2], release: args[3]))
+    end,
     BDD.step("{string} reads the events of {string}") do |ctx, args|
       send(ctx, Request(op: "events", name: args[0], text: args[1]))
     end,
