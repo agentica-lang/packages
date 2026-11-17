@@ -1,6 +1,6 @@
 ---
 title: The contract
-description: What every jobs backend guarantees, the records of the contract, and how to prove a backend with the conformance suite.
+description: What every jobs backend guarantees, and the records of the contract.
 weight: 2
 ---
 
