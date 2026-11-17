@@ -288,7 +288,6 @@ jobs:
           # CC and EXTRA_ARGS are split at spaces, as Agentica splits CC.
           # shellcheck disable=SC2086
           set -- $CC
-          "$@" --version
           echo "$@" "${args[@]}" $EXTRA_ARGS
           "$@" "${args[@]}" $EXTRA_ARGS
           output=".native-prebuilt/out/$(cat "$plan/output-$SYSTEM")"
