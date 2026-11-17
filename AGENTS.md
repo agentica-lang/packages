@@ -49,6 +49,19 @@ http-client/         an HTTP/1.1 client: http_client.agc is the API (new, reques
                      that reads requests by hand and writes the answers of a script: slow heads, stalls, closes, and
                      which connection served each); test/ the unit tests (URL, addresses, retry policy, redirects, link,
                      a client's checks) and a reuse test (many requests on one connection, no task left after close)
+jobs/                jobs to produce and consume, with the backend swappable: jobs.agc is the API (the `Backend` record, enqueue,
+                     fetch, ack, nack, extend, counts, close, discard, json, decode, memory, drain, manual_clock),
+                     conformance.agc the suite that every backend passes (run_all); src/types.agc the records,
+                     src/store.agc the jobs of the memory backend and their rules (pure: each function takes the store
+                     and the time), src/memory.agc the actor that owns a store (the calls, the fetches that wait, the
+                     close), src/settle.agc what happens to a job after its handler (shared by `Jobs.drain` and the
+                     later pipeline), src/inline.agc `Jobs.drain`, src/cases.agc the cases of the suite; specs/ has the
+                     features (conformance: the suite on the memory backend, on a broken one and on one with no clock;
+                     memory, drain, stress: many consumers and producers), whose program under test is specs/driver.agc
+                     (a memory backend and a manual clock that a step program drives by JSON lines, specs/protocol.agc,
+                     specs/steps.agc), specs/stress.agc the consumers and producers, and fixtures/model.py an
+                     independent model of the contract that the memory feature compares the backend with on random
+                     calls; test/jobs_test.agc has the unit tests of the helpers
 native-gen/          the C header of an `extern module` block: cli.agc is the command, native_gen.agc the API
                      (`header`), src/header.agc the text of the header, src/codecs.agc the C values of the structs and
                      enums, src/collections.agc the Lists, Maps, Optionals and Results, src/types.agc the type
