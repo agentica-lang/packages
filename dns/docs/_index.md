@@ -56,6 +56,8 @@ end
 | `DNS.addresses(resolver, name, type)` | the A or AAAA records of a name, with their TTLs, the CNAMEs followed |
 | `DNS.query(resolver, name, type)` | the first good answer, as the server said it |
 | `DNS.system_servers(path)` | the nameservers of a `resolv.conf`, only when you ask |
+| `DNS.parse_resolv_conf(text)` | the same for the text of a `resolv.conf` that you have read |
+| `DNS.same_name?(a, b)` | whether two names are the same for DNS (no case, a final dot is the same) |
 | `DNS.encode_query(id, name, type)` and `DNS.decode(bytes)` | the codec |
 
 The [nameservers](nameservers.md) page has the transports, the order, the timeouts and the checks. The [errors](errors.md) page has the kinds. The [codec](codec.md) page has the wire format and its limits.

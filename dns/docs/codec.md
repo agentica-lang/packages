@@ -4,49 +4,6 @@ description: The codec of RFC 1035 of the dns package, which writes a query and 
 weight: 4
 ---
 
-## Nameservers
-
-`DNS.Server.Tcp(host, port)` is DNS over TCP, and `DNS.Server.Tls(host, port, name)` is DNS over TLS: `name` is what the certificate must have, `""` for the host. `DNS.Server.Https(url)` is DNS over HTTPS: the `https://` URL of the server, to which each query goes as a POST of the type `application/dns-message` with the id 0 (RFC 8484); an answer must be a 200 of that type. A resolver has 1 to 16 servers and asks them in order, each with `timeout_ms` for the whole exchange (connect, send and read). `Options.tls` is the client context for the TLS and HTTPS servers, the system trust by default; the system trust is loaded only when a `Tls` server needs it.
-
-A query that fails goes on to the next server: a timeout, a broken connection, SERVFAIL, REFUSED, a cut answer, an answer that is not for the query. When all fail, the error of the last one is the result. NXDOMAIN ends the search, since the next server would say the same.
-
-Every answer is checked: its id is the one of the query, it has the QR flag, and its question is the one asked (the names compare without case, as `DNS.same_name?(a, b)` does: `example.com.` is `EXAMPLE.com`).
-
-## The nameservers of the system
-
-Nothing reads `/etc/resolv.conf` unless you ask. `DNS.system_servers()` gives its `nameserver` lines (at most 3, as the C library reads them) as `Tcp` servers on port 53, and `DNS.system_servers(path)` reads another file. Not every system resolver answers over TCP, so use it only when yours does.
-
-```agentica {mode="check"}
-import DNS from "pkg/dns/dns"
-
-def main() -> Void
-  servers = DNS.system_servers().unwrap!
-  resolver = DNS.resolver(servers).unwrap!
-  puts(DNS.lookup(resolver, "example.com").unwrap!)
-end
-```
-
-## Time
-
-Each nameserver has `timeout_ms` for a query. A query takes at most that for each server, `lookup` asks A and then AAAA (and skips AAAA when the name does not exist), and each CNAME that leaves an answer adds a query, so a `lookup` takes at most `2 * (max_cnames + 1) * servers * timeout_ms`.
-
-## Errors
-
-An `error` has a kind, tested with `e.is_a?("dns.nxdomain")`:
-
-| Kind | When |
-|---|---|
-| `dns.nxdomain` | the name does not exist |
-| `dns.servfail` | SERVFAIL, or any other code of the server |
-| `dns.refused` | the server refused the query |
-| `dns.truncated` | the answer has the TC flag |
-| `dns.timeout` | no answer in time |
-| `dns.network` | the connection or the TLS handshake failed, ended before the whole answer, or an HTTPS server did not answer 200 |
-| `dns.mismatch` | the answer is not for the query |
-| `dns.malformed` | bytes that break RFC 1035, an HTTPS answer of another type, or an argument that does not fit |
-| `dns.cname_limit` | more CNAMEs than `max_cnames` (8 by default), or a loop |
-| `dns.no_address` | `lookup` of a name that has no address |
-
 ## The codec
 
 `DNS.encode_query` writes a query and `DNS.decode` reads any message, here the query itself:

@@ -19,5 +19,4 @@ An `error` of this package has a kind, tested with `e.is_a?("dns.nxdomain")`. Th
 | `dns.cname_limit` | more CNAMEs than `max_cnames` (8 by default), or a loop |
 | `dns.no_address` | `lookup` of a name that has no address |
 
-
-A query that ends in one of these kinds other than `dns.nxdomain` has been tried on every server first (see [nameservers](nameservers.md)), and the kind is the one of the last server.
+A query that ends in `dns.servfail`, `dns.refused`, `dns.truncated`, `dns.timeout`, `dns.network`, `dns.mismatch` or `dns.malformed` (from an answer) has been tried on every server first (see [nameservers](nameservers.md)), and the kind is the one of the last server. `dns.nxdomain` ends the search at the first server that says it. `dns.cname_limit` and `dns.no_address` come from the answers that a server gave, and an argument that does not fit is a `dns.malformed` before any server is asked.
