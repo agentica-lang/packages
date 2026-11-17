@@ -176,5 +176,6 @@ yaml/                a YAML 1.2 parser: yaml.agc is the API (parse, parse_all, O
   that another one uses: it makes a fresh one (native-gen copies a fixture package before it builds it).
 - Each package has its own CHANGELOG.md; a user-visible change adds a line under its `## [Unreleased]`; a release renames
   it to `## [X.Y.Z] - DATE` and tags `PACKAGE-X.Y.Z`.
-- Release: a tag `PACKAGE-X.Y.Z` on main, made by the owner. A PR never pushes a tag.
+- Release: a tag `PACKAGE-X.Y.Z` on main, made by the owner, or by the coordinator after the owner confirms that
+  release. A PR never pushes a tag.
 - Code style is the one of `agentica-code-guidelines`; a comment says why, not what.
