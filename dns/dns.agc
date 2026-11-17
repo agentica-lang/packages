@@ -100,11 +100,11 @@ end
 ## they came.
 def decode(data: Bytes) -> Result[Types.Message] = Wire.decode(data)
 
-## The nameservers of a `resolv.conf` as `Tcp` servers on port 53, at most 3, in order. It is opt-in: no function reads
-## the file unless you call this one. An `error` when the file cannot be read, and of the kind `dns.malformed` when it
-## has no
-## `nameserver` line. Not every system resolver answers over TCP, so pass the result to `resolver` only when yours
-## does.
+## The nameservers of a `resolv.conf` as `Tcp` servers on port 53, at most 3, in order. Only `nameserver` lines with an
+## IPv4 or IPv6 address are read: a name, a zone address and the lines `search`, `options` and `domain` are not used,
+## so the search list and `ndots` do not apply. It is opt-in: no function reads the file unless you call this one. An
+## `error` when the file cannot be read, and of the kind `dns.malformed` when it has no usable `nameserver` line. Not
+## every system resolver answers over TCP, so pass the result to `resolver` only when yours does.
 def system_servers(path: String = "/etc/resolv.conf") -> Result[List[Types.Server]] = Resolv.read(path)
 
 ## The nameservers of the text of a `resolv.conf`, as `system_servers` reads them.

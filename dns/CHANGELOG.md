@@ -12,3 +12,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Only records of the class IN are addresses or CNAMEs, and an NXDOMAIN answer needs its question.
 - `DNS.Server.Https(url)`: DNS over HTTPS (RFC 8484), a POST of `application/dns-message` with the id 0.
 - `DNS.system_servers` and `DNS.parse_resolv_conf`: the nameservers of a `resolv.conf`, read only when asked.
+- A nameserver of a `resolv.conf` must be an IP address, and a line may end with CR.

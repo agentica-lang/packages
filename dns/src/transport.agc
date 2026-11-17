@@ -35,7 +35,7 @@ def post(url: String, query: Bytes, context: Optional[TLS.Context], deadline: In
   return error("dns: #{url} answered #{response.status}", kind: Types.NETWORK) if response.status != 200
 
   types = HTTP.header_values(response.headers, "content-type")
-  if types.empty? or not types[0].downcase.start_with?(MEDIA_TYPE)
+  if types.empty? or types[0].split(";").first.strip.downcase != MEDIA_TYPE
     return error("dns: #{url} did not answer with #{MEDIA_TYPE}", kind: Types.MALFORMED)
   end
 

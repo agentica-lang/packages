@@ -38,6 +38,7 @@ Feature: Asking nameservers over HTTPS
       | 404    | text/html               | 3c68746d6c3e                                    | dns.network   |
       | 200    | text/html               | ID 8180 0001 0000 0000 0000 QUESTION            | dns.malformed |
       | 200    | -                       | ID 8180 0001 0000 0000 0000 QUESTION            | dns.malformed |
+      | 200    | application/dns-messageXYZ | ID 8180 0001 0000 0000 0000 QUESTION         | dns.malformed |
       | 200    | application/dns-message | 00                                              | dns.malformed |
       | 200    | application/dns-message | OTHERID 8180 0001 0000 0000 0000 QUESTION       | dns.mismatch  |
       | 200    | application/dns-message | ID 8380 0001 0000 0000 0000 QUESTION            | dns.truncated |
