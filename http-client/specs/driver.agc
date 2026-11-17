@@ -355,12 +355,12 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
     case req.op
       "stream" ->
         streamed = HttpClient.stream(client, req.kind, url, headers: headers)
-        Task.sleep(req.number)
+        pause(req.number)
         done = read_stream(streamed, began, false, req.pace)
       "stream_first" -> done = read_stream(HttpClient.stream(client, req.kind, url, headers: headers), began, true, 0)
       "events" ->
         events = HttpClient.get_events(client, url, headers: headers)
-        Task.sleep(req.number)
+        pause(req.number)
         done = read_events(events, began, req.pace)
       "events_closed" ->
         result: Result[HttpClient.Response] = error("no events")
@@ -398,11 +398,11 @@ def read_stream(streamed: Result[HttpClient.Stream], began: Int, first_only: Boo
           error(e) -> return Outcome(result: error(e), elapsed: 0)
         end
 
-        Task.sleep(pace_ms)
-
         if first == 0
           first = Time.monotonic_ms() - began
         end
+
+        pause(pace_ms)
 
         if first_only
           stream.body.close
@@ -424,6 +424,13 @@ def read_stream(streamed: Result[HttpClient.Stream], began: Int, first_only: Boo
   end
 end
 
+# Waits `ms`, or not at all: even a sleep of 0 hands the turn to the other tasks.
+def pause(ms: Int) -> Void
+  if ms > 0
+    Task.sleep(ms)
+  end
+end
+
 def read_events(events: Result[Channel[Result[HttpClient.Event]]], began: Int, pace_ms: Int) -> Outcome
   case events
     ok(channel) ->
@@ -436,11 +443,11 @@ def read_events(events: Result[Channel[Result[HttpClient.Event]]], began: Int, p
           error(e) -> return Outcome(result: error(e), elapsed: 0)
         end
 
-        Task.sleep(pace_ms)
-
         if first == 0
           first = Time.monotonic_ms() - began
         end
+
+        pause(pace_ms)
 
         next_event = channel.recv(WAIT_MS)
       end
