@@ -3,9 +3,11 @@
 ## `Maker` and fails with `failed(outcomes)`, so a backend that moves to a newer `jobs` tag runs the new cases with no
 ## change.
 ##
-## The suite gives each case a fresh backend that follows a manual clock, so no case sleeps. A case that needs a
-## capability the backend lacks (`Caps`) is skipped, and says so in its outcome. Cases that start tasks run in the
-## task that calls the suite, which makes the backend, so the backend stays up while the case runs.
+## The suite gives each case a fresh backend that follows a manual clock, so no case sleeps. A backend that cannot
+## follow an injected clock (`Caps.has_clock` false) gets the real clock instead: its cases sleep, with a unit of time
+## of half a second, and a case only checks what holds a little before and a little after a time. A case that needs a
+## capability the backend lacks (`unique keys`, `extend`) is skipped, and says so in its outcome. Cases that start
+## tasks run in the task that calls the suite, which makes the backend, so the backend stays up while the case runs.
 
 import Cases from "src/cases"
 import Jobs from "jobs"
@@ -48,13 +50,16 @@ end
 
 ## The cases that failed, one line each, with what went wrong; empty when none did.
 def failures(outcomes: List[Outcome]) -> String
-  outcomes.map(->(outcome) { line(outcome) }).filter(->(text) { text != "" }).join("\n")
+  lines = outcomes.map(&line)
+  lines.filter(->(text) { text != "" }).join("\n")
 end
 
 private
 
 CASE_MS = 120_000
 CLOSE_MS = 1_000
+MANUAL_UNIT_MS = 1_000
+REAL_UNIT_MS = 500
 
 def failed?(outcome: Outcome) -> Bool
   case outcome.status
@@ -91,16 +96,22 @@ end
 def run_on(item: Cases.Case, backend: Jobs.Backend, clock: Jobs.Clock) -> Status
   status = case missing(item, backend.caps)
     some(reason) -> Status.Skipped(reason)
-    none -> attempt(item, Cases.Env(backend: backend, clock: clock))
+    none -> attempt(item, environment(backend, clock))
   end
 
   Jobs.close(backend, CLOSE_MS)
   status
 end
 
-def missing(item: Cases.Case, caps: Jobs.Caps) -> Optional[String]
-  return some("the backend has no clock") if item.needs_clock and not caps.has_clock
+# The manual clock, or the real one for a backend that does not follow an injected clock.
+def environment(backend: Jobs.Backend, clock: Jobs.Clock) -> Cases.Env
+  return Cases.Env(backend: backend, clock: clock, exact: true, unit_ms: MANUAL_UNIT_MS) if backend.caps.has_clock
 
+  real = Jobs.Clock(now: &Time.now_ms, advance: ->(ms) { Task.sleep(ms) })
+  Cases.Env(backend: backend, clock: real, exact: false, unit_ms: REAL_UNIT_MS)
+end
+
+def missing(item: Cases.Case, caps: Jobs.Caps) -> Optional[String]
   return some("the backend has no unique keys") if item.needs_unique_keys and not caps.has_unique_keys
 
   return some("the backend cannot extend a lease") if item.needs_extend and not caps.extendable

@@ -26,6 +26,18 @@ Feature: The memory backend
       | unique_key | k     |
     Then the reply is "ok 1 duplicate"
 
+  Scenario: A batch that does not fit adds none of its jobs
+    Given a memory backend on a manual clock with:
+      | setting  | value |
+      | max_jobs | 3     |
+    When I enqueue "a" into "q"
+    And I enqueue the jobs "b,c,d" into "q" in one batch
+    Then the reply is "error jobs.full"
+    When I ask for the counts of "q"
+    Then the reply is "ready 1 scheduled 0 leased 0 dead 0"
+    When I enqueue the jobs "b,c" into "q" in one batch
+    Then the reply is "ok 2,3"
+
   Scenario: A finished job frees its place
     Given a memory backend on a manual clock with:
       | setting  | value |

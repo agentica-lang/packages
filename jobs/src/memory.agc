@@ -2,14 +2,16 @@
 ## first applies the clock to the store, so a lease that ran out is back before the call is served, and a test with a
 ## manual clock needs no sleep.
 ##
-## A fetch that waits for jobs is parked in the state of the actor, with its reply channel. The actor serves it when a
-## job comes or is due, and ends it at its deadline; while one is parked the actor also wakes at least every
-## WAKE_CAP_MS, so a clock that is set by hand, or that jumps, is seen. A caller that gave up while it waited makes
-## `Actor.reply` give `false`, and the jobs go back to their queue.
+## A fetch that waits for jobs is parked in the state of the actor (parked.agc), with its reply channel. The actor
+## serves the waiters of a queue, oldest first, after each call and each wake, and ends one at its deadline; while some
+## are parked it also wakes at the next time a job or a lease is due, and at least every WAKE_CAP_MS, so a clock that
+## is set by hand, or that jumps, is seen. A caller that gave up while it waited makes `Actor.reply` give `false`, and
+## the jobs go back to their queue.
 ##
 ## The actor is a child of the task that calls `start`: make the backend in `main`.
 
 import Actor from "std/actor"
+import Parked from "parked"
 import Store from "store"
 import Types from "types"
 
@@ -18,7 +20,7 @@ def start(options: Types.MemoryOptions) -> Result[Types.Backend]
   try check(options)
   clock = options.clock.unwrap_or(&Time.now_ms)
   behaviour: Actor.Behaviour[State, Msg] = Actor.Behaviour(
-    init: -> { State(store: Store.empty(options.max_jobs, options.max_dead), parked: [], clock: clock) },
+    init: -> { State(store: Store.empty(options.max_jobs, options.max_dead), parked: Parked.empty(), clock: clock) },
     handle: &handle,
     terminate: some(&shutdown),
     timeout: some(Actor.Timeout(after_ms: &wake_in, handle: &wake)),
@@ -39,26 +41,30 @@ MAX_WAIT_MS = 86_400_000
 WAKE_CAP_MS = 100
 CLOSED = "closed"
 
+struct Extension
+  lease: Types.Lease
+  ms: Int
+  reply: Channel[Result[Types.Lease]]
+end
+
 enum Msg
   Enqueue(List[Types.NewJob], Channel[Result[List[Types.Enqueued]]])
   Fetch(Types.Fetch, Channel[Result[List[Types.Lease]]])
   Ack(Types.Lease, Channel[Result[Void]])
   Nack(Types.Lease, Types.Nack, Channel[Result[Void]])
-  Extend(Types.Lease, Int, Channel[Result[Types.Lease]])
+  Extend(Extension)
   Counts(String, Channel[Result[Types.Counts]])
-end
-
-# A fetch that waits: until when (on the clock of the backend) and where to answer.
-struct Waiter
-  fetch: Types.Fetch
-  until_ms: Int
-  reply: Channel[Result[List[Types.Lease]]]
 end
 
 struct State
   store: Store.Store
-  parked: List[Waiter]
+  parked: Parked.Parked
   clock: Fn[Int]
+end
+
+struct Served
+  state: State
+  served: Bool
 end
 
 # What the functions of the backend share: the actor, and whether `close` ran.
@@ -88,7 +94,9 @@ def backend(link: Link) -> Types.Backend
     fetch: ->(fetch) { fetch_jobs(link, fetch) },
     ack: ->(lease) { ask(link, CALL_MS) do |reply| Msg.Ack(lease, reply) end },
     nack: ->(lease, how) { ask(link, CALL_MS) do |reply| Msg.Nack(lease, how, reply) end },
-    extend: ->(lease, ms) { ask(link, CALL_MS) do |reply| Msg.Extend(lease, ms, reply) end },
+    extend: ->(lease, ms) {
+      ask(link, CALL_MS) do |reply| Msg.Extend(Extension(lease: lease, ms: ms, reply: reply)) end
+    },
     counts: ->(queue) { ask(link, CALL_MS) do |reply| Msg.Counts(queue, reply) end },
     close: ->(drain_ms) { close(link, drain_ms) },
   )
@@ -109,15 +117,9 @@ def ask[R](link: Link, wait_ms: Int, make: Fn[Channel[Result[R]], Msg]) -> Resul
   end
 end
 
-# A fetch that waits also ends, with no jobs, when the actor has not answered by then: the actor puts the jobs it has
-# taken back.
 def fetch_jobs(link: Link, fetch: Types.Fetch) -> Result[List[Types.Lease]]
   wait_ms = fetch.wait_ms.clamp(0, MAX_WAIT_MS)
-  answer: Result[List[Types.Lease]] = ask(link, wait_ms + CALL_MS) do |reply| Msg.Fetch(fetch, reply) end
-  case answer
-    error(e) if e.is_a?("jobs.timeout") and wait_ms > 0 -> ok([])
-    _ -> answer
-  end
+  ask(link, wait_ms + CALL_MS) do |reply| Msg.Fetch(fetch, reply) end
 end
 
 def close(link: Link, drain_ms: Int) -> Void
@@ -129,7 +131,10 @@ end
 def handle(state: State, msg: Msg) -> Actor.Step[State]
   now = state.clock.call()
   ticked = state.with(store: Store.tick(state.store, now))
-  Actor.continue(wake_parked(serve(ticked, now, msg), now))
+  # The waiters that were there first are served first, then the call, then the waiters that its change can serve.
+  before = wake_parked(ticked, now)
+  after = wake_parked(serve(before, now, msg), now)
+  Actor.continue(after)
 end
 
 def serve(state: State, now: Int, msg: Msg) -> State
@@ -138,7 +143,7 @@ def serve(state: State, now: Int, msg: Msg) -> State
     Msg.Fetch(fetch, reply) -> serve_fetch(state, now, fetch, reply)
     Msg.Ack(lease, reply) -> serve_ack(state, lease, reply)
     Msg.Nack(lease, how, reply) -> serve_nack(state, lease, how, reply)
-    Msg.Extend(lease, ms, reply) -> serve_extend(state, now, lease, ms, reply)
+    Msg.Extend(extension) -> serve_extend(state, now, extension)
     Msg.Counts(queue, reply) -> reply_with(reply, ok(Store.counts(state.store, now, queue)), state)
   end
 end
@@ -158,10 +163,14 @@ end
 def serve_fetch(state: State, now: Int, fetch: Types.Fetch, reply: Channel[Result[List[Types.Lease]]]) -> State
   case Store.take(state.store, now, fetch)
     error(e) -> reply_with(reply, error(e), state)
-    ok(taken) if taken.leases.empty? and fetch.wait_ms > 0 ->
-      state.with(parked: state.parked.push(Waiter(fetch: fetch, until_ms: now + fetch.wait_ms, reply: reply)))
+    ok(taken) if taken.leases.empty? and fetch.wait_ms > 0 -> park(state, now, fetch, reply)
     ok(taken) -> deliver(state, taken, reply)
   end
+end
+
+def park(state: State, now: Int, fetch: Types.Fetch, reply: Channel[Result[List[Types.Lease]]]) -> State
+  until_ms = now + fetch.wait_ms.clamp(0, MAX_WAIT_MS)
+  state.with(parked: Parked.park(state.parked, fetch, until_ms, reply))
 end
 
 def serve_ack(state: State, lease: Types.Lease, reply: Channel[Result[Void]]) -> State
@@ -178,10 +187,10 @@ def serve_nack(state: State, lease: Types.Lease, how: Types.Nack, reply: Channel
   end
 end
 
-def serve_extend(state: State, now: Int, lease: Types.Lease, ms: Int, reply: Channel[Result[Types.Lease]]) -> State
-  case Store.extend(state.store, now, lease, ms)
-    ok(extended) -> reply_with(reply, ok(extended.lease), state.with(store: extended.store))
-    error(e) -> reply_with(reply, error(e), state)
+def serve_extend(state: State, now: Int, extension: Extension) -> State
+  case Store.extend(state.store, now, extension.lease, extension.ms)
+    ok(extended) -> reply_with(extension.reply, ok(extended.lease), state.with(store: extended.store))
+    error(e) -> reply_with(extension.reply, error(e), state)
   end
 end
 
@@ -201,19 +210,53 @@ def deliver(state: State, taken: Store.Taken, reply: Channel[Result[List[Types.L
   end
 end
 
-# Serves the parked fetches in the order they came: the ones that get jobs, and the ones whose time is up, leave.
+# Serves the waiters of each queue in the order they came, while there are jobs, and ends the ones whose time is up.
 def wake_parked(state: State, now: Int) -> State
   current = state
-  still: List[Waiter] = []
-  for waiter in state.parked
-    case Store.take(current.store, now, waiter.fetch)
-      error(e) -> current = reply_with(waiter.reply, error(e), current)
-      ok(taken) if taken.leases.empty? and waiter.until_ms > now -> still = still.push(waiter)
-      ok(taken) -> current = deliver(current, taken, waiter.reply)
+  for queue in Parked.queues(state.parked)
+    current = serve_queue(current, now, queue)
+  end
+
+  expire(current, now)
+end
+
+def serve_queue(state: State, now: Int, queue: String) -> State
+  current = state
+  going = true
+  while going
+    front = Parked.front(current.parked, queue)
+    current = current.with(parked: front.parked)
+    case front.waiter
+      some(waiter) ->
+        served = serve_waiter(current, now, waiter)
+        current = served.state
+        going = served.served
+      none -> going = false
     end
   end
 
-  current.with(parked: still)
+  current
+end
+
+# The waiter leaves when it gets jobs or an error; one that finds no job stays, and so do the ones behind it.
+def serve_waiter(state: State, now: Int, waiter: Parked.Waiter) -> Served
+  case Store.take(state.store, now, waiter.fetch)
+    error(e) -> Served(state: reply_with(waiter.reply, error(e), gone(state, waiter)), served: true)
+    ok(taken) if taken.leases.empty? -> Served(state: state, served: false)
+    ok(taken) -> Served(state: deliver(gone(state, waiter), taken, waiter.reply), served: true)
+  end
+end
+
+def gone(state: State, waiter: Parked.Waiter) -> State = state.with(parked: Parked.remove(state.parked, waiter.seq))
+
+# A waiter whose time is up gets no jobs.
+def expire(state: State, now: Int) -> State
+  out = Parked.expired(state.parked, now)
+  for waiter in out.waiters
+    _ = Actor.reply(waiter.reply, ok([]))
+  end
+
+  state.with(parked: out.parked)
 end
 
 def wake(state: State) -> Actor.Step[State]
@@ -224,16 +267,20 @@ end
 
 # How long until something may change for a parked fetch: a job due, a lease to expire, or a deadline.
 def wake_in(state: State) -> Optional[Int]
-  return none if state.parked.empty?
+  return none if Parked.empty?(state.parked)
 
   now = state.clock.call()
   times: List[Int] = []
-  for waiter in state.parked
-    times = times.push(waiter.until_ms)
-    case Store.next_due(state.store, waiter.fetch.queue)
+  for queue in Parked.queues(state.parked)
+    case Store.next_due(state.store, queue)
       some(at) -> times = times.push(at)
       none -> nil
     end
+  end
+
+  case Parked.next_deadline(state.parked)
+    some(at) -> times = times.push(at)
+    none -> nil
   end
 
   case times.min
@@ -244,7 +291,7 @@ end
 
 # The actor ends with `close`: the fetches that wait are told.
 def shutdown(state: State) -> Void
-  for waiter in state.parked
+  for waiter in Parked.all(state.parked)
     _ = Actor.reply(waiter.reply, closed_error())
   end
 end

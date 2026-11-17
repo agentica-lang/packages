@@ -4,7 +4,7 @@ Feature: The conformance suite
 
   Scenario: The memory backend passes every contract case
     When the suite runs on the memory backend
-    Then the suite has 20 cases
+    Then the suite has 23 cases
     And no case failed
     And the case "ack removes the job, and a second ack fails" passed
     And the case "eight tasks fetch 200 jobs at once and each job is delivered once" passed
@@ -15,8 +15,26 @@ Feature: The conformance suite
     And the case "a leased job is not fetched again, and comes back when its lease expires" failed
     And the case "a fetch of an empty queue gives no jobs" passed
 
-  Scenario: The suite skips the cases that need a clock when the backend has none
-    When the suite runs on a memory backend that says it has no clock
-    Then the case "a retry hides the job until its time" was skipped
+  Scenario: The suite skips the cases of a capability that the backend lacks
+    When the suite runs on a memory backend that has no unique keys and cannot extend a lease
+    Then the case "a unique key gives a duplicate until the job is acked or dead" was skipped
+    And the case "extend moves the end of the lease, and the job comes back at the new end" was skipped
     And the case "ack removes the job, and a second ack fails" passed
     And no case failed
+
+  Scenario Outline: A backend that does not follow an injected clock runs the cases on time on the real clock
+    Then the case "<case>" passes on a memory backend that reads the real clock
+
+    Examples:
+      | case                                                                              |
+      | a fetch that waits gives no jobs when its time is up                              |
+      | a fetch that waits for a scheduled job gets it when it is due                     |
+      | a leased job is not fetched again, and comes back when its lease expires          |
+      | a late ack, nack or extend of an older delivery changes nothing                   |
+      | an ack, nack or extend after the lease ran out fails, before any other fetch      |
+      | a retry hides the job until its time                                              |
+      | a dead job is never delivered again, and is counted                               |
+      | the expiry of the last attempt makes the job dead                                 |
+      | extend moves the end of the lease, and the job comes back at the new end          |
+      | a job is not delivered before its time                                            |
+      | a unique key stays held through a retry, a release and an expired lease           |

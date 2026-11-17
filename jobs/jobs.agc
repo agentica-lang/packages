@@ -48,7 +48,7 @@ def decode[T](job: Types.Job, codec: Codec[T]) -> Result[T]
   codec.decode(text)
 end
 
-## Leases up to `fetch.max` jobs of a queue, waiting up to `fetch.wait_ms` for the first. No job in time gives
+## Leases up to `options.max` jobs of a queue, waiting up to `options.wait_ms` for the first. No job in time gives
 ## `ok([])`.
 def fetch(backend: Types.Backend, fetch: Types.Fetch) -> Result[List[Types.Lease]] = backend.fetch.call(fetch)
 
@@ -87,8 +87,8 @@ end
 ## Runs the jobs of a queue one at a time in the caller, with the rules of a pipeline: `ok` acks, `Jobs.discard` makes
 ## the job dead, and another error runs it again after a backoff, or makes it dead on its last attempt. For the tests
 ## of an app: enqueue, drain, and check the effects, with no task left running.
-def drain(backend: Types.Backend, drain: Types.Drain, handle: Fn[Types.Job, Result[Void]]) -> Result[Types.Drained]
-  Inline.drain(backend, drain, handle)
+def drain(backend: Types.Backend, options: Types.Drain, handle: Fn[Types.Job, Result[Void]]) -> Result[Types.Drained]
+  Inline.drain(backend, options, handle)
 end
 
 private

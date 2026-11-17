@@ -38,6 +38,9 @@ def main() -> Void
     BDD.step("I enqueue {string} into {string} with:") do |ctx, args|
       ask(ctx, Request(op: "enqueue", text: args[0], queue: args[1], table: BDD.table(ctx)))
     end,
+    BDD.step("I enqueue the jobs {string} into {string} in one batch") do |ctx, args|
+      ask(ctx, Request(op: "enqueue_all", text: args[0], queue: args[1]))
+    end,
     BDD.step("I fetch a job of {string} as {string}") do |ctx, args|
       ask(ctx, Request(op: "fetch", queue: args[0], name: args[1], number: LEASE_MS))
     end,
@@ -77,8 +80,11 @@ def main() -> Void
     BDD.step("the suite runs on a memory backend whose ack never fails") do |ctx, _args|
       run_suite(ctx, &lenient_acks)
     end,
-    BDD.step("the suite runs on a memory backend that says it has no clock") do |ctx, _args|
-      run_suite(ctx, &no_clock)
+    BDD.step("the suite runs on a memory backend that has no unique keys and cannot extend a lease") do |ctx, _args|
+      run_suite(ctx, &limited)
+    end,
+    BDD.step("the case {string} passes on a memory backend that reads the real clock") do |ctx, args|
+      real_clock_case(ctx, args[0])
     end,
     BDD.step("the suite has {int} cases") do |ctx, args| expect_cases(ctx, args[0].to_i!) end,
     BDD.step("no case failed") do |ctx, _args| expect_no_failure(ctx) end,
@@ -113,9 +119,20 @@ def lenient_acks(clock: Fn[Int]) -> Result[Jobs.Backend]
   ok(backend.with(ack: ->(_lease) { ok() }))
 end
 
-def no_clock(clock: Fn[Int]) -> Result[Jobs.Backend]
+def limited(clock: Fn[Int]) -> Result[Jobs.Backend]
   backend = try memory(clock)
+  ok(backend.with(caps: Jobs.Caps(has_unique_keys: false, extendable: false)))
+end
+
+# A memory backend that ignores the clock it is given and reads the wall clock, as a database does.
+def real_clock(_clock: Fn[Int]) -> Result[Jobs.Backend]
+  backend = try Jobs.memory()
   ok(backend.with(caps: Jobs.Caps(has_clock: false)))
+end
+
+def real_clock_case(ctx: BDD.Context, name: String) -> BDD.Context
+  result = Conformance.run(name, &real_clock)
+  BDD.assert(ctx, result.ok?, "the case #{name} on the real clock: #{result}")
 end
 
 # The outcomes are kept as lines: `passed`, `skipped` or `failed`, a tab, the name of the case.

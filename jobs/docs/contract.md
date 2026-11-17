@@ -53,7 +53,7 @@ Conformance.failed(outcomes: List[Outcome]) -> List[String]
 Conformance.failures(outcomes: List[Outcome]) -> String
 ```
 
-A backend package has one scenario, "the backend passes every contract case", that runs `run_all` and fails with `Conformance.failures`. A backend that moves to a newer `jobs` tag runs the new cases with no change to its specs. A case that needs a capability the backend lacks (`Caps.has_clock`, `has_unique_keys`, `extendable`) is skipped, and its outcome says so.
+A backend package has one scenario, "the backend passes every contract case", that runs `run_all` and fails with `Conformance.failures`. A backend that moves to a newer `jobs` tag runs the new cases with no change to its specs. A backend that cannot follow an injected clock (`Caps.has_clock` false, as a database that uses its own time) gets the real clock: its time cases sleep, with a unit of half a second, and check what holds a little before and a little after a time, not to the millisecond. A case that needs a capability the backend lacks (`has_unique_keys`, `extendable`) is skipped, and its outcome says so.
 
 ```agentica
 import Conformance from "pkg/jobs/conformance"
@@ -69,8 +69,8 @@ end
 ```
 
 ```output
-cases: 20
+cases: 23
 failed: []
 ```
 
-The cases cover: the job as it was enqueued, byte for byte; empty queues and queues that do not see each other; a fetch that waits, for a job that comes and for a job that is due; leases that run out, and a late ack, nack or extend with an old token; ack, retry, release and dead; the last attempt; extend; a job that is not delivered early; unique keys; `enqueue_all` with a job that is not valid; eight tasks that fetch 200 jobs at once, each delivered once; and the calls after `close`.
+The cases cover: the job as it was enqueued, byte for byte; empty queues and queues that do not see each other; a fetch that waits, for a job that comes and for a job that is due; leases that run out, a late ack, nack or extend with an old token, and the same calls after the lease ran out but before any other fetch; ack, retry, release and dead; the last attempt; extend, and the job that comes back at the new end; a job that is not delivered early; unique keys, held through a retry, a release and an expired lease, and two jobs of one batch with one key; `enqueue_all` with a job that is not valid; eight tasks that fetch 200 jobs at once, each delivered once; and the calls after `close`.

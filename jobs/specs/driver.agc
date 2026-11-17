@@ -54,6 +54,7 @@ def act(driver: Driver, req: Request) -> Handled
     "advance" -> advance(driver, req)
     "close" -> with_backend(driver, req, &close)
     "enqueue" -> with_backend(driver, req, &enqueue)
+    "enqueue_all" -> with_backend(driver, req, &enqueue_all)
     "fetch" -> with_backend(driver, req, &fetch)
     "ack" -> with_backend(driver, req, &ack)
     "retry" -> with_backend(driver, req, &retry)
@@ -150,6 +151,12 @@ def enqueue(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
   )
 
   answer(driver, Jobs.enqueue(backend, new), ->(added) { enqueued_text(added) })
+end
+
+# The payloads of the text, split at the commas, in one batch.
+def enqueue_all(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
+  jobs = req.text.split(",").map(->(text) { Jobs.NewJob(queue: req.queue, payload: text.bytes) })
+  answer(driver, Jobs.enqueue_all(backend, jobs), ->(added) { "ok #{added.map(->(one) { one.id }).join(",")}" })
 end
 
 # 0 is now; a wait of `ms` is the clock plus that.

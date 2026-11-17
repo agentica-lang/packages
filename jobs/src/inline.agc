@@ -4,18 +4,18 @@ import Settle from "settle"
 import Types from "types"
 
 ## Runs the jobs of the queue until none is due (`Due.Ready`) or none is left (`Due.All`), or `max_runs` ran.
-def drain(backend: Types.Backend, drain: Types.Drain, handle: Fn[Types.Job, Result[Void]]) -> Result[Types.Drained]
-  try check(drain)
-  backoff = drain.backoff.unwrap_or(&Settle.default_backoff)
-  now = clock_of(drain)
-  fetch = Types.Fetch(queue: drain.queue, max: 1, lease_ms: LEASE_MS)
+def drain(backend: Types.Backend, options: Types.Drain, handle: Fn[Types.Job, Result[Void]]) -> Result[Types.Drained]
+  try check(options)
+  backoff = options.backoff.unwrap_or(&Settle.default_backoff)
+  now = clock_of(options)
+  fetch = Types.Fetch(queue: options.queue, max: 1, lease_ms: LEASE_MS)
   drained = Types.Drained(done: 0, retried: 0, dead: 0)
   runs = 0
   steps = 0
-  while runs < drain.max_runs
+  while runs < options.max_runs
     leases = try backend.fetch.call(fetch)
     if leases.empty?
-      break if steps >= MAX_STEPS or not try waiting?(backend, drain)
+      break if steps >= MAX_STEPS or not try waiting?(backend, options)
 
       steps += 1
       next
@@ -40,31 +40,31 @@ STEP_MS = 7_200_000
 # How many times a drain moves the clock while it waits for jobs that are not due.
 MAX_STEPS = 10_000
 
-def check(drain: Types.Drain) -> Result[Void]
-  if drain.max_runs < 1
-    return error("jobs error: max_runs must be at least 1, got #{drain.max_runs}", kind: "argument")
+def check(options: Types.Drain) -> Result[Void]
+  if options.max_runs < 1
+    return error("jobs error: max_runs must be at least 1, got #{options.max_runs}", kind: "argument")
   end
 
-  case drain.due
-    Types.Due.All if drain.clock.none? ->
+  case options.due
+    Types.Due.All if options.clock.none? ->
       error("jobs error: Due.All needs the clock that the backend follows", kind: "argument")
     _ -> ok()
   end
 end
 
-def clock_of(drain: Types.Drain) -> Fn[Int]
-  case drain.clock
+def clock_of(options: Types.Drain) -> Fn[Int]
+  case options.clock
     some(clock) -> clock.now
     none -> &Time.now_ms
   end
 end
 
 # Whether jobs wait for a time: with `Due.All` the clock moves to the time of the next ones.
-def waiting?(backend: Types.Backend, drain: Types.Drain) -> Result[Bool]
-  counts = try backend.counts.call(drain.queue)
-  return ok(false) if drain.due == Types.Due.Ready or counts.scheduled == 0
+def waiting?(backend: Types.Backend, options: Types.Drain) -> Result[Bool]
+  counts = try backend.counts.call(options.queue)
+  return ok(false) if options.due == Types.Due.Ready or counts.scheduled == 0
 
-  case drain.clock
+  case options.clock
     some(clock) -> clock.advance.call(STEP_MS)
     none -> nil
   end

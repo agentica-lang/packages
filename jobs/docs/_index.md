@@ -54,14 +54,14 @@ Jobs.enqueue(backend: Backend, job: NewJob) -> Result[Enqueued]
 Jobs.enqueue_all(backend: Backend, jobs: List[NewJob]) -> Result[List[Enqueued]]
 Jobs.json(queue: String, value: T) -> NewJob
 Jobs.decode(job: Job, codec: Codec[T]) -> Result[T]
-Jobs.fetch(backend: Backend, fetch: Fetch) -> Result[List[Lease]]
+Jobs.fetch(backend: Backend, options: Fetch) -> Result[List[Lease]]
 Jobs.ack(backend: Backend, lease: Lease) -> Result[Void]
 Jobs.nack(backend: Backend, lease: Lease, how: Nack) -> Result[Void]
 Jobs.extend(backend: Backend, lease: Lease, ms: Int) -> Result[Lease]
 Jobs.counts(backend: Backend, queue: String) -> Result[Counts]
 Jobs.close(backend: Backend, drain_ms: Int) -> Void
 Jobs.discard(reason: String) -> Result[Void]
-Jobs.drain(backend: Backend, drain: Drain, handle: Fn[Job, Result[Void]]) -> Result[Drained]
+Jobs.drain(backend: Backend, options: Drain, handle: Fn[Job, Result[Void]]) -> Result[Drained]
 Jobs.manual_clock() -> Clock
 ```
 
