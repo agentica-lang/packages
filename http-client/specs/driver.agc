@@ -8,9 +8,12 @@ import {Request} from "protocol"
 
 private
 
-PEER = "fixtures/peer.py"
-PEER_START_MS = 10_000
+# The peers are programs of their own, so that they share nothing with the client under test.
+PEERS = {"server": "fixtures/server.agc", "raw": "fixtures/raw_peer.agc"}
+PEER_START_MS = 60_000
 WAIT_MS = 30_000
+# A started request's task stays until it is cancelled or the driver ends, as a caller's task would.
+LINGER_MS = 600_000
 
 # The outcome of a request: its result and how long it took.
 struct Outcome
@@ -18,12 +21,20 @@ struct Outcome
   elapsed: Int
 end
 
+# A request in its task, which sends its outcome and then stays until `stop` closes.
+struct Running
+  task: Task[Void]
+  outcome: Channel[Outcome]
+end
+
 struct Driver
   peers: Map[String, String]
-  processes: List[Process]
+  processes: Map[String, Process]
+  seen: Map[String, Int]
   client: Optional[HttpClient.Client]
-  running: Map[String, Task[Outcome]]
+  running: Map[String, Running]
   outcomes: Map[String, Outcome]
+  stop: Channel[Bool]
 end
 
 struct Handled
@@ -32,7 +43,8 @@ struct Handled
 end
 
 def main() -> Void
-  driver = Driver(peers: {}, processes: [], client: none, running: {}, outcomes: {})
+  stop: Channel[Bool] = Channel.new(1)
+  driver = Driver(peers: {}, processes: {}, seen: {}, client: none, running: {}, outcomes: {}, stop: stop)
   line = IO.gets
   while line.ok?
     handled = handle(driver, line.unwrap_or(""))
@@ -41,6 +53,8 @@ def main() -> Void
     IO.flush()
     line = IO.gets
   end
+
+  stop.close
 end
 
 def handle(driver: Driver, line: String) -> Handled
@@ -57,6 +71,19 @@ def run(driver: Driver, req: Request) -> Handled
     "send" -> send(driver, req)
     "start" -> started(driver, req)
     "wait" -> waited(driver, req.name)
+    "cancel" ->
+      case driver.running.get(req.name)
+        some(running) -> Task.cancel(running.task)
+        none -> nil
+      end
+
+      done(driver)
+    "dead_port" ->
+      listener = TCP.listen("127.0.0.1", 0).unwrap!
+      address = "http://127.0.0.1:#{TCP.local_port(listener)}"
+      TCP.close_listener(listener)
+      done(driver.with(peers: driver.peers.put(req.name, address)))
+    "read" -> read_requests(driver, req)
     "sleep" ->
       Task.sleep(req.number)
       done(driver)
@@ -76,17 +103,16 @@ def done(driver: Driver) -> Handled = Handled(driver: driver, reply: Protocol.OK
 def failed(driver: Driver, text: String) -> Handled = Handled(driver: driver, reply: text)
 
 def start_peer(driver: Driver, req: Request) -> Handled
-  args = [PEER]
-  if req.number > 0
-    args = args.push(req.number.to_s)
-  end
-
-  case Process.spawn("python3", args)
+  program = PEERS.get(req.kind).unwrap_or("")
+  script = req.text.split("\n").select { |line| not line.strip.empty? }
+  case Process.spawn("agentica", [program] + script)
     ok(peer) ->
       case Process.read_line(peer, PEER_START_MS)
         ok(line) ->
           address = "http://127.0.0.1:#{line.split(" ").last}"
-          done(driver.with(peers: driver.peers.put(req.name, address), processes: driver.processes.push(peer)))
+          done(
+            driver.with(peers: driver.peers.put(req.name, address), processes: driver.processes.put(req.name, peer)),
+          )
         error(e) -> failed(driver, "the peer did not start: #{e.message}")
       end
 
@@ -129,33 +155,50 @@ def header(text: String) -> HTTP.Header
   HTTP.Header(name: parts[0], value: parts.drop(1).join(": "))
 end
 
-def send(driver: Driver, req: Request) -> Handled
-  case start_request(driver, req)
-    ok(task) -> done(driver.with(outcomes: driver.outcomes.put(req.name, Task.await(task))))
-    error(e) -> failed(driver, e.message)
+# Waits until the raw peer has printed its `number`th `request` line.
+def read_requests(driver: Driver, req: Request) -> Handled
+  peer = driver.processes.get(req.name)
+  return failed(driver, "no peer #{req.name}") if not peer.some?
+
+  seen = driver.seen.get(req.name).unwrap_or(0)
+  while seen < req.number
+    case Process.read_line(peer.unwrap!, WAIT_MS)
+      ok(line) if line.start_with?("request ") -> seen = seen + 1
+      ok(_) -> nil
+      error(e) -> return failed(driver, "#{req.name} read #{seen} requests: #{e.message}")
+    end
   end
+
+  done(driver.with(seen: driver.seen.put(req.name, seen)))
+end
+
+def send(driver: Driver, req: Request) -> Handled
+  started_one = started(driver, req)
+  return started_one if started_one.reply != Protocol.OK
+
+  waited(started_one.driver, req.name)
 end
 
 def started(driver: Driver, req: Request) -> Handled
   case start_request(driver, req)
-    ok(task) -> done(driver.with(running: driver.running.put(req.name, task)))
+    ok(running) -> done(driver.with(running: driver.running.put(req.name, running)))
     error(e) -> failed(driver, e.message)
   end
 end
 
 def waited(driver: Driver, name: String) -> Handled
   case driver.running.get(name)
-    some(task) ->
-      case Task.await(task, WAIT_MS)
-        Await.Done(outcome) -> done(driver.with(outcomes: driver.outcomes.put(name, outcome)))
-        Await.TimedOut -> failed(driver, "#{name} did not end")
+    some(running) ->
+      case running.outcome.recv(WAIT_MS)
+        ok(outcome) -> done(driver.with(outcomes: driver.outcomes.put(name, outcome)))
+        error(_) -> failed(driver, "#{name} did not end")
       end
 
     none -> failed(driver, "no request #{name} runs")
   end
 end
 
-def start_request(driver: Driver, req: Request) -> Result[Task[Outcome]]
+def start_request(driver: Driver, req: Request) -> Result[Running]
   client = try driver.client.to_result("no client")
   url = req.text
   for name in driver.peers.keys
@@ -167,13 +210,16 @@ def start_request(driver: Driver, req: Request) -> Result[Task[Outcome]]
     headers = [header(req.header)]
   end
 
-  ok(
-    Task.spawn do
-      began = Time.monotonic_ms()
-      result = HttpClient.request(client, req.kind, url, req.body.bytes, headers)
-      Outcome(result: result, elapsed: Time.monotonic_ms() - began)
-    end,
-  )
+  outcome: Channel[Outcome] = Channel.new(1)
+  stop = driver.stop
+  task = Task.spawn do
+    began = Time.monotonic_ms()
+    result = HttpClient.request(client, req.kind, url, req.body.bytes, headers)
+    _ = outcome.send(Outcome(result: result, elapsed: Time.monotonic_ms() - began), 0)
+    _ = stop.recv(LINGER_MS)
+  end
+
+  ok(Running(task: task, outcome: outcome))
 end
 
 def expect(driver: Driver, req: Request) -> Handled

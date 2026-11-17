@@ -28,7 +28,6 @@ struct Client
   private
 
   pools: Pools.Pools
-  options: HTTP.ClientOptions
 end
 
 ## Makes a client. `base_url` is joined to the URL of a request that is a path (`/todos`); the pool settings are
@@ -48,21 +47,17 @@ def new(
   proxy: String = "",
   tls: Optional[TLS.Context] = none,
 ) -> Result[Client]
-  if connect_timeout_ms < 1 or read_timeout_ms < 1 or timeout_ms < 1 or pool_timeout_ms < 1 or idle_ms < 1
-    return argument("the timeouts and idle_ms must be at least 1")
-  end
+  return argument("pool_timeout_ms and idle_ms must be at least 1") if pool_timeout_ms < 1 or idle_ms < 1
+  return argument("pool_size must be at least 1") if pool_size < 1
 
-  return argument("pool_size and max_body_bytes must be at least 1") if pool_size < 1 or max_body_bytes < 1
-
-  if not base_url.empty?
-    _ = try Url.resolve("", base_url)
-  end
+  try valid(base_url, connect_timeout_ms, read_timeout_ms, timeout_ms, max_body_bytes)
 
   settings = Pools.Settings(
     size: pool_size,
     wait_ms: pool_timeout_ms,
     idle_ms: idle_ms,
     health_ms: [idle_ms, HEALTH_MS].min.unwrap!,
+    options: HTTP.ClientOptions(max_body_bytes: MAX_REQUEST_BODY, proxy: proxy, tls: tls),
   )
 
   ok(
@@ -74,7 +69,6 @@ def new(
       timeout_ms: timeout_ms,
       max_body_bytes: max_body_bytes,
       pools: Pools.start(settings),
-      options: HTTP.ClientOptions(max_body_bytes: MAX_REQUEST_BODY, proxy: proxy, tls: tls),
     ),
   )
 end
@@ -82,7 +76,8 @@ end
 ## Sends a request and gives the whole response. A 4xx or 5xx is a response, not an error. An error has a kind:
 ## `http_client.timeout.pool`, `.connect`, `.read` or `.request` (all `http_client.timeout`), `http_client.pool_full`
 ## (1000 requests wait already), `http_client.network`, `http_client.too_large` (a body over `max_body_bytes`),
-## `http_client.closed` or `argument` (a bad URL or header).
+## `http_client.closed`, `http_client.crashed` (a bug: the request's task crashed) or `argument` (a bad URL, method or
+## header, or a client field below 1).
 def request(
   client: Client,
   method: String,
@@ -90,8 +85,16 @@ def request(
   body: Bytes,
   headers: List[HTTP.Header] = [],
 ) -> Result[Exchange.Response]
+  try valid(
+    client.base_url,
+    client.connect_timeout_ms,
+    client.read_timeout_ms,
+    client.timeout_ms,
+    client.max_body_bytes,
+  )
+
   target = try Url.resolve(client.base_url, url)
-  pool = try Pools.pool_for(client.pools, target.origin)
+  pool = try Pools.pool_for(client.pools, target.origin, client.timeout_ms)
   call = Exchange.Call(
     method: method,
     target: target,
@@ -101,7 +104,6 @@ def request(
     read_timeout_ms: client.read_timeout_ms,
     deadline: Time.monotonic_ms() + client.timeout_ms,
     max_body_bytes: client.max_body_bytes,
-    options: client.options,
   )
 
   # A task of its own, so that `timeout_ms` can cancel the request wherever it is; the pool then ends its connection.
@@ -160,6 +162,25 @@ HEALTH_MS = 5_000
 
 def argument[T](text: String) -> Result[T] = error("http_client: #{text}", kind: "argument")
 
+# The public fields of a client, which `client.with(...)` may change.
+def valid(
+  base_url: String,
+  connect_timeout_ms: Int,
+  read_timeout_ms: Int,
+  timeout_ms: Int,
+  max_body_bytes: Int,
+) -> Result[Void]
+  if connect_timeout_ms < 1 or read_timeout_ms < 1 or timeout_ms < 1
+    return argument("connect_timeout_ms, read_timeout_ms and timeout_ms must be at least 1")
+  end
+
+  return argument("max_body_bytes must be at least 1") if max_body_bytes < 1
+  return ok() if base_url.empty?
+
+  _ = try Url.resolve("", base_url)
+  ok()
+end
+
 # The headers of the call replace those of the client with the same name; the case of a name does not matter.
 def merge(base: List[HTTP.Header], extra: List[HTTP.Header]) -> List[HTTP.Header]
   names = extra.map { |header| header.name.downcase }
@@ -174,7 +195,7 @@ def pool_failure(result: Result[Exchange.Response]) -> Result[Exchange.Response]
     error(e) if e.is_a?("pool.closed") -> Exchange.failure("the client is closed", "closed", some(e))
     error(e) if e.is_a?("pool.full") ->
       Exchange.failure("too many requests wait for a connection", "pool_full", some(e))
-    error(e) if e.is_a?("task") -> Exchange.failure("the request ended", "network", some(e))
+    error(e) if e.is_a?("task") -> Exchange.failure("the request crashed", "crashed", some(e))
     _ -> result
   end
 end

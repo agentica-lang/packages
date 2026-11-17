@@ -37,9 +37,13 @@ struct HostPort
   port: Int
 end
 
+# A URL with a scheme of its own, `http` or another (which `parse` refuses), as opposed to a path that may hold `://`
+# in its query.
 def absolute?(url: String) -> Bool
-  lower = url.downcase
-  lower.start_with?("http://") or lower.start_with?("https://")
+  case url.index_of("://")
+    some(at) -> not first_of(url.slice(0, at), ["/", "?", "#"]).some?
+    none -> false
+  end
 end
 
 def join(base_url: String, url: String) -> String

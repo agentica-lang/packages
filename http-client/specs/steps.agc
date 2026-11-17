@@ -1,6 +1,6 @@
-## The steps of the features. They drive `HttpClient` through `driver.agc`, which holds the client and its requests
-## (see `protocol.agc`); the server is `fixtures/peer.py`, an HTTP/1.1 server of Python's standard library that says
-## which TCP connection served each response (`x-connection`).
+## The steps of the features. They drive `HttpClient` through `driver.agc`, which holds the client, its requests and
+## the peers (see `protocol.agc`). A peer is the server of `std/http` (`fixtures/server.agc`) or a raw peer that
+## writes the answers of a script by hand and says which TCP connection served each one (`fixtures/raw_peer.agc`).
 
 import BDD from "std/bdd"
 import Protocol from "protocol"
@@ -12,9 +12,11 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
-    BDD.step("the peer {string} listens") do |ctx, args| send(ctx, Request(op: "peer", name: args[0])) end,
-    BDD.step("the peer {string} listens and closes idle connections after {int} ms") do |ctx, args|
-      send(ctx, Request(op: "peer", name: args[0], number: args[1].to_i!))
+    BDD.step("the server {string} listens") do |ctx, args|
+      send(ctx, Request(op: "peer", name: args[0], kind: "server"))
+    end,
+    BDD.step("the raw peer {string} listens with the script:") do |ctx, args|
+      send(ctx, Request(op: "peer", name: args[0], kind: "raw", text: BDD.doc_string(ctx)))
     end,
     BDD.step("a client of {string} with:") do |ctx, args|
       send(ctx, Request(op: "client", name: args[0], table: BDD.table(ctx)))
@@ -31,7 +33,12 @@ def main() -> Void
     BDD.step("{string} starts {string} to {string}") do |ctx, args|
       send(ctx, Request(op: "start", name: args[0], kind: args[1], text: args[2]))
     end,
+    BDD.step("the port {string} is closed") do |ctx, args| send(ctx, Request(op: "dead_port", name: args[0])) end,
+    BDD.step("the peer {string} has read request {int}") do |ctx, args|
+      send(ctx, Request(op: "read", name: args[0], number: args[1].to_i!))
+    end,
     BDD.step("I wait for {string}") do |ctx, args| send(ctx, Request(op: "wait", name: args[0])) end,
+    BDD.step("the task of {string} is cancelled") do |ctx, args| send(ctx, Request(op: "cancel", name: args[0])) end,
     BDD.step("I wait {int} ms") do |ctx, args| send(ctx, Request(op: "sleep", number: args[0].to_i!)) end,
     BDD.step("I close the client") do |ctx, _args| send(ctx, Request(op: "close")) end,
     BDD.step("{string} has the status {int}") do |ctx, args|

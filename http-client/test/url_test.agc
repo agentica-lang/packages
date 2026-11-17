@@ -35,6 +35,8 @@ end
 def test_a_bad_url_is_an_argument_error() -> Result[Void]
   try Test.eq(kind("", "/todos"), "argument")
   try Test.eq(kind("", "ftp://example.com/"), "argument")
+  try Test.eq(kind(BASE, "ftp://example.com/"), "argument")
+  try Test.eq(kind(BASE, "/go?to=ftp://example.com/"), "ok")
   try Test.eq(kind("", "http://user:pw@example.com/"), "argument")
   try Test.eq(kind("", "http://example.com:0/"), "argument")
   try Test.eq(kind("", "http://example.com:65536/"), "argument")

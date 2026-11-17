@@ -1,18 +1,21 @@
 ## The pools of a client, one per origin, made when a request first needs one. A pool's owner task ends with the
 ## task that started it, so a manager task that lives as long as the client starts them all and keeps them in a map;
-## a request asks it for the pool of its origin.
+## a request asks it for the pool of its origin. A pool that no request wanted for `timeout_ms` and `idle_ms` has no
+## request left and no connection worth keeping: the manager closes it, and the next request starts a new one.
 
+import HTTP from "std/http"
 import Link from "link"
 import Pool from "pkg/pool/pool"
 
 type OriginPool = Pool.Pool[Link.Origin, Link.Link]
 
-## The settings that every pool of the client gets.
+## The settings that every pool of the client gets, and the options its connections are opened with.
 struct Settings
   size: Int
   wait_ms: Int
   idle_ms: Int
   health_ms: Int
+  options: HTTP.ClientOptions
 end
 
 ## The manager of the pools of a client.
@@ -27,9 +30,10 @@ enum Msg
   Close(Closing)
 end
 
-## The pool of `origin`, answered on `reply`.
+## The pool of `origin`, answered on `reply`, for a request that lasts at most `timeout_ms`.
 struct Wanted
   origin: String
+  timeout_ms: Int
   reply: Channel[Result[OriginPool]]
 end
 
@@ -46,19 +50,23 @@ def start(settings: Settings) -> Pools
   Pools(inbox: inbox, manager: manager)
 end
 
-## The pool of an origin (`scheme://host:port`), started if it is the first request to that origin.
-def pool_for(pools: Pools, origin: String) -> Result[OriginPool]
+## The pool of an origin (`scheme://host:port`), started if it is the first request to that origin in a while.
+def pool_for(pools: Pools, origin: String, timeout_ms: Int) -> Result[OriginPool]
   reply: Channel[Result[OriginPool]] = Channel.new(1)
-  sent = pools.inbox.send(Msg.Want(Wanted(origin: origin, reply: reply)), ASK_MS)
-  return closed() if not sent.ok?
+  case pools.inbox.send(Msg.Want(Wanted(origin: origin, timeout_ms: timeout_ms, reply: reply)), ASK_MS)
+    error(e) if e.is_a?("channel.closed") -> return closed()
+    error(e) -> return busy(e)
+    ok(_) -> nil
+  end
 
   case reply.recv(ASK_MS)
     ok(found) -> found
-    error(_) -> closed()
+    error(e) if e.is_a?("channel.closed") -> closed()
+    error(e) -> busy(e)
   end
 end
 
-## Closes every pool and ends the manager. Closing twice does nothing.
+## Closes every pool at once and ends the manager. Closing twice does nothing.
 def close(pools: Pools, drain_ms: Int) -> Void
   done: Channel[Bool] = Channel.new(1)
   if pools.inbox.send(Msg.Close(Closing(drain_ms: drain_ms, done: done)), ASK_MS).ok?
@@ -74,38 +82,55 @@ INBOX_SIZE = 64
 ASK_MS = 5_000
 # What `Pool.close` may take after its drain: its keepers have six seconds to end their resources.
 CLOSE_SLACK_MS = 8_000
+# How often the manager looks for pools to close.
+SWEEP_MS = 1_000
+
+# A pool, and the monotonic time after which no request uses it and its connections have been idle `idle_ms`.
+struct Entry
+  pool: OriginPool
+  until: Int
+end
 
 def closed[T]() -> Result[T] = error("http_client: the client is closed", kind: "http_client.closed")
 
+def busy[T](cause: Error) -> Result[T]
+  error("http_client: the pools did not answer within #{ASK_MS} ms", kind: "http_client.timeout.pool", cause: cause)
+end
+
 def manage(settings: Settings, inbox: Channel[Msg]) -> Void
-  pools: Map[String, OriginPool] = {}
+  pools: Map[String, Entry] = {}
+  swept = Time.monotonic_ms()
   while true
-    case inbox.recv(ASK_MS)
+    case inbox.recv(SWEEP_MS)
       ok(Msg.Want(wanted)) -> pools = want(settings, pools, wanted)
       ok(Msg.Close(closing)) ->
-        for pool in pools.values
-          Pool.close(pool, closing.drain_ms)
-        end
-
+        close_all(pools.values.map { |entry| entry.pool }, closing.drain_ms)
         inbox.close
         _ = closing.done.send(true, 0)
         return
       _ -> nil
     end
+
+    now = Time.monotonic_ms()
+    if now - swept >= SWEEP_MS
+      pools = sweep(pools, now)
+      swept = now
+    end
   end
 end
 
 # Answers the pool of the origin, started now if there is none, and gives the pools with it.
-def want(settings: Settings, pools: Map[String, OriginPool], wanted: Wanted) -> Map[String, OriginPool]
+def want(settings: Settings, pools: Map[String, Entry], wanted: Wanted) -> Map[String, Entry]
+  until = Time.monotonic_ms() + ASK_MS + wanted.timeout_ms + settings.idle_ms
   case pools.get(wanted.origin)
-    some(pool) ->
-      _ = wanted.reply.send(ok(pool), 0)
-      pools
+    some(entry) ->
+      _ = wanted.reply.send(ok(entry.pool), 0)
+      pools.put(wanted.origin, entry.with(until: [entry.until, until].max.unwrap!))
     none ->
       case start_pool(settings, wanted.origin)
         ok(pool) ->
           _ = wanted.reply.send(ok(pool), 0)
-          pools.put(wanted.origin, pool)
+          pools.put(wanted.origin, Entry(pool: pool, until: until))
         error(e) ->
           _ = wanted.reply.send(error(e), 0)
           pools
@@ -113,8 +138,29 @@ def want(settings: Settings, pools: Map[String, OriginPool], wanted: Wanted) -> 
   end
 end
 
-def start_pool(settings: Settings, origin: String) -> Result[OriginPool]
-  spec = Link.spec(Link.Origin(url: origin), settings.size, settings.wait_ms, settings.idle_ms, settings.health_ms)
+# Closes the pools past their time, each in a task of its own so that the manager does not wait.
+def sweep(pools: Map[String, Entry], now: Int) -> Map[String, Entry]
+  kept: Map[String, Entry] = {}
+  for origin in pools.keys
+    entry = pools.get(origin).unwrap!
+    if entry.until > now
+      kept = kept.put(origin, entry)
+    else
+      _ = Task.spawn do Pool.close(entry.pool, 0) end
+    end
+  end
 
-  Pool.start(spec)
+  kept
+end
+
+def close_all(pools: List[OriginPool], drain_ms: Int) -> Void
+  closers = pools.map { |pool| Task.spawn do Pool.close(pool, drain_ms) end }
+  for closer in closers
+    _ = Task.await(closer, drain_ms + CLOSE_SLACK_MS)
+  end
+end
+
+def start_pool(settings: Settings, origin: String) -> Result[OriginPool]
+  config = Link.Origin(url: origin, options: settings.options)
+  Pool.start(Link.spec(config, settings.size, settings.wait_ms, settings.idle_ms, settings.health_ms))
 end
