@@ -14,6 +14,14 @@ Feature: Resolving and filtering addresses
     Then "r" has the body "api.test:{a:port}"
     And the resolver was asked 1 times
 
+  Scenario: An IPv4-mapped answer connects to its IPv4 address, which std/http would refuse as a mapped one
+    Given the server "a" listens
+    And a client of "a" with:
+      | setting | value                     |
+      | resolve | api.test=::ffff:127.0.0.1 |
+    When "r" sends "GET" to "http://api.test:{a:port}/host"
+    Then "r" has the body "api.test:{a:port}"
+
   Scenario: Without a resolver or public_only std/http resolves the host
     Given the server "a" listens
     And a client of "a" with:

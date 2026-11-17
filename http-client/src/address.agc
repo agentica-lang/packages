@@ -21,6 +21,16 @@ def unbracketed(host: String) -> String
   host
 end
 
+## `text` as std/http's `connect_to` takes it: an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`, in any spelling) is its
+## IPv4 address `a.b.c.d`, since std/http refuses a mapped one; any other text is returned as it is.
+def unmapped(text: String) -> String
+  case parse(text)
+    some(bytes) if bytes.size == 16 and zero?(bytes.take(10)) and bytes[10] == 255 and bytes[11] == 255 ->
+      bytes.drop(12).map { |byte| byte.to_s }.join(".")
+    _ -> text
+  end
+end
+
 ## Whether the address is public: a global unicast one. Text that is not an IP address is not public.
 def public?(text: String) -> Bool
   case parse(text)

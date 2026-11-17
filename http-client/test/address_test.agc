@@ -23,6 +23,17 @@ def test_ip_literals_are_read_as_inet_pton_reads_them() -> Result[Void]
   Test.eq(Address.literal?("example.com"), false)
 end
 
+def test_a_mapped_address_is_its_ipv4_address_for_connect_to() -> Result[Void]
+  try Test.eq(Address.unmapped("::ffff:127.0.0.1"), "127.0.0.1")
+  try Test.eq(Address.unmapped("::FFFF:7f00:1"), "127.0.0.1")
+  try Test.eq(Address.unmapped("0:0:0:0:0:ffff:93.184.216.34"), "93.184.216.34")
+  for kept in ["93.184.216.34", "::1", "2001:db8::1", "64:ff9b::1.2.3.4", "::ffff:0:1.2.3.4", "api.test"]
+    try Test.eq(Address.unmapped(kept), kept)
+  end
+
+  ok()
+end
+
 def test_only_global_unicast_addresses_are_public() -> Result[Void]
   public = [
     "8.8.8.8", "1.1.1.1", "100.63.255.255", "172.32.0.1", "2606:4700:4700::1111", "2a00:1450::1", "::ffff:8.8.8.8",
