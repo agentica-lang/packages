@@ -107,6 +107,36 @@ def main() -> Void
         ],
       )
     end,
+    Test.test("the model passes over a full group, and counts the leases of one fetch") do
+      calls = [
+        start(8),
+        enqueue("q", "a", [["group", "g"]]),
+        enqueue("q", "b", [["group", "g"]]),
+        enqueue("q", "c", []),
+        Request(op: "fetch", queue: "q", name: "w", number: 5_000, max: 3, limit: 1),
+        Request(op: "fetch", queue: "q", name: "x", number: 5_000, max: 3, limit: 1),
+        Request(op: "ack", name: "w"),
+        Request(op: "fetch", queue: "q", name: "y", number: 5_000, max: 3, limit: 1),
+        Request(op: "enqueue", queue: "r", text: "d", table: [["setting", "value"], ["group", "g"]]),
+        Request(op: "fetch", queue: "r", name: "z", number: 5_000, limit: 1),
+      ]
+
+      return Test.eq(
+        Model.replies(calls),
+        [
+          "ok",
+          "ok 1",
+          "ok 2",
+          "ok 3",
+          "ok a attempt 1 group g, c attempt 1",
+          "ok none",
+          "ok",
+          "ok b attempt 1 group g",
+          "ok 4",
+          "ok d attempt 1 group g",
+        ],
+      )
+    end,
     Test.test("a seed gives the same script, and the script answers with its own replies") do
       first = Model.script(7, 200)
       try Test.eq(first.map(->(call) { call.reply }), Model.script(7, 200).map(->(call) { call.reply }))

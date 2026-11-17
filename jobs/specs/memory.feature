@@ -162,6 +162,37 @@ Feature: The memory backend
     And the fetch "live" ends
     Then the reply is "ok x attempt 1"
 
+  Scenario: A fetch with a limit per group skips the jobs of a full group and takes the next one
+    Given a memory backend on a manual clock
+    When I enqueue "a1" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And I enqueue "a2" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And I enqueue "plain" into "q"
+    And I fetch a job of "q" as "x", at most 1 per group
+    Then the reply is "ok a1 attempt 1 group g"
+    When I fetch a job of "q" as "y", at most 1 per group
+    Then the reply is "ok plain attempt 1"
+    When I ack "x"
+    And I fetch a job of "q" as "z", at most 1 per group
+    Then the reply is "ok a2 attempt 1 group g"
+
+  Scenario: A fetch that waits with no limit is served when the one in front of it is held back by its limit
+    Given a memory backend on a manual clock
+    When I enqueue "g1" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And I fetch a job of "q" as "a"
+    And a fetch of "q" starts to wait as "limited", at most 1 per group
+    And a fetch of "q" starts to wait as "free"
+    And I enqueue "g2" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And the fetch "free" ends
+    Then the reply is "ok g2 attempt 1 group g"
+
   Scenario: A retry gives its error to the next delivery
     Given a memory backend on a manual clock
     When I enqueue "a" into "q"

@@ -14,6 +14,16 @@ Feature: Many consumers on one queue
     When 16 consumers that wait 200 ms work off 400 jobs of one queue while producers add them
     Then the reply is "ok"
 
+  Scenario: 16 consumers work off 400 jobs of 8 groups and no group has more than 2 live leases
+    Given a memory backend on a manual clock
+    When 16 consumers work off 400 jobs in 8 groups with at most 2 per group
+    Then the reply is "ok"
+
+  Scenario: 16 consumers that wait for jobs work off 400 jobs of 8 groups and no group has more than 2 live leases
+    Given a memory backend on a manual clock
+    When 16 consumers that wait 200 ms work off 400 jobs in 8 groups with at most 2 per group
+    Then the reply is "ok"
+
   Scenario: A single consumer works off the same jobs
     Given a memory backend on a manual clock
     When 1 consumers work off 400 jobs of one queue while producers add them

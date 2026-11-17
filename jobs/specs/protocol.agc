@@ -5,14 +5,15 @@
 
 ## A request. The ops are `start` (table: the settings, a header and a name and value per row: `clock` is `manual` or
 ## `wall`, `max_jobs`, `max_dead`, `fetch_timeout_ms`), `enqueue` (queue, text: the payload, table: the settings of the
-## job: `max_attempts`, `run_in_ms`, `unique_key`), `enqueue_all` (queue, text: the payloads, split at the commas),
-## `fetch` (queue, name: where to keep the lease, `name/2` for a second one, number: the lease in ms, max: how many
-## jobs), `ack`, `retry` (number: ms from now, text: what went wrong, if anything), `release`, `kill` and `extend`
-## (number: ms) of the lease `name`, `counts` (queue), `advance` (number: ms), `drain` (queue, kind: `ready`, `all` or
-## `all without clock`, number: `max_runs` if there is one), `wait` (queue, name: a fetch that waits is parked;
-## `wait_end` ends it; number: its `wait_ms` if there is one), `logs` (what the drains logged, one line each), `close`
-## (number: the drain in ms), and `stress` (number: the consumers, wait: the jobs, wait_ms: how long a consumer waits
-## for a job, if it does).
+## job: `max_attempts`, `run_in_ms`, `unique_key`, `group`), `enqueue_all` (queue, text: the payloads, split at the
+## commas), `fetch` (queue, name: where to keep the lease, `name/2` for a second one, number: the lease in ms, max: how
+## many jobs, limit: `max_per_group`), `ack`, `retry` (number: ms from now, text: what went wrong, if anything),
+## `release`, `kill` and `extend` (number: ms) of the lease `name`, `counts` (queue), `advance` (number: ms), `drain`
+## (queue, kind: `ready`, `all` or `all without clock`, number: `max_runs` if there is one), `wait` (queue, name: a
+## fetch that waits is parked; `wait_end` ends it; number: its `wait_ms` if there is one, limit: `max_per_group`),
+## `logs` (what the drains logged, one line each), `close` (number: the drain in ms), and `stress` (number: the
+## consumers, wait: the jobs, wait_ms: how long a consumer waits for a job, if it does, groups: how many groups the
+## jobs are in, limit: the `max_per_group` of the consumers).
 struct Request
   op: String
   queue: String = ""
@@ -23,5 +24,7 @@ struct Request
   wait: Int = 0
   wait_ms: Int = 0
   max: Int = 1
+  limit: Int = 0
+  groups: Int = 0
   table: List[List[String]] = []
 end

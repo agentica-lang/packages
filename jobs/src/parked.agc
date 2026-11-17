@@ -92,6 +92,12 @@ def front(parked: Parked, queue: String) -> Front
   Front(parked: state, waiter: none)
 end
 
+## The waiters of a queue, oldest first. It costs the waiters of all queues, so it is for the rare case of a waiter
+## that a limit per group holds back, and not for each call.
+def line(parked: Parked, queue: String) -> List[Waiter]
+  parked.waiters.values.select(->(waiter) { waiter.fetch.queue == queue }).sort_by(->(waiter) { waiter.seq })
+end
+
 ## The waiter leaves.
 def remove(parked: Parked, seq: Int) -> Parked = parked.with(waiters: parked.waiters.delete(seq))
 

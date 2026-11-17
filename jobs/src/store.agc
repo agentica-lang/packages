@@ -3,7 +3,8 @@
 ##
 ## A live job is waiting (in the heap of its queue, ordered by `run_at_ms`, then by insertion) or leased (with an entry
 ## in the heap of expiries). The heap of expiries is not cleaned when a lease ends: an entry whose lease is gone or
-## moved is skipped when it comes up.
+## moved is skipped when it comes up. `groups` counts the live leases of each group of a queue, kept in step by every
+## function that starts or ends a lease (`lease`, `finish`, `requeue`), so a fetch with a limit per group reads it.
 
 import Heap from "std/heap"
 import Types from "types"
@@ -27,6 +28,7 @@ struct Store
   waiting: Map[String, Heap.Heap[Slot]]
   expiries: Heap.Heap[Expiry]
   keys: Map[String, String]
+  groups: Map[String, Int]
   dead: List[Entry]
   next_ord: Int
   next_token: Int
@@ -74,6 +76,7 @@ def empty(max_jobs: Int, max_dead: Int) -> Store
     waiting: {},
     expiries: Heap.new(&expires_first),
     keys: {},
+    groups: {},
     dead: [],
     next_ord: 1,
     next_token: 1,
@@ -122,7 +125,8 @@ def enqueue(store: Store, now: Int, jobs: List[Types.NewJob]) -> Result[Added]
   ok(Added(store: state, enqueued: enqueued))
 end
 
-## Leases up to `fetch.max` of the jobs of the queue whose time has come, the first due first.
+## Leases up to `fetch.max` of the jobs of the queue whose time has come, the first due first. A job whose group has
+## `fetch.max_per_group` live leases is left where it is, and the next one is taken; the leases of this call count.
 def take(store: Store, now: Int, fetch: Types.Fetch) -> Result[Taken]
   if fetch.max < 1 or fetch.lease_ms < 1
     return error("jobs error: fetch max and lease_ms must be at least 1", kind: "argument")
@@ -130,10 +134,18 @@ def take(store: Store, now: Int, fetch: Types.Fetch) -> Result[Taken]
 
   return error("jobs error: fetch wait_ms cannot be negative", kind: "argument") if fetch.wait_ms < 0
 
+  if fetch.max_per_group < 0
+    return error("jobs error: fetch max_per_group cannot be negative, got #{fetch.max_per_group}", kind: "argument")
+  end
+
   state = store
   leases: List[Types.Lease] = []
+  skipped: List[Slot] = []
   while leases.size < fetch.max
     case due_slot(state, fetch.queue, now)
+      some(slot) if full?(state, slot, fetch.max_per_group) ->
+        state = pop_slot(state, fetch.queue)
+        skipped = skipped.push(slot)
       some(slot) ->
         leased = lease(pop_slot(state, fetch.queue), slot, now, fetch.lease_ms)
         state = leased.store
@@ -142,7 +154,7 @@ def take(store: Store, now: Int, fetch: Types.Fetch) -> Result[Taken]
     end
   end
 
-  ok(Taken(store: state, leases: leases))
+  ok(Taken(store: put_back(state, fetch.queue, skipped), leases: leases))
 end
 
 ## Puts back leases that nobody got (the caller gave up): the delivery does not count.
@@ -230,6 +242,11 @@ def key_of(queue: String, unique_key: String) -> String = "#{queue.size}:#{queue
 def valid(new: Types.NewJob) -> Result[Void]
   return error("jobs error: queue cannot be empty", kind: "argument") if new.queue == ""
 
+  case new.group
+    some("") -> return error("jobs error: group cannot be empty", kind: "argument")
+    _ -> nil
+  end
+
   if new.max_attempts < 1
     return error("jobs error: max_attempts must be at least 1, got #{new.max_attempts}", kind: "argument")
   end
@@ -280,6 +297,7 @@ def insert(store: Store, now: Int, new: Types.NewJob) -> Added
     unique_key: new.unique_key,
     meta: new.meta,
     last_error: none,
+    group: new.group,
   )
 
   keys = case new.unique_key
@@ -317,6 +335,45 @@ def due_slot(store: Store, queue: String, now: Int) -> Optional[Slot]
   end
 end
 
+# Whether the group of the job already has `limit` live leases; no limit, or no group, is never full.
+def full?(store: Store, slot: Slot, limit: Int) -> Bool
+  return false if limit == 0
+
+  # A slot is in the heap only while its job waits, so the job is in `entries`.
+  job = store.entries[slot.id].job
+  case job.group
+    some(group) -> store.groups.get(key_of(job.queue, group), 0) >= limit
+    none -> false
+  end
+end
+
+def put_back(store: Store, queue: String, slots: List[Slot]) -> Store
+  state = store
+  for slot in slots
+    state = state.with(
+      waiting: state.waiting.put(queue, Heap.push(state.waiting.get(queue, Heap.new(&starts_first)), slot)),
+    )
+  end
+
+  state
+end
+
+# The group of a job has one more live lease, or one less.
+def count_group(store: Store, job: Types.Job, change: Int) -> Store
+  case job.group
+    some(group) -> store.with(groups: counted(store.groups, key_of(job.queue, group), change))
+    none -> store
+  end
+end
+
+# A count that falls to 0 leaves the map, so the map holds the groups that have a lease.
+def counted(groups: Map[String, Int], key: String, change: Int) -> Map[String, Int]
+  count = groups.get(key, 0) + change
+  return groups.delete(key) if count <= 0
+
+  groups.put(key, count)
+end
+
 def pop_slot(store: Store, queue: String) -> Store
   # The caller saw a slot in this heap, so it is not empty.
   popped = Heap.pop(store.waiting[queue]).unwrap!
@@ -330,10 +387,14 @@ def lease(store: Store, slot: Slot, now: Int, lease_ms: Int) -> Leased
   at_ms = now + lease_ms
   job = entry.job.with(attempt: entry.job.attempt + 1)
   held = Entry(job: job, ord: entry.ord, lease: some(Held(token: token, expires_at_ms: at_ms)))
-  state = store.with(
-    entries: store.entries.put(job.id, held),
-    expiries: Heap.push(store.expiries, Expiry(at_ms: at_ms, id: job.id, token: token)),
-    next_token: store.next_token + 1,
+  state = count_group(
+    store.with(
+      entries: store.entries.put(job.id, held),
+      expiries: Heap.push(store.expiries, Expiry(at_ms: at_ms, id: job.id, token: token)),
+      next_token: store.next_token + 1,
+    ),
+    job,
+    1,
   )
 
   Leased(store: state, lease: Types.Lease(job: job, token: token, expires_at_ms: at_ms))
@@ -366,7 +427,7 @@ def finish(store: Store, entry: Entry) -> Store
     none -> store.keys
   end
 
-  store.with(entries: store.entries.delete(entry.job.id), keys: keys)
+  count_group(store.with(entries: store.entries.delete(entry.job.id), keys: keys), entry.job, -1)
 end
 
 def kill(store: Store, entry: Entry, message: String) -> Store
@@ -385,7 +446,7 @@ end
 
 def requeue(store: Store, entry: Entry, run_at_ms: Int) -> Store
   waiting = Entry(job: entry.job.with(run_at_ms: run_at_ms), ord: entry.ord, lease: none)
-  push_slot(store.with(entries: store.entries.put(entry.job.id, waiting)), waiting)
+  push_slot(count_group(store.with(entries: store.entries.put(entry.job.id, waiting)), entry.job, -1), waiting)
 end
 
 # The lease of this expiry, when it is still the live one of its job.

@@ -246,12 +246,32 @@ def serve_queue(state: State, now: Int, queue: String) -> State
         served = serve_waiter(current, now, waiter)
         current = served.state
         going = served.served
+        if not served.served and waiter.fetch.max_per_group > 0
+          current = serve_unlimited_behind(current, now, waiter)
+        end
+
       none -> going = false
     end
   end
 
   current
 end
+
+# The oldest waiter found no job because of its limit per group: a waiter behind it with a higher limit, or none, may
+# find one. A limit that is not above the one that failed fails again, so those waiters are not tried.
+def serve_unlimited_behind(state: State, now: Int, failed: Parked.Waiter) -> State
+  current = state
+  for waiter in Parked.line(state.parked, failed.fetch.queue)
+    if waiter.seq != failed.seq and higher?(waiter.fetch.max_per_group, failed.fetch.max_per_group)
+      current = serve_waiter(current, now, waiter).state
+    end
+  end
+
+  current
+end
+
+# 0 is no limit, so it is higher than any.
+def higher?(limit: Int, than: Int) -> Bool = limit == 0 or limit > than
 
 # The waiter leaves when it gets jobs or an error; one that finds no job stays, and so do the ones behind it.
 def serve_waiter(state: State, now: Int, waiter: Parked.Waiter) -> Served
@@ -280,7 +300,8 @@ def wake(state: State) -> Actor.Step[State]
   Actor.continue(wake_parked(ticked, now))
 end
 
-# How long until something may change for a parked fetch: a job due, a lease to expire, or a deadline.
+# How long until something may change for a parked fetch: a job due, a lease to expire, or a deadline. A job that is
+# due already and still waits is held by a limit per group: only the end of a lease frees it, and that is a time here.
 def wake_in(state: State) -> Optional[Int]
   return none if Parked.empty?(state.parked)
 
@@ -288,8 +309,8 @@ def wake_in(state: State) -> Optional[Int]
   times: List[Int] = []
   for queue in Parked.queues(state.parked)
     case Store.next_due(state.store, queue)
-      some(at) -> times = times.push(at)
-      none -> nil
+      some(at) if at > now -> times = times.push(at)
+      _ -> nil
     end
   end
 

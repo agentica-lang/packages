@@ -44,4 +44,4 @@ sent to ana@example.com on attempt 2
 Drained(done: 1, retried: 0, dead: 0)
 ```
 
-A drain moves the clock forward by two hours each time only scheduled jobs are left, which is past the longest default backoff. Give `backoff` (a function from the attempt to the wait in ms) to choose the wait.
+A drain runs one job at a time, so a limit per group never holds it back: it takes the jobs of every group in turn, and the `group` of a job is in `job.group` and in the fields of its log lines. A drain moves the clock forward by two hours each time only scheduled jobs are left, which is past the longest default backoff. Give `backoff` (a function from the attempt to the wait in ms) to choose the wait.

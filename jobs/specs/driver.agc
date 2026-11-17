@@ -1,9 +1,9 @@
 ## The program under test of the features: it holds one memory backend, a clock, and the leases that the steps named,
 ## and runs the requests that `steps.agc` sends (`protocol.agc`), one JSON line in and one reply line out.
 ##
-## Replies: `ok`, `ok ID` (an enqueue; `ok ID duplicate` for one that was), `ok PAYLOAD attempt N` (a fetch, with
-## ` last_error TEXT` when the job has one, and `, ` between the jobs when it gave more than one; `ok none` when it
-## gave none), `ready N scheduled N leased N dead N` (counts), `done N retried N dead N` (a drain), and
+## Replies: `ok`, `ok ID` (an enqueue; `ok ID duplicate` for one that was), `ok PAYLOAD attempt N` (a fetch, with `
+## last_error TEXT` and ` group NAME` when the job has them, and `, ` between the jobs when it gave more than one; `ok
+## none` when it gave none), `ready N scheduled N leased N dead N` (counts), `done N retried N dead N` (a drain), and
 ## `error KIND` for a failed call.
 ##
 ## The payload of a job says what a drain does with it: `ok` acks it, `fail` returns an error, `discard` discards it,
@@ -166,6 +166,7 @@ def enqueue(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
     max_attempts: number(values, "max_attempts", 5),
     run_at_ms: if_later(driver, at_ms),
     unique_key: values.get("unique_key"),
+    group: values.get("group"),
   )
 
   answer(driver, Jobs.enqueue(backend, new), ->(added) { enqueued_text(added) })
@@ -191,7 +192,11 @@ def enqueued_text(added: Jobs.Enqueued) -> String
 end
 
 def fetch(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
-  leases = Jobs.fetch(backend, Jobs.Fetch(queue: req.queue, max: req.max, lease_ms: req.number))
+  leases = Jobs.fetch(
+    backend,
+    Jobs.Fetch(queue: req.queue, max: req.max, lease_ms: req.number, max_per_group: req.limit),
+  )
+
   case leases
     error(e) -> Handled(driver: driver, reply: failure(e))
     ok(found) if found.empty? -> Handled(driver: driver, reply: "ok none")
@@ -217,9 +222,15 @@ end
 
 def lease_text(lease: Jobs.Lease) -> String
   text = String.from_bytes(lease.job.payload).unwrap_or("?")
-  case lease.job.last_error
-    some(why) -> "#{text} attempt #{lease.job.attempt} last_error #{why}"
-    none -> "#{text} attempt #{lease.job.attempt}"
+  base = "#{text} attempt #{lease.job.attempt}"
+  with_error = case lease.job.last_error
+    some(why) -> "#{base} last_error #{why}"
+    none -> base
+  end
+
+  case lease.job.group
+    some(group) -> "#{with_error} group #{group}"
+    none -> with_error
   end
 end
 
@@ -277,7 +288,7 @@ end
 # A fetch that waits: it runs in a task of the driver until `wait_end`.
 def wait(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
   wait_ms = if_given(req.number, WAIT_FETCH_MS)
-  fetch_args = Jobs.Fetch(queue: req.queue, lease_ms: 60_000, wait_ms: wait_ms)
+  fetch_args = Jobs.Fetch(queue: req.queue, lease_ms: 60_000, wait_ms: wait_ms, max_per_group: req.limit)
   task = Task.spawn do Jobs.fetch(backend, fetch_args) end
   # The fetch is parked before the next request, so the waiting fetches keep the order of their steps.
   Task.sleep(PARK_MS)
@@ -389,6 +400,10 @@ def behave(job: Jobs.Job) -> Result[Void]
   end
 end
 
+def plan_of(req: Request) -> Stress.Plan
+  Stress.Plan(consumers: req.number, jobs: req.wait, wait_ms: req.wait_ms, groups: req.groups, limit: req.limit)
+end
+
 def stress(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
-  Handled(driver: driver, reply: Stress.run(backend, driver.clock, req.number, req.wait, req.wait_ms))
+  Handled(driver: driver, reply: Stress.run(backend, driver.clock, plan_of(req)))
 end

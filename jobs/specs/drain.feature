@@ -71,6 +71,15 @@ Feature: Jobs.drain
     And the drain logged
     Then the reply is "err job dead attempt=1 id=1 queue=mail reason=attempts_exhausted"
 
+  Scenario: The log of a job of a group has the group
+    Given a memory backend on a manual clock
+    When I enqueue "fail" into "mail" with:
+      | setting | value |
+      | group   | bot   |
+    And I drain "mail"
+    And the drain logged
+    Then the reply is "warning job failed, it will run again attempt=1 group=bot id=1 queue=mail"
+
   Scenario: A job that is not due is left alone
     Given a memory backend on a manual clock
     When I enqueue "ok" into "q" with:

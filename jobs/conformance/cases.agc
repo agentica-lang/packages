@@ -60,6 +60,18 @@ def all() -> List[Case]
     Case(name: "eight tasks fetch 200 jobs at once and each job is delivered once", run: &competing_fetchers),
     Case(name: "after close, calls fail with jobs.closed, and a second close does nothing", run: &closed_calls),
     Case(name: "a fetch that waits when the backend is closed ends with jobs.closed", run: &closed_while_waiting),
+    Case(name: "a job keeps its group, and a bad group or limit is refused", run: &group_values),
+    Case(name: "a full group is skipped while the jobs of other groups are served", run: &full_group_skipped),
+    Case(name: "a group is counted in its own queue", run: &groups_per_queue),
+    Case(name: "max_per_group 0 is no limit, and a job with no group is never limited", run: &no_limit),
+    Case(name: "an ack frees the place of a group", run: &group_freed_by_ack),
+    Case(name: "a retry frees the place of a group", run: &group_freed_by_retry),
+    Case(name: "a release frees the place of a group", run: &group_freed_by_release),
+    Case(name: "a dead job frees the place of a group", run: &group_freed_by_dead),
+    Case(name: "the expiry of a lease frees the place of a group", run: &group_freed_by_expiry),
+    Case(name: "a fetch that waits for a full group gets a job when an ack frees it", run: &group_wakes_on_ack),
+    Case(name: "a fetch that waits for a full group gets a job when a retry frees it", run: &group_wakes_on_retry),
+    Case(name: "a fetch that waits for a full group gets a job when a lease expires", run: &group_wakes_on_expiry),
   ]
 end
 
@@ -73,6 +85,11 @@ FETCHERS = 8
 FETCHED_JOBS = 200
 AWAIT_MS = 30_000
 PENDING_MS = 100
+# A fetch that waits for a group is woken when a lease ends: at once on a manual clock, and after the unit of the
+# lease on
+# a real one. It fails, for a backend that does not wake it, when its wait is over.
+GROUP_WAIT_MS = 5_000
+AWAIT_GRACE_MS = 1_000
 ADVANCES = 600
 ADVANCE_MS = 50
 DAY_MS = 86_400_000
@@ -210,9 +227,11 @@ end
 # A fetch that waits, in a task of its own. It is still waiting a moment later: a backend that ignores `wait_ms` has
 # answered by then, and a correct one cannot end a fetch that waits within PENDING_MS.
 def spawn_waiting(env: Env, wait_ms: Int) -> Result[Task[Result[List[Jobs.Lease]]]]
-  waiting = Task.spawn do
-    Jobs.fetch(env.backend, Jobs.Fetch(queue: QUEUE, lease_ms: env.unit_ms, wait_ms: wait_ms))
-  end
+  spawn_fetch(env, Jobs.Fetch(queue: QUEUE, lease_ms: env.unit_ms, wait_ms: wait_ms))
+end
+
+def spawn_fetch(env: Env, fetch: Jobs.Fetch) -> Result[Task[Result[List[Jobs.Lease]]]]
+  waiting = Task.spawn do Jobs.fetch(env.backend, fetch) end
 
   case Task.await(waiting, PENDING_MS)
     Await.Done(_) -> error("conformance: a fetch that waits ended at once", kind: "conformance.failed")
@@ -555,4 +574,137 @@ def closed_while_waiting(env: Env) -> Result[Void]
     Await.Done(answer) -> expect_kind(answer, "jobs.closed", "a fetch that waited when the backend was closed")
     Await.TimedOut -> error("conformance: a fetch that waits did not end at close", kind: "conformance.failed")
   end
+end
+
+def grouped(group: String, text: String) -> Jobs.NewJob
+  Jobs.NewJob(queue: QUEUE, payload: text.bytes, group: some(group))
+end
+
+def limited(env: Env, max: Int, limit: Int) -> Jobs.Fetch
+  Jobs.Fetch(queue: QUEUE, max: max, lease_ms: env.unit_ms, max_per_group: limit)
+end
+
+def payloads(leases: List[Jobs.Lease]) -> List[String]
+  leases.map(->(held) { String.from_bytes(held.job.payload).unwrap_or("?") })
+end
+
+def expect_payloads(leases: List[Jobs.Lease], want: List[String]) -> Result[Void]
+  expect(payloads(leases) == want, "the fetch gave #{payloads(leases)}, and should give #{want}")
+end
+
+def group_values(env: Env) -> Result[Void]
+  _ = try add(env, grouped("g", "a"))
+  held = try lease_one(env, QUEUE)
+  try expect(held.job.group == some("g"), "the group of the job is #{held.job.group}")
+  empty = Jobs.NewJob(queue: QUEUE, payload: "b".bytes, group: some(""))
+  try expect_kind(add(env, empty), "argument", "a job with an empty group")
+  expect_kind(Jobs.fetch(env.backend, limited(env, 1, -1)), "argument", "a fetch with a negative max_per_group")
+end
+
+def full_group_skipped(env: Env) -> Result[Void]
+  for text in ["a1", "a2", "a3"]
+    _ = try add(env, grouped("a", text))
+  end
+
+  _ = try add(env, grouped("b", "b1"))
+  _ = try add(env, job(QUEUE, "plain"))
+  first = try Jobs.fetch(env.backend, limited(env, 10, 2))
+  try expect_payloads(first, ["a1", "a2", "b1", "plain"])
+  second = try Jobs.fetch(env.backend, limited(env, 10, 2))
+  try expect_payloads(second, [])
+  try expect_counts(env, QUEUE, counted(1, 0, 4, 0))
+  try Jobs.ack(env.backend, first[0])
+  third = try Jobs.fetch(env.backend, limited(env, 10, 2))
+  expect_payloads(third, ["a3"])
+end
+
+def groups_per_queue(env: Env) -> Result[Void]
+  _ = try add(env, grouped("a", "here"))
+  _ = try Jobs.enqueue(env.backend, Jobs.NewJob(queue: OTHER, payload: "there".bytes, group: some("a")))
+  _ = try lease_one(env, QUEUE)
+  elsewhere = try Jobs.fetch(env.backend, Jobs.Fetch(queue: OTHER, lease_ms: env.unit_ms, max_per_group: 1))
+  expect_payloads(elsewhere, ["there"])
+end
+
+def no_limit(env: Env) -> Result[Void]
+  for text in ["a1", "a2", "a3"]
+    _ = try add(env, grouped("a", text))
+  end
+
+  unlimited = try Jobs.fetch(env.backend, limited(env, 3, 0))
+  try expect_payloads(unlimited, ["a1", "a2", "a3"])
+  for text in ["p1", "p2", "p3"]
+    _ = try add(env, job(QUEUE, text))
+  end
+
+  plain = try Jobs.fetch(env.backend, limited(env, 3, 1))
+  expect_payloads(plain, ["p1", "p2", "p3"])
+end
+
+# A group of limit 1 with one lease live and a job that waits for it: `end_lease` ends that lease, and the job is then
+# delivered (the job of the lease itself may come back first).
+def group_freed(env: Env, end_lease: Fn[Env, Jobs.Lease, Result[Void]]) -> Result[Void]
+  _ = try add(env, grouped("g", "g1"))
+  _ = try add(env, grouped("g", "g2"))
+  first = try Jobs.fetch(env.backend, limited(env, 1, 1))
+  try expect_payloads(first, ["g1"])
+  blocked = try Jobs.fetch(env.backend, limited(env, 1, 1))
+  try expect_payloads(blocked, [])
+  try end_lease.call(env, first[0])
+  freed = try Jobs.fetch(env.backend, limited(env, 1, 1))
+  expect(freed.size == 1, "the group is not free after its lease ended: the fetch gave #{freed.size} jobs")
+end
+
+def group_freed_by_ack(env: Env) -> Result[Void] = group_freed(env, ->(e, held) { Jobs.ack(e.backend, held) })
+
+def group_freed_by_retry(env: Env) -> Result[Void]
+  group_freed(env, ->(e, held) { Jobs.nack(e.backend, held, retry_now(e, none)) })
+end
+
+def group_freed_by_release(env: Env) -> Result[Void]
+  group_freed(env, ->(e, held) { Jobs.nack(e.backend, held, Jobs.Nack.Release) })
+end
+
+def group_freed_by_dead(env: Env) -> Result[Void]
+  group_freed(env, ->(e, held) { Jobs.nack(e.backend, held, Jobs.Nack.Dead("no")) })
+end
+
+def group_freed_by_expiry(env: Env) -> Result[Void]
+  group_freed(
+    env,
+    ->(e, _held) {
+      expire(e)
+      ok()
+    },
+  )
+end
+
+# A fetch that waits for a group that is full: `end_lease` ends the lease that fills it, and the fetch ends with a job.
+def group_wakes(env: Env, end_lease: Fn[Env, Jobs.Lease, Result[Void]]) -> Result[Void]
+  _ = try add(env, grouped("g", "g1"))
+  _ = try add(env, grouped("g", "g2"))
+  first = try Jobs.fetch(env.backend, limited(env, 1, 1))
+  waiting_for = Jobs.Fetch(queue: QUEUE, lease_ms: env.unit_ms, wait_ms: GROUP_WAIT_MS, max_per_group: 1)
+  waiting = try spawn_fetch(env, waiting_for)
+  try end_lease.call(env, first[0])
+  case Task.await(waiting, GROUP_WAIT_MS + AWAIT_GRACE_MS)
+    Await.Done(answer) -> got_one(answer)
+    Await.TimedOut -> error("conformance: a fetch that waits for a group did not end", kind: "conformance.failed")
+  end
+end
+
+def group_wakes_on_ack(env: Env) -> Result[Void] = group_wakes(env, ->(e, held) { Jobs.ack(e.backend, held) })
+
+def group_wakes_on_retry(env: Env) -> Result[Void]
+  group_wakes(env, ->(e, held) { Jobs.nack(e.backend, held, retry_now(e, none)) })
+end
+
+def group_wakes_on_expiry(env: Env) -> Result[Void]
+  group_wakes(
+    env,
+    ->(e, _held) {
+      expire(e)
+      ok()
+    },
+  )
 end
