@@ -224,6 +224,17 @@ def test_pointers_into_the_middle_of_labels_cost_the_bytes_of_the_names() -> Res
   Test.assert(System.Profile.steps() - before < 1500 * 4000, "the work grows with the bytes, not with their names")
 end
 
+def test_a_name_may_end_in_a_known_name_only_when_its_pointer_goes_before_it() -> Result[Void]
+  # The owner of the record is a pointer to a label whose rest is the name `42 c0 0e` that the second question
+  # made. That
+  # name has a pointer to a place after the start of the owner, which the strict rule refuses, so the owner must
+  # not take
+  # the name of the question as its rest.
+  message = "0001" + "8180" + "0002" + "0001" + "00000000" + "00" + "03000001" + "0142c00e00010001"
+  record = "c00d" + "00010001" + "0000003c" + "0004" + "01020304"
+  Test.assert(malformed?(message + record), "a pointer into the name that holds it")
+end
+
 def test_a_chain_of_pointers_that_nobody_read_is_cut_before_it_is_followed() -> Result[Void]
   # A record of an unknown type holds 3000 names, each a pointer to the one before. The owner of the next record points
   # at the last of them: the 33rd pointer ends the walk, whatever the length of the chain.

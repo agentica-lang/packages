@@ -28,6 +28,45 @@ def test_a_resolv_conf_gives_its_nameservers_in_order() -> Result[Void]
   Test.eq(hosts(DNS.parse_resolv_conf(text)), ["192.0.2.1:53", "2001:db8::1:53", "192.0.2.3:53"])
 end
 
+def test_lines_that_end_with_a_carriage_return_and_other_white_space_are_read() -> Result[Void]
+  text = "nameserver 1.1.1.1\r\nnameserver\t\t2606:4700::1111  \r\n\tnameserver 9.9.9.9 \r"
+  Test.eq(hosts(DNS.parse_resolv_conf(text)), ["1.1.1.1:53", "2606:4700::1111:53", "9.9.9.9:53"])
+end
+
+def test_only_ip_literals_are_nameservers() -> Result[Void]
+  good = ["1.1.1.1", "255.0.0.0", "::1", "::", "2001:db8::1", "1:2:3:4:5:6:7:8", "::ffff:1.2.3.4", "1::", "fe80::1"]
+  for address in good
+    try Test.eq(hosts(DNS.parse_resolv_conf("nameserver #{address}")), ["#{address}:53"])
+  end
+
+  bad = [
+    "localhost",
+    "-bad",
+    "http://x",
+    "1.1.1",
+    "1.1.1.1.1",
+    "256.1.1.1",
+    "01.1.1.1",
+    "1.1.1.a",
+    ":::",
+    "1:2:3:4:5:6:7",
+    "1:2:3:4:5:6:7:8:9",
+    "1::2::3",
+    "12345::1",
+    "g::1",
+    ":1:2:3:4:5:6:7",
+    "1:2:3:4:5:6:7::8",
+    "fe80::1%eth0",
+    "1.2.3.4::1",
+  ]
+
+  for address in bad
+    try Test.eq(hosts(DNS.parse_resolv_conf("nameserver #{address}")), [])
+  end
+
+  ok()
+end
+
 def test_a_resolv_conf_without_a_nameserver_is_an_error() -> Result[Void]
   try Test.eq(DNS.parse_resolv_conf("search example.com\nnameserver\n").length, 0)
   Test.assert(not DNS.system_servers("/nonexistent/resolv.conf").ok?, "a file that is not there")

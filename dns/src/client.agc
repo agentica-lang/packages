@@ -167,7 +167,8 @@ end
 def secure?(server: Types.Server) -> Bool
   case server
     Types.Server.Tls(_, _, _) -> true
-    _ -> false
+    Types.Server.Https(_) -> true
+    Types.Server.Tcp(_, _) -> false
   end
 end
 
