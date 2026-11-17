@@ -9,7 +9,6 @@
 import Types from "src/types"
 
 export Types.Backend
-export Types.Caps
 export Types.Clock
 export Types.Counts
 export Types.Enqueued
@@ -65,7 +64,7 @@ def close(backend: Types.Backend, drain_ms: Int) -> Void
 end
 
 ## What a handler returns to say that its job is dead, with no more attempts.
-def discard(reason: String) -> Result[Void] = error(reason, kind: "jobs.discard")
+def discard(message: String) -> Result[Void] = error(message, kind: "jobs.discard")
 
 ## A clock that moves only when told, for a backend's `clock` and for tests.
 def manual_clock() -> Types.Clock

@@ -10,7 +10,9 @@ def new_job(max_attempts: Int) -> Jobs.NewJob = Jobs.NewJob(queue: "q", payload:
 
 def keyed(key: String) -> Jobs.NewJob = Jobs.NewJob(queue: "q", payload: key.bytes, unique_key: some(key))
 
-def retry(at_ms: Int, reason: Optional[String]) -> Jobs.Nack = Jobs.Nack.Retry(Jobs.Later(at_ms: at_ms, error: reason))
+def retry(at_ms: Int, message: Optional[String]) -> Jobs.Nack
+  Jobs.Nack.Retry(Jobs.Later(at_ms: at_ms, error: message))
+end
 
 def with_job(new: Jobs.NewJob) -> Result[Store.Store]
   added = try Store.enqueue(Store.empty(10, 10), NOW, [new])
@@ -73,7 +75,7 @@ def main() -> Void
       again = try take(over, NOW + LEASE_MS)
       return Test.eq(again.leases[0].job.attempt, 2)
     end,
-    Test.test("a lease that runs out on the last attempt makes the job dead, with the reason") do
+    Test.test("a lease that runs out on the last attempt makes the job dead, with the error") do
       taken = try leased(new_job(1))
       over = Store.tick(taken.store, NOW + LEASE_MS)
       try Test.eq(counts(over, NOW + LEASE_MS), counted(0, 0, 0, 1))
@@ -135,7 +137,7 @@ def main() -> Void
       again = try take(released, NOW)
       return Test.eq(again.leases[0].job.attempt, 1)
     end,
-    Test.test("a retry keeps what went wrong for the next delivery, and a retry with no reason keeps the last one") do
+    Test.test("a retry keeps what went wrong for the next delivery, and a retry with no error keeps the last one") do
       taken = try leased(new_job(5))
       failed = try Store.nack(taken.store, taken.leases[0], retry(NOW, some("the server is down")))
       second = try take(failed, NOW)
@@ -152,7 +154,7 @@ def main() -> Void
       try Test.eq(again.leases[0].job.attempt, 1)
       return Test.eq(counts(again.store, NOW), counted(0, 0, 1, 0))
     end,
-    Test.test("a dead job keeps the reason, whether it was killed or ran out of attempts") do
+    Test.test("a dead job keeps the error, whether it was killed or ran out of attempts") do
       taken = try leased(new_job(5))
       killed = try Store.nack(taken.store, taken.leases[0], Jobs.Nack.Dead("bad input"))
       try Test.eq(killed.dead[0].job.last_error, some("bad input"))
