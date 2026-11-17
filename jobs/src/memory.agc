@@ -3,10 +3,11 @@
 ## manual clock needs no sleep.
 ##
 ## A fetch that waits for jobs is parked in the state of the actor (parked.agc), with its reply channel. The actor
-## serves the waiters of a queue, oldest first, after each call and each wake, and ends one at its deadline; while some
-## are parked it also wakes at the next time a job or a lease is due, and at least every WAKE_CAP_MS, so a clock that
-## is set by hand, or that jumps, is seen. A caller that gave up while it waited makes `Actor.reply` give `false`, and
-## the jobs go back to their queue.
+## serves the waiters of a queue, oldest first, after each call and each wake, and ends one at its deadline: the first
+## of `wait_ms` on the clock of the backend and `wait_ms` of real time, so a manual clock that nobody moves does not
+## keep a fetch past its time. While some are parked it also wakes at the next time a job or a lease is due, and at
+## least every WAKE_CAP_MS, so a clock that is set by hand, or that jumps, is seen. A caller that gave up while it
+## waited makes `Actor.reply` give `false`, and the jobs go back to their queue.
 ##
 ## The actor is a child of the task that calls `start`: make the backend in `main`.
 
@@ -28,7 +29,7 @@ def start(options: Types.MemoryOptions) -> Result[Types.Backend]
 
   actor = Actor.start(behaviour, Actor.Options(capacity: INBOX))
   closed: ATS[String, Int] = ATS.new()
-  ok(backend(Link(ref: actor, address: actor.address, closed: closed)))
+  ok(backend(Link(ref: actor, address: actor.address, closed: closed, fetch_timeout_ms: options.fetch_timeout_ms)))
 end
 
 private
@@ -72,6 +73,7 @@ struct Link
   ref: Actor.Ref[State, Msg]
   address: Address[Msg]
   closed: ATS[String, Int]
+  fetch_timeout_ms: Optional[Int]
 end
 
 def check(options: Types.MemoryOptions) -> Result[Void]
@@ -119,7 +121,7 @@ end
 
 def fetch_jobs(link: Link, fetch: Types.Fetch) -> Result[List[Types.Lease]]
   wait_ms = fetch.wait_ms.clamp(0, MAX_WAIT_MS)
-  ask(link, wait_ms + CALL_MS) do |reply| Msg.Fetch(fetch, reply) end
+  ask(link, link.fetch_timeout_ms.unwrap_or(wait_ms + CALL_MS)) do |reply| Msg.Fetch(fetch, reply) end
 end
 
 def close(link: Link, drain_ms: Int) -> Void
@@ -169,8 +171,9 @@ def serve_fetch(state: State, now: Int, fetch: Types.Fetch, reply: Channel[Resul
 end
 
 def park(state: State, now: Int, fetch: Types.Fetch, reply: Channel[Result[List[Types.Lease]]]) -> State
-  until_ms = now + fetch.wait_ms.clamp(0, MAX_WAIT_MS)
-  state.with(parked: Parked.park(state.parked, fetch, until_ms, reply))
+  wait_ms = fetch.wait_ms.clamp(0, MAX_WAIT_MS)
+  until = Parked.Until(ms: now + wait_ms, real_ms: Time.monotonic_ms() + wait_ms)
+  state.with(parked: Parked.park(state.parked, fetch, until, reply))
 end
 
 def serve_ack(state: State, lease: Types.Lease, reply: Channel[Result[Void]]) -> State
@@ -251,7 +254,7 @@ def gone(state: State, waiter: Parked.Waiter) -> State = state.with(parked: Park
 
 # A waiter whose time is up gets no jobs.
 def expire(state: State, now: Int) -> State
-  out = Parked.expired(state.parked, now)
+  out = Parked.expired(state.parked, now, Time.monotonic_ms())
   for waiter in out.waiters
     _ = Actor.reply(waiter.reply, ok([]))
   end
@@ -278,8 +281,8 @@ def wake_in(state: State) -> Optional[Int]
     end
   end
 
-  case Parked.next_deadline(state.parked)
-    some(at) -> times = times.push(at)
+  case Parked.next_wait(state.parked, now, Time.monotonic_ms())
+    some(ms) -> times = times.push(now + ms)
     none -> nil
   end
 

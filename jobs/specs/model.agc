@@ -1,6 +1,8 @@
-## An independent model of the jobs contract (docs/contract.md), for the differential scenario of memory.feature: it
-## makes a script of random calls on a manual clock, with the reply that the contract gives to each one, and the memory
-## backend must answer the same.
+## An independent reference model of the memory backend, for the differential scenario of memory.feature: it makes a
+## script of random calls on a manual clock, with the reply that the contract gives to each one, and the memory backend
+## must answer the same. The contract (docs/contract.md) leaves some things open that the memory backend fixes, and the
+## model fixes them in the same way: jobs come by `run_at_ms` and then by insertion, and a duplicate key is answered
+## before `max_jobs` is looked at.
 ##
 ## It imports nothing of the package: no heap, no store, no rules of `settle`. The jobs are a plain list that each call
 ## scans, so nothing here can share a mistake with the code under test. A random number comes from a generator of its
@@ -57,6 +59,8 @@ AMOUNTS = [1, 500, 1_000, 5_000, 60_000]
 ATTEMPTS = [1, 2, 3, 5]
 DELAYS = [0, 0, 0, 1_000, 5_000, 60_000]
 KINDS = ["ack", "ack", "retry", "release", "kill", "extend"]
+MAXES = [1, 1, 2, 3]
+WHYS = ["", "", "boom", "the server is down"]
 STATE = "state"
 MODULUS = 2_147_483_648
 SALT = 7_919
@@ -73,6 +77,7 @@ struct Item
   attempt: Int
   token: Int
   expires: Int
+  last_error: String
 end
 
 # The delivery that a name holds.
@@ -89,6 +94,14 @@ struct World
   held: Map[String, Held]
   next_id: Int
   next_token: Int
+  again: Again
+end
+
+# The queue and the key of the job that went back last, so that the script asks for that key again soon: a key that
+# is taken, or free, after a retry or a release.
+struct Again
+  queue: String
+  key: String
 end
 
 struct Step
@@ -109,13 +122,17 @@ def pick[T](gen: ATS[String, Int], choices: List[T]) -> T = choices[draw(gen, ch
 # A random call. The names that hold a lease are the ones that a lease call can use, stale or not.
 def next_request(gen: ATS[String, Int], world: World, serial: Int) -> Request
   roll = draw(gen, 100)
-  return enqueue_request(gen, serial) if roll < 28
+  return again_request(gen, world, serial) if world.again.key != "" and roll < 60
 
-  return Request(op: "fetch", queue: pick(gen, QUEUES), name: pick(gen, NAMES), number: pick(gen, LEASES)) if roll < 52
+  return enqueue_request(gen, serial) if roll < 24
+
+  return enqueue_all_request(gen, serial) if roll < 28
+
+  return fetch_request(gen) if roll < 52
 
   if roll < 72 and not world.held.empty?
     kind = pick(gen, KINDS)
-    return Request(op: kind, name: pick(gen, world.held.keys), number: pick(gen, AMOUNTS))
+    return Request(op: kind, name: pick(gen, world.held.keys), number: pick(gen, AMOUNTS), text: pick(gen, WHYS))
   end
 
   return Request(op: "advance", number: pick(gen, STEPS)) if roll < 86
@@ -124,10 +141,32 @@ def next_request(gen: ATS[String, Int], world: World, serial: Int) -> Request
 end
 
 def enqueue_request(gen: ATS[String, Int], serial: Int) -> Request
-  queue = pick(gen, QUEUES)
+  enqueue_with(gen, serial, pick(gen, QUEUES), pick(gen, KEYS))
+end
+
+def again_request(gen: ATS[String, Int], world: World, serial: Int) -> Request
+  enqueue_with(gen, serial, world.again.queue, world.again.key)
+end
+
+def fetch_request(gen: ATS[String, Int]) -> Request
+  Request(
+    op: "fetch",
+    queue: pick(gen, QUEUES),
+    name: pick(gen, NAMES),
+    number: pick(gen, LEASES),
+    max: pick(gen, MAXES),
+  )
+end
+
+# Two or three jobs in one batch.
+def enqueue_all_request(gen: ATS[String, Int], serial: Int) -> Request
+  payloads = (0...(2 + draw(gen, 2))).map(->(n) { "p#{serial}x#{n}" })
+  Request(op: "enqueue_all", queue: pick(gen, QUEUES), text: payloads.join(","))
+end
+
+def enqueue_with(gen: ATS[String, Int], serial: Int, queue: String, key: String) -> Request
   attempts = pick(gen, ATTEMPTS)
   delay = pick(gen, DELAYS)
-  key = pick(gen, KEYS)
   rows = [["max_attempts", "#{attempts}"]]
   if delay > 0
     rows = rows.push(["run_in_ms", "#{delay}"])
@@ -146,10 +185,11 @@ def apply(before: World, req: Request) -> Step
   case req.op
     "start" -> Step(world: empty(number(req, "max_jobs", MAX_JOBS)), reply: "ok")
     "enqueue" -> enqueue(world, req)
+    "enqueue_all" -> enqueue_all(world, req)
     "fetch" -> fetch(world, req)
     "advance" -> Step(world: world.with(now: world.now + req.number), reply: "ok")
     "counts" -> Step(world: world, reply: counts(world, req.queue))
-    _ -> on_lease(world, req.name, req.op, req.number)
+    _ -> on_lease(world, req)
   end
 end
 
@@ -168,7 +208,16 @@ def text(req: Request, name: String) -> String
 end
 
 def empty(max_jobs: Int) -> World
-  World(now: 0, max_jobs: max_jobs, jobs: [], dead: [], held: {}, next_id: 1, next_token: 1)
+  World(
+    now: 0,
+    max_jobs: max_jobs,
+    jobs: [],
+    dead: [],
+    held: {},
+    next_id: 1,
+    next_token: 1,
+    again: Again(queue: "", key: ""),
+  )
 end
 
 # A lease that ran out is over: the job is back, or dead when that was its last attempt.
@@ -205,52 +254,85 @@ def enqueue(world: World, req: Request) -> Step
   key = text(req, "unique_key")
   twin = world.jobs.find(->(item) { key != "" and item.queue == req.queue and item.key == key })
   case twin
-    ok(item) -> return Step(world: world, reply: "ok #{item.id} duplicate")
+    ok(item) -> return Step(world: forgotten(world), reply: "ok #{item.id} duplicate")
     error(_) -> nil
   end
 
-  return Step(world: world, reply: "error jobs.full") if world.jobs.size >= world.max_jobs
+  return Step(world: forgotten(world), reply: "error jobs.full") if world.jobs.size >= world.max_jobs
 
-  item = Item(
-    id: world.next_id,
+  item = new_item(world, world.next_id, req, req.text, key)
+  added = world.with(jobs: world.jobs.push(item), next_id: world.next_id + 1)
+  Step(world: forgotten(added), reply: "ok #{item.id}")
+end
+
+# The batch adds all its jobs, or none when they do not fit.
+def enqueue_all(world: World, req: Request) -> Step
+  payloads = req.text.split(",")
+  return Step(world: forgotten(world), reply: "error jobs.full") if world.jobs.size + payloads.size > world.max_jobs
+
+  items = (0...payloads.size).map(->(n) { new_item(world, world.next_id + n, req, payloads[n], "") })
+  added = world.with(jobs: world.jobs + items, next_id: world.next_id + payloads.size)
+  Step(world: forgotten(added), reply: "ok #{items.map(->(item) { "#{item.id}" }).join(",")}")
+end
+
+def new_item(world: World, id: Int, req: Request, payload: String, key: String) -> Item
+  Item(
+    id: id,
     queue: req.queue,
-    payload: req.text,
+    payload: payload,
     max_attempts: number(req, "max_attempts", 5),
     run_at: world.now + number(req, "run_in_ms", 0),
     key: key,
     attempt: 0,
     token: 0,
     expires: 0,
+    last_error: "",
   )
-
-  added = world.with(jobs: world.jobs.push(item), next_id: world.next_id + 1)
-  Step(world: added, reply: "ok #{item.id}")
 end
 
-# The job that comes first: the earliest time, then the first added.
+def forgotten(world: World) -> World = world.with(again: Again(queue: "", key: ""))
+
+# The jobs that come first, up to `max`: the earliest time, then the first added.
 def fetch(world: World, req: Request) -> Step
   ready = world.jobs.filter(->(item) { item.queue == req.queue and item.token == 0 and item.run_at <= world.now })
-  case ready.min_by(->(item) { item.run_at * 1_000_000 + item.id })
-    none -> Step(world: world, reply: "ok none")
-    some(item) -> lend(world, item, req.name, req.number)
+  first = ready.sort_by(->(item) { item.run_at * 1_000_000 + item.id }).take(req.max)
+  return Step(world: world, reply: "ok none") if first.empty?
+
+  state = world
+  texts: List[String] = []
+  for position in 0...first.size
+    state = lend(state, first[position], lease_name(req.name, position), req.number)
+    texts = texts.push(delivery_text(first[position]))
   end
+
+  Step(world: state, reply: "ok #{texts.join(", ")}")
 end
 
-def lend(world: World, item: Item, name: String, lease_ms: Int) -> Step
+def lease_name(name: String, position: Int) -> String
+  return name if position == 0
+
+  "#{name}/#{position + 1}"
+end
+
+def delivery_text(item: Item) -> String
+  return "#{item.payload} attempt #{item.attempt + 1}" if item.last_error == ""
+
+  "#{item.payload} attempt #{item.attempt + 1} last_error #{item.last_error}"
+end
+
+def lend(world: World, item: Item, name: String, lease_ms: Int) -> World
   leased = item.with(attempt: item.attempt + 1, token: world.next_token, expires: world.now + lease_ms)
   state = replace(world, leased)
   held = state.held.put(name, Held(id: item.id, token: world.next_token))
-  Step(
-    world: state.with(held: held, next_token: world.next_token + 1),
-    reply: "ok #{item.payload} attempt #{leased.attempt}",
-  )
+  state.with(held: held, next_token: world.next_token + 1)
 end
 
-# ack, retry (`amount` ms from now), release, kill or extend (`amount` ms from now) of the delivery that a name holds.
-def on_lease(world: World, name: String, kind: String, amount: Int) -> Step
-  case live(world, name)
+# ack, retry (`amount` ms from now, with `why` as its error), release, kill or extend (`amount` ms from now) of the
+# delivery that a name holds.
+def on_lease(world: World, req: Request) -> Step
+  case live(world, req.name)
     none -> Step(world: world, reply: "error jobs.lease_lost")
-    some(item) -> Step(world: finish(world, item, kind, amount), reply: "ok")
+    some(item) -> Step(world: finish(world, item, req), reply: "ok")
   end
 end
 
@@ -265,22 +347,29 @@ def live(world: World, name: String) -> Optional[Item]
   end
 end
 
-def finish(world: World, item: Item, kind: String, amount: Int) -> World
-  case kind
+def finish(world: World, item: Item, req: Request) -> World
+  case req.op
     "ack" -> remove(world, item)
     "kill" -> bury(world, item)
-    "release" -> replace(world, item.with(attempt: item.attempt - 1, token: 0))
-    "extend" -> replace(world, item.with(expires: world.now + amount))
-    _ -> retry(world, item, amount)
+    "release" -> back_again(replace(world, item.with(attempt: item.attempt - 1, token: 0)), item)
+    "extend" -> replace(world, item.with(expires: world.now + req.number))
+    _ -> retry(world, item, req)
   end
 end
 
-# A retry on the last attempt is the end of the job.
-def retry(world: World, item: Item, amount: Int) -> World
+# A retry on the last attempt is the end of the job. One that says nothing keeps the last error.
+def retry(world: World, item: Item, req: Request) -> World
   return bury(world, item) if item.attempt >= item.max_attempts
 
-  replace(world, item.with(run_at: world.now + amount, token: 0))
+  last_error = case req.text
+    "" -> item.last_error
+    _ -> req.text
+  end
+
+  back_again(replace(world, item.with(run_at: world.now + req.number, token: 0, last_error: last_error)), item)
 end
+
+def back_again(world: World, item: Item) -> World = world.with(again: Again(queue: item.queue, key: item.key))
 
 def counts(world: World, queue: String) -> String
   mine = world.jobs.filter(->(item) { item.queue == queue })
