@@ -57,7 +57,7 @@ jobs/                jobs to produce and consume, with the backend swappable: jo
                      wait, the close), src/parked.agc the fetches that wait (by queue and by deadline), src/settle.agc
                      what happens to a job after its handler (shared by `Jobs.drain` and the later pipeline),
                      src/inline.agc `Jobs.drain`, src/cases.agc the cases of the suite; specs/ has the features
-                     (conformance: the suite on the memory backend, on a broken one, on one that lacks capabilities
+                     (conformance: the suite on the memory backend, on a broken one
                      and on the real clock; memory, drain, stress: many consumers and producers), whose program under
                      test is specs/driver.agc (a memory backend and a manual clock that a step program drives by JSON
                      lines, specs/protocol.agc, specs/steps.agc), specs/stress.agc the consumers and producers, and

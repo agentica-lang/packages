@@ -15,11 +15,9 @@ struct Env
   unit_ms: Int
 end
 
-## A case, and the capabilities of a backend that it needs: without one, the case is skipped.
+## A case: its name, and what it runs.
 struct Case
   name: String
-  needs_unique_keys: Bool
-  needs_extend: Bool
   run: Fn[Env, Result[Void]]
 end
 
@@ -38,14 +36,18 @@ def all() -> List[Case]
     plain("ack removes the job, and a second ack fails", &ack_once),
     plain("a retry hides the job until its time", &retry_waits),
     plain("a release gives the job back at once, without counting the attempt", &release_keeps_attempt),
+    plain(
+      "the error of a retry is the last_error of the next delivery, and a retry without one keeps it",
+      &last_error,
+    ),
     plain("a dead job is never delivered again, and is counted", &dead_for_good),
     plain("the expiry of the last attempt makes the job dead", &last_attempt_expires),
     plain("a retry on the last attempt makes the job dead", &last_attempt_retries),
-    extending("extend moves the end of the lease, and the job comes back at the new end", &extend_moves),
+    plain("extend moves the end of the lease, and the job comes back at the new end", &extend_moves),
     plain("a job is not delivered before its time", &not_early),
-    unique("a unique key gives a duplicate until the job is acked or dead", &unique_key),
-    unique("a unique key stays held through a retry, a release and an expired lease", &unique_key_held),
-    unique("two jobs of one batch with the same key are one job", &same_key_in_batch),
+    plain("a unique key gives a duplicate until the job is acked or dead", &unique_key),
+    plain("a unique key stays held through a retry, a release and an expired lease", &unique_key_held),
+    plain("two jobs of one batch with the same key are one job", &same_key_in_batch),
     plain("enqueue_all adds every job, or none", &all_or_nothing),
     plain("eight tasks fetch 200 jobs at once and each job is delivered once", &competing_fetchers),
     plain("after close, calls fail with jobs.closed", &closed_calls),
@@ -65,17 +67,7 @@ ADVANCES = 600
 ADVANCE_MS = 50
 DAY_MS = 86_400_000
 
-def plain(name: String, run: Fn[Env, Result[Void]]) -> Case
-  Case(name: name, needs_unique_keys: false, needs_extend: false, run: run)
-end
-
-def unique(name: String, run: Fn[Env, Result[Void]]) -> Case
-  Case(name: name, needs_unique_keys: true, needs_extend: false, run: run)
-end
-
-def extending(name: String, run: Fn[Env, Result[Void]]) -> Case
-  Case(name: name, needs_unique_keys: false, needs_extend: true, run: run)
-end
+def plain(name: String, run: Fn[Env, Result[Void]]) -> Case = Case(name: name, run: run)
 
 def expect(condition: Bool, text: String) -> Result[Void]
   return error("conformance: #{text}", kind: "conformance.failed") if not condition
@@ -300,7 +292,7 @@ end
 def retry_waits(env: Env) -> Result[Void]
   _ = try add(env, job(QUEUE, "a"))
   held = try lease_one(env, QUEUE)
-  try Jobs.nack(env.backend, held, Jobs.Nack.Retry(env.clock.now.call() + delay(env)))
+  try Jobs.nack(env.backend, held, Jobs.Nack.Retry(Jobs.Later(at_ms: env.clock.now.call() + delay(env))))
   try fetch_none(env, QUEUE)
   try expect_counts(env, QUEUE, counted(0, 1, 0, 0))
   try reach(env, delay(env), QUEUE)
@@ -314,6 +306,25 @@ def release_keeps_attempt(env: Env) -> Result[Void]
   try Jobs.nack(env.backend, held, Jobs.Nack.Release)
   again = try lease_one(env, QUEUE)
   expect(again.job.attempt == 1, "the attempt is #{again.job.attempt} after a release, and should be 1")
+end
+
+def last_error(env: Env) -> Result[Void]
+  _ = try add(env, job(QUEUE, "a"))
+  first = try lease_one(env, QUEUE)
+  try expect(first.job.last_error == none, "the first delivery has the last_error #{first.job.last_error}")
+  try Jobs.nack(env.backend, first, retry_now(env, some("the server is down")))
+  second = try lease_one(env, QUEUE)
+  try expect(second.job.last_error == some("the server is down"), "the last_error is #{second.job.last_error}")
+  try Jobs.nack(env.backend, second, retry_now(env, none))
+  third = try lease_one(env, QUEUE)
+  expect(
+    third.job.last_error == some("the server is down"),
+    "the last_error is #{third.job.last_error} after a silent retry",
+  )
+end
+
+def retry_now(env: Env, message: Optional[String]) -> Jobs.Nack
+  Jobs.Nack.Retry(Jobs.Later(at_ms: env.clock.now.call(), error: message))
 end
 
 def dead_for_good(env: Env) -> Result[Void]
@@ -339,7 +350,7 @@ end
 def last_attempt_retries(env: Env) -> Result[Void]
   _ = try add(env, Jobs.NewJob(queue: QUEUE, payload: "a".bytes, max_attempts: 1))
   held = try lease_one(env, QUEUE)
-  try Jobs.nack(env.backend, held, Jobs.Nack.Retry(env.clock.now.call()))
+  try Jobs.nack(env.backend, held, Jobs.Nack.Retry(Jobs.Later(at_ms: env.clock.now.call())))
   try fetch_none(env, QUEUE)
   expect_counts(env, QUEUE, counted(0, 0, 0, 1))
 end
@@ -403,7 +414,7 @@ end
 def unique_key_held(env: Env) -> Result[Void]
   first = try add(env, keyed("held"))
   held = try lease_one(env, QUEUE)
-  try Jobs.nack(env.backend, held, Jobs.Nack.Retry(env.clock.now.call() + delay(env)))
+  try Jobs.nack(env.backend, held, Jobs.Nack.Retry(Jobs.Later(at_ms: env.clock.now.call() + delay(env))))
   try expect_duplicate(env, first, "after a retry")
   try reach(env, delay(env), QUEUE)
   released = try lease_one(env, QUEUE)

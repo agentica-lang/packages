@@ -73,16 +73,12 @@ def main() -> Void
     BDD.step("the suite runs on a memory backend whose ack never fails") do |ctx, _args|
       run_suite(ctx, &lenient_acks)
     end,
-    BDD.step("the suite runs on a memory backend that has no unique keys and cannot extend a lease") do |ctx, _args|
-      run_suite(ctx, &limited)
-    end,
     BDD.step("the case {string} passes on a memory backend that reads the real clock") do |ctx, args|
       real_clock_case(ctx, args[0])
     end,
     BDD.step("the suite has {int} cases") do |ctx, args| expect_cases(ctx, args[0].to_i!) end,
     BDD.step("no case failed") do |ctx, _args| expect_no_failure(ctx) end,
     BDD.step("the case {string} passed") do |ctx, args| expect_status(ctx, args[0], "passed") end,
-    BDD.step("the case {string} was skipped") do |ctx, args| expect_status(ctx, args[0], "was skipped") end,
     BDD.step("the case {string} failed") do |ctx, args| expect_status(ctx, args[0], "failed") end,
   ])
 end
@@ -112,11 +108,6 @@ def lenient_acks(clock: Fn[Int]) -> Result[Jobs.Backend]
   ok(backend.with(ack: ->(_lease) { ok() }))
 end
 
-def limited(clock: Fn[Int]) -> Result[Jobs.Backend]
-  backend = try memory(clock)
-  ok(backend.with(caps: Jobs.Caps(has_unique_keys: false, extendable: false)))
-end
-
 # A memory backend that ignores the clock it is given and reads the wall clock, as a database does.
 def real_clock(_clock: Fn[Int]) -> Result[Jobs.Backend]
   backend = try Jobs.memory()
@@ -128,7 +119,7 @@ def real_clock_case(ctx: BDD.Context, name: String) -> BDD.Context
   BDD.assert(ctx, result.ok?, "the case #{name} on the real clock: #{result}")
 end
 
-# The outcomes are kept as lines: `passed`, `skipped` or `failed`, a tab, the name of the case.
+# The outcomes are kept as lines: `passed` or `failed`, a tab, the name of the case.
 def run_suite(ctx: BDD.Context, make: Conformance.Maker) -> BDD.Context
   lines = Conformance.run_all(make).map(->(outcome) { "#{status_word(outcome.status)}\t#{outcome.name}" })
   BDD.set(ctx, OUTCOMES, JSON.from(lines))
@@ -137,7 +128,6 @@ end
 def status_word(status: Conformance.Status) -> String
   case status
     Conformance.Status.Passed -> "passed"
-    Conformance.Status.Skipped(_) -> "was skipped"
     Conformance.Status.Failed(_) -> "failed"
   end
 end

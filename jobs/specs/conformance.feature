@@ -4,7 +4,7 @@ Feature: The conformance suite
 
   Scenario: The memory backend passes every contract case
     When the suite runs on the memory backend
-    Then the suite has 23 cases
+    Then the suite has 24 cases
     And no case failed
     And the case "ack removes the job, and a second ack fails" passed
     And the case "eight tasks fetch 200 jobs at once and each job is delivered once" passed
@@ -14,13 +14,6 @@ Feature: The conformance suite
     Then the case "ack removes the job, and a second ack fails" failed
     And the case "a leased job is not fetched again, and comes back when its lease expires" failed
     And the case "a fetch of an empty queue gives no jobs" passed
-
-  Scenario: The suite skips the cases of a capability that the backend lacks
-    When the suite runs on a memory backend that has no unique keys and cannot extend a lease
-    Then the case "a unique key gives a duplicate until the job is acked or dead" was skipped
-    And the case "extend moves the end of the lease, and the job comes back at the new end" was skipped
-    And the case "ack removes the job, and a second ack fails" passed
-    And no case failed
 
   Scenario Outline: A backend that does not follow an injected clock runs the cases on time on the real clock
     Then the case "<case>" passes on a memory backend that reads the real clock

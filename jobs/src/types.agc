@@ -56,7 +56,7 @@ struct Later
 end
 
 ## How a job goes back. `Retry(later)`: run again at that time (on the last attempt the job is dead instead).
-## `Release`: back now, and the attempt does not count (a stop that never started it). `Dead(reason)`: never again;
+## `Release`: back now, and the attempt does not count (a stop that never started it). `Dead(error)`: never again;
 ## kept as dead.
 enum Nack
   Retry(Later)
@@ -71,13 +71,11 @@ struct Counts
   dead: Int
 end
 
-## What a backend can prove in the conformance suite. `has_clock`: it follows an injected clock (else the cases on time
-## run on the real clock, with a unit of one second). `has_unique_keys`: it keeps unique keys. `extendable`: `extend`
-## moves a lease. A case that needs a capability the backend lacks is skipped.
+## What a backend says about itself to the conformance suite. `has_clock`: it follows an injected clock. A backend that
+## reads its own clock, as a database does, sets it to false, and the cases on time run on the real clock, with a unit
+## of one second.
 struct Caps
   has_clock: Bool = true
-  has_unique_keys: Bool = true
-  extendable: Bool = true
 end
 
 ## The contract: a backend fills the record, and the functions of `Jobs` call it.
