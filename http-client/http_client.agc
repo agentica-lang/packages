@@ -5,9 +5,12 @@
 ## request waits at most `pool_timeout_ms` for a free connection, at most `connect_timeout_ms` to connect, at most
 ## `read_timeout_ms` for each read, and at most `timeout_ms` for the whole call. A connection is kept for the next
 ## request only when its response was read to its end and the server did not close it. An idempotent request goes
-## again after a transient error or status (`src/retry.agc`), and a redirect is followed (`src/redirect.agc`).
+## again after a transient error or status (`src/retry.agc`), a redirect is followed (`src/redirect.agc`), and a gzip
+## or deflate body is decoded (`src/encoding.agc`). The request steps of the client change each request before it
+## goes, and its response steps change each response it gives (`Request`).
 
 import Dial from "src/dial"
+import Encoding from "src/encoding"
 import Exchange from "src/exchange"
 import HTTP from "std/http"
 import Pool from "pkg/pool/pool"
@@ -15,16 +18,26 @@ import Pools from "src/pools"
 import Redirect from "src/redirect"
 import {Hop} from "src/redirect"
 import Retry from "src/retry"
+import URI from "std/uri"
 import Url from "src/url"
 
 export Exchange.Response
 
+## A request as the request steps see it: the method, the whole URL with its query, the headers and the body.
+struct Request
+  method: String
+  url: String
+  headers: List[HTTP.Header]
+  body: Bytes
+end
+
 ## A client. The public fields apply to each request, and `client.with(...)` gives a client with other values that
 ## shares the pools: `client.with(read_timeout_ms: 500)`. `headers` go with every request, under the headers of the
-## call.
+## call, and `params` go in the query of every request, before those of the call.
 struct Client
   base_url: String
   headers: List[HTTP.Header]
+  params: List[URI.Pair]
   connect_timeout_ms: Int
   read_timeout_ms: Int
   timeout_ms: Int
@@ -33,6 +46,9 @@ struct Client
   retry_delay_ms: Int
   max_retry_delay_ms: Int
   max_redirects: Int
+  decompress: Bool
+  request_steps: List[Fn[Request, Result[Request]]]
+  response_steps: List[Fn[Exchange.Response, Result[Exchange.Response]]]
 
   private
 
@@ -48,13 +64,17 @@ end
 ## `DNS.lookuper` of the dns package) or `public_only`, the client resolves a host itself (with the system's
 ## `DNS.lookup` when no resolver is given) and keeps the answers `dns_cache_ms` (0 for none); `public_only` refuses
 ## every address that is not public (loopback, private, link-local and the other special ranges), checked on the
-## address the connection goes to. With neither, std/http resolves the host and `dns_cache_ms` has no effect. `proxy` (`http://host:port`) and
-## `tls` (a client `TLS.Context`, the system trust when none) are those of std/http's `ClientOptions`; a proxy
-## resolves the host itself, so it is refused with a `resolver` or `public_only`. Make the client in a task that lives
-## as long as it does, such as `main`.
+## address the connection goes to. With neither, std/http resolves the host and `dns_cache_ms` has no effect. `proxy`
+## (`http://host:port`) and `tls` (a client `TLS.Context`, the system trust when none) are those of std/http's
+## `ClientOptions`; a proxy resolves the host itself, so it is refused with a `resolver` or `public_only`. With
+## `decompress` the client asks for gzip or deflate (unless the request names its own `accept-encoding`) and decodes
+## such a body. `request_steps` run in order on each request before it goes, and `response_steps` on each response
+## before it is given; an error of a step is the error of the request. Make the client in a task that lives as long as
+## it does, such as `main`.
 def new(
   base_url: String = "",
   headers: List[HTTP.Header] = [],
+  params: List[URI.Pair] = [],
   connect_timeout_ms: Int = 10_000,
   read_timeout_ms: Int = 30_000,
   timeout_ms: Int = 60_000,
@@ -63,6 +83,9 @@ def new(
   retry_delay_ms: Int = 500,
   max_retry_delay_ms: Int = 30_000,
   max_redirects: Int = 10,
+  decompress: Bool = true,
+  request_steps: List[Fn[Request, Result[Request]]] = [],
+  response_steps: List[Fn[Exchange.Response, Result[Exchange.Response]]] = [],
   pool_size: Int = 10,
   pool_timeout_ms: Int = 5_000,
   idle_ms: Int = 30_000,
@@ -72,7 +95,10 @@ def new(
   proxy: String = "",
   tls: Optional[TLS.Context] = none,
 ) -> Result[Client]
-  return argument("pool_timeout_ms and idle_ms must be at least 1") if pool_timeout_ms < 1 or idle_ms < 1
+  if pool_timeout_ms < 1 or idle_ms < 1 or pool_timeout_ms > MAX_MS or idle_ms > MAX_MS
+    return argument("pool_timeout_ms and idle_ms must be 1 to #{MAX_MS}")
+  end
+
   return argument("pool_size must be at least 1") if pool_size < 1
   return argument("dns_cache_ms must be 0 to #{MAX_MS}") if dns_cache_ms < 0 or dns_cache_ms > MAX_MS
   if not proxy.empty? and (resolver.some? or public_only)
@@ -100,6 +126,7 @@ def new(
   client = Client(
     base_url: base_url,
     headers: headers,
+    params: params,
     connect_timeout_ms: connect_timeout_ms,
     read_timeout_ms: read_timeout_ms,
     timeout_ms: timeout_ms,
@@ -108,6 +135,9 @@ def new(
     retry_delay_ms: retry_delay_ms,
     max_retry_delay_ms: max_retry_delay_ms,
     max_redirects: max_redirects,
+    decompress: decompress,
+    request_steps: request_steps,
+    response_steps: response_steps,
     pools: Pools.start(settings),
     proxied: not proxy.empty?,
   )
@@ -120,22 +150,165 @@ def new(
   end
 end
 
-## Sends a request and gives the whole response, after its retries and redirects. A 4xx or 5xx is a response, not an
-## error. An error has a kind: `http_client.timeout.pool`, `.connect`, `.read` or `.request` (all
+## Sends a request and gives the whole response, after its retries and redirects. `body` is sent as it is; `json` is
+## sent as JSON text with `content-type: application/json` (unless `headers` name another), and giving both is an
+## `argument` error. `params` go in the query, after those of the client. A 4xx or 5xx is a response, not an error.
+## An error has a kind: `http_client.timeout.pool`, `.connect`, `.read` or `.request` (all
 ## `http_client.timeout`), `http_client.pool_full` (1000 requests wait already), `http_client.network`,
 ## `http_client.too_large` (a body over `max_body_bytes`), `http_client.redirect.too_many` (over `max_redirects`),
-## `http_client.redirect.location` (a `Location` that cannot be followed), `http_client.closed`,
-## `http_client.crashed` (a bug: the request's task crashed) or `argument` (a bad URL, method or header, or a bad
-## client field).
+## `http_client.redirect.location` (a `Location` that cannot be followed), `http_client.decode` (a body that does not
+## decode), `http_client.closed`, `http_client.crashed` (a bug: the request's task crashed) or `argument` (a bad URL,
+## method or header, or a bad client field), or that of a step.
 def request(
   client: Client,
   method: String,
   url: String,
-  body: Bytes,
+  body: Optional[Bytes] = none,
+  json: Optional[JSON.Value] = none,
+  params: List[URI.Pair] = [],
   headers: List[HTTP.Header] = [],
 ) -> Result[Exchange.Response]
   try valid(client)
-  target = try Url.resolve(client.base_url, url)
+  return argument("give a body or json, not both") if body.some? and json.some?
+
+  first = Request(
+    method: method,
+    url: Url.to_s(Url.with_query(try Url.resolve(client.base_url, url), URI.encode_www_form(client.params + params))),
+    headers: merge(client.headers, headers),
+    body: body.unwrap_or(NO_BODY),
+  )
+
+  if json.some?
+    first = first.with(body: JSON.encode(json.unwrap!).bytes, headers: merge([JSON_TYPE], first.headers))
+  end
+
+  if client.decompress
+    first = first.with(headers: merge([ACCEPT_ENCODING], first.headers))
+  end
+
+  for step in client.request_steps
+    first = try step.call(first)
+  end
+
+  response = try sent(client, first)
+  for step in client.response_steps
+    response = try step.call(response)
+  end
+
+  ok(response)
+end
+
+## The body of the response read as JSON into the type of `codec`: `HttpClient.decode(response, User.codec)`. A body
+## that is not that JSON is an `http_client.decode` error.
+def decode[T](response: Exchange.Response, codec: Codec[T]) -> Result[T]
+  case String.from_bytes(response.body)
+    ok(text) ->
+      case codec.decode(text)
+        ok(value) -> ok(value)
+        error(e) -> Exchange.failure("the body is not the JSON wanted", "decode", some(e))
+      end
+
+    error(e) -> Exchange.failure("the body is not UTF-8", "decode", some(e))
+  end
+end
+
+## The `authorization` header of HTTP Basic, for `headers`.
+def basic_auth(user: String, password: String) -> HTTP.Header
+  HTTP.Header(name: "authorization", value: "Basic #{Base64.strict_encode64("#{user}:#{password}".bytes)}")
+end
+
+## The `authorization` header of a bearer token, for `headers`.
+def bearer_auth(token: String) -> HTTP.Header = HTTP.Header(name: "authorization", value: "Bearer #{token}")
+
+## A `GET` request.
+def get(
+  client: Client,
+  url: String,
+  params: List[URI.Pair] = [],
+  headers: List[HTTP.Header] = [],
+) -> Result[Exchange.Response]
+  request(client, "GET", url, params: params, headers: headers)
+end
+
+## A `HEAD` request: the response has no body.
+def head(
+  client: Client,
+  url: String,
+  params: List[URI.Pair] = [],
+  headers: List[HTTP.Header] = [],
+) -> Result[Exchange.Response]
+  request(client, "HEAD", url, params: params, headers: headers)
+end
+
+## A `DELETE` request.
+def delete(
+  client: Client,
+  url: String,
+  params: List[URI.Pair] = [],
+  headers: List[HTTP.Header] = [],
+) -> Result[Exchange.Response]
+  request(client, "DELETE", url, params: params, headers: headers)
+end
+
+## A `POST` request with `body` or `json`.
+def post(
+  client: Client,
+  url: String,
+  body: Optional[Bytes] = none,
+  json: Optional[JSON.Value] = none,
+  params: List[URI.Pair] = [],
+  headers: List[HTTP.Header] = [],
+) -> Result[Exchange.Response]
+  request(client, "POST", url, body, json, params, headers)
+end
+
+## A `PUT` request with `body` or `json`.
+def put(
+  client: Client,
+  url: String,
+  body: Optional[Bytes] = none,
+  json: Optional[JSON.Value] = none,
+  params: List[URI.Pair] = [],
+  headers: List[HTTP.Header] = [],
+) -> Result[Exchange.Response]
+  request(client, "PUT", url, body, json, params, headers)
+end
+
+## A `PATCH` request with `body` or `json`.
+def patch(
+  client: Client,
+  url: String,
+  body: Optional[Bytes] = none,
+  json: Optional[JSON.Value] = none,
+  params: List[URI.Pair] = [],
+  headers: List[HTTP.Header] = [],
+) -> Result[Exchange.Response]
+  request(client, "PATCH", url, body, json, params, headers)
+end
+
+## Closes the pools: the requests in flight have `drain_ms` to end, then their connections close. A request after the
+## close is an `http_client.closed` error.
+def close(client: Client, drain_ms: Int = 5_000) -> Void
+  Pools.close(client.pools, drain_ms)
+end
+
+private
+
+NO_BODY = "".bytes
+JSON_TYPE = HTTP.Header(name: "content-type", value: "application/json")
+ACCEPT_ENCODING = HTTP.Header(name: "accept-encoding", value: Encoding.ACCEPTED)
+# The largest request body that std/http sends.
+MAX_REQUEST_BODY = 67_108_864
+# The largest time setting: a year, far from an overflow when it is added to a clock.
+MAX_MS = 31_536_000_000
+# The health tick of each pool checks its idle connections and closes those unused for `idle_ms`.
+HEALTH_MS = 5_000
+# How long a try that ran out of time has to end once cancelled.
+CANCEL_MS = 1_000
+
+# The request after its retries and redirects, with its body decoded.
+def sent(client: Client, first: Request) -> Result[Exchange.Response]
+  target = try Url.resolve(client.base_url, first.url)
   deadline = Time.monotonic_ms() + client.timeout_ms
   policy = Retry.Policy(
     max_retries: client.max_retries,
@@ -143,7 +316,7 @@ def request(
     max_delay_ms: client.max_retry_delay_ms,
   )
 
-  hop = Hop(method: method, target: target, headers: merge(client.headers, headers), body: body)
+  hop = Hop(method: first.method, target: target, headers: first.headers, body: first.body)
   tries = 0
   redirects = 0
   while redirects <= client.max_redirects
@@ -158,7 +331,7 @@ def request(
 
     response = try result
     location = Redirect.location(response)
-    return ok(response) if client.max_redirects == 0 or not location.some?
+    return decoded(client, response) if client.max_redirects == 0 or not location.some?
 
     hop = try Redirect.next(target, hop, response.status, location.unwrap!, client.proxied)
     redirects = redirects + 1
@@ -167,53 +340,11 @@ def request(
   Exchange.failure("more than #{client.max_redirects} redirects", "redirect.too_many")
 end
 
-## A `GET` request.
-def get(client: Client, url: String, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
-  request(client, "GET", url, NO_BODY, headers)
+def decoded(client: Client, response: Exchange.Response) -> Result[Exchange.Response]
+  return ok(response) if not client.decompress
+
+  Encoding.decoded(response, client.max_body_bytes)
 end
-
-## A `HEAD` request: the response has no body.
-def head(client: Client, url: String, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
-  request(client, "HEAD", url, NO_BODY, headers)
-end
-
-## A `DELETE` request.
-def delete(client: Client, url: String, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
-  request(client, "DELETE", url, NO_BODY, headers)
-end
-
-## A `POST` request with `body`.
-def post(client: Client, url: String, body: Bytes, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
-  request(client, "POST", url, body, headers)
-end
-
-## A `PUT` request with `body`.
-def put(client: Client, url: String, body: Bytes, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
-  request(client, "PUT", url, body, headers)
-end
-
-## A `PATCH` request with `body`.
-def patch(client: Client, url: String, body: Bytes, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
-  request(client, "PATCH", url, body, headers)
-end
-
-## Closes the pools: the requests in flight have `drain_ms` to end, then their connections close. A request after the
-## close is an `http_client.closed` error.
-def close(client: Client, drain_ms: Int = 5_000) -> Void
-  Pools.close(client.pools, drain_ms)
-end
-
-private
-
-NO_BODY = "".bytes
-# The largest request body that std/http sends.
-MAX_REQUEST_BODY = 67_108_864
-# The largest time setting: a year, far from an overflow when it is added to a clock.
-MAX_MS = 31_536_000_000
-# The health tick of each pool checks its idle connections and closes those unused for `idle_ms`.
-HEALTH_MS = 5_000
-# How long a try that ran out of time has to end once cancelled.
-CANCEL_MS = 1_000
 
 def system_lookup(host: String) -> Result[List[String]] = DNS.lookup(host)
 

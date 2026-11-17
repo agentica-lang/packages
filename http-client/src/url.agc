@@ -46,6 +46,15 @@ def follow(base: Target, location: String) -> Result[Target]
   ok(base.with(target: "#{without_dots(path)}#{query}"))
 end
 
+## The target with `query` (already encoded) after its own query, if any.
+def with_query(target: Target, query: String) -> Target
+  return target if query.empty?
+  return target.with(target: "#{target.target}#{query}") if target.target.end_with?("?")
+  return target.with(target: "#{target.target}&#{query}") if target.target.include?("?")
+
+  target.with(target: "#{target.target}?#{query}")
+end
+
 ## The URL written back whole, as the response names it.
 def to_s(target: Target) -> String = "#{target.origin}#{target.target}"
 

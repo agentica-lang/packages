@@ -33,6 +33,8 @@ Feature: Resolving and filtering addresses
     Then "good" has the body "api.test:{s:port}"
     And "wrong" fails with the kind "http_client.network"
 
+  # Linux routes all of 127.0.0.0/8 to the loopback interface, where nobody listens on 127.0.0.2; on other systems
+  # 127.0.0.2 may need an alias first.
   Scenario: The next address is tried when one refuses
     Given the server "a" listens
     And a client of "a" with:
@@ -107,3 +109,23 @@ Feature: Resolving and filtering addresses
       | public_only | 1     |
     When "r" sends "GET" to "http://localhost:{a:port}/hello"
     Then "r" fails with the kind "http_client.address_denied"
+
+  Scenario: A resolver that never answers costs each request its connect timeout, not its connection slot
+    Given the server "a" listens
+    And a client of "a" with:
+      | setting            | value              |
+      | resolve            | slow.test=hang     |
+      | resolve            | api.test=127.0.0.1 |
+      | connect_timeout_ms | 500                |
+      | pool_size          | 1                  |
+    When "r1" sends "GET" to "http://slow.test:{a:port}/hello"
+    And "r2" sends "GET" to "http://slow.test:{a:port}/hello"
+    And "r3" sends "GET" to "http://slow.test:{a:port}/hello"
+    And "other" sends "GET" to "http://api.test:{a:port}/hello"
+    Then "r1" fails with the kind "http_client.timeout.connect"
+    And "r1" ended within 900 ms
+    And "r2" fails with the kind "http_client.timeout.connect"
+    And "r2" ended within 900 ms
+    And "r3" fails with the kind "http_client.timeout.connect"
+    And "r3" ended within 900 ms
+    And "other" has the body "hello"

@@ -4,6 +4,7 @@
 import HTTP from "std/http"
 import HttpClient from "../http_client"
 import Protocol from "protocol"
+import URI from "std/uri"
 import {Request} from "protocol"
 
 private
@@ -13,6 +14,8 @@ PEERS = {"server": "fixtures/server.agc", "tls_server": "fixtures/server.agc", "
 PEER_START_MS = 60_000
 WAIT_MS = 30_000
 QUIET_MS = 500
+# How long the resolver answers a name whose address is `hang`: longer than any scenario.
+HANG_MS = 60_000
 # A started request's task stays until it is cancelled or the driver ends, as a caller's task would.
 LINGER_MS = 600_000
 
@@ -42,6 +45,12 @@ end
 struct Handled
   driver: Driver
   reply: String
+end
+
+# What the body of `/json` decodes to.
+struct Person
+  name: String
+  age: Int
 end
 
 def main() -> Void
@@ -160,9 +169,24 @@ def make_client(driver: Driver, req: Request) -> Handled
   headers: List[HTTP.Header] = []
   names: Map[String, List[String]] = {}
   tls: Optional[TLS.Context] = none
+  params: List[URI.Pair] = []
+  request_steps: List[Fn[HttpClient.Request, Result[HttpClient.Request]]] = []
+  response_steps: List[Fn[HttpClient.Response, Result[HttpClient.Response]]] = []
   for row in req.table.drop(1)
     if row[0] == "header"
       headers = headers.push(header(row[1]))
+    elsif row[0] == "param"
+      params = params.push(pair(row[1]))
+    elsif row[0] == "basic"
+      credentials = row[1].split(":")
+      headers = headers.push(HttpClient.basic_auth(credentials[0], credentials[1]))
+    elsif row[0] == "bearer"
+      headers = headers.push(HttpClient.bearer_auth(row[1]))
+    elsif row[0] == "request_step"
+      added = header(row[1])
+      request_steps = request_steps.push(->(request) { ok(request.with(headers: request.headers.push(added))) })
+    elsif row[0] == "response_step"
+      response_steps = response_steps.push(&error_status)
     elsif row[0] == "resolve"
       pair = row[1].split("=")
       names = names.put(pair[0], pair[1].split(","))
@@ -181,6 +205,7 @@ def make_client(driver: Driver, req: Request) -> Handled
   made = HttpClient.new(
     base_url: base,
     headers: headers,
+    params: params,
     connect_timeout_ms: settings.get("connect_timeout_ms").unwrap_or(10_000),
     read_timeout_ms: settings.get("read_timeout_ms").unwrap_or(30_000),
     timeout_ms: settings.get("timeout_ms").unwrap_or(60_000),
@@ -189,6 +214,9 @@ def make_client(driver: Driver, req: Request) -> Handled
     retry_delay_ms: settings.get("retry_delay_ms").unwrap_or(10),
     max_retry_delay_ms: settings.get("max_retry_delay_ms").unwrap_or(30_000),
     max_redirects: settings.get("max_redirects").unwrap_or(10),
+    decompress: settings.get("decompress").unwrap_or(1) == 1,
+    request_steps: request_steps,
+    response_steps: response_steps,
     pool_size: settings.get("pool_size").unwrap_or(10),
     pool_timeout_ms: settings.get("pool_timeout_ms").unwrap_or(5_000),
     idle_ms: settings.get("idle_ms").unwrap_or(30_000),
@@ -204,7 +232,7 @@ def make_client(driver: Driver, req: Request) -> Handled
   end
 end
 
-# A resolver that knows only `names` and counts each question in `asked`.
+# A resolver that knows only `names` and counts each question in `asked`. A name of `hang` never gets its answer.
 def resolver_of(names: Map[String, List[String]], asked: ATS[String, Int]) -> Fn[String, Result[List[String]]]
   ->(host) { answer(names, asked, host) }
 end
@@ -212,9 +240,23 @@ end
 def answer(names: Map[String, List[String]], asked: ATS[String, Int], host: String) -> Result[List[String]]
   _ = asked.add(host, 1)
   case names.get(host)
+    some(addresses) if addresses == ["hang"] ->
+      Task.sleep(HANG_MS)
+      ok([])
     some(addresses) -> ok(addresses)
     none -> error("network: host not found: #{host}", kind: "net.host_not_found")
   end
+end
+
+def error_status(response: HttpClient.Response) -> Result[HttpClient.Response]
+  return error("status #{response.status}", kind: "status") if response.status >= 400
+
+  ok(response)
+end
+
+def pair(text: String) -> URI.Pair
+  parts = text.split("=")
+  URI.Pair(name: parts[0], value: parts.drop(1).join("="))
 end
 
 def header(text: String) -> HTTP.Header
@@ -283,11 +325,26 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
     headers = [header(req.header)]
   end
 
+  params: List[URI.Pair] = []
+  if not req.param.empty?
+    params = [pair(req.param)]
+  end
+
+  body: Optional[Bytes] = none
+  if not req.body.empty?
+    body = some(req.body.bytes)
+  end
+
+  json: Optional[JSON.Value] = none
+  if not req.json.empty?
+    json = some(try JSON.parse(req.json))
+  end
+
   outcome: Channel[Outcome] = Channel.new(1)
   stop = driver.stop
   task = Task.spawn do
     began = Time.monotonic_ms()
-    result = HttpClient.request(client, req.kind, url, req.body.bytes, headers)
+    result = HttpClient.request(client, req.kind, url, body: body, json: json, params: params, headers: headers)
     _ = outcome.send(Outcome(result: result, elapsed: Time.monotonic_ms() - began), 0)
     _ = stop.recv(LINGER_MS)
   end
@@ -328,9 +385,18 @@ def check_response(req: Request, response: HttpClient.Response) -> String
     "expect_body" if String.from_bytes(response.body).unwrap_or("") == req.text -> Protocol.OK
     "expect_header" if has_header?(response, header(req.text)) -> Protocol.OK
     "expect_url" if response.url == req.text -> Protocol.OK
+    "expect_size" if response.body.size == req.number -> Protocol.OK
+    "expect_decoded" if decoded(response) == req.text -> Protocol.OK
     _ ->
       text = String.from_bytes(response.body).unwrap_or("<binary>")
       "#{req.name}: #{response.status} #{response.url} #{response.headers} #{text}"
+  end
+end
+
+def decoded(response: HttpClient.Response) -> String
+  case HttpClient.decode(response, Person.codec)
+    ok(person) -> "#{person.name} #{person.age}"
+    error(e) -> e.kind
   end
 end
 

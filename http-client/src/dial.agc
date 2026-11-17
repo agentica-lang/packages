@@ -48,13 +48,15 @@ def connect(dialer: Dialer, url: String, options: HTTP.ClientOptions, wait_ms: I
   end
 
   deadline = Time.monotonic_ms() + wait_ms
-  addresses = try allowed(dialer, host, try resolved(dialer, host))
-  last: Result[HTTP.Connection] = error("network: no address", kind: "net.failed")
-  for address in addresses
+  addresses = try allowed(dialer, host, try resolved(dialer, host, deadline))
+  last: Result[HTTP.Connection] = timed_out()
+  for at in 0..(addresses.size - 1)
     left = deadline - Time.monotonic_ms()
-    return error("network: operation timed out", kind: "net.timeout") if left < 1
+    return timed_out() if left < 1
 
-    last = reach(target, host, address, options.with(timeout_ms: left))
+    # Each address gets its share of the time left, so that one that never answers leaves time for the next.
+    share = [left / (addresses.size - at), 1].max.unwrap!
+    last = reach(target, host, addresses[at], options.with(timeout_ms: share))
     return last if last.ok?
   end
 
@@ -65,8 +67,28 @@ private
 
 # Past this many hosts the cache starts again, so that a client that meets many names keeps a bounded table.
 MAX_CACHED = 1_024
+# How long a resolver that was cancelled has to end.
+CANCEL_MS = 1_000
 
-def resolved(dialer: Dialer, host: String) -> Result[List[String]]
+def timed_out[T]() -> Result[T] = error("network: operation timed out", kind: "net.timeout")
+
+# The resolver runs in a task of its own, so that one that never answers costs the connect its time, not the link its
+# task: past the deadline it is cancelled, and the connect is a timeout.
+def asked(dialer: Dialer, host: String, deadline: Int) -> Result[List[String]]
+  left = deadline - Time.monotonic_ms()
+  return timed_out() if left < 1
+
+  asking = Task.spawn do dialer.resolver.call(host) end
+  case Task.await(asking, left)
+    Await.Done(answer) -> answer
+    Await.TimedOut ->
+      Task.cancel(asking)
+      _ = Task.await(asking, CANCEL_MS)
+      timed_out()
+  end
+end
+
+def resolved(dialer: Dialer, host: String, deadline: Int) -> Result[List[String]]
   key = host.downcase
   now = Time.monotonic_ms()
   case dialer.cache.get(key)
@@ -75,8 +97,9 @@ def resolved(dialer: Dialer, host: String) -> Result[List[String]]
   end
 
   addresses: List[String] = []
-  case dialer.resolver.call(host)
+  case asked(dialer, host, deadline)
     ok(found) -> addresses = found.select { |address| Address.parse(address).some? }
+    error(e) if e.is_a?("net.timeout") -> return error(e)
     error(e) -> return error("http_client: cannot resolve #{host}: #{e.message}", kind: "http_client.dns", cause: e)
   end
 
