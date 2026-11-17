@@ -1,7 +1,10 @@
 ## The steps of the features. Most of them drive the memory backend through `driver.agc`, which holds the backend and
-## the clock (see `protocol.agc`): a step cannot keep the backend's actor between steps.
+## the clock (see `protocol.agc`): a step cannot keep the backend's actor between steps. The steps of the conformance
+## suite run it in the step itself, since a case makes its own backend and ends it.
 
 import BDD from "std/bdd"
+import Conformance from "../conformance"
+import Jobs from "../jobs"
 import {Request} from "protocol"
 
 private
@@ -10,6 +13,7 @@ REPLY_MS = 60_000
 MODEL = "specs/fixtures/model.py"
 MODEL_MS = 30_000
 LEASE_MS = 30_000
+OUTCOMES = "outcomes"
 REPLY = "reply"
 HEADER = [["setting", "value"]]
 
@@ -72,6 +76,21 @@ def main() -> Void
       agree_with_model(ctx, args[0].to_i!, args[1].to_i!)
     end,
     BDD.step("the reply is {string}") do |ctx, args| expect_reply(ctx, args[0]) end,
+    BDD.step("the suite runs on the memory backend") do |ctx, _args| run_suite(ctx, &memory) end,
+    BDD.step("the suite runs on a memory backend whose ack never fails") do |ctx, _args|
+      run_suite(ctx, &lenient_acks)
+    end,
+    BDD.step("the suite runs on a memory backend that has no unique keys and cannot extend a lease") do |ctx, _args|
+      run_suite(ctx, &limited)
+    end,
+    BDD.step("the case {string} passes on a memory backend that reads the real clock") do |ctx, args|
+      real_clock_case(ctx, args[0])
+    end,
+    BDD.step("the suite has {int} cases") do |ctx, args| expect_cases(ctx, args[0].to_i!) end,
+    BDD.step("no case failed") do |ctx, _args| expect_no_failure(ctx) end,
+    BDD.step("the case {string} passed") do |ctx, args| expect_status(ctx, args[0], "passed") end,
+    BDD.step("the case {string} was skipped") do |ctx, args| expect_status(ctx, args[0], "was skipped") end,
+    BDD.step("the case {string} failed") do |ctx, args| expect_status(ctx, args[0], "failed") end,
   ])
 end
 
@@ -91,6 +110,62 @@ end
 def expect_reply(ctx: BDD.Context, want: String) -> BDD.Context
   reply = JSON.string(BDD.get(ctx, REPLY).unwrap!).unwrap_or("")
   BDD.assert(ctx, reply == want, "the reply is #{reply}, and should be #{want}")
+end
+
+def memory(clock: Fn[Int]) -> Result[Jobs.Backend] = Jobs.memory(Jobs.MemoryOptions(clock: some(clock)))
+
+def lenient_acks(clock: Fn[Int]) -> Result[Jobs.Backend]
+  backend = try memory(clock)
+  ok(backend.with(ack: ->(_lease) { ok() }))
+end
+
+def limited(clock: Fn[Int]) -> Result[Jobs.Backend]
+  backend = try memory(clock)
+  ok(backend.with(caps: Jobs.Caps(has_unique_keys: false, extendable: false)))
+end
+
+# A memory backend that ignores the clock it is given and reads the wall clock, as a database does.
+def real_clock(_clock: Fn[Int]) -> Result[Jobs.Backend]
+  backend = try Jobs.memory()
+  ok(backend.with(caps: Jobs.Caps(has_clock: false)))
+end
+
+def real_clock_case(ctx: BDD.Context, name: String) -> BDD.Context
+  result = Conformance.run(name, &real_clock)
+  BDD.assert(ctx, result.ok?, "the case #{name} on the real clock: #{result}")
+end
+
+# The outcomes are kept as lines: `passed`, `skipped` or `failed`, a tab, the name of the case.
+def run_suite(ctx: BDD.Context, make: Conformance.Maker) -> BDD.Context
+  lines = Conformance.run_all(make).map(->(outcome) { "#{status_word(outcome.status)}\t#{outcome.name}" })
+  BDD.set(ctx, OUTCOMES, JSON.from(lines))
+end
+
+def status_word(status: Conformance.Status) -> String
+  case status
+    Conformance.Status.Passed -> "passed"
+    Conformance.Status.Skipped(_) -> "was skipped"
+    Conformance.Status.Failed(_) -> "failed"
+  end
+end
+
+def outcomes(ctx: BDD.Context) -> List[String]
+  JSON.decode(BDD.get(ctx, OUTCOMES).unwrap!, List[String]).unwrap_or([])
+end
+
+def expect_cases(ctx: BDD.Context, count: Int) -> BDD.Context
+  found = outcomes(ctx).size
+  BDD.assert(ctx, found == count and Conformance.names().size == count, "the suite has #{found} cases, not #{count}")
+end
+
+def expect_no_failure(ctx: BDD.Context) -> BDD.Context
+  failed = outcomes(ctx).filter(->(line) { line.start_with?("failed") })
+  BDD.assert(ctx, failed.empty?, "cases failed: #{failed.join("; ")}")
+end
+
+def expect_status(ctx: BDD.Context, name: String, word: String) -> BDD.Context
+  want = "#{word}\t#{name}"
+  BDD.assert(ctx, outcomes(ctx).include?(want), "no case #{name} #{word}; the outcomes are #{outcomes(ctx)}")
 end
 
 # Sends the calls of a script to the driver, one after the other, and stops at the first reply that is not the model's.

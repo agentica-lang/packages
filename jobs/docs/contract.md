@@ -1,6 +1,6 @@
 ---
 title: The contract
-description: What every jobs backend guarantees, and the records of the contract.
+description: What every jobs backend guarantees, the records of the contract, and how to prove a backend with the conformance suite.
 weight: 2
 ---
 
@@ -39,3 +39,38 @@ Times are Unix milliseconds. A backend takes a clock option (`Fn[Int]`) and defa
 `Jobs.memory(Jobs.MemoryOptions(...))` keeps the jobs in one actor. `max_jobs` (10 000) is how many live jobs it holds: past it `enqueue` fails with `jobs.full`, and a producer decides to log, drop or answer 503. `max_dead` (1 000) is how many dead jobs it keeps; the oldest is dropped. `clock` is the time source. Every call applies the clock first, so a lease that ran out is back before the call is served.
 
 A fetch with `wait_ms` parks until a job comes or is due, or its time is up. A caller that gives up while it waits does not lose the jobs the actor had for it: they go back to the queue, and the delivery does not count.
+
+## The conformance suite
+
+`import Conformance from "pkg/jobs/conformance"` runs the cases that every backend must pass, so a new backend keeps the contract. Each case gets a fresh backend from your `Maker`, a function from a clock to a backend, and moves a manual clock, so no case sleeps.
+
+```text
+type Maker = Fn[Fn[Int], Result[Jobs.Backend]]
+Conformance.names() -> List[String]
+Conformance.run(name: String, make: Maker) -> Result[Void]
+Conformance.run_all(make: Maker) -> List[Outcome]
+Conformance.failed(outcomes: List[Outcome]) -> List[String]
+Conformance.failures(outcomes: List[Outcome]) -> String
+```
+
+A backend package has one scenario, "the backend passes every contract case", that runs `run_all` and fails with `Conformance.failures`. A backend that moves to a newer `jobs` tag runs the new cases with no change to its specs. A backend that cannot follow an injected clock (`Caps.has_clock` false, as a database that uses its own time) gets the real clock: its time cases sleep, with a unit of half a second, and check what holds a little before and a little after a time, not to the millisecond. A case that needs a capability the backend lacks (`has_unique_keys`, `extendable`) is skipped, and its outcome says so.
+
+```agentica
+import Conformance from "pkg/jobs/conformance"
+import Jobs from "pkg/jobs/jobs"
+
+def make(clock: Fn[Int]) -> Result[Jobs.Backend] = Jobs.memory(Jobs.MemoryOptions(clock: some(clock)))
+
+def main() -> Void
+  outcomes = Conformance.run_all(&make)
+  puts("cases: #{outcomes.size}")
+  puts("failed: #{Conformance.failed(outcomes)}")
+end
+```
+
+```output
+cases: 23
+failed: []
+```
+
+The cases cover: the job as it was enqueued, byte for byte; empty queues and queues that do not see each other; a fetch that waits, for a job that comes and for a job that is due; leases that run out, a late ack, nack or extend with an old token, and the same calls after the lease ran out but before any other fetch; ack, retry, release and dead; the last attempt; extend, and the job that comes back at the new end; a job that is not delivered early; unique keys, held through a retry, a release and an expired lease, and two jobs of one batch with one key; `enqueue_all` with a job that is not valid; eight tasks that fetch 200 jobs at once, each delivered once; and the calls after `close`.
