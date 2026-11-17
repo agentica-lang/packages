@@ -382,7 +382,10 @@ jobs:
               build=$(vtool -arch "$arch" -show-build "$FILE")
               minos=$(awk '$1 == "minos" { print $2 }' <<< "$build")
               [ "$minos" = "$MACOSX_DEPLOYMENT_TARGET" ] || die "has minos '$minos', not $MACOSX_DEPLOYMENT_TARGET"
-              libs=$(otool -L "$FILE" | tail -n +2 | awk '{ print $1 }')
+              # The libraries it loads, not its own install name (which otool -L lists first).
+              libs=$(otool -l "$FILE" | awk '/cmd LC_(LOAD|LOAD_WEAK|REEXPORT|LAZY_LOAD)_DYLIB$/ { f = 1 } f && $1 == "name" { print $2; f = 0 }')
+              echo "libraries: $(tr '\n' ' ' <<< "$libs")"
+              grep -qx '/usr/lib/libSystem.B.dylib' <<< "$libs" || die "does not link libSystem"
               bad=$(grep -vE '^(/usr/lib/|/System/Library/)' <<< "$libs" || true)
               [ -z "$bad" ] || die "links libraries outside the system: $bad"
               codesign --verify --strict "$FILE" || die "has no valid code signature"
