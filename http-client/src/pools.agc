@@ -20,16 +20,19 @@ struct Settings
   dialer: Dial.Dialer
 end
 
-## The manager of the pools of a client.
+## The manager of the pools of a client. `stopping` closes when the client closes: the tasks of the streams read it
+## between pieces, and end.
 struct Pools
   inbox: Channel[Msg]
   manager: Task[Void]
   down: Channel[TaskDown]
+  stopping: Channel[Bool]
 end
 
 ## A request to the manager.
 enum Msg
   Want(Wanted)
+  Watch(TaskRef)
   Close(Closing)
 end
 
@@ -52,7 +55,20 @@ def start(settings: Settings) -> Pools
   manager = Task.spawn do manage(settings, inbox) end
   down: Channel[TaskDown] = Channel.new(1)
   Task.monitor(manager, down) do |notice| notice end
-  Pools(inbox: inbox, manager: manager, down: down)
+  stopping: Channel[Bool] = Channel.new(1)
+  Pools(inbox: inbox, manager: manager, down: down, stopping: stopping)
+end
+
+## Has the manager wait for `task`, a task of a stream that outlives its call, when the client closes. A task that
+## starts once the client is closed is an `http_client.closed` error.
+def watch(pools: Pools, task: TaskRef) -> Result[Void]
+  return closed() if pools.stopping.closed?
+
+  case pools.inbox.send(Msg.Watch(task), ASK_MS)
+    error(e) if e.is_a?("channel.closed") -> closed()
+    error(e) -> busy(e)
+    ok(_) -> ok()
+  end
 end
 
 ## The pool of an origin (`scheme://host:port`), started if it is the first request to that origin in a while.
@@ -74,6 +90,7 @@ end
 ## Closes every pool at once and ends the manager, and returns once every task of the client has ended. Closing
 ## twice does nothing.
 def close(pools: Pools, drain_ms: Int) -> Void
+  pools.stopping.close
   done: Channel[Bool] = Channel.new(1)
   if pools.inbox.send(Msg.Close(Closing(drain_ms: drain_ms, done: done)), ASK_MS).ok?
     _ = done.recv(drain_ms + CLOSE_SLACK_MS)
@@ -98,13 +115,17 @@ INBOX_SIZE = 64
 ASK_MS = 5_000
 # What `Pool.close` may take after its drain: its keepers have six seconds to end their resources.
 CLOSE_SLACK_MS = 8_000
+# How long a cancelled stream task has to end.
+CANCEL_MS = 1_000
 # How often the manager looks for pools to close.
 SWEEP_MS = 1_000
 
-# The pools by origin, the tasks that close the pools the manager let go (by task id), and the notices of their ends.
+# The pools by origin, the tasks that close the pools the manager let go and the tasks of the streams (by task id),
+# and the notices of their ends.
 struct State
   pools: Map[String, Entry]
   closers: Map[Int, Task[Result[Void]]]
+  streams: Map[Int, TaskRef]
   ended: Channel[TaskDown]
 end
 
@@ -122,11 +143,14 @@ end
 
 def manage(settings: Settings, inbox: Channel[Msg]) -> Void
   ended: Channel[TaskDown] = Channel.new(INBOX_SIZE)
-  state = State(pools: {}, closers: {}, ended: ended)
+  state = State(pools: {}, closers: {}, streams: {}, ended: ended)
   swept = Time.monotonic_ms()
   while true
     case inbox.recv(SWEEP_MS)
       ok(Msg.Want(wanted)) -> state = state.with(pools: want(settings, state.pools, wanted))
+      ok(Msg.Watch(task)) ->
+        Task.monitor(task, ended) do |notice| notice end
+        state = state.with(streams: state.streams.put(task.id, task))
       ok(Msg.Close(closing)) ->
         inbox.close
         closers = state.pools.values.map { |entry| Task.spawn do shut(entry.pool, closing.drain_ms) end }
@@ -134,6 +158,7 @@ def manage(settings: Settings, inbox: Channel[Msg]) -> Void
           _ = Task.await(closer, closing.drain_ms + CLOSE_SLACK_MS)
         end
 
+        streams_end(state)
         _ = closing.done.send(true, 0)
         return
       _ -> nil
@@ -170,7 +195,8 @@ end
 # closers that ended.
 def sweep(state: State, now: Int) -> State
   kept: Map[String, Entry] = {}
-  closers = without_ended(state.closers, state.ended)
+  swept = without_ended(state)
+  closers = swept.closers
   for origin in state.pools.keys
     entry = state.pools.get(origin).unwrap!
     if entry.until > now
@@ -182,19 +208,41 @@ def sweep(state: State, now: Int) -> State
     end
   end
 
-  state.with(pools: kept, closers: closers)
+  swept.with(pools: kept, closers: closers)
 end
 
-# The closers whose end notice has not come yet. A notice means the task is gone.
-def without_ended(closers: Map[Int, Task[Result[Void]]], ended: Channel[TaskDown]) -> Map[Int, Task[Result[Void]]]
-  left = closers
-  notice = ended.recv(0)
+# The state without the closers and streams whose end notice came. A notice means the task is gone.
+def without_ended(state: State) -> State
+  left = state
+  notice = state.ended.recv(0)
   while notice.ok?
-    left = left.delete(notice.unwrap!.task_id)
-    notice = ended.recv(0)
+    id = notice.unwrap!.task_id
+    left = left.with(closers: left.closers.delete(id), streams: left.streams.delete(id))
+    notice = state.ended.recv(0)
   end
 
   left
+end
+
+# Waits for the tasks of the streams, which end once their connection closes or at their next piece. One that does not
+# end in time is cancelled.
+def streams_end(state: State) -> Void
+  left = without_ended(state)
+  deadline = Time.monotonic_ms() + CLOSE_SLACK_MS
+  while not left.streams.empty? and Time.monotonic_ms() < deadline
+    case left.ended.recv([deadline - Time.monotonic_ms(), 1].max.unwrap!)
+      ok(notice) -> left = left.with(streams: left.streams.delete(notice.task_id))
+      error(_) -> nil
+    end
+  end
+
+  for task in left.streams.values
+    Task.cancel(task)
+  end
+
+  for _ in left.streams.values
+    _ = left.ended.recv(CANCEL_MS)
+  end
 end
 
 # Closes the pool and waits for its owner task to end: `Pool.close` cancels it without waiting.

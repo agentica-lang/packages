@@ -352,9 +352,15 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
     began = Time.monotonic_ms()
     done = Outcome(result: error("no request"), elapsed: 0)
     case req.op
-      "stream" -> done = read_stream(HttpClient.stream(client, req.kind, url, headers: headers), began, false)
+      "stream" ->
+        streamed = HttpClient.stream(client, req.kind, url, headers: headers)
+        Task.sleep(req.number)
+        done = read_stream(streamed, began, false)
       "stream_first" -> done = read_stream(HttpClient.stream(client, req.kind, url, headers: headers), began, true)
-      "events" -> done = read_events(HttpClient.get_events(client, url, headers: headers), began)
+      "events" ->
+        events = HttpClient.get_events(client, url, headers: headers)
+        Task.sleep(req.number)
+        done = read_events(events, began)
       _ ->
         result = HttpClient.request(client, req.kind, url, body: body, json: json, params: params, headers: headers)
         done = Outcome(result: result, elapsed: Time.monotonic_ms() - began)

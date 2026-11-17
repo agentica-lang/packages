@@ -6,6 +6,10 @@ private
 STREAM = (
   ":hi\r\nevent: add\r\ndata: 1\r\ndata:2\r\nid: 7\r\n\r\ndata: é\rdata\r\r: x\nevent: none\n\nretry: 5\ndata: last\n\n"
 )
+LINES = 4_000
+LINE_BYTES = 1_000
+# Several times what the long event takes when each line costs what it holds.
+LINEAR_MS = 1_000
 WANTED = [
   Event(event: "add", data: "1\n2", id: "7"),
   Event(event: "message", data: "é\n", id: "7"),
@@ -39,4 +43,17 @@ def test_an_event_over_the_limit_is_too_large() -> Result[Void]
     ok(_) -> error("an event over the limit was read")
     error(e) -> Test.eq(e.kind, "http_client.too_large")
   end
+end
+
+# Each line costs what it holds, however long the event: a parser that copies the data of the event so far on each
+# line copies gigabytes for these 4 MB, and takes seconds.
+def test_a_long_event_costs_what_it_holds() -> Result[Void]
+  line = "data: #{"x" * LINE_BYTES}\n"
+  stream = (line * LINES + "\n").bytes
+  began = Time.monotonic_ms()
+  read = try Sse.feed(Sse.parser(), stream, stream.size)
+  elapsed = Time.monotonic_ms() - began
+  try Test.eq(read.events.size, 1)
+  try Test.eq(read.events[0].data.length, LINES * (LINE_BYTES + 1) - 1)
+  Test.eq(elapsed < LINEAR_MS, true)
 end

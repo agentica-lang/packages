@@ -17,6 +17,7 @@
 ##   stall MS BODY          writes the head of a 200 and half of BODY, waits MS, then writes the rest
 ##   chunks MS P1,P2,...    a 200, chunked, with each piece as a chunk and MS between them; in a piece `_` is a
 ##                          space and `\n` a line end
+##   repeat MS COUNT PIECE  as `chunks`, with COUNT times the one PIECE
 ##   idle MS                not an answer: a connection idle for MS between requests is closed (else it stays)
 ##
 ## Each answer has `x-connection: N`, the number of its TCP connection from 1, and the peer prints
@@ -180,6 +181,7 @@ def write_answer(socket: TCP.Socket, number: Int, request: Request, answer: List
   end
 
   return chunked(socket, number, answer[1].to_i!, answer[2].split(",")) if op == "chunks"
+  return chunked(socket, number, answer[1].to_i!, (1..answer[2].to_i!).map { |_| answer[3] }) if op == "repeat"
 
   return false if op == "drop"
 

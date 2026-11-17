@@ -12,14 +12,16 @@ struct Event
   id: String
 end
 
-## What is read so far: the bytes after the last line end, and the event that the lines so far build.
+## What is read so far: the pieces after the last line end, and the event that the lines so far build. The parts are
+## kept in lists, with their size in bytes, and joined once, so that a long line or event costs what it holds.
 struct Parser
-  pending: Bytes
+  pending: List[Bytes]
+  pending_bytes: Int
   after_cr: Bool
   started: Bool
   event: String
-  data: String
-  has_data: Bool
+  data: List[String]
+  data_bytes: Int
   id: String
 end
 
@@ -31,7 +33,7 @@ end
 
 ## A parser at the start of a stream.
 def parser() -> Parser
-  Parser(pending: NO_BYTES, after_cr: false, started: false, event: "", data: "", has_data: false, id: "")
+  Parser(pending: [], pending_bytes: 0, after_cr: false, started: false, event: "", data: [], data_bytes: 0, id: "")
 end
 
 ## Reads `piece`. An event, or a line, of more than `max_bytes` is an `http_client.too_large` error, and text that is
@@ -43,13 +45,13 @@ def feed(parser: Parser, piece: Bytes, max_bytes: Int) -> Result[Fed]
   end
 
   if at < 0
-    pending = parser.pending + piece
-    return too_large() if pending.size + parser.data.bytesize > max_bytes
+    pending_bytes = parser.pending_bytes + piece.size
+    return too_large() if pending_bytes + parser.data_bytes > max_bytes
 
-    return ok(Fed(parser: parser.with(pending: pending), events: []))
+    return ok(Fed(parser: parser.with(pending: parser.pending.push(piece), pending_bytes: pending_bytes), events: []))
   end
 
-  complete = parser.pending + piece.take(at + 1)
+  complete = Bytes.concat(parser.pending.push(piece.take(at + 1)))
   if not parser.started and complete.take(3) == bom()
     complete = complete.drop(3)
   end
@@ -61,21 +63,21 @@ def feed(parser: Parser, piece: Bytes, max_bytes: Int) -> Result[Fed]
     text = text.slice(1, text.length - 1)
   end
 
-  state = parser.with(pending: rest, after_cr: text.end_with?("\r"), started: true)
+  state = parser.with(pending: [rest], pending_bytes: rest.size, after_cr: text.end_with?("\r"), started: true)
   events: List[Event] = []
   lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
   for line in lines.take(lines.size - 1)
     if line.empty?
-      if state.has_data
-        events = events.push(Event(event: name_of(state.event), data: state.data, id: state.id))
+      if not state.data.empty?
+        events = events.push(Event(event: name_of(state.event), data: state.data.join("\n"), id: state.id))
       end
 
-      state = state.with(event: "", data: "", has_data: false)
+      state = state.with(event: "", data: [], data_bytes: 0)
     else
       state = read_line(state, line)
     end
 
-    return too_large() if state.data.bytesize + rest.size > max_bytes
+    return too_large() if state.data_bytes + rest.size > max_bytes
   end
 
   ok(Fed(parser: state, events: events))
@@ -83,7 +85,6 @@ end
 
 private
 
-NO_BYTES = "".bytes
 LF = "\n".code
 CR = "\r".code
 
@@ -105,8 +106,7 @@ def read_line(state: Parser, line: String) -> Parser
 
   case field
     "event" -> state.with(event: value)
-    "data" if state.has_data -> state.with(data: "#{state.data}\n#{value}")
-    "data" -> state.with(data: value, has_data: true)
+    "data" -> state.with(data: state.data.push(value), data_bytes: state.data_bytes + value.bytesize + 1)
     "id" if not value.bytes.to_a.include?(0) -> state.with(id: value)
     _ -> state
   end

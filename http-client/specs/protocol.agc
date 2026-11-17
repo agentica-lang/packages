@@ -24,7 +24,7 @@ OK = "ok"
 ##   task, which stays after the request until then;
 ## - `stream` and `stream_first` (name, kind: the method, text: the URL, header) stream a response and read its
 ##   pieces to the end, or close it after the first one, and `events` (name, text: the URL, header) reads the
-##   server-sent events of a `GET`; the outcome is a response whose body is the pieces, or `event:data` of each event
+##   server-sent events of a `GET`; `stream` and `events` wait `number` ms before they read; the outcome is a response whose body is the pieces, or `event:data` of each event
 ##   (a newline as `/`) joined by `|`;
 ## - `asked` (number) checks how many questions the resolver got in all;
 ## - `dead_port` (name) gives a peer name to a port where nobody listens, and `read` (name, number) waits until the

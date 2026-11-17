@@ -134,13 +134,14 @@ With `decompress` (the default) a request asks for `accept-encoding: gzip, defla
 
 ## Streams and server-sent events
 
-`stream` sends a request as `request` does, and gives a `Stream` once the head of the response has come: `status`, `headers`, `url`, and `body`, a channel that gives `ok(piece)` for each piece of the body as the server sends it, or one `error` when the body fails, and closes at its end.
+`stream` sends a request as `request` does, and gives a `Stream` once the head of the response has come: `status`, `headers`, `url`, and `body`, a channel that gives `ok(piece)` for each piece of the body as the server sends it, then one `error` if the body fails or is cut short, and closes at its end. A body that closes without an error came whole.
 
 - Read `body` to its end, or close it: the connection goes back to the pool after the end, and closes when the reader closes `body` first.
-- `timeout_ms` bounds the call up to the head. After it, each piece has `read_timeout_ms` to come, and the reader as long to take it; past that the stream ends (an `http_client.timeout.read` error for a piece that did not come).
-- A stream asks for no compression and decodes none, `max_body_bytes` does not apply to it, and `response_steps` do not run. Request steps, retries and redirects work as for `request`: a response that is retried or redirected is read whole and dropped, and so is one that could be retried but has no time left, which then comes as one piece.
+- `timeout_ms` bounds the call up to the head. After it, each piece has `read_timeout_ms` to come, and the reader as long to make room for it: 16 pieces wait for the reader, and past that the reader gets an `http_client.timeout.read` error after the pieces that waited, and the connection closes.
+- `close` ends the streams of the client: their readers get an `http_client.closed` error, and `close` returns once their tasks have ended.
+- A stream asks for no compression and decodes none (a server that compresses all the same gives its coded bytes as they came, with `content-encoding` in `headers`), `max_body_bytes` does not apply to it, and `response_steps` do not run. Request steps, retries and redirects work as for `request`: a response that is retried or redirected is read whole and dropped, and so is one that could be retried but has no time left, which then comes as one piece.
 
-`events(stream)` reads the body as server-sent events (`text/event-stream`), in a task of its own: an `Event` has `event` (`message` when the server names none), `data` (the `data` lines joined by newlines) and `id` (the last event ID). An event over `max_event_bytes` is an `http_client.too_large` error. Closing the channel of the events closes the body. `get_events(client, url)` is a `GET` with `accept: text/event-stream` and its events. The client does not reconnect: to go on after the end, send the `id` of the last event in a `last-event-id` header.
+`events(stream)` reads the body as server-sent events (`text/event-stream`), in a task of its own: an `Event` has `event` (`message` when the server names none), `data` (the `data` lines joined by newlines) and `id` (the last event ID). The channel ends with an error as the body does, and also for an event over `max_event_bytes` (`http_client.too_large`) or a reader that took no event for `read_timeout_ms` (`http_client.timeout.read`). Closing the channel of the events closes the body. `get_events(client, url)` is a `GET` with `accept: text/event-stream` and its events. The client does not reconnect: to go on after the end, send the `id` of the last event in a `last-event-id` header.
 
 ```agentica
 import HTTP from "std/http"

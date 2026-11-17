@@ -18,10 +18,9 @@ struct Response
   url: String
 end
 
-## A response whose body comes in pieces: `body` gives `ok(piece)` for each piece as it comes, or one `error` when the
-## body fails, and closes at its end. The client waits `read_timeout_ms` for each piece, and as long for the reader to
-## take it; closing `body` ends the request early, and its connection.
-struct Stream
+## The head of a streamed response, and the channel of its body: `ok(piece)` for each piece as it comes, then one
+## `error` if the body fails or is cut short, and the close at its end.
+struct Head
   status: Int
   headers: List[HTTP.Header]
   url: String
@@ -30,15 +29,16 @@ end
 
 ## What reaches the caller of a try: the head of a streamed response, and the end of the task of the try.
 enum Arrival
-  Head(Stream)
+  Head(Head)
   Over
 end
 
-## How a call streams: `whole` says which responses are read whole all the same (given with their head only), and
-## the head of a streamed one goes to `arrivals`.
+## How a call streams: `whole` says which responses are read whole all the same (given with their head only), the
+## head of a streamed one goes to `arrivals`, and the body stops when `stopping` closes (the client closes).
 struct Streaming
   whole: Fn[Response, Bool]
   arrivals: Channel[Arrival]
+  stopping: Channel[Bool]
 end
 
 ## What one request needs: where it goes, what it sends, and its limits. `deadline` is the monotonic time at which
@@ -71,6 +71,48 @@ def run(link: Link.Link, call: Call) -> Result[Response]
   end
 end
 
+## Sends `ok(value)` on `channel`, whose capacity is `limit + 1`, while fewer than `limit` values may wait in it, so
+## that its last place stays free for the error that ends it: a body cut short never looks whole. `waiting` counts the
+## values sent since the channel was last seen empty, at least as many as wait in it; the result is the new count. A
+## reader that makes no room within `wait_ms` is an `http_client.timeout.read` error, and a closed channel or a closed
+## client (`stopping`) an `http_client.closed` one.
+def offer[T](
+  channel: Channel[Result[T]],
+  value: T,
+  waiting: Int,
+  limit: Int,
+  wait_ms: Int,
+  stopping: Channel[Bool],
+) -> Result[Int]
+  deadline = Time.monotonic_ms() + wait_ms
+  count = waiting
+  if channel.empty?
+    count = 0
+  end
+
+  while count >= limit and not channel.closed? and not stopping.closed? and Time.monotonic_ms() < deadline
+    Task.sleep(ROOM_POLL_MS)
+    if channel.empty?
+      count = 0
+    end
+  end
+
+  return failure("the reader closed the stream", "closed") if channel.closed?
+  return failure("the client is closed", "closed") if stopping.closed?
+  return failure("the reader took nothing for #{wait_ms} ms", "timeout.read") if count >= limit
+
+  case channel.send(ok(value), 0)
+    ok(_) -> ok(count + 1)
+    error(e) -> failure("the reader closed the stream", "closed", some(e))
+  end
+end
+
+## Ends `channel` with `failed`, in the place that `offer` keeps free, and closes it.
+def cut[T](channel: Channel[Result[T]], failed: Error) -> Void
+  _ = channel.send(error(failed), 0)
+  channel.close
+end
+
 ## An error of the request with its kind, below `http_client`.
 def failure[T](text: String, kind: String, cause: Optional[Error] = none) -> Result[T]
   case cause
@@ -82,8 +124,9 @@ end
 private
 
 READ_BYTES = 65_536
-# The pieces of a streamed body that wait for the reader.
+# The pieces of a streamed body that wait for the reader, and how often a full channel is looked at again.
 PIECES = 16
+ROOM_POLL_MS = 5
 NO_BYTES = "".bytes
 # The longest `Keep-Alive: timeout=` that is taken as it is: a day.
 MAX_KEEP_ALIVE_S = 86_400
@@ -194,36 +237,40 @@ def answered(held: Held, call: Call, head: HTTP.ResponseHead) -> Result[Done]
   ok(Done(response: response, reusable: reusable?(call.method, head), expires_at: keep_alive_end(head.headers)))
 end
 
-# Gives the head to the caller, then each piece of the body to the reader, until its end.
+# Gives the head to the caller, then each piece of the body to the reader, until its end. A failure, of the body or
+# of the reader, ends the channel with its error.
 def streamed(held: Held, call: Call, response: Response, streaming: Streaming) -> Result[Void]
-  body: Channel[Result[Bytes]] = Channel.new(PIECES)
-  head = Stream(status: response.status, headers: response.headers, url: response.url, body: body)
+  body: Channel[Result[Bytes]] = Channel.new(PIECES + 1)
+  head = Head(status: response.status, headers: response.headers, url: response.url, body: body)
   _ = streaming.arrivals.send(Arrival.Head(head), 0)
-  pumped = pump(held, call, body)
-  body.close
-  pumped
+  case pump(held, call, body, streaming.stopping)
+    ok(_) ->
+      body.close
+      ok()
+    error(e) ->
+      cut(body, e)
+      error(e)
+  end
 end
 
-def pump(held: Held, call: Call, body: Channel[Result[Bytes]]) -> Result[Void]
-  piece = try next_piece(held, call, body)
+def pump(held: Held, call: Call, body: Channel[Result[Bytes]], stopping: Channel[Bool]) -> Result[Void]
+  queued = 0
+  piece = try next_piece(held, call)
   while not piece.empty?
-    return failure("the reader closed the body", "network") if not body.send(ok(piece), call.read_timeout_ms).ok?
-
-    piece = try next_piece(held, call, body)
+    sent = try offer(body, piece, queued, PIECES, call.read_timeout_ms, stopping)
+    queued = sent
+    piece = try next_piece(held, call)
   end
 
   ok()
 end
 
-# The next piece of a streamed body, empty at its end. A failure goes to the reader too.
-def next_piece(held: Held, call: Call, body: Channel[Result[Bytes]]) -> Result[Bytes]
+# The next piece of a streamed body, empty at its end.
+def next_piece(held: Held, call: Call) -> Result[Bytes]
   wait = Wait(ms: call.read_timeout_ms, kind: "timeout.read")
   case HTTP.read_body(waiting(held, wait), READ_BYTES)
     ok(piece) -> ok(piece)
-    error(e) ->
-      failed: Result[Bytes] = read_failure(e, wait, "the body did not come")
-      _ = body.send(failed, call.read_timeout_ms)
-      failed
+    error(e) -> read_failure(e, wait, "the body did not come")
   end
 end
 

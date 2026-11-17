@@ -33,6 +33,28 @@ Feature: Streamed bodies and server-sent events
     And "r" has the body "after"
     And "r" came on connection 2
 
+  Scenario: A reader that takes nothing for read_timeout_ms gets an error after the pieces that waited
+    Given the raw peer "a" listens with the script:
+      """
+      repeat 1 40 piece
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | read_timeout_ms | 300   |
+    When "s" streams "GET" from "/s" and reads it after 800 ms
+    Then "s" fails with the kind "http_client.timeout.read"
+
+  Scenario: A reader of events that takes nothing for read_timeout_ms gets an error after the events that waited
+    Given the raw peer "a" listens with the script:
+      """
+      repeat 1 60 data:_x\n\n
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | read_timeout_ms | 300   |
+    When "e" reads the events of "/events" after 800 ms
+    Then "e" fails with the kind "http_client.timeout.read"
+
   Scenario: A redirect is followed before the stream
     Given the server "a" listens
     And a client of "a" with:

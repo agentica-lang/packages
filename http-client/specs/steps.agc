@@ -51,6 +51,12 @@ def main() -> Void
     BDD.step("{string} reads the events of {string}") do |ctx, args|
       send(ctx, Request(op: "events", name: args[0], text: args[1]))
     end,
+    BDD.step("{string} streams {string} from {string} and reads it after {int} ms") do |ctx, args|
+      send(ctx, Request(op: "stream", name: args[0], kind: args[1], text: args[2], number: args[3].to_i!))
+    end,
+    BDD.step("{string} reads the events of {string} after {int} ms") do |ctx, args|
+      send(ctx, Request(op: "events", name: args[0], text: args[1], number: args[2].to_i!))
+    end,
     BDD.step("{string} starts {string} to {string}") do |ctx, args|
       send(ctx, Request(op: "start", name: args[0], kind: args[1], text: args[2]))
     end,
