@@ -14,6 +14,7 @@
 
 import Client from "src/client"
 import Name from "src/name"
+import Resolv from "src/resolv"
 import Types from "src/types"
 import Wire from "src/wire"
 
@@ -98,3 +99,13 @@ end
 ## bytes. A, AAAA, CNAME, NS and PTR records are decoded; the data of any other type is `Data.Other` with the bytes as
 ## they came.
 def decode(data: Bytes) -> Result[Types.Message] = Wire.decode(data)
+
+## The nameservers of a `resolv.conf` as `Tcp` servers on port 53, at most 3, in order. It is opt-in: no function reads
+## the file unless you call this one. An `error` when the file cannot be read, and of the kind `dns.malformed` when it
+## has no
+## `nameserver` line. Not every system resolver answers over TCP, so pass the result to `resolver` only when yours
+## does.
+def system_servers(path: String = "/etc/resolv.conf") -> Result[List[Types.Server]] = Resolv.read(path)
+
+## The nameservers of the text of a `resolv.conf`, as `system_servers` reads them.
+def parse_resolv_conf(text: String) -> List[Types.Server] = Resolv.parse(text)

@@ -21,6 +21,7 @@ def main() -> Void
     BDD.step("writing fails with {string}", &writing_fails),
     BDD.step("the peer listens with the script {string}", &peer_listens),
     BDD.step("the TLS peer listens with the script {string}", &tls_peer_listens),
+    BDD.step("the HTTPS peer listens with the script {string}", &https_peer_listens),
     BDD.step("the nameservers are:", &nameservers_are),
     BDD.step("each nameserver has {int} milliseconds", &each_has),
     BDD.step("the client trusts the CA of the specs", &trusts_ca),
@@ -42,6 +43,7 @@ QUERY = "query"
 FAILURE = "failure"
 PYTHON_MS = 60_000
 PEER_PROGRAM = "fixtures/dns_tcp_peer.agc"
+HTTPS_PROGRAM = "fixtures/doh_peer.agc"
 PEER_CERTIFICATE = "fixtures/server.pem"
 PEER_KEY = "fixtures/server.key"
 CA = "specs/fixtures/ca.pem"
@@ -201,7 +203,7 @@ def writing_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.assert(ctx, kind == args[0], "the failure is #{kind}")
 end
 
-def start_peer(ctx: BDD.Context, script: String, secure: Bool) -> BDD.Context
+def start_peer(ctx: BDD.Context, script: String, program: String, secure: Bool) -> BDD.Context
   armed = ctx
   if secure
     armed = BDD.given_env(BDD.given_env(armed, "TLS_CERT", PEER_CERTIFICATE), "TLS_KEY", PEER_KEY)
@@ -211,7 +213,7 @@ def start_peer(ctx: BDD.Context, script: String, secure: Bool) -> BDD.Context
     armed = BDD.given_argument(armed, line.strip)
   end
 
-  started = BDD.given_program(armed, PEER_PROGRAM)
+  started = BDD.given_program(armed, program)
   port = BDD.read_line(started, START_MS).unwrap!.split(" ").last.to_i!
   listener = TCP.listen("127.0.0.1", 0).unwrap!
   closed = TCP.local_port(listener)
@@ -219,9 +221,15 @@ def start_peer(ctx: BDD.Context, script: String, secure: Bool) -> BDD.Context
   BDD.set(BDD.set(started, PORT, JSON.from(port)), CLOSED, JSON.from(closed))
 end
 
-def peer_listens(ctx: BDD.Context, args: List[String]) -> BDD.Context = start_peer(ctx, args[0], false)
+def peer_listens(ctx: BDD.Context, args: List[String]) -> BDD.Context = start_peer(ctx, args[0], PEER_PROGRAM, false)
 
-def tls_peer_listens(ctx: BDD.Context, args: List[String]) -> BDD.Context = start_peer(ctx, args[0], true)
+def tls_peer_listens(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  start_peer(ctx, args[0], PEER_PROGRAM, true)
+end
+
+def https_peer_listens(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  start_peer(ctx, args[0], HTTPS_PROGRAM, true)
+end
 
 def number(ctx: BDD.Context, name: String, fallback: Int) -> Int
   case BDD.get(ctx, name)
@@ -248,6 +256,7 @@ def server_of(ctx: BDD.Context, row: List[String]) -> DNS.Server
   end
 
   return DNS.Server.Tls("127.0.0.1", port, row[2]) if row[0] == "tls"
+  return DNS.Server.Https("https://127.0.0.1:#{port}#{row[2]}") if row[0] == "https"
 
   DNS.Server.Tcp("127.0.0.1", port)
 end

@@ -10,3 +10,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The codec of RFC 1035: `DNS.encode_query` and `DNS.decode`, with name compression (a pointer must go before its name, so no name reads a byte twice), a name read once per place, and bounded sizes.
 - `DNS.lookup` does not ask for IPv6 after NXDOMAIN, reports the error that failed rather than `dns.no_address`, and has a documented time bound.
 - Only records of the class IN are addresses or CNAMEs, and an NXDOMAIN answer needs its question.
+- `DNS.Server.Https(url)`: DNS over HTTPS (RFC 8484), a POST of `application/dns-message` with the id 0.
+- `DNS.system_servers` and `DNS.parse_resolv_conf`: the nameservers of a `resolv.conf`, read only when asked.

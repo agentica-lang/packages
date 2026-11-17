@@ -54,12 +54,18 @@ NO_ADDRESS = "dns.no_address"
 ## The most that a timeout may be, in milliseconds: one day.
 MAX_TIMEOUT_MS = 86_400_000
 
+## The most bytes of an answer over HTTPS: the 16-bit length of a message over TCP.
+MAX_ANSWER_BYTES = 65_535
+
 ## A nameserver. `Tcp` is DNS over TCP (RFC 7766): the host (a name or an address) and the port, 53 for most. `Tls` is
 ## DNS over TLS (RFC 7858): the host, the port (853 for most) and the name that the certificate must have, "" for the
 ## host.
+## `Https` is DNS over HTTPS (RFC 8484): the whole `https://` URL of the server, such as
+## `https://dns.example/dns-query`.
 enum Server
   Tcp(String, Int)
   Tls(String, Int, String)
+  Https(String)
 end
 
 ## What a resolver takes. `timeout_ms` is how long each nameserver has for the whole exchange (connect, send and read),

@@ -111,6 +111,7 @@ end
 
 private
 
+HTTPS = "https://"
 # A TTL that no record has: the top of the 32 bits.
 NO_TTL = 4_294_967_295
 
@@ -132,7 +133,16 @@ def check_server(server: Types.Server) -> Result[Void]
   case server
     Types.Server.Tcp(host, port) -> check_endpoint(host, port)
     Types.Server.Tls(host, port, _) -> check_endpoint(host, port)
+    Types.Server.Https(url) -> check_url(url)
   end
+end
+
+def check_url(url: String) -> Result[Void]
+  if not url.start_with?(HTTPS) or url.length == HTTPS.length
+    return malformed("the URL of a DNS over HTTPS server must start with #{HTTPS}")
+  end
+
+  ok()
 end
 
 def check_endpoint(host: String, port: Int) -> Result[Void]
@@ -157,18 +167,30 @@ end
 def secure?(server: Types.Server) -> Bool
   case server
     Types.Server.Tls(_, _, _) -> true
-    Types.Server.Tcp(_, _) -> false
+    _ -> false
   end
 end
 
 def ask(resolver: Types.Resolver, server: Types.Server, name: String, type: Int) -> Result[Types.Message]
-  id = try random_id()
+  id = 0
+  if not https?(server)
+    id = try random_id()
+  end
+
   query = try Wire.encode_query(id, name, type)
   answer = try Transport.exchange(server, query, resolver.options.timeout_ms, resolver.context)
   message = try Wire.decode(answer)
   try check_answer(message, id, name, type)
   try check_code(message)
   ok(message)
+end
+
+# The id of a query over HTTPS is 0, so that the answers can be cached (RFC 8484 4.1).
+def https?(server: Types.Server) -> Bool
+  case server
+    Types.Server.Https(_) -> true
+    _ -> false
+  end
 end
 
 def random_id() -> Result[Int]
