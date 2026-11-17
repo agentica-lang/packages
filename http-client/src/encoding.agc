@@ -7,11 +7,13 @@ import HTTP from "std/http"
 ACCEPTED = "gzip, deflate"
 
 ## The response with its body decoded, and without the `content-encoding` and `content-length` that no longer apply.
-## A body in another coding, or none, stays as it is. The decoded body is at most `max_bytes` (`http_client.too_large`),
-## and one that does not decode is an `http_client.decode` error.
+## A body in another coding, or none, stays as it is, and so does the part of a body that a 206 carries: its coding
+## applies to the whole body. The decoded body is at most `max_bytes` (`http_client.too_large`), and one that does not
+## decode is an `http_client.decode` error. std's decoder takes one gzip member, so a body of several members (RFC 1952
+## allows it, servers rarely send it) is an `http_client.decode` error too.
 def decoded(response: Exchange.Response, max_bytes: Int) -> Result[Exchange.Response]
   codings = HTTP.header_values(response.headers, "content-encoding").map { |value| value.strip.downcase }
-  return ok(response) if response.body.empty? or codings.size != 1
+  return ok(response) if response.body.empty? or response.status == 206 or codings.size != 1
 
   body = response.body
   if ["gzip", "x-gzip"].include?(codings[0])

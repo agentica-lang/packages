@@ -5,8 +5,6 @@ description: An HTTP client with a pool of keep-alive connections per origin, an
 
 `http-client` sends HTTP/1.1 requests from an Agentica program, in the spirit of Elixir's Req. You make a `Client` once, and each request goes through a pool of keep-alive connections for its origin (scheme, host and port), made with the [pool](https://www.agentica-lang.com/packages/pool/) package. It is built on the `HTTP.start`, `send_request` and `read_body` calls of `std/http`.
 
-The package is new: streamed bodies come in a next release.
-
 ## Install
 
 Needs Agentica 0.33.1, and is tested on 0.33.x only: until 0.34.0 it sets the timeout of each call, and on the opt-in dial path (`resolver` or `public_only`) the address and server name of a connection, through fields of std/http's `Connection` that may change. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`, once it is released:
@@ -66,8 +64,11 @@ HttpClient.post(client: Client, url: String, body: Optional[Bytes] = none, json:
 HttpClient.put(client: Client, url: String, body: Optional[Bytes] = none, json: Optional[JSON.Value] = none, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
 HttpClient.patch(client: Client, url: String, body: Optional[Bytes] = none, json: Optional[JSON.Value] = none, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
 HttpClient.decode(response: Response, codec: Codec[T]) -> Result[T]
-HttpClient.basic_auth(user: String, password: String) -> HTTP.Header
+HttpClient.basic_auth(user: String, password: String) -> Result[HTTP.Header]
 HttpClient.bearer_auth(token: String) -> HTTP.Header
+HttpClient.stream(client: Client, method: String, url: String, body: Optional[Bytes] = none, json: Optional[JSON.Value] = none, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Stream]
+HttpClient.events(stream: Stream, max_event_bytes: Int = 1048576) -> Channel[Result[Event]]
+HttpClient.get_events(client: Client, url: String, params: List[URI.Pair] = [], headers: List[HTTP.Header] = [], max_event_bytes: Int = 1048576) -> Result[Channel[Result[Event]]]
 HttpClient.close(client: Client, drain_ms: Int = 5000) -> Void
 ```
 
@@ -82,9 +83,9 @@ HttpClient.close(client: Client, drain_ms: Int = 5000) -> Void
 
 ## JSON, auth and steps
 
-`json` sends a `JSON.Value` as the body, with `content-type: application/json` unless the call names another; `body` sends bytes as they are, and a call with both is an `argument` error. `HttpClient.decode(response, User.codec)` reads a JSON body into a type, and a body that is not that JSON is an `http_client.decode` error. `basic_auth` and `bearer_auth` make the `authorization` header, for the `headers` of the client or of a call.
+`json` sends a `JSON.Value` as the body, with `content-type: application/json` unless the call names another; `body` sends bytes as they are, and a call with both is an `argument` error. `HttpClient.decode(response, User.codec)` reads a JSON body into a type, and a body that is not that JSON is an `http_client.decode` error. `basic_auth` and `bearer_auth` make the `authorization` header, for the `headers` of the client or of a call; a user name with a `:` is an `argument` error (RFC 7617).
 
-The steps are Req's model of plugins. `request_steps` run in order on each call, after `base_url`, `params`, `json` and the headers are applied and before the first try: each takes a `Request` (`method`, `url`, `headers`, `body`) and gives the one to send. `response_steps` run in order on the final response, after the retries, the redirects and the decoding of the body. An error of a step is the error of the call.
+The steps are Req's model of plugins. `request_steps` run in order on each call, after `base_url`, `params`, `json` and the headers are applied and before the first try: each takes a `Request` (`method`, `url`, `headers`, `body`) and gives the one to send. They run once, not again for each retry or redirect, so a step that signs the URL signs only the first one. `response_steps` run in order on the final response, after the retries, the redirects and the decoding of the body. An error of a step is the error of the call.
 
 ```agentica
 import HTTP from "std/http"
@@ -129,7 +130,49 @@ ok(Todo(id: 7, title: "milk (r1)"))
 
 ## Compressed bodies
 
-With `decompress` (the default) a request asks for `accept-encoding: gzip, deflate`, unless it names its own, and a body in `gzip` or `deflate` (the zlib format, or raw DEFLATE as some servers send it) is decoded before the response is given, without its `content-encoding` and `content-length` headers. The decoded body is also at most `max_body_bytes` (`http_client.too_large`), and one that does not decode is an `http_client.decode` error. A body in another coding stays as it came. `decompress: false` sends no `accept-encoding` and decodes nothing.
+With `decompress` (the default) a request asks for `accept-encoding: gzip, deflate`, unless it names its own, and a body in `gzip` or `deflate` (the zlib format, or raw DEFLATE as some servers send it) is decoded before the response is given, without its `content-encoding` and `content-length` headers. The decoded body is also at most `max_body_bytes` (`http_client.too_large`), and one that does not decode is an `http_client.decode` error. A body in another coding stays as it came, and so does a 206, the part of a body whose coding applies to the whole. std's decoder takes one gzip member, so a body of several (RFC 1952 allows it, servers rarely send it) is an `http_client.decode` error. `decompress: false` sends no `accept-encoding` and decodes nothing.
+
+## Streams and server-sent events
+
+`stream` sends a request as `request` does, and gives a `Stream` once the head of the response has come: `status`, `headers`, `url`, and `body`, a channel that gives `ok(piece)` for each piece of the body as the server sends it, then one `error` if the body fails or is cut short, and closes at its end. A body that closes without an error came whole.
+
+- Read `body` to its end, or close it: the connection goes back to the pool after the end, and closes when the reader closes `body` first.
+- `timeout_ms` bounds the call up to the head. After it, each piece has `read_timeout_ms` to come, and the reader as long to take it: `body` holds one piece at a time, and the time starts again at each take. A reader that takes nothing for `read_timeout_ms` gets an `http_client.timeout.read` error after the piece that waited, and the connection closes.
+- The pool of the origin stays while a stream is open, however long it lasts.
+- `close` ends the streams of the client: their readers get an `http_client.closed` error, and `close` returns once their tasks have ended.
+- A stream asks for no compression and decodes none (a server that compresses all the same gives its coded bytes as they came, with `content-encoding` in `headers`), `max_body_bytes` does not apply to it, and `response_steps` do not run. Request steps, retries and redirects work as for `request`: a response that is retried or redirected is read whole and dropped, and so is one that could be retried but has no time left, which then comes as one piece.
+
+`events(stream)` reads the body as server-sent events (`text/event-stream`), in a task of its own: an `Event` has `event` (`message` when the server names none), `data` (the `data` lines joined by newlines) and `id` (the last event ID). The channel ends with an error as the body does, and also for an event over `max_event_bytes` (`http_client.too_large`) or a reader that took no event for `read_timeout_ms` (`http_client.timeout.read`). Closing the channel of the events closes the body. Each event has `read_timeout_ms` from when it is given, as a piece does. `get_events(client, url)` is a `GET` with `accept: text/event-stream` and its events; a response that is not a 2xx with `content-type: text/event-stream` is an `http_client.events` error that names its status and type in its message only: to branch on the status, call `stream` and look at `status` before `events`, which reads any stream. A stream has one reader of events: a second `events` call gives a channel with an `argument` error. The end of the task that called `events`, by a cancel or a crash, closes the body too. The client does not reconnect: to go on after the end, send the `id` of the last event in a `last-event-id` header.
+
+```agentica
+import HTTP from "std/http"
+import HttpClient from "pkg/http-client/http_client"
+
+def ticks(_request: HTTP.Request) -> Result[HTTP.Response]
+  text = "event: tick\ndata: 1\n\n: a comment\ndata: two\ndata: lines\nid: 2\n\n"
+  ok(HTTP.Response(status: 200, headers: [HTTP.Header(name: "content-type", value: "text/event-stream")], body: text.bytes))
+end
+
+def main() -> Void
+  server = HTTP.serve("127.0.0.1", 0, HTTP.app(&ticks)).unwrap!
+  client = HttpClient.new(base_url: "http://127.0.0.1:#{HTTP.local_port(server)}").unwrap!
+  events = HttpClient.get_events(client, "/ticks").unwrap!
+  for item in events.lazy(5_000).to_a.unwrap!
+    case item
+      ok(event) -> puts("#{event.event} #{event.data.inspect} #{event.id.inspect}")
+      error(e) -> puts("#{e.kind}: #{e.message}")
+    end
+  end
+
+  HttpClient.close(client)
+  HTTP.close_server(server)
+end
+```
+
+```output
+tick "1" ""
+message "two\nlines" "2"
+```
 
 ## Timeouts
 
@@ -182,13 +225,14 @@ Each error has a kind, so a caller tests `e.is_a?("http_client.timeout")` or a k
 | `http_client.timeout.request` | the request took longer than `timeout_ms` |
 | `http_client.pool_full` | 1000 requests wait for a connection of the origin already |
 | `http_client.network` | the connect failed, or the connection broke |
-| `http_client.too_large` | the body is over `max_body_bytes`, before or after its decoding |
-| `http_client.decode` | a compressed body that does not decode, or a body that `decode` cannot read |
+| `http_client.too_large` | the body is over `max_body_bytes`, before or after its decoding, or an event is over `max_event_bytes` |
+| `http_client.decode` | a compressed body that does not decode, a body that `decode` cannot read, or events that are not UTF-8 |
+| `http_client.events` | `get_events` got a response that is not a 2xx event stream |
 | `http_client.dns` | the host does not resolve |
 | `http_client.address_denied` | `public_only` and the host has no public address |
 | `http_client.redirect.too_many` | more than `max_redirects` redirects |
 | `http_client.redirect.location` | a redirect whose `Location` cannot be followed |
-| `http_client.closed` | the client is closed |
+| `http_client.closed` | the client is closed, before the request or during its stream |
 | `http_client.crashed` | the task of the request crashed: a bug, which a retry does not fix |
 | `argument` | a bad URL, setting, method or header, or both `body` and `json`; nothing was sent, and the connection stays |
 

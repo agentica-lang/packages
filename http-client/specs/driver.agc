@@ -19,10 +19,13 @@ HANG_MS = 60_000
 # A started request's task stays until it is cancelled or the driver ends, as a caller's task would.
 LINGER_MS = 600_000
 
-# The outcome of a request: its result and how long it took.
+# The outcome of a request: its result, how long it took, and for a stream how long its first piece took. A stream
+# reads as a response whose body is its pieces, and events as one whose body is `event:data` of each (a newline as
+# `/`), joined by `|`.
 struct Outcome
   result: Result[HttpClient.Response]
   elapsed: Int
+  first: Int = 0
 end
 
 # A request in its task, which sends its outcome and then stays until `stop` closes.
@@ -91,6 +94,11 @@ def run(driver: Driver, req: Request) -> Handled
     "peer" -> start_peer(driver, req)
     "client" -> make_client(driver, req)
     "send" -> send(driver, req)
+    "stream" -> send(driver, req)
+    "stream_first" -> send(driver, req)
+    "events" -> send(driver, req)
+    "events_closed" -> send(driver, req)
+    "events_abandoned" -> send(driver, req)
     "start" -> started(driver, req)
     "wait" -> waited(driver, req.name)
     "cancel" ->
@@ -179,7 +187,7 @@ def make_client(driver: Driver, req: Request) -> Handled
       params = params.push(pair(row[1]))
     elsif row[0] == "basic"
       credentials = row[1].split(":")
-      headers = headers.push(HttpClient.basic_auth(credentials[0], credentials[1]))
+      headers = headers.push(HttpClient.basic_auth(credentials[0], credentials[1]).unwrap!)
     elsif row[0] == "bearer"
       headers = headers.push(HttpClient.bearer_auth(row[1]))
     elsif row[0] == "request_step"
@@ -344,12 +352,141 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
   stop = driver.stop
   task = Task.spawn do
     began = Time.monotonic_ms()
-    result = HttpClient.request(client, req.kind, url, body: body, json: json, params: params, headers: headers)
-    _ = outcome.send(Outcome(result: result, elapsed: Time.monotonic_ms() - began), 0)
+    done = Outcome(result: error("no request"), elapsed: 0)
+    case req.op
+      "stream" ->
+        streamed = HttpClient.stream(client, req.kind, url, headers: headers)
+        pause(req.number)
+        done = read_stream(streamed, began, false, req.pace)
+      "stream_first" -> done = read_stream(HttpClient.stream(client, req.kind, url, headers: headers), began, true, 0)
+      "events" ->
+        events = HttpClient.get_events(client, url, headers: headers)
+        pause(req.number)
+        done = read_events(events, began, req.pace)
+      "events_abandoned" ->
+        result: Result[HttpClient.Response] = error("no stream")
+        case HttpClient.stream(client, "GET", url, headers: headers)
+          ok(streamed) ->
+            crash = req.kind == "crash"
+            reader: Task[Result[Void]] = Task.spawn do abandoned(streamed, crash) end
+            if not crash
+              pause(req.number)
+              Task.cancel(reader)
+            end
+
+            _ = Task.await(reader, WAIT_MS)
+            result = ok(HttpClient.Response(status: 200, headers: [], body: "".bytes, url: url))
+          error(e) -> result = error(e)
+        end
+
+        done = Outcome(result: result, elapsed: 0)
+      "events_closed" ->
+        result: Result[HttpClient.Response] = error("no events")
+        case HttpClient.get_events(client, url, headers: headers)
+          ok(events) ->
+            Task.sleep(req.number)
+            events.close
+            result = ok(HttpClient.Response(status: 200, headers: [], body: "".bytes, url: url))
+          error(e) -> result = error(e)
+        end
+
+        done = Outcome(result: result, elapsed: 0)
+      _ ->
+        result = HttpClient.request(client, req.kind, url, body: body, json: json, params: params, headers: headers)
+        done = Outcome(result: result, elapsed: Time.monotonic_ms() - began)
+    end
+
+    _ = outcome.send(done.with(elapsed: Time.monotonic_ms() - began), 0)
     _ = stop.recv(LINGER_MS)
   end
 
   ok(Running(task: task, outcome: outcome))
+end
+
+# Reads the pieces of the stream to its end, or only its first one before it closes the body.
+def read_stream(streamed: Result[HttpClient.Stream], began: Int, first_only: Bool, pace_ms: Int) -> Outcome
+  case streamed
+    ok(stream) ->
+      pieces: List[Bytes] = []
+      first = 0
+      next_piece = stream.body.recv(WAIT_MS)
+      while next_piece.ok?
+        case next_piece.unwrap!
+          ok(piece) -> pieces = pieces.push(piece)
+          error(e) -> return Outcome(result: error(e), elapsed: 0)
+        end
+
+        if first == 0
+          first = Time.monotonic_ms() - began
+        end
+
+        pause(pace_ms)
+
+        if first_only
+          stream.body.close
+          break
+        end
+
+        next_piece = stream.body.recv(WAIT_MS)
+      end
+
+      response = HttpClient.Response(
+        status: stream.status,
+        headers: stream.headers,
+        body: Bytes.concat(pieces),
+        url: stream.url,
+      )
+
+      Outcome(result: ok(response), elapsed: 0, first: first)
+    error(e) -> Outcome(result: error(e), elapsed: 0)
+  end
+end
+
+# Reads one event in a task of its own, then crashes, or waits to be cancelled: either way the relay of the events ends
+# with this task.
+def abandoned(stream: HttpClient.Stream, crash: Bool) -> Result[Void]
+  events = HttpClient.events(stream)
+  _ = events.recv(WAIT_MS)
+  if crash
+    _ = "not a number".to_i!
+  end
+
+  Task.sleep(LINGER_MS)
+  ok()
+end
+
+# Waits `ms`, or not at all: even a sleep of 0 hands the turn to the other tasks.
+def pause(ms: Int) -> Void
+  if ms > 0
+    Task.sleep(ms)
+  end
+end
+
+def read_events(events: Result[Channel[Result[HttpClient.Event]]], began: Int, pace_ms: Int) -> Outcome
+  case events
+    ok(channel) ->
+      seen: List[String] = []
+      first = 0
+      next_event = channel.recv(WAIT_MS)
+      while next_event.ok?
+        case next_event.unwrap!
+          ok(event) -> seen = seen.push("#{event.event}:#{event.data.replace("\n", "/")}")
+          error(e) -> return Outcome(result: error(e), elapsed: 0)
+        end
+
+        if first == 0
+          first = Time.monotonic_ms() - began
+        end
+
+        pause(pace_ms)
+
+        next_event = channel.recv(WAIT_MS)
+      end
+
+      response = HttpClient.Response(status: 200, headers: [], body: seen.join("|").bytes, url: "")
+      Outcome(result: ok(response), elapsed: 0, first: first)
+    error(e) -> Outcome(result: error(e), elapsed: 0)
+  end
 end
 
 def expect(driver: Driver, req: Request) -> Handled
@@ -364,6 +501,12 @@ def check(req: Request, outcome: Outcome) -> String
     return Protocol.OK if outcome.elapsed < req.number
 
     return "#{req.name} took #{outcome.elapsed} ms"
+  end
+
+  if req.op == "expect_first_within"
+    return Protocol.OK if outcome.first > 0 and outcome.first < req.number
+
+    return "the first piece of #{req.name} took #{outcome.first} ms"
   end
 
   if req.op == "expect_after"

@@ -42,6 +42,36 @@ def main() -> Void
     BDD.step("{string} sends {string} to {string} with the param {string}") do |ctx, args|
       send(ctx, Request(op: "send", name: args[0], kind: args[1], text: args[2], param: args[3]))
     end,
+    BDD.step("{string} streams {string} from {string}") do |ctx, args|
+      send(ctx, Request(op: "stream", name: args[0], kind: args[1], text: args[2]))
+    end,
+    BDD.step("{string} streams {string} from {string} and closes it after the first piece") do |ctx, args|
+      send(ctx, Request(op: "stream_first", name: args[0], kind: args[1], text: args[2]))
+    end,
+    BDD.step("{string} reads the events of {string}") do |ctx, args|
+      send(ctx, Request(op: "events", name: args[0], text: args[1]))
+    end,
+    BDD.step("{string} streams {string} from {string} and reads it after {int} ms") do |ctx, args|
+      send(ctx, Request(op: "stream", name: args[0], kind: args[1], text: args[2], number: args[3].to_i!))
+    end,
+    BDD.step("{string} streams {string} from {string} taking a piece every {int} ms") do |ctx, args|
+      send(ctx, Request(op: "stream", name: args[0], kind: args[1], text: args[2], pace: args[3].to_i!))
+    end,
+    BDD.step("{string} reads the events of {string} taking one every {int} ms") do |ctx, args|
+      send(ctx, Request(op: "events", name: args[0], text: args[1], pace: args[2].to_i!))
+    end,
+    BDD.step("{string} reads the events of {string} in a task that is cancelled after {int} ms") do |ctx, args|
+      send(ctx, Request(op: "events_abandoned", name: args[0], kind: "cancel", text: args[1], number: args[2].to_i!))
+    end,
+    BDD.step("{string} reads the events of {string} in a task that crashes after the first") do |ctx, args|
+      send(ctx, Request(op: "events_abandoned", name: args[0], kind: "crash", text: args[1]))
+    end,
+    BDD.step("{string} closes the events of {string} after {int} ms") do |ctx, args|
+      send(ctx, Request(op: "events_closed", name: args[0], text: args[1], number: args[2].to_i!))
+    end,
+    BDD.step("{string} reads the events of {string} after {int} ms") do |ctx, args|
+      send(ctx, Request(op: "events", name: args[0], text: args[1], number: args[2].to_i!))
+    end,
     BDD.step("{string} starts {string} to {string}") do |ctx, args|
       send(ctx, Request(op: "start", name: args[0], kind: args[1], text: args[2]))
     end,
@@ -82,6 +112,9 @@ def main() -> Void
     end,
     BDD.step("{string} does not decode") do |ctx, args|
       send(ctx, Request(op: "expect_decoded", name: args[0], text: "http_client.decode"))
+    end,
+    BDD.step("the first piece of {string} came within {int} ms") do |ctx, args|
+      send(ctx, Request(op: "expect_first_within", name: args[0], number: args[1].to_i!))
     end,
     BDD.step("{string} took at least {int} ms") do |ctx, args|
       send(ctx, Request(op: "expect_after", name: args[0], number: args[1].to_i!))
