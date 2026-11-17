@@ -40,6 +40,9 @@ INBOX = 4_096
 CALL_MS = 10_000
 MAX_WAIT_MS = 86_400_000
 WAKE_CAP_MS = 100
+# A fetch parks no longer than its caller waits, and a little more, so that a fetch whose caller gave up does not wait
+# for its whole `wait_ms` in the actor.
+GRACE_MS = 1_000
 CLOSED = "closed"
 
 struct Extension
@@ -85,6 +88,11 @@ def check(options: Types.MemoryOptions) -> Result[Void]
     return error("jobs error: max_dead cannot be negative, got #{options.max_dead}", kind: "argument")
   end
 
+  case options.fetch_timeout_ms
+    some(ms) if ms < 1 -> return error("jobs error: fetch_timeout_ms must be at least 1, got #{ms}", kind: "argument")
+    _ -> nil
+  end
+
   ok()
 end
 
@@ -121,7 +129,11 @@ end
 
 def fetch_jobs(link: Link, fetch: Types.Fetch) -> Result[List[Types.Lease]]
   wait_ms = fetch.wait_ms.clamp(0, MAX_WAIT_MS)
-  ask(link, link.fetch_timeout_ms.unwrap_or(wait_ms + CALL_MS)) do |reply| Msg.Fetch(fetch, reply) end
+  case link.fetch_timeout_ms
+    some(limit) ->
+      ask(link, limit) do |reply| Msg.Fetch(fetch.with(wait_ms: wait_ms.clamp(0, limit + GRACE_MS)), reply) end
+    none -> ask(link, wait_ms + CALL_MS) do |reply| Msg.Fetch(fetch, reply) end
+  end
 end
 
 def close(link: Link, drain_ms: Int) -> Void

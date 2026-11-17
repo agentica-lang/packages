@@ -150,6 +150,18 @@ Feature: The memory backend
     When I fetch a job of "q" as "a"
     Then the reply is "ok x attempt 1"
 
+  Scenario: A fetch that waits after a caller that gave up gets the job that comes
+    Given a memory backend on a manual clock with:
+      | setting          | value |
+      | fetch_timeout_ms | 200   |
+    When a fetch of "q" starts to wait as "gone"
+    And the fetch "gone" ends
+    Then the reply is "error jobs.timeout"
+    When a fetch of "q" starts to wait as "live" for 1000 ms
+    And I enqueue "x" into "q"
+    And the fetch "live" ends
+    Then the reply is "ok x attempt 1"
+
   Scenario: A retry gives its error to the next delivery
     Given a memory backend on a manual clock
     When I enqueue "a" into "q"
@@ -174,9 +186,11 @@ Feature: The memory backend
     Then the reply is "error argument"
 
     Examples:
-      | setting  | value |
-      | max_jobs | 0     |
-      | max_dead | -1    |
+      | setting          | value |
+      | max_jobs         | 0     |
+      | max_dead         | -1    |
+      | fetch_timeout_ms | 0     |
+      | fetch_timeout_ms | -1    |
 
   Scenario: The wall clock runs the jobs that are due now
     Given a memory backend on the wall clock
