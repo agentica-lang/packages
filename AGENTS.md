@@ -142,6 +142,9 @@ yaml/                a YAML 1.2 parser: yaml.agc is the API (parse, parse_all, O
 - BDD first: a behavior is a Gherkin scenario in `specs/`, with steps in `specs/steps.agc`. A pure helper may have a
   unit test in `test/` (`*_test.agc`). Tests are hermetic: 127.0.0.1, port 0, no external services, and a step that makes
   something on disk removes it with `BDD.after`.
+- Tests, models and peers are written in Agentica. A peer in another language (Python or Node, standard library
+  only) is for a protocol or format that must agree with an independent implementation, such as a wire codec
+  (dns's `dns_peer.py`); a model of a package's own logic is Agentica.
 - Each package keeps its docs in its own `PACKAGE/docs/`, as Markdown with a front matter (`title`, `description`,
   `weight` to order a page): `_index.md` is the package page (what it is, the `agentica add` command with `--subdir` and
   the prefixed tag and the `agentica.toml` line it writes, a short example, the API), and each other `.md` is a page of
