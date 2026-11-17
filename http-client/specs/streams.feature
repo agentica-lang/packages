@@ -55,6 +55,64 @@ Feature: Streamed bodies and server-sent events
     When "e" reads the events of "/events" after 800 ms
     Then "e" fails with the kind "http_client.timeout.read"
 
+  Scenario: A steady reader a little slower than the server gets the whole body
+    Given the raw peer "a" listens with the script:
+      """
+      repeat 1 40 piece
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | read_timeout_ms | 500   |
+    When "s" streams "GET" from "/s" taking a piece every 40 ms
+    Then "s" has a body of 200 bytes
+
+  Scenario: A steady reader of events a little slower than the server gets every event
+    Given the raw peer "a" listens with the script:
+      """
+      repeat 1 40 data:_x\n\n
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | read_timeout_ms | 500   |
+    When "e" reads the events of "/events" taking one every 40 ms
+    Then "e" has a body of 399 bytes
+
+  Scenario: Closing the events of a stream of comments closes its body, and its connection goes
+    Given the raw peer "a" listens with the script:
+      """
+      repeat 50 200 :_beat\n
+      ok after
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | pool_size       | 1     |
+      | pool_timeout_ms | 2000  |
+    When "e" closes the events of "/events" after 300 ms
+    And "r" sends "GET" to "/r"
+    Then "r" has the body "after"
+    And "r" came on connection 2
+
+  Scenario: A stream that outlives timeout_ms and idle_ms keeps its pool
+    Given the raw peer "a" listens with the script:
+      """
+      repeat 100 90 p
+      """
+    And a client of "a" with:
+      | setting    | value |
+      | timeout_ms | 1000  |
+      | idle_ms    | 300   |
+    When "s" streams "GET" from "/s"
+    Then "s" has a body of 90 bytes
+
+  Scenario: get_events refuses a response that is not a 2xx event stream
+    Given the server "a" listens
+    And a client of "a" with:
+      | setting | value |
+    When "n" reads the events of "/status/404"
+    And "t" reads the events of "/hello"
+    Then "n" fails with the kind "http_client.events"
+    And "t" fails with the kind "http_client.events"
+
   Scenario: A redirect is followed before the stream
     Given the server "a" listens
     And a client of "a" with:

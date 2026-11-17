@@ -137,11 +137,12 @@ With `decompress` (the default) a request asks for `accept-encoding: gzip, defla
 `stream` sends a request as `request` does, and gives a `Stream` once the head of the response has come: `status`, `headers`, `url`, and `body`, a channel that gives `ok(piece)` for each piece of the body as the server sends it, then one `error` if the body fails or is cut short, and closes at its end. A body that closes without an error came whole.
 
 - Read `body` to its end, or close it: the connection goes back to the pool after the end, and closes when the reader closes `body` first.
-- `timeout_ms` bounds the call up to the head. After it, each piece has `read_timeout_ms` to come, and the reader as long to make room for it: 16 pieces wait for the reader, and past that the reader gets an `http_client.timeout.read` error after the pieces that waited, and the connection closes.
+- `timeout_ms` bounds the call up to the head. After it, each piece has `read_timeout_ms` to come, and the reader as long to take it: `body` holds one piece at a time, and the time starts again at each take. A reader that takes nothing for `read_timeout_ms` gets an `http_client.timeout.read` error after the piece that waited, and the connection closes.
+- The pool of the origin stays while a stream is open, however long it lasts.
 - `close` ends the streams of the client: their readers get an `http_client.closed` error, and `close` returns once their tasks have ended.
 - A stream asks for no compression and decodes none (a server that compresses all the same gives its coded bytes as they came, with `content-encoding` in `headers`), `max_body_bytes` does not apply to it, and `response_steps` do not run. Request steps, retries and redirects work as for `request`: a response that is retried or redirected is read whole and dropped, and so is one that could be retried but has no time left, which then comes as one piece.
 
-`events(stream)` reads the body as server-sent events (`text/event-stream`), in a task of its own: an `Event` has `event` (`message` when the server names none), `data` (the `data` lines joined by newlines) and `id` (the last event ID). The channel ends with an error as the body does, and also for an event over `max_event_bytes` (`http_client.too_large`) or a reader that took no event for `read_timeout_ms` (`http_client.timeout.read`). Closing the channel of the events closes the body. `get_events(client, url)` is a `GET` with `accept: text/event-stream` and its events. The client does not reconnect: to go on after the end, send the `id` of the last event in a `last-event-id` header.
+`events(stream)` reads the body as server-sent events (`text/event-stream`), in a task of its own: an `Event` has `event` (`message` when the server names none), `data` (the `data` lines joined by newlines) and `id` (the last event ID). The channel ends with an error as the body does, and also for an event over `max_event_bytes` (`http_client.too_large`) or a reader that took no event for `read_timeout_ms` (`http_client.timeout.read`). Closing the channel of the events closes the body. Each event has `read_timeout_ms` from when it is given, as a piece does. `get_events(client, url)` is a `GET` with `accept: text/event-stream` and its events; a response that is not a 2xx with `content-type: text/event-stream` is an `http_client.events` error that names its status and type. `events` reads any stream. The client does not reconnect: to go on after the end, send the `id` of the last event in a `last-event-id` header.
 
 ```agentica
 import HTTP from "std/http"
@@ -226,11 +227,12 @@ Each error has a kind, so a caller tests `e.is_a?("http_client.timeout")` or a k
 | `http_client.network` | the connect failed, or the connection broke |
 | `http_client.too_large` | the body is over `max_body_bytes`, before or after its decoding, or an event is over `max_event_bytes` |
 | `http_client.decode` | a compressed body that does not decode, a body that `decode` cannot read, or events that are not UTF-8 |
+| `http_client.events` | `get_events` got a response that is not a 2xx event stream |
 | `http_client.dns` | the host does not resolve |
 | `http_client.address_denied` | `public_only` and the host has no public address |
 | `http_client.redirect.too_many` | more than `max_redirects` redirects |
 | `http_client.redirect.location` | a redirect whose `Location` cannot be followed |
-| `http_client.closed` | the client is closed |
+| `http_client.closed` | the client is closed, before the request or during its stream |
 | `http_client.crashed` | the task of the request crashed: a bug, which a retry does not fix |
 | `argument` | a bad URL, setting, method or header, or both `body` and `json`; nothing was sent, and the connection stays |
 

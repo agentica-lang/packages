@@ -46,6 +46,7 @@ struct Stream
 
   read_timeout_ms: Int
   pools: Pools.Pools
+  relayed: Channel[Bool]
 end
 
 ## A client. The public fields apply to each request, and `client.with(...)` gives a client with other values that
@@ -197,12 +198,12 @@ end
 
 ## Sends a request as `request` does, and gives the response once its head has come: its body comes in pieces through
 ## `body` (`Stream`), as the server sends them, for a reader that is a task of the caller's. The client asks for no
-## compression and decodes none, and runs no response steps. A response that is retried or redirected is read whole
-## and dropped, as for `request`; so is one that cannot go again for lack of time, which then comes as one piece.
+## compression and decodes none, and runs no response steps. A response that is retried or redirected is read whole and
+## dropped, as for `request`; so is one that cannot go again for lack of time, which then comes as one piece.
 ## `timeout_ms` bounds the call up to the head; after it, each piece has `read_timeout_ms` to come, and the reader as
-## long to make room for it, else the body ends with an `http_client.timeout.read` error. Read `body` to its end, or
-## close it, so that its connection goes back to the pool. A server that compresses all the same gives its coded bytes
-## as they came, with its `content-encoding` in `headers`.
+## long to take it (`body` holds one), else the body ends with an `http_client.timeout.read` error. Read `body` to its
+## end, or close it, so that its connection goes back to the pool. A server that compresses all the same gives its coded
+## bytes as they came, with its `content-encoding` in `headers`.
 def stream(
   client: Client,
   method: String,
@@ -232,24 +233,28 @@ def stream(
           body: pieces,
           read_timeout_ms: client.read_timeout_ms,
           pools: client.pools,
+          relayed: Channel.new(1),
         ),
       )
   end
 end
 
-## The server-sent events of `stream` (`text/event-stream`), read by a task of their own: `ok(event)` for each, then
-## one `error` if the body fails or is cut short, an event is over `max_event_bytes` (`http_client.too_large`), or the
-## reader took no event for `read_timeout_ms` (`http_client.timeout.read`); the channel closes at the end of the body.
-## Closing it early closes the body. The client does not reconnect: a reader that wants to goes again with the
-## `last-event-id` header, from the `id` of the last event.
+## The server-sent events of `stream`, read by a task of their own: `ok(event)` for each, then one `error` if the body
+## fails or is cut short, an event is over `max_event_bytes` (`http_client.too_large`), or the reader took no event
+## for `read_timeout_ms` (`http_client.timeout.read`); the channel closes at the end of the body. Closing it early
+## closes the body. It reads the body whatever the status and type of the response; `get_events` checks them. The
+## client does not reconnect: a reader that wants to goes again with the `last-event-id` header, from the `id` of the
+## last event.
 def events(stream: Stream, max_event_bytes: Int = 1_048_576) -> Channel[Result[Sse.Event]]
-  out: Channel[Result[Sse.Event]] = Channel.new(EVENTS + 1)
+  out: Channel[Result[Sse.Event]] = Channel.new(EVENT_PLACES)
+  stream.relayed.close
   Task.spawn do relay(stream, out, max_event_bytes) end
   out
 end
 
 ## A `GET` request whose body comes as a stream of server-sent events, with `accept: text/event-stream` unless
-## `headers` name another.
+## `headers` name another. A response that is not a 2xx with `content-type: text/event-stream` is an
+## `http_client.events` error that names its status and type, and its body is closed.
 def get_events(
   client: Client,
   url: String,
@@ -258,6 +263,12 @@ def get_events(
   max_event_bytes: Int = 1_048_576,
 ) -> Result[Channel[Result[Sse.Event]]]
   streamed = try stream(client, "GET", url, params: params, headers: merge([EVENT_STREAM], headers))
+  type = HTTP.header_values(streamed.headers, "content-type").join(",")
+  if streamed.status < 200 or streamed.status > 299 or not type.downcase.strip.start_with?("text/event-stream")
+    streamed.body.close
+    return Exchange.failure("the response is #{streamed.status} #{type.inspect}, not an event stream", "events")
+  end
+
   ok(events(streamed, max_event_bytes))
 end
 
@@ -408,15 +419,28 @@ HEALTH_MS = 5_000
 # How long a try that ran out of time has to end once cancelled.
 CANCEL_MS = 1_000
 EVENT_STREAM = HTTP.Header(name: "accept", value: "text/event-stream")
-# The events that wait for the reader. A piece of the body comes within `read_timeout_ms`, or the body ends: the relay
-# waits that long, and a little more, for each.
+# The events read and not yet given that the relay holds before it stops reading the body; the channel of the events
+# holds one, and a place for the error that ends it. A piece of the body comes within `read_timeout_ms`, or the body
+# ends: the relay waits that long, and a little more. It looks at its channels every `RELAY_POLL_MS` while it waits.
 EVENTS = 16
+EVENT_PLACES = 2
 RELAY_SLACK_MS = 1_000
+RELAY_POLL_MS = 5
 
 # What a try gives: the response, whole, or its head and the stream of its body.
 struct Got
   response: Exchange.Response
   stream: Optional[Stream]
+end
+
+# What the relay holds: the parser, the events read and not yet given, when it gave the last one and heard the body
+# last, and whether the body ended.
+struct Relaying
+  parser: Sse.Parser
+  pending: List[Sse.Event]
+  given_at: Int
+  heard_at: Int
+  ended: Bool
 end
 
 # The request after its retries and redirects.
@@ -519,36 +543,58 @@ end
 
 # Reads the body into events until its end, then closes `out`, or ends `out` with the error that cut it short. The
 # client waits for this task when it closes.
-def relay(stream: Stream, out: Channel[Result[Sse.Event]], max_bytes: Int) -> Result[Void]
+def relay(stream: Stream, out: Channel[Result[Sse.Event]], max_bytes: Int) -> Void
   case relayed(stream, out, max_bytes)
     ok(_) -> out.close
     error(e) -> Exchange.cut(out, e)
   end
 
   stream.body.close
+end
+
+# Gives an event once the reader took the last one, and reads the body while it holds few events, so that each event
+# has `read_timeout_ms` from when it is given, and a reader that closed `out` closes the body at once, even when the
+# body brings no events.
+def relayed(stream: Stream, out: Channel[Result[Sse.Event]], max_bytes: Int) -> Result[Void]
+  try Pools.watch(stream.pools, Task.current, "")
+  now = Time.monotonic_ms()
+  state = Relaying(parser: Sse.parser(), pending: [], given_at: now, heard_at: now, ended: false)
+  while not (state.ended and state.pending.empty?) and not out.closed?
+    state = try relay_step(stream, out, state, max_bytes)
+  end
+
   ok()
 end
 
-def relayed(stream: Stream, out: Channel[Result[Sse.Event]], max_bytes: Int) -> Result[Void]
-  try Pools.watch(stream.pools, Task.current)
-  parser = Sse.parser()
-  queued = 0
-  wait_ms = stream.read_timeout_ms + RELAY_SLACK_MS
-  item = stream.body.recv(wait_ms)
-  while item.ok?
-    fed = try Sse.feed(parser, try item.unwrap!, max_bytes)
-    parser = fed.parser
-    for event in fed.events
-      sent = try Exchange.offer(out, event, queued, EVENTS, stream.read_timeout_ms, stream.pools.stopping)
-      queued = sent
+def relay_step(stream: Stream, out: Channel[Result[Sse.Event]], state: Relaying, max_bytes: Int) -> Result[Relaying]
+  return Exchange.failure("the client is closed", "closed") if stream.pools.stopping.closed?
+
+  now = Time.monotonic_ms()
+  if not state.pending.empty?
+    if out.empty?
+      _ = out.send(ok(state.pending[0]), 0)
+      return ok(state.with(pending: state.pending.drop(1), given_at: now))
     end
 
-    item = stream.body.recv(wait_ms)
+    if now - state.given_at >= stream.read_timeout_ms
+      return Exchange.failure("the reader took no event for #{stream.read_timeout_ms} ms", "timeout.read")
+    end
   end
 
-  return ok() if stream.body.closed? and stream.body.empty?
+  if state.ended or state.pending.size >= EVENTS
+    Task.sleep(RELAY_POLL_MS)
+    return ok(state)
+  end
 
-  Exchange.failure("no piece of the body came within #{wait_ms} ms", "timeout.read")
+  case stream.body.recv(RELAY_POLL_MS)
+    ok(item) ->
+      fed = try Sse.feed(state.parser, try item, max_bytes)
+      ok(state.with(parser: fed.parser, pending: state.pending + fed.events, heard_at: now))
+    error(_) if stream.body.closed? and stream.body.empty? -> ok(state.with(ended: true))
+    error(_) if now - state.heard_at >= stream.read_timeout_ms + RELAY_SLACK_MS ->
+      Exchange.failure("no piece of the body came within #{stream.read_timeout_ms} ms", "timeout.read")
+    error(_) -> ok(state)
+  end
 end
 
 # One try of the hop, within what is left of the call.
@@ -595,7 +641,7 @@ end
 
 def borrowed(client: Client, pool: Pools.OriginPool, call: Exchange.Call, streamed: Bool) -> Result[Exchange.Response]
   if streamed
-    try Pools.watch(client.pools, Task.current)
+    try Pools.watch(client.pools, Task.current, call.target.origin)
   end
 
   Pool.with(pool) do |link| Exchange.run(link, call) end
@@ -612,6 +658,7 @@ def arrived(client: Client, running: Task[Result[Exchange.Response]], arrival: E
         body: head.body,
         read_timeout_ms: client.read_timeout_ms,
         pools: client.pools,
+        relayed: head.relayed,
       )
 
       ok(Got(response: response, stream: some(streamed)))

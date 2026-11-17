@@ -97,6 +97,7 @@ def run(driver: Driver, req: Request) -> Handled
     "stream" -> send(driver, req)
     "stream_first" -> send(driver, req)
     "events" -> send(driver, req)
+    "events_closed" -> send(driver, req)
     "start" -> started(driver, req)
     "wait" -> waited(driver, req.name)
     "cancel" ->
@@ -355,12 +356,23 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
       "stream" ->
         streamed = HttpClient.stream(client, req.kind, url, headers: headers)
         Task.sleep(req.number)
-        done = read_stream(streamed, began, false)
-      "stream_first" -> done = read_stream(HttpClient.stream(client, req.kind, url, headers: headers), began, true)
+        done = read_stream(streamed, began, false, req.pace)
+      "stream_first" -> done = read_stream(HttpClient.stream(client, req.kind, url, headers: headers), began, true, 0)
       "events" ->
         events = HttpClient.get_events(client, url, headers: headers)
         Task.sleep(req.number)
-        done = read_events(events, began)
+        done = read_events(events, began, req.pace)
+      "events_closed" ->
+        result: Result[HttpClient.Response] = error("no events")
+        case HttpClient.get_events(client, url, headers: headers)
+          ok(events) ->
+            Task.sleep(req.number)
+            events.close
+            result = ok(HttpClient.Response(status: 200, headers: [], body: "".bytes, url: url))
+          error(e) -> result = error(e)
+        end
+
+        done = Outcome(result: result, elapsed: 0)
       _ ->
         result = HttpClient.request(client, req.kind, url, body: body, json: json, params: params, headers: headers)
         done = Outcome(result: result, elapsed: Time.monotonic_ms() - began)
@@ -374,7 +386,7 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
 end
 
 # Reads the pieces of the stream to its end, or only its first one before it closes the body.
-def read_stream(streamed: Result[HttpClient.Stream], began: Int, first_only: Bool) -> Outcome
+def read_stream(streamed: Result[HttpClient.Stream], began: Int, first_only: Bool, pace_ms: Int) -> Outcome
   case streamed
     ok(stream) ->
       pieces: List[Bytes] = []
@@ -385,6 +397,8 @@ def read_stream(streamed: Result[HttpClient.Stream], began: Int, first_only: Boo
           ok(piece) -> pieces = pieces.push(piece)
           error(e) -> return Outcome(result: error(e), elapsed: 0)
         end
+
+        Task.sleep(pace_ms)
 
         if first == 0
           first = Time.monotonic_ms() - began
@@ -410,7 +424,7 @@ def read_stream(streamed: Result[HttpClient.Stream], began: Int, first_only: Boo
   end
 end
 
-def read_events(events: Result[Channel[Result[HttpClient.Event]]], began: Int) -> Outcome
+def read_events(events: Result[Channel[Result[HttpClient.Event]]], began: Int, pace_ms: Int) -> Outcome
   case events
     ok(channel) ->
       seen: List[String] = []
@@ -421,6 +435,8 @@ def read_events(events: Result[Channel[Result[HttpClient.Event]]], began: Int) -
           ok(event) -> seen = seen.push("#{event.event}:#{event.data.replace("\n", "/")}")
           error(e) -> return Outcome(result: error(e), elapsed: 0)
         end
+
+        Task.sleep(pace_ms)
 
         if first == 0
           first = Time.monotonic_ms() - began

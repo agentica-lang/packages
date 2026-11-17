@@ -15,8 +15,8 @@
 ##   keep-alive SECONDS BODY  a 200 with `Keep-Alive: timeout=SECONDS`
 ##   slow-head MS BODY      waits MS before it writes the head of a 200
 ##   stall MS BODY          writes the head of a 200 and half of BODY, waits MS, then writes the rest
-##   chunks MS P1,P2,...    a 200, chunked, with each piece as a chunk and MS between them; in a piece `_` is a
-##                          space and `\n` a line end
+##   chunks MS P1,P2,...    a 200 of `text/event-stream`, chunked, with each piece as a chunk and MS between them;
+##                          in a piece `_` is a space and `\n` a line end
 ##   repeat MS COUNT PIECE  as `chunks`, with COUNT times the one PIECE
 ##   idle MS                not an answer: a connection idle for MS between requests is closed (else it stays)
 ##
@@ -132,7 +132,14 @@ def read_exact(socket: TCP.Socket, count: Int) -> Result[Bytes]
 end
 
 def chunked(socket: TCP.Socket, number: Int, wait_ms: Int, pieces: List[String]) -> Bool
-  head = "HTTP/1.1 200 Peer#{CRLF}x-connection: #{number}#{CRLF}transfer-encoding: chunked#{CRLF}#{CRLF}"
+  lines = [
+    "HTTP/1.1 200 Peer",
+    "x-connection: #{number}",
+    "content-type: text/event-stream",
+    "transfer-encoding: chunked",
+  ]
+
+  head = "#{lines.join(CRLF)}#{CRLF}#{CRLF}"
   return false if not TCP.send(socket, head, STEP_MS).ok?
 
   for piece in pieces

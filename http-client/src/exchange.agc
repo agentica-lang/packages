@@ -19,12 +19,15 @@ struct Response
 end
 
 ## The head of a streamed response, and the channel of its body: `ok(piece)` for each piece as it comes, then one
-## `error` if the body fails or is cut short, and the close at its end.
+## `error` if the body fails or is cut short, and the close at its end. The body holds one piece at a time, which the
+## reader has `read_timeout_ms` to take, unless `relayed` is closed: the reader is then the relay of the events, which
+## holds its own reader to that time.
 struct Head
   status: Int
   headers: List[HTTP.Header]
   url: String
   body: Channel[Result[Bytes]]
+  relayed: Channel[Bool]
 end
 
 ## What reaches the caller of a try: the head of a streamed response, and the end of the task of the try.
@@ -71,43 +74,8 @@ def run(link: Link.Link, call: Call) -> Result[Response]
   end
 end
 
-## Sends `ok(value)` on `channel`, whose capacity is `limit + 1`, while fewer than `limit` values may wait in it, so
-## that its last place stays free for the error that ends it: a body cut short never looks whole. `waiting` counts the
-## values sent since the channel was last seen empty, at least as many as wait in it; the result is the new count. A
-## reader that makes no room within `wait_ms` is an `http_client.timeout.read` error, and a closed channel or a closed
-## client (`stopping`) an `http_client.closed` one.
-def offer[T](
-  channel: Channel[Result[T]],
-  value: T,
-  waiting: Int,
-  limit: Int,
-  wait_ms: Int,
-  stopping: Channel[Bool],
-) -> Result[Int]
-  deadline = Time.monotonic_ms() + wait_ms
-  count = waiting
-  if channel.empty?
-    count = 0
-  end
-
-  while count >= limit and not channel.closed? and not stopping.closed? and Time.monotonic_ms() < deadline
-    Task.sleep(ROOM_POLL_MS)
-    if channel.empty?
-      count = 0
-    end
-  end
-
-  return failure("the reader closed the stream", "closed") if channel.closed?
-  return failure("the client is closed", "closed") if stopping.closed?
-  return failure("the reader took nothing for #{wait_ms} ms", "timeout.read") if count >= limit
-
-  case channel.send(ok(value), 0)
-    ok(_) -> ok(count + 1)
-    error(e) -> failure("the reader closed the stream", "closed", some(e))
-  end
-end
-
-## Ends `channel` with `failed`, in the place that `offer` keeps free, and closes it.
+## Ends `channel` with `failed`, in the place kept free for it (a channel of 2 that is given one value at a time), and
+## closes it.
 def cut[T](channel: Channel[Result[T]], failed: Error) -> Void
   _ = channel.send(error(failed), 0)
   channel.close
@@ -124,9 +92,10 @@ end
 private
 
 READ_BYTES = 65_536
-# The pieces of a streamed body that wait for the reader, and how often a full channel is looked at again.
-PIECES = 16
-ROOM_POLL_MS = 5
+# A streamed body holds one piece, and a place for the error that ends it; how often the pump looks whether the reader
+# took the piece. (A close with a reason, agentica#1790, will make the place for the error needless.)
+BODY_PLACES = 2
+TAKE_POLL_MS = 5
 NO_BYTES = "".bytes
 # The longest `Keep-Alive: timeout=` that is taken as it is: a day.
 MAX_KEEP_ALIVE_S = 86_400
@@ -240,10 +209,11 @@ end
 # Gives the head to the caller, then each piece of the body to the reader, until its end. A failure, of the body or
 # of the reader, ends the channel with its error.
 def streamed(held: Held, call: Call, response: Response, streaming: Streaming) -> Result[Void]
-  body: Channel[Result[Bytes]] = Channel.new(PIECES + 1)
-  head = Head(status: response.status, headers: response.headers, url: response.url, body: body)
+  body: Channel[Result[Bytes]] = Channel.new(BODY_PLACES)
+  relayed: Channel[Bool] = Channel.new(1)
+  head = Head(status: response.status, headers: response.headers, url: response.url, body: body, relayed: relayed)
   _ = streaming.arrivals.send(Arrival.Head(head), 0)
-  case pump(held, call, body, streaming.stopping)
+  case pump(held, call, head, streaming.stopping)
     ok(_) ->
       body.close
       ok()
@@ -253,23 +223,44 @@ def streamed(held: Held, call: Call, response: Response, streaming: Streaming) -
   end
 end
 
-def pump(held: Held, call: Call, body: Channel[Result[Bytes]], stopping: Channel[Bool]) -> Result[Void]
-  queued = 0
-  piece = try next_piece(held, call)
+def pump(held: Held, call: Call, head: Head, stopping: Channel[Bool]) -> Result[Void]
+  given_at = 0
+  piece = try next_piece(held, call, stopping)
   while not piece.empty?
-    sent = try offer(body, piece, queued, PIECES, call.read_timeout_ms, stopping)
-    queued = sent
-    piece = try next_piece(held, call)
+    handed = try hand(head, piece, given_at, call.read_timeout_ms, stopping)
+    given_at = handed
+    piece = try next_piece(held, call, stopping)
   end
 
   ok()
 end
 
-# The next piece of a streamed body, empty at its end.
-def next_piece(held: Held, call: Call) -> Result[Bytes]
+# Gives `piece` once the reader took the last one, given at `given_at`, and says when. A reader that took nothing for
+# `wait_ms` is an `http_client.timeout.read` error, and a closed body or client an `http_client.closed` one.
+def hand(head: Head, piece: Bytes, given_at: Int, wait_ms: Int, stopping: Channel[Bool]) -> Result[Int]
+  while not head.body.empty? and not head.body.closed? and not stopping.closed?
+    if not head.relayed.closed? and Time.monotonic_ms() - given_at >= wait_ms
+      return failure("the reader took no piece for #{wait_ms} ms", "timeout.read")
+    end
+
+    Task.sleep(TAKE_POLL_MS)
+  end
+
+  return failure("the reader closed the stream", "closed") if head.body.closed?
+  return failure("the client is closed", "closed") if stopping.closed?
+
+  case head.body.send(ok(piece), 0)
+    ok(_) -> ok(Time.monotonic_ms())
+    error(e) -> failure("the reader closed the stream", "closed", some(e))
+  end
+end
+
+# The next piece of a streamed body, empty at its end. A read that fails once the client closed is that close.
+def next_piece(held: Held, call: Call, stopping: Channel[Bool]) -> Result[Bytes]
   wait = Wait(ms: call.read_timeout_ms, kind: "timeout.read")
   case HTTP.read_body(waiting(held, wait), READ_BYTES)
     ok(piece) -> ok(piece)
+    error(e) if stopping.closed? -> failure("the client is closed", "closed", some(e))
     error(e) -> read_failure(e, wait, "the body did not come")
   end
 end

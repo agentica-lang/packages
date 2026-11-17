@@ -32,8 +32,14 @@ end
 ## A request to the manager.
 enum Msg
   Want(Wanted)
-  Watch(TaskRef)
+  Watch(Watched)
   Close(Closing)
+end
+
+## A task of a stream, and the origin whose pool it holds a connection of (empty for one that holds none).
+struct Watched
+  task: TaskRef
+  origin: String
 end
 
 ## The pool of `origin`, answered on `reply`, for a request that lasts at most `timeout_ms`.
@@ -59,12 +65,13 @@ def start(settings: Settings) -> Pools
   Pools(inbox: inbox, manager: manager, down: down, stopping: stopping)
 end
 
-## Has the manager wait for `task`, a task of a stream that outlives its call, when the client closes. A task that
-## starts once the client is closed is an `http_client.closed` error.
-def watch(pools: Pools, task: TaskRef) -> Result[Void]
+## Has the manager wait for `task`, a task of a stream that outlives its call, when the client closes, and keep the
+## pool of `origin` while the task lives. A task that starts once the client is closed is an `http_client.closed`
+## error.
+def watch(pools: Pools, task: TaskRef, origin: String) -> Result[Void]
   return closed() if pools.stopping.closed?
 
-  case pools.inbox.send(Msg.Watch(task), ASK_MS)
+  case pools.inbox.send(Msg.Watch(Watched(task: task, origin: origin)), ASK_MS)
     error(e) if e.is_a?("channel.closed") -> closed()
     error(e) -> busy(e)
     ok(_) -> ok()
@@ -125,7 +132,7 @@ SWEEP_MS = 1_000
 struct State
   pools: Map[String, Entry]
   closers: Map[Int, Task[Result[Void]]]
-  streams: Map[Int, TaskRef]
+  streams: Map[Int, Watched]
   ended: Channel[TaskDown]
 end
 
@@ -148,9 +155,9 @@ def manage(settings: Settings, inbox: Channel[Msg]) -> Void
   while true
     case inbox.recv(SWEEP_MS)
       ok(Msg.Want(wanted)) -> state = state.with(pools: want(settings, state.pools, wanted))
-      ok(Msg.Watch(task)) ->
-        Task.monitor(task, ended) do |notice| notice end
-        state = state.with(streams: state.streams.put(task.id, task))
+      ok(Msg.Watch(watched)) ->
+        Task.monitor(watched.task, ended) do |notice| notice end
+        state = state.with(streams: state.streams.put(watched.task.id, watched))
       ok(Msg.Close(closing)) ->
         inbox.close
         closers = state.pools.values.map { |entry| Task.spawn do shut(entry.pool, closing.drain_ms) end }
@@ -166,7 +173,7 @@ def manage(settings: Settings, inbox: Channel[Msg]) -> Void
 
     now = Time.monotonic_ms()
     if now - swept >= SWEEP_MS
-      state = sweep(state, now)
+      state = sweep(state, now, settings.idle_ms)
       swept = now
     end
   end
@@ -192,15 +199,19 @@ def want(settings: Settings, pools: Map[String, Entry], wanted: Wanted) -> Map[S
 end
 
 # Closes the pools past their time, each in a task of its own so that the manager does not wait, and forgets the
-# closers that ended.
-def sweep(state: State, now: Int) -> State
+# closers and streams that ended. A pool with a stream alive is in use, however long ago its request came: it is kept
+# `idle_ms` past now.
+def sweep(state: State, now: Int, idle_ms: Int) -> State
   kept: Map[String, Entry] = {}
   swept = without_ended(state)
   closers = swept.closers
+  streamed = swept.streams.values.map { |watched| watched.origin }
   for origin in state.pools.keys
     entry = state.pools.get(origin).unwrap!
     if entry.until > now
       kept = kept.put(origin, entry)
+    elsif streamed.include?(origin)
+      kept = kept.put(origin, entry.with(until: now + idle_ms))
     else
       closer = Task.spawn do shut(entry.pool, 0) end
       Task.monitor(closer, state.ended) do |notice| notice end
@@ -236,8 +247,8 @@ def streams_end(state: State) -> Void
     end
   end
 
-  for task in left.streams.values
-    Task.cancel(task)
+  for watched in left.streams.values
+    Task.cancel(watched.task)
   end
 
   for _ in left.streams.values

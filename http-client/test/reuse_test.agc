@@ -60,8 +60,9 @@ def test_a_request_after_its_pool_was_closed_for_idleness_gets_a_new_one() -> Re
   Test.eq(left, before)
 end
 
-# A reader that drops its events without closing them leaves a relay task that waits for room, and a pump task that
-# waits for the relay. `close` ends both, though `read_timeout_ms` is far: nothing of the client is left.
+# A reader that stops reading its events without closing them leaves a relay task that waits for the reader, and a
+# pump task that waits for the relay. `close` ends both, though `read_timeout_ms` is far: nothing of the client is
+# left, and the events end with `http_client.closed` after the one that waited.
 def test_close_ends_the_tasks_of_a_stream_whose_reader_is_gone() -> Result[Void]
   before = Task.pending_count()
   agentica = System.env("HTTP_CLIENT_AGENTICA").unwrap_or("agentica")
@@ -76,7 +77,18 @@ def test_close_ends_the_tasks_of_a_stream_whose_reader_is_gone() -> Result[Void]
   closing_ms = Time.monotonic_ms() - began
   left = Task.pending_count()
   Process.close(peer)
+  waited = events.recv(0)
+  last = events.recv(0)
   try Test.eq(first.ok?, true)
+  try Test.eq(waited.unwrap!.ok?, true)
+  try Test.eq(failed_kind(last.unwrap!), "http_client.closed")
   try Test.eq(closing_ms < 2_000, true)
   Test.eq(left, before)
+end
+
+def failed_kind(item: Result[HttpClient.Event]) -> String
+  case item
+    ok(_) -> "ok"
+    error(e) -> e.kind
+  end
 end
