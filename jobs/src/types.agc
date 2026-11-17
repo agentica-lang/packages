@@ -64,8 +64,8 @@ struct Counts
   dead: Int
 end
 
-## What a backend can prove in the conformance suite. `has_clock`: it follows an injected clock (else the cases on time
-## run on real time, in the slow tier).
+## What a backend can say about itself. `has_clock`: it follows an injected clock (else the conformance cases on time
+## run on the real clock). `has_unique_keys` and `extendable`: it keeps unique keys, and `extend` moves a lease.
 struct Caps
   has_clock: Bool = true
   has_unique_keys: Bool = true
