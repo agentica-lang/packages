@@ -217,6 +217,7 @@ jobs:
       # Read by clang, which writes it as the `minos` of the library.
       MACOSX_DEPLOYMENT_TARGET: '12.0'
       FILE: lib${{ inputs.module }}-${{ needs.source.outputs.api }}-${{ matrix.target }}${{ matrix.ext }}
+      LOAD: import ctypes, os, sys; ctypes.CDLL(os.path.abspath(sys.argv[1])).agentica_native_init
     defaults:
       run:
         shell: ${{ matrix.system == 'windows' && 'msys2 {0}' || 'bash' }}
@@ -304,9 +305,15 @@ jobs:
       # The library loads in a plain process and exports the entry point of a module. On Windows the step runs outside
       # MSYS2, so a DLL that needs one of its runtime DLLs fails here.
       - name: Load ${{ env.FILE }}
-        shell: ${{ matrix.system == 'windows' && 'pwsh' || 'bash' }}
+        if: matrix.system != 'windows'
         working-directory: ${{ inputs.directory }}/.native-prebuilt/dist
-        run: ${{ matrix.system == 'windows' && 'python' || 'python3' }} -I -c "import ctypes, os, sys; ctypes.CDLL(os.path.abspath(sys.argv[1])).agentica_native_init" "${{ env.FILE }}"
+        run: python3 -I -c "$LOAD" "$FILE"
+
+      - name: Load ${{ env.FILE }} outside MSYS2
+        if: matrix.system == 'windows'
+        shell: pwsh
+        working-directory: ${{ inputs.directory }}/.native-prebuilt/dist
+        run: python -I -c "$env:LOAD" "$env:FILE"
 
       - uses: actions/upload-artifact@v7
         with:
