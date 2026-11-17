@@ -357,6 +357,11 @@ jobs:
         if: ${{ !inputs.dry-run }}
         working-directory: ${{ runner.temp }}/built
         run: |
+          # Run by the push of a tag native-*, the tag must name these sources: the release goes on it.
+          if [ "$GITHUB_REF_TYPE" = tag ] && [[ "$GITHUB_REF_NAME" == native-* ]] && [ "$GITHUB_REF_NAME" != "$TAG" ]; then
+            echo "the tag $GITHUB_REF_NAME is not $TAG, the source key of these sources" >&2
+            exit 1
+          fi
           if ! gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
             gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" --title "$TAG" \
               --notes "Prebuilt native modules of the sources with key $SOURCE (native API $API)."

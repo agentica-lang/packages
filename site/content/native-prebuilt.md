@@ -8,7 +8,7 @@ A package with a native module (`[native.NAME]` with a `build` table in `agentic
 - it builds the module on the five targets with the toolchains of Agentica's own releases: zig cc against glibc 2.28 on `linux-x86_64` and `linux-arm64`, Apple clang with `MACOSX_DEPLOYMENT_TARGET=12.0` on `macos-x86_64` and `macos-arm64`, and MSYS2 UCRT64 gcc on `windows-x86_64`;
 - the compiler gets the same arguments as Agentica's own build of the `build` table, then `extra-args`, and the library is stripped;
 - it checks that each library loads in a plain process;
-- it runs `agentica native source NAME` and uploads `lib{name}-{api}-{target}{ext}` to the release `native-<source>` of your repository, which it creates when it is missing;
+- it runs `agentica native source NAME` and uploads `lib{name}-{api}-{target}{ext}` to the release `native-<source>` of your repository, which it creates when it is missing (on the tag `native-<source>` when that exists, else at the commit of the run);
 - it prints the `prebuilt` row with its `sha256` table, ready to paste under `[native.NAME]`, in the job summary.
 
 The files are named by the source key, which covers the `build` table and the files of `native/`. A release whose native sources did not change finds the files there: it keeps them and prints their table again. A file that the release already has is never replaced.
@@ -18,6 +18,11 @@ The files are named by the source key, which covers the `build` table and the fi
 Call it from a workflow of your repository, pinned by commit. Uploading needs `contents: write`:
 
 ```yaml
+on:
+  push:
+    tags: ['native-*']
+  workflow_dispatch:
+
 jobs:
   prebuilt:
     permissions:
@@ -28,6 +33,8 @@ jobs:
       agentica-version: 0.34.0
       agentica-sha256: SHA256_OF_THE_LINUX_X86_64_ARCHIVE
 ```
+
+A workflow file runs by hand (`workflow_dispatch`) only from the default branch. To make the files of a branch first, run the workflow on a push of the tag `native-<source>` (`agentica native source NAME` prints the key): a run on a tag `native-*` that is not the key of its sources fails before it uploads.
 
 Then commit the printed row, for example:
 
