@@ -26,7 +26,7 @@ jobs:
       directory: .github/native-prebuilt-example
       # agentica master with `agentica native source` (agentica#1786); a release once 0.34.0 ships.
       agentica-commit: 45e6c4a8d0b71954da19c9c03b49fadc46fedc02
-      prepare: mkdir -p gen && printf 'int twice_factor(void) { return 2; }\n' > gen/factor.c
+      prepare: mkdir -p gen && $PYTHON -I -c "open('gen/factor.c', 'w').write('int twice_factor(void) { return 2; }\\n')"
       extra-args: -DTWICE_LINKED gen/factor.c
       dry-run: true
 

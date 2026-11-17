@@ -54,7 +54,7 @@ Adding the row does not change the source key, since the key covers only the `bu
 | `directory` | The folder of `agentica.toml`, `.` by default. |
 | `agentica-version`, `agentica-sha256` | The Agentica release that builds, and the sha256 of its `linux-x86_64` archive from its `SHA256SUMS`. The header and the native API come from it. |
 | `agentica-commit` | Instead of a release, a full commit SHA of `agentica-lang/agentica`, built in the job. |
-| `prepare` | A bash command run in `directory` before each build, such as a script that fetches a pinned source. |
+| `prepare` | A bash command run in `directory` before each build, such as a script that fetches a pinned source. `$PYTHON` names a Python 3 on every runner. |
 | `extra-args` | Compiler arguments after those of the `build` table, split at spaces with no quoting, such as `-DSTATIC third_party/lib.c`. |
 | `dry-run` | `true` builds and prints the row, but uploads nothing. |
 

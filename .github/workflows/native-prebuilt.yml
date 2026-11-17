@@ -35,7 +35,9 @@ on:
         type: string
         default: ''
       prepare:
-        description: A bash command run in `directory` before each build, such as a script that fetches a pinned source.
+        description: >-
+          A bash command run in `directory` before each build, such as a script that fetches a pinned source; $PYTHON
+          names a Python 3 on every runner.
         type: string
         default: ''
       extra-args:
@@ -272,6 +274,8 @@ jobs:
         working-directory: ${{ inputs.directory }}
         env:
           PREPARE: ${{ inputs.prepare }}
+          # Outside Windows, python can be Python 2 or missing; on Windows, python3 can be the Store's stub.
+          PYTHON: ${{ matrix.system == 'windows' && 'python' || 'python3' }}
         run: eval "$PREPARE"
 
       - name: Build ${{ env.FILE }}
