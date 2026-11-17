@@ -1,9 +1,20 @@
 name: CI
 
+# A pull request that changes only files that mark no package (the site, the top-level docs, a package's README or
+# CHANGELOG: the rules of .github/scripts/changed-packages.sh) does not start CI; Pages builds the site.
 on:
   push:
     branches: [main]
   pull_request:
+    paths-ignore:
+      - 'site/**'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'LICENSE'
+      - '.gitmodules'
+      - '.github/workflows/pages.yml'
+      - '*/README.md'
+      - '*/CHANGELOG.md'
 
 permissions:
   contents: read
@@ -18,14 +29,15 @@ env:
   NIGHTLY: nightly-2026-11-01
 
 jobs:
-  # A pull request runs only the packages whose files changed (the rules are in the script); a push to main runs all of
-  # them. Each package runs on the Agentica version of its AGENTICA_VERSION file, so the packages are grouped by
-  # version: one job of `packages` per group.
+  # A pull request runs only the packages whose files changed (the rules are in the script), and only the doc examples
+  # of a package whose only change is in its docs/; a push to main runs all of them. Each package runs on the Agentica
+  # version of its AGENTICA_VERSION file, so the packages are grouped by version: one job of `packages` per group.
   plan:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       groups: ${{ steps.groups.outputs.groups }}
+      rust: ${{ steps.groups.outputs.rust }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -40,17 +52,27 @@ jobs:
         shell: bash
         # The diff goes to a file first: in a pipe a failed git diff (no base branch, no merge base) would read as
         # "no package changed" and turn the required check green untested. groups is a JSON list of
-        # {version, sha256, packages}, `[]` when no package changed.
+        # {version, sha256, packages, docs} (docs: the packages that run only their doc examples), `[]` when no package
+        # changed. rust is true when the crate of native-gen (or this file) changed, or on main.
         run: |
           set -euo pipefail
           if [ "$EVENT" = pull_request ]; then
             git diff --name-only --no-renames -z "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/changed-files"
             packages=$(.github/scripts/changed-packages.sh < "$RUNNER_TEMP/changed-files")
+            docs=$(.github/scripts/changed-packages.sh --docs < "$RUNNER_TEMP/changed-files")
+            rust=false
+            tr '\0' '\n' < "$RUNNER_TEMP/changed-files" > "$RUNNER_TEMP/changed-lines"
+            if grep -qE '^(native-gen/|\.github/workflows/ci\.yml$)' "$RUNNER_TEMP/changed-lines"; then
+              rust=true
+            fi
           else
             packages=$(.github/scripts/changed-packages.sh --all)
+            docs=
+            rust=true
           fi
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
           : > "$RUNNER_TEMP/versions"
-          for p in $packages; do
+          for p in $packages $docs; do
             # Reset first: a missing or empty file must not keep the values of the package before it.
             version= sha256=
             if [ -f "$p/AGENTICA_VERSION" ]; then read -r version sha256 rest < "$p/AGENTICA_VERSION" || true; fi
@@ -58,22 +80,28 @@ jobs:
               echo "$p/AGENTICA_VERSION must hold the version and the sha256 of its linux-x86_64 archive" >&2
               exit 1
             fi
-            printf '%s\t%s\t%s\n' "$version" "$sha256" "$p" >> "$RUNNER_TEMP/versions"
+            kind=packages
+            case " $docs " in *" $p "*) kind=docs ;; esac
+            printf '%s\t%s\t%s\t%s\n' "$version" "$sha256" "$p" "$kind" >> "$RUNNER_TEMP/versions"
           done
           # One version with two sha256 values is an error: the job of the group would check only the first.
           groups=$(jq -cR -s 'split("\n") | map(select(. != "") | split("\t")) | group_by(.[0])
             | map(if (map(.[1]) | unique | length) > 1
               then error("Agentica \(.[0][0]) has two sha256 values: \(map(.[2] + " " + .[1]) | join(", "))")
-              else {version: .[0][0], sha256: .[0][1], packages: (map(.[2]) | join(" "))} end)' \
+              else {version: .[0][0], sha256: .[0][1],
+                packages: (map(select(.[3] == "packages") | .[2]) | join(" ")),
+                docs: (map(select(.[3] == "docs") | .[2]) | join(" "))} end)' \
             "$RUNNER_TEMP/versions")
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
-          if [ -n "$packages" ]; then echo "Packages to run: $groups"; else echo "No package changed: nothing to run."; fi
+          if [ -n "$packages$docs" ]; then echo "Packages to run: $groups"; else echo "No package changed: nothing to run."; fi
+          echo "rust: $rust"
 
-  # The packages of one Agentica version, on that release (setup-agentica caches each version).
+  # The packages of one Agentica version, on that release (setup-agentica caches each version). A group that only has
+  # packages whose docs changed runs their doc examples alone, as `docs (VERSION)`.
   packages:
     needs: plan
     if: needs.plan.outputs.groups != '[]'
-    name: packages (${{ matrix.version }})
+    name: ${{ matrix.packages != '' && 'packages' || 'docs' }} (${{ matrix.version }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -82,6 +110,7 @@ jobs:
         include: ${{ fromJSON(needs.plan.outputs.groups) }}
     env:
       PACKAGES: ${{ matrix.packages }}
+      DOCS: ${{ matrix.docs }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
@@ -95,25 +124,28 @@ jobs:
       # list as an argument: its own assignment ignores the environment.
       - name: Install the packages
         run: |
-          echo "Agentica $(agentica --version): $PACKAGES"
-          make install PACKAGES="$PACKAGES"
+          echo "Agentica $(agentica --version): $PACKAGES; doc examples only: $DOCS"
+          make install PACKAGES="$PACKAGES $DOCS"
 
       - name: Check
+        if: env.PACKAGES != ''
         run: make check PACKAGES="$PACKAGES"
 
       - name: Format
+        if: env.PACKAGES != ''
         run: make fmt-check PACKAGES="$PACKAGES"
 
       # The features of specs/ (they listen on 127.0.0.1 only) and the tests of test/.
       - name: Test
+        if: env.PACKAGES != ''
         run: make test PACKAGES="$PACKAGES"
 
       # The agentica code blocks of each docs/ folder run, or are checked.
       - name: Doc examples
-        run: make doc-examples PACKAGES="$PACKAGES"
+        run: make doc-examples PACKAGES="$PACKAGES $DOCS"
 
-  # `test` is the required check, so it carries the result of the other jobs: it fails when the plan or the rust job
-  # did not pass, or when a group of packages failed (`packages` is skipped when no package changed).
+  # `test` is the required check, so it carries the result of the other jobs: it fails when the plan did not pass, or
+  # when a group of packages or the rust job failed (each is skipped when nothing of it changed).
   test:
     needs: [plan, packages, rust]
     if: ${{ !cancelled() }}
@@ -127,7 +159,7 @@ jobs:
           RUST: ${{ needs.rust.result }}
         run: |
           echo "plan: $PLAN, packages: $PACKAGES, rust: $RUST"
-          [ "$PLAN" = success ] && [ "$RUST" = success ] && { [ "$PACKAGES" = success ] || [ "$PACKAGES" = skipped ]; }
+          [ "$PLAN" = success ] && [[ "$PACKAGES" =~ ^(success|skipped)$ ]] && [[ "$RUST" =~ ^(success|skipped)$ ]]
 
   # The Rust crate of native-gen (native-gen/native/agentica-native), when a pull request changes native-gen or this
   # file, and on main: its format and lints on stable, its tests on the MSRV of its Cargo.toml and on stable, its
@@ -136,6 +168,8 @@ jobs:
   # Rust files native-gen makes, build-check, `cli.agc build` of a Rust module, and new-check, the module
   # `new --lang rust` writes. The crate has no dependencies, so it needs no registry.
   rust:
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -143,28 +177,8 @@ jobs:
         working-directory: native-gen/native/agentica-native
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 0
-
-      - name: Find whether the crate changed
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
-        shell: bash
-        run: |
-          if [ "$EVENT" != pull_request ]; then
-            echo "RUST=1" >> "$GITHUB_ENV"
-          else
-            git diff --name-only --no-renames "origin/$BASE_REF...HEAD" > "$RUNNER_TEMP/changed-files"
-            if grep -qE '^(native-gen/|\.github/workflows/ci\.yml$)' "$RUNNER_TEMP/changed-files"; then
-              echo "RUST=1" >> "$GITHUB_ENV"
-            else
-              echo "The crate did not change: nothing to run."
-            fi
-          fi
 
       - name: Install the toolchains
-        if: env.RUST == '1'
         run: |
           msrv=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)
           echo "MSRV=$msrv" >> "$GITHUB_ENV"
@@ -173,38 +187,31 @@ jobs:
           rustup toolchain install "$NIGHTLY" --profile minimal --component miri
 
       - name: Format
-        if: env.RUST == '1'
         run: |
           cargo +stable fmt --check
           cargo +stable fmt --check --manifest-path ../../rust/vm-check/Cargo.toml
           cargo +stable fmt --check --manifest-path ../../rust/gen-check/Cargo.toml
 
       - name: Lints
-        if: env.RUST == '1'
         run: |
           cargo +stable clippy --all-targets -- -D warnings
           cargo +stable clippy --all-targets --manifest-path ../../rust/vm-check/Cargo.toml -- -D warnings
 
       - name: Test on the MSRV
-        if: env.RUST == '1'
         run: cargo +"$MSRV" test
 
       - name: Test on stable
-        if: env.RUST == '1'
         run: cargo +stable test
 
       - name: Doctests on nightly
-        if: env.RUST == '1'
         run: cargo +"$NIGHTLY" test --doc
 
       - name: Test under Miri
-        if: env.RUST == '1'
         env:
           MIRIFLAGS: -Zmiri-strict-provenance
         run: cargo +"$NIGHTLY" miri test --lib
 
       - name: Read the Agentica version of native-gen
-        if: env.RUST == '1'
         run: |
           version= sha256=
           read -r version sha256 rest < ../../AGENTICA_VERSION || true
@@ -216,7 +223,6 @@ jobs:
           echo "AGENTICA_SHA256=$sha256" >> "$GITHUB_ENV"
 
       - name: Install the Agentica release of native-gen
-        if: env.RUST == '1'
         uses: agentica-lang/setup-agentica@v1
         with:
           version: ${{ env.AGENTICA_VERSION }}
@@ -225,22 +231,18 @@ jobs:
       # Collections run while one call keeps 200000 Strings in a Vec (the heap floor is off), so a term the root list
       # did not keep would come back wrong.
       - name: Run vm-check on the VM
-        if: env.RUST == '1'
         run: RUSTUP_TOOLCHAIN=stable ../../rust/vm-check/run.sh
 
       # The Rust files that native-gen makes for the fixtures stats, shapes, kinds and shapes2, linted, built and run.
       - name: Run gen-check on the VM
-        if: env.RUST == '1'
         run: RUSTUP_TOOLCHAIN=stable ../../rust/gen-check/run.sh
 
       # `cli.agc build` of examples/rust_math: the docs' copies of its files and outputs, the library and the
       # [native.math] entry it writes, a second build with nothing to do, an entry kept with its own file, and the
       # program's output on the real VM.
       - name: Run build-check on the VM
-        if: env.RUST == '1'
         run: RUSTUP_TOOLCHAIN=stable ../../rust/build-check.sh
 
       # `cli.agc new --lang rust demo` in an empty folder, then build and the program on the real VM with no edit.
       - name: Run new-check on the VM
-        if: env.RUST == '1'
         run: RUSTUP_TOOLCHAIN=stable ../../rust/new-check.sh

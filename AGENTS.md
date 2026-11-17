@@ -110,7 +110,9 @@ yaml/                a YAML 1.2 parser: yaml.agc is the API (parse, parse_all, O
   and `agentica test`.
 - `make check PACKAGES="prop native-gen"` (any target) runs only those packages. A pull request runs the packages
   whose files changed (`.github/scripts/changed-packages.sh`), a push to main runs all of them; a change of a shared
-  file (Makefile, `ci.yml`, a script) marks all. A new push to a pull request cancels its older run.
+  file (Makefile, `ci.yml`, a script) marks all. A package whose only change is in its `docs/` runs only its doc
+  examples, and a pull request that changes only the site or top-level docs starts no CI (Pages builds the site). A
+  new push to a pull request cancels its older run.
 - `make site` builds the docs into `site/public` (needs the theme, `git submodule update --init`, Hugo, Dart Sass and
   Node; CI pins Hugo 0.167.0 and Dart Sass 1.105.1 in `pages.yml`);
   `make site-serve` previews them. A pull request builds the site, and a push to main deploys it to GitHub Pages.
