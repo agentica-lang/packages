@@ -199,7 +199,7 @@ end
 
 def retry(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
   at_ms = driver.clock.now.call() + req.number
-  with_lease(driver, req.name, ->(lease) { Jobs.nack(backend, lease, Jobs.Nack.Retry(at_ms)) })
+  with_lease(driver, req.name, ->(lease) { Jobs.nack(backend, lease, Jobs.Nack.Retry(Jobs.Later(at_ms: at_ms))) })
 end
 
 def release(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled

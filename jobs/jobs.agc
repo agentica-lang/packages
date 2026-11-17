@@ -17,10 +17,14 @@ export Types.Caps
 export Types.Clock
 export Types.Counts
 export Types.Enqueued
+export Types.Drain
+export Types.Drained
+export Types.Due
 export Types.Fetch
 export Types.Job
 export Types.Later
 export Types.Lease
+export Types.MemoryOptions
 export Types.Nack
 export Types.NewJob
 
