@@ -74,7 +74,7 @@ cases: 27
 failed: []
 ```
 
-The cases cover: the `last_error` of a retry, the job as it was enqueued, byte for byte; empty queues and queues that do not see each other; a fetch that waits, for a job that comes and for a job that is due; leases that run out, a late ack, nack or extend with an old token, and the same calls after the lease ran out but before any other fetch; ack, retry, release and dead; the last attempt; extend, and the job that comes back at the new end; a job that is not delivered early; unique keys, held through a retry, a release and an expired lease, and two jobs of one batch with one key; `enqueue_all` with a job that is not valid; eight tasks that fetch 200 jobs at once, each delivered once; and the calls after `close`.
+The cases cover: the `last_error` of a retry, the job as it was enqueued, byte for byte; empty queues and queues that do not see each other; a fetch that waits, for a job that comes and for a job that is due; leases that run out, a late ack, nack or extend with an old token, and the same calls after the lease ran out but before any other fetch; ack, retry, release and dead; the last attempt; extend, and the job that comes back at the new end; a job that is not delivered early; unique keys, held through a retry, a release and an expired lease, free again when the job dies on its last attempt by expiry or by a retry, and two jobs of one batch with one key; a lease that is over at exactly its end and not a millisecond before; `enqueue_all` with a job that is not valid; eight tasks that fetch 200 jobs at once, each delivered once; the calls after `close`, and a second `close`; and a fetch that waits when the backend is closed, which ends with `jobs.closed`.
 
 ## For the author of a backend
 
@@ -86,20 +86,36 @@ Scenario: The backend passes every contract case
   Then no case failed
 ```
 
-```agentica
+```agentica {mode="check"}
 import BDD from "std/bdd"
 import Conformance from "pkg/jobs/conformance"
 import Jobs from "pkg/jobs/jobs"
 
+private
+
+FAILED = "failed"
+
 def make(clock: Fn[Int]) -> Result[Jobs.Backend] = Jobs.memory(Jobs.MemoryOptions(clock: some(clock)))
 
-def run_suite(ctx: BDD.Context) -> BDD.Context
-  failed = Conformance.failed(Conformance.run_all(&make))
-  BDD.assert(ctx, failed.empty?, "cases failed: #{failed.join("; ")}")
+def main() -> Void
+  BDD.run([
+    BDD.step("the suite runs on the backend") do |ctx, _args|
+      failed = Conformance.failed(Conformance.run_all(&make))
+      BDD.set(ctx, FAILED, JSON.from(failed))
+    end,
+    BDD.step("no case failed") do |ctx, _args|
+      failed = failed_cases(ctx)
+      BDD.assert(ctx, failed.empty?, "cases failed: #{failed.join("; ")}")
+    end,
+  ])
+end
+
+def failed_cases(ctx: BDD.Context) -> List[String]
+  JSON.decode(BDD.get(ctx, FAILED).unwrap!, List[String]).unwrap_or([])
 end
 ```
 
 - Each case needs a fresh, empty backend: the maker is called once for each case, and a backend that shares a database between calls must empty its tables, or use a schema of its own.
 - The cases use the queue names `conformance` and `other`, and the keys and payloads that they make up. A table of the backend can hold nothing else that those names would meet.
 - The maker runs in the task that calls `run_all`, so a backend that starts tasks (an actor) is a child of it and stays up while the case runs. The suite closes the backend after each case, so the maker must not close it.
-- On a backend with `has_clock: false` the cases on time run on the real clock and sleep. The whole suite takes about 30 s then, and under a second on a manual clock. Measure it with `time agentica test specs/`, or `time agentica` on a file that calls `run_all`.
+- On a backend with `has_clock: false` the cases on time run on the real clock and sleep. The whole suite takes about 28 s then, and under a second on a manual clock. To time the kit alone, run `time agentica FILE` on a file whose `main` calls `Conformance.run_all` with the maker and prints `Conformance.failed` of its outcomes.

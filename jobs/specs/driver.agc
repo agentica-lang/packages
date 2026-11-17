@@ -347,9 +347,13 @@ def if_given(value: Int, default: Int) -> Int
   value
 end
 
-# What a drain logs: the level, the message and the fields in the order of their names, to be read with `logs`.
+# What a drain logs: the level, the message and the fields in the order of their names, to be read with `logs`. Each
+# line has its number in front, so a line that came twice is kept twice.
 def captured[T](driver: Driver, run: Fn[T]) -> T
-  _ = Logger.attach("capture", Logger.Level.Debug) do |event| driver.logs.put(log_line(event), driver.logs.size) end
+  _ = Logger.attach("capture", Logger.Level.Debug) do |event|
+    driver.logs.put("#{driver.logs.size}\t#{log_line(event)}", driver.logs.size)
+  end
+
   result = run.call()
   _ = Logger.detach("capture")
   result
@@ -372,7 +376,7 @@ end
 def logs(driver: Driver) -> Handled
   lines = driver.logs.to_map
   ordered = lines.keys.sort_by(->(line) { lines[line] })
-  Handled(driver: driver, reply: ordered.join("; "))
+  Handled(driver: driver, reply: ordered.map(->(line) { line.split("\t")[1] }).join("; "))
 end
 
 def behave(job: Jobs.Job) -> Result[Void]

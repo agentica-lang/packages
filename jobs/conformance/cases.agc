@@ -208,7 +208,7 @@ def queues_apart(env: Env) -> Result[Void]
 end
 
 # A fetch that waits, in a task of its own. It is still waiting a moment later: a backend that ignores `wait_ms` has
-# answered by then.
+# answered by then, and a correct one cannot end a fetch that waits within PENDING_MS.
 def spawn_waiting(env: Env, wait_ms: Int) -> Result[Task[Result[List[Jobs.Lease]]]]
   waiting = Task.spawn do
     Jobs.fetch(env.backend, Jobs.Fetch(queue: QUEUE, lease_ms: env.unit_ms, wait_ms: wait_ms))
