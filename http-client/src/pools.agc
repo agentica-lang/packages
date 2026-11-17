@@ -22,6 +22,7 @@ end
 struct Pools
   inbox: Channel[Msg]
   manager: Task[Void]
+  down: Channel[TaskDown]
 end
 
 ## A request to the manager.
@@ -47,7 +48,9 @@ end
 def start(settings: Settings) -> Pools
   inbox: Channel[Msg] = Channel.new(INBOX_SIZE)
   manager = Task.spawn do manage(settings, inbox) end
-  Pools(inbox: inbox, manager: manager)
+  down: Channel[TaskDown] = Channel.new(1)
+  Task.monitor(manager, down) do |notice| notice end
+  Pools(inbox: inbox, manager: manager, down: down)
 end
 
 ## The pool of an origin (`scheme://host:port`), started if it is the first request to that origin in a while.
@@ -66,14 +69,25 @@ def pool_for(pools: Pools, origin: String, timeout_ms: Int) -> Result[OriginPool
   end
 end
 
-## Closes every pool at once and ends the manager. Closing twice does nothing.
+## Closes every pool at once and ends the manager, and returns once every task of the client has ended. Closing
+## twice does nothing.
 def close(pools: Pools, drain_ms: Int) -> Void
   done: Channel[Bool] = Channel.new(1)
   if pools.inbox.send(Msg.Close(Closing(drain_ms: drain_ms, done: done)), ASK_MS).ok?
     _ = done.recv(drain_ms + CLOSE_SLACK_MS)
   end
 
-  Task.cancel(pools.manager)
+  # The manager returns once its pools are closed; one that does not is cancelled. Either way its notice comes when
+  # it is gone, and it is put back for a second close.
+  case pools.down.recv(CLOSE_SLACK_MS)
+    ok(notice) -> _ = pools.down.send(notice, 0)
+    error(_) ->
+      Task.cancel(pools.manager)
+      case pools.down.recv(CLOSE_SLACK_MS)
+        ok(notice) -> _ = pools.down.send(notice, 0)
+        error(_) -> nil
+      end
+  end
 end
 
 private
@@ -84,6 +98,13 @@ ASK_MS = 5_000
 CLOSE_SLACK_MS = 8_000
 # How often the manager looks for pools to close.
 SWEEP_MS = 1_000
+
+# The pools by origin, the tasks that close the pools the manager let go (by task id), and the notices of their ends.
+struct State
+  pools: Map[String, Entry]
+  closers: Map[Int, Task[Result[Void]]]
+  ended: Channel[TaskDown]
+end
 
 # A pool, and the monotonic time after which no request uses it and its connections have been idle `idle_ms`.
 struct Entry
@@ -98,14 +119,19 @@ def busy[T](cause: Error) -> Result[T]
 end
 
 def manage(settings: Settings, inbox: Channel[Msg]) -> Void
-  pools: Map[String, Entry] = {}
+  ended: Channel[TaskDown] = Channel.new(INBOX_SIZE)
+  state = State(pools: {}, closers: {}, ended: ended)
   swept = Time.monotonic_ms()
   while true
     case inbox.recv(SWEEP_MS)
-      ok(Msg.Want(wanted)) -> pools = want(settings, pools, wanted)
+      ok(Msg.Want(wanted)) -> state = state.with(pools: want(settings, state.pools, wanted))
       ok(Msg.Close(closing)) ->
-        close_all(pools.values.map { |entry| entry.pool }, closing.drain_ms)
         inbox.close
+        closers = state.pools.values.map { |entry| Task.spawn do shut(entry.pool, closing.drain_ms) end }
+        for closer in state.closers.values + closers
+          _ = Task.await(closer, closing.drain_ms + CLOSE_SLACK_MS)
+        end
+
         _ = closing.done.send(true, 0)
         return
       _ -> nil
@@ -113,7 +139,7 @@ def manage(settings: Settings, inbox: Channel[Msg]) -> Void
 
     now = Time.monotonic_ms()
     if now - swept >= SWEEP_MS
-      pools = sweep(pools, now)
+      state = sweep(state, now)
       swept = now
     end
   end
@@ -138,26 +164,44 @@ def want(settings: Settings, pools: Map[String, Entry], wanted: Wanted) -> Map[S
   end
 end
 
-# Closes the pools past their time, each in a task of its own so that the manager does not wait.
-def sweep(pools: Map[String, Entry], now: Int) -> Map[String, Entry]
+# Closes the pools past their time, each in a task of its own so that the manager does not wait, and forgets the
+# closers that ended.
+def sweep(state: State, now: Int) -> State
   kept: Map[String, Entry] = {}
-  for origin in pools.keys
-    entry = pools.get(origin).unwrap!
+  closers = without_ended(state.closers, state.ended)
+  for origin in state.pools.keys
+    entry = state.pools.get(origin).unwrap!
     if entry.until > now
       kept = kept.put(origin, entry)
     else
-      _ = Task.spawn do Pool.close(entry.pool, 0) end
+      closer = Task.spawn do shut(entry.pool, 0) end
+      Task.monitor(closer, state.ended) do |notice| notice end
+      closers = closers.put(closer.id, closer)
     end
   end
 
-  kept
+  state.with(pools: kept, closers: closers)
 end
 
-def close_all(pools: List[OriginPool], drain_ms: Int) -> Void
-  closers = pools.map { |pool| Task.spawn do Pool.close(pool, drain_ms) end }
-  for closer in closers
-    _ = Task.await(closer, drain_ms + CLOSE_SLACK_MS)
+# The closers whose end notice has not come yet. A notice means the task is gone.
+def without_ended(closers: Map[Int, Task[Result[Void]]], ended: Channel[TaskDown]) -> Map[Int, Task[Result[Void]]]
+  left = closers
+  notice = ended.recv(0)
+  while notice.ok?
+    left = left.delete(notice.unwrap!.task_id)
+    notice = ended.recv(0)
   end
+
+  left
+end
+
+# Closes the pool and waits for its owner task to end: `Pool.close` cancels it without waiting.
+def shut(pool: OriginPool, drain_ms: Int) -> Result[Void]
+  ended: Channel[TaskDown] = Channel.new(1)
+  Task.monitor(pool.owner, ended) do |notice| notice end
+  Pool.close(pool, drain_ms)
+  _ = ended.recv(CLOSE_SLACK_MS)
+  ok()
 end
 
 def start_pool(settings: Settings, origin: String) -> Result[OriginPool]

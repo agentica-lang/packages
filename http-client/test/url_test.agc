@@ -43,3 +43,42 @@ def test_a_bad_url_is_an_argument_error() -> Result[Void]
   try Test.eq(kind("", "http://:80/"), "argument")
   Test.eq(kind("", "http://[::1/"), "argument")
 end
+
+# The examples of RFC 3986, section 5.4, with the default port written out.
+def test_a_location_is_read_against_the_url_of_its_response() -> Result[Void]
+  base = Url.resolve("", "http://a/b/c/d;p?q").unwrap!
+  cases = {
+    "g": "http://a:80/b/c/g",
+    "./g": "http://a:80/b/c/g",
+    "g/": "http://a:80/b/c/g/",
+    "/g": "http://a:80/g",
+    "//g": "http://g:80/",
+    "?y": "http://a:80/b/c/d;p?y",
+    "g?y": "http://a:80/b/c/g?y",
+    "#s": "http://a:80/b/c/d;p?q",
+    "g#s": "http://a:80/b/c/g",
+    "": "http://a:80/b/c/d;p?q",
+    ".": "http://a:80/b/c/",
+    "./": "http://a:80/b/c/",
+    "..": "http://a:80/b/",
+    "../g": "http://a:80/b/g",
+    "../..": "http://a:80/",
+    "../../g": "http://a:80/g",
+    "../../../g": "http://a:80/g",
+    "/./g": "http://a:80/g",
+    "/../g": "http://a:80/g",
+    "g.": "http://a:80/b/c/g.",
+    "..g": "http://a:80/b/c/..g",
+    "./g/.": "http://a:80/b/c/g/",
+    "g/../h": "http://a:80/b/c/h",
+    "g;x=1/../y": "http://a:80/b/c/y",
+    "g?y/./x": "http://a:80/b/c/g?y/./x",
+    "https://other:8443/x": "https://other:8443/x",
+  }
+
+  for reference in cases.keys
+    try Test.eq([reference, Url.to_s(try Url.follow(base, reference))], [reference, cases.get(reference).unwrap!])
+  end
+
+  Test.eq(Url.follow(base, "ftp://a/b").ok?, false)
+end

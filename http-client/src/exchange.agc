@@ -137,8 +137,10 @@ def exchange(held: Held, call: Call) -> Attempt
   end
 end
 
-# std/http refuses a request it cannot encode (a bad method, target or header) before it writes a byte, and leaves the
-# connection as it was: `read_body` then finds no response to read. After any other failure the connection is over.
+# Whether a failed `send_request` wrote anything: std/http refuses a request it cannot encode (a bad method, target or
+# header), and one on a connection it closed after the last body, before it writes a byte, and leaves the connection
+# as it was, so `read_body` finds no response to read. After a failure past the first byte (a close after a
+# `100 Continue` is an `http.closed` too) the connection is over and `read_body` fails.
 def sent(held: Held, call: Call, wait: Wait, head: Result[HTTP.ResponseHead]) -> Attempt
   case head
     ok(started) ->
@@ -147,8 +149,9 @@ def sent(held: Held, call: Call, wait: Wait, head: Result[HTTP.ResponseHead]) ->
         error(e) -> Attempt.Failed(error(e))
       end
 
-    error(e) if e.is_a?("http.closed") -> Attempt.Stale(error(e))
     error(e) if HTTP.read_body(held.conn, 1).ok? ->
+      return Attempt.Stale(error(e)) if e.is_a?("http.closed")
+
       Attempt.Refused(error("http_client: #{e.message}", kind: "argument", cause: e))
     error(e) -> Attempt.Failed(read_failure(e, wait, "the response did not come"))
   end

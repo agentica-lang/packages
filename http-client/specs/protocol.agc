@@ -10,16 +10,18 @@ OK = "ok"
 ##
 ## - `peer` (name: the peer, kind: `server` for `fixtures/server.agc` or `raw` for `fixtures/raw_peer.agc`, text: the
 ##   script of a raw peer, one answer per line) starts a peer;
-## - `client` (name: the peer of `base_url`, table: a header row, then a setting and a value per row) makes the client;
+## - `client` (name: the peer of `base_url`, table: a header row, then a setting and a value per row) makes the client,
+##   with `max_retries` 0 and `retry_delay_ms` 10 unless a row sets them, so that only the scenarios of retries retry;
 ## - `send` and `start` (name: the request, kind: the method, text: the URL, where `{a}` is the address of the peer
 ##   `a`, body, header: `name: value` or "") send a request and wait for it, or let it run; `wait` (name) waits for
 ##   one that runs, and `cancel` (name) cancels its task, which stays after the request until then;
 ## - `dead_port` (name) gives a peer name to a port where nobody listens, and `read` (name, number) waits until the
-##   raw peer has read that many requests;
+##   raw peer has read that many requests, and `read_only` also that it reads no other one;
 ## - `sleep` (number: ms) and `close` (the client);
 ## - the expectations, on a request's outcome: `expect_status` (number), `expect_body` (text), `expect_header` (text:
-##   `name: value`), `expect_kind` (text: the start of the kind of its error) and `expect_within` (number: it ended
-##   within that many ms).
+##   `name: value`), `expect_url` (text, where `{a}` is the address of `a`), `expect_kind` (text: the start of the
+##   kind of its error), `expect_within` (number: it ended within that many ms) and `expect_after` (number: it took
+##   that many ms or more).
 struct Request
   op: String
   name: String = ""

@@ -5,7 +5,7 @@ description: An HTTP client with a pool of keep-alive connections per origin, an
 
 `http-client` sends HTTP/1.1 requests from an Agentica program, in the spirit of Elixir's Req. You make a `Client` once, and each request goes through a pool of keep-alive connections for its origin (scheme, host and port), made with the [pool](https://www.agentica-lang.com/packages/pool/) package. It is built on the `HTTP.start`, `send_request` and `read_body` calls of `std/http`.
 
-The package is new: retries, redirects, request and response steps, JSON helpers and streamed bodies come in the next releases.
+The package is new: request and response steps, JSON helpers and streamed bodies come in the next releases.
 
 ## Install
 
@@ -57,7 +57,7 @@ end
 ## API
 
 ```signature
-HttpClient.new(base_url: String = "", headers: List[HTTP.Header] = [], connect_timeout_ms: Int = 10000, read_timeout_ms: Int = 30000, timeout_ms: Int = 60000, max_body_bytes: Int = 16777216, pool_size: Int = 10, pool_timeout_ms: Int = 5000, idle_ms: Int = 30000, proxy: String = "", tls: Optional[TLS.Context] = none) -> Result[Client]
+HttpClient.new(base_url: String = "", headers: List[HTTP.Header] = [], connect_timeout_ms: Int = 10000, read_timeout_ms: Int = 30000, timeout_ms: Int = 60000, max_body_bytes: Int = 16777216, max_retries: Int = 3, retry_delay_ms: Int = 500, max_retry_delay_ms: Int = 30000, max_redirects: Int = 10, pool_size: Int = 10, pool_timeout_ms: Int = 5000, idle_ms: Int = 30000, proxy: String = "", tls: Optional[TLS.Context] = none) -> Result[Client]
 HttpClient.request(client: Client, method: String, url: String, body: Bytes, headers: List[HTTP.Header] = []) -> Result[Response]
 HttpClient.get(client: Client, url: String, headers: List[HTTP.Header] = []) -> Result[Response]
 HttpClient.head(client: Client, url: String, headers: List[HTTP.Header] = []) -> Result[Response]
@@ -68,19 +68,34 @@ HttpClient.patch(client: Client, url: String, body: Bytes, headers: List[HTTP.He
 HttpClient.close(client: Client, drain_ms: Int = 5000) -> Void
 ```
 
+- The API is the module `http_client.agc` (`pkg/http-client/http_client`); the modules under `src/` are internal and may change in any release.
 - A `url` that starts with `http://` or `https://` is used as it is; any other is a path (or a `?query`) joined to `base_url`. A URL with user info is refused.
 - The `headers` of a call go over the client's headers of the same name. std/http adds `Host` and `Content-Length`.
 - The client's `headers` go with every request, to whatever origin its URL names, not only to the one of `base_url`: give a secret such as `Authorization` to the calls that need it, or use a client per origin.
 - A `Response` has `status`, `headers` (names in lowercase), `body` (`Bytes`, read whole) and `url`. A 4xx or 5xx is a response, not an error.
-- `client.with(read_timeout_ms: 500)` gives a client with other values for its public fields (`base_url`, `headers`, the timeouts below and `max_body_bytes`), and it shares the pools of the first one. A request checks them as `new` does.
-- Make the client in a task that lives as long as it does, such as `main`, and `close` it at the end: the requests in flight have `drain_ms` to end.
+- `client.with(read_timeout_ms: 500)` gives a client with other values for its public fields (`base_url`, `headers`, the timeouts below, `max_body_bytes` and the retry and redirect settings), and it shares the pools of the first one. A request checks them as `new` does.
+- Make the client in a task that lives as long as it does, such as `main`, and `close` it at the end: the requests in flight have `drain_ms` to end, and `close` returns once every task of the client has ended, so a test that closes its client leaves no task behind.
 
 ## Timeouts
 
 - `connect_timeout_ms`: to open a connection (and its TLS handshake).
 - `read_timeout_ms`: sending the request and the wait for the head of the response, then each wait for a piece of the body.
-- `timeout_ms`: the whole request, from the call to the end of the body. Each wait is cut to what is left of it.
+- `timeout_ms`: the whole call, from the call to the end of the last body: its tries, the waits between them and its redirects. Each wait is cut to what is left of it.
 - `pool_timeout_ms`: the wait for a free connection of the origin, when all `pool_size` of them are in use.
+
+## Retries
+
+A `GET`, `HEAD`, `OPTIONS`, `TRACE`, `PUT` or `DELETE` (in any case) goes again after a connect or read timeout, a broken connection, or a 408, 429, 500, 502, 503 or 504. `max_retries` (0 for never) counts the retries of the whole call, its redirects included. A `POST` or `PATCH` is never sent twice. Before each try the client waits `retry_delay_ms`, doubled on each try up to `max_retry_delay_ms`, with jitter (between half of that and all of it). A `Retry-After` of the response, in seconds or as an HTTP date, is waited as it is; one over `max_retry_delay_ms` gives the response back at once. A wait that does not fit in what is left of `timeout_ms` gives the last response or error back at once, and so does the last try.
+
+A retried `PUT` or `DELETE` may have been applied already: a broken connection or a read timeout does not say whether the server got the request. Those methods are idempotent, so a second time leaves the same state, but a server that counts them sees two. Set `max_retries: 0` where that matters.
+
+## Redirects
+
+A 301, 302, 303, 307 or 308 with a `Location` is followed, at most `max_redirects` times (0 gives the redirect back as the response); one more is an `http_client.redirect.too_many` error. The `Location` is read against the URL of the response, and the `url` of the final response says where the request ended.
+
+- A 303 turns the request into a `GET` (a `HEAD` stays one), and so do a 301 and a 302 for a `POST`. That `GET` has no body and no `Content-Type`. A 307 and a 308 keep the method and the body.
+- A redirect to another origin than the first request's goes without `Authorization` and `Cookie`, and so do the redirects after it; without `Proxy-Authorization` too, unless the client has a `proxy`, which carries every hop. Other headers, those of the client included, go on, and a 307 or 308 sends the body to the other origin as well.
+- A redirect from `https` to `http`, and a `Location` that is not an `http` or `https` URL or has a space or a control character, are an `http_client.redirect.location` error.
 
 ## The pool
 
@@ -101,6 +116,8 @@ Each error has a kind, so a caller tests `e.is_a?("http_client.timeout")` or a k
 | `http_client.pool_full` | 1000 requests wait for a connection of the origin already |
 | `http_client.network` | the connect failed, or the connection broke |
 | `http_client.too_large` | the body is over `max_body_bytes` |
+| `http_client.redirect.too_many` | more than `max_redirects` redirects |
+| `http_client.redirect.location` | a redirect whose `Location` cannot be followed |
 | `http_client.closed` | the client is closed |
 | `http_client.crashed` | the task of the request crashed: a bug, which a retry does not fix |
 | `argument` | a bad URL, setting, method or header; nothing was sent, and the connection stays |

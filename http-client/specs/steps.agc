@@ -37,6 +37,9 @@ def main() -> Void
     BDD.step("the peer {string} has read request {int}") do |ctx, args|
       send(ctx, Request(op: "read", name: args[0], number: args[1].to_i!))
     end,
+    BDD.step("the peer {string} has read only {int} requests") do |ctx, args|
+      send(ctx, Request(op: "read_only", name: args[0], number: args[1].to_i!))
+    end,
     BDD.step("I wait for {string}") do |ctx, args| send(ctx, Request(op: "wait", name: args[0])) end,
     BDD.step("the task of {string} is cancelled") do |ctx, args| send(ctx, Request(op: "cancel", name: args[0])) end,
     BDD.step("I wait {int} ms") do |ctx, args| send(ctx, Request(op: "sleep", number: args[0].to_i!)) end,
@@ -56,6 +59,12 @@ def main() -> Void
     BDD.step("{string} fails with the kind {string}") do |ctx, args|
       send(ctx, Request(op: "expect_kind", name: args[0], text: args[1]))
     end,
+    BDD.step("{string} ended at {string}") do |ctx, args|
+      send(ctx, Request(op: "expect_url", name: args[0], text: args[1]))
+    end,
+    BDD.step("{string} took at least {int} ms") do |ctx, args|
+      send(ctx, Request(op: "expect_after", name: args[0], number: args[1].to_i!))
+    end,
     BDD.step("{string} ended within {int} ms") do |ctx, args|
       send(ctx, Request(op: "expect_within", name: args[0], number: args[1].to_i!))
     end,
@@ -73,5 +82,14 @@ end
 def start(ctx: BDD.Context) -> BDD.Context
   return ctx if BDD.get(ctx, "driver").ok?
 
-  BDD.set(BDD.given_program(ctx, "driver.agc"), "driver", JSON.from(true))
+  # The driver starts the peers with the agentica that runs the specs.
+  command = ctx.scenario.settings.agentica
+  with_env = ctx
+  # A relative path names a file from the folder of the run, not from the driver's, so only a full path or a name
+  # found in PATH goes.
+  if not command.empty? and (command[0].start_with?("/") or not command[0].include?("/"))
+    with_env = BDD.given_env(ctx, "HTTP_CLIENT_AGENTICA", command[0])
+  end
+
+  BDD.set(BDD.given_program(with_env, "driver.agc"), "driver", JSON.from(true))
 end
