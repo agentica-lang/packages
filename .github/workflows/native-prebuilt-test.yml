@@ -1,0 +1,56 @@
+name: Native prebuilt test
+
+# Runs native-prebuilt.yml on the module of .github/native-prebuilt-example with dry-run, so nothing is uploaded: the
+# five builds (with a prepare step and extra arguments, as a package that links a fetched source), the load of each
+# library, and the `prebuilt` row, which must read back as the table the manifest takes.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/native-prebuilt*.yml'
+      - '.github/native-prebuilt-example/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/native-prebuilt*.yml'
+      - '.github/native-prebuilt-example/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prebuilt:
+    uses: ./.github/workflows/native-prebuilt.yml
+    with:
+      module: twice
+      directory: .github/native-prebuilt-example
+      # agentica master with `agentica native source` (agentica#1786); a release once 0.34.0 ships.
+      agentica-commit: 45e6c4a8d0b71954da19c9c03b49fadc46fedc02
+      prepare: mkdir -p gen && printf 'int twice_factor(void) { return 2; }\n' > gen/factor.c
+      extra-args: -DTWICE_LINKED gen/factor.c
+      dry-run: true
+
+  check:
+    needs: prebuilt
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read the prebuilt row back
+        env:
+          ROW: ${{ needs.prebuilt.outputs.prebuilt }}
+          SOURCE: ${{ needs.prebuilt.outputs.source }}
+          API: ${{ needs.prebuilt.outputs.api }}
+        run: |
+          python3 -I - <<'EOF'
+          import os, re, tomllib
+          row = tomllib.loads(os.environ["ROW"])["prebuilt"]
+          print(row)
+          url = "https://github.com/agentica-lang/packages/releases/download/native-{source}/lib{name}-{api}-{target}{ext}"
+          assert row["url"] == url, row["url"]
+          assert row["source"] == os.environ["SOURCE"] and re.fullmatch(r"[0-9a-f]{16}", row["source"])
+          assert row["api"] == os.environ["API"] and re.fullmatch(r"[0-9]+\.[0-9]+", row["api"])
+          targets = ["linux-x86_64", "linux-arm64", "macos-x86_64", "macos-arm64", "windows-x86_64"]
+          assert list(row["sha256"]) == targets, row["sha256"]
+          assert all(re.fullmatch(r"[0-9a-f]{64}", v) for v in row["sha256"].values())
+          assert len(set(row["sha256"].values())) == 5
+          EOF

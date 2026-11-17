@@ -1,0 +1,390 @@
+name: Native prebuilt
+
+# Builds the native module `module` of the calling repository on the five release targets of Agentica, with its
+# release toolchains, and uploads each library to the release `native-<source>` of that repository, as the `prebuilt`
+# table of agentica.toml names them (docs: site/content/native-prebuilt.md):
+#   linux-x86_64    ubuntu-latest     pinned zig cc against glibc 2.28   lib{name}-{api}-linux-x86_64.so
+#   linux-arm64     ubuntu-24.04-arm  pinned zig cc against glibc 2.28   lib{name}-{api}-linux-arm64.so
+#   macos-x86_64    macos-15-intel    Apple clang, macOS 12.0            lib{name}-{api}-macos-x86_64.dylib
+#   macos-arm64     macos-latest      Apple clang, macOS 12.0            lib{name}-{api}-macos-arm64.dylib
+#   windows-x86_64  windows-2025      MSYS2 UCRT64 gcc                   lib{name}-{api}-windows-x86_64.dll
+# The compiler gets the arguments of Agentica's own build of the `build` table (compiler/packages/native_build.agc of
+# agentica), then `extra-args`. The last job prints the `prebuilt` row with its sha256 table, ready to paste.
+# Uploading needs `contents: write` from the caller; a release that already holds a file keeps it.
+on:
+  workflow_call:
+    inputs:
+      module:
+        description: The NAME of `[native.NAME]` in agentica.toml.
+        type: string
+        required: true
+      directory:
+        description: The folder of agentica.toml, relative to the repository.
+        type: string
+        default: .
+      agentica-version:
+        description: An Agentica release that has `agentica native source` (0.34.0 or later), installed by setup-agentica.
+        type: string
+        default: ''
+      agentica-sha256:
+        description: The sha256 of the linux-x86_64 archive of that release, from its SHA256SUMS.
+        type: string
+        default: ''
+      agentica-commit:
+        description: Instead of a release, a full commit SHA of agentica-lang/agentica to build.
+        type: string
+        default: ''
+      prepare:
+        description: A bash command run in `directory` before each build, such as a script that fetches a pinned source.
+        type: string
+        default: ''
+      extra-args:
+        description: Compiler arguments after those of the build table, split at spaces with no quoting.
+        type: string
+        default: ''
+      dry-run:
+        description: Build and print the table, but upload nothing.
+        type: boolean
+        default: false
+    outputs:
+      source:
+        description: The source key of the module.
+        value: ${{ jobs.source.outputs.source }}
+      api:
+        description: The native API the libraries are built with.
+        value: ${{ jobs.source.outputs.api }}
+      prebuilt:
+        description: The `prebuilt = { ... }` line for `[native.NAME]`.
+        value: ${{ jobs.publish.outputs.prebuilt }}
+
+jobs:
+  # The source key and the API come from `agentica native source`, the header from the same Agentica, and the compiler
+  # arguments of each system from the build table; the build jobs take them from the artifact
+  # `native-prebuilt-<module>-plan`.
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      source: ${{ steps.source.outputs.source }}
+      api: ${{ steps.source.outputs.api }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the inputs
+        env:
+          MODULE: ${{ inputs.module }}
+          VERSION: ${{ inputs.agentica-version }}
+          SHA256: ${{ inputs.agentica-sha256 }}
+          COMMIT: ${{ inputs.agentica-commit }}
+        run: |
+          [[ "$MODULE" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "module must be a C identifier: $MODULE" >&2; exit 1; }
+          if [ -n "$COMMIT" ]; then
+            [ -z "$VERSION$SHA256" ] || { echo "give agentica-commit or agentica-version, not both" >&2; exit 1; }
+            [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "agentica-commit must be a full commit SHA" >&2; exit 1; }
+          else
+            [ -n "$VERSION" ] && [ -n "$SHA256" ] || {
+              echo "give agentica-version with agentica-sha256, or agentica-commit" >&2
+              exit 1
+            }
+          fi
+
+      - name: Install the Agentica release
+        if: inputs.agentica-commit == ''
+        id: release
+        uses: agentica-lang/setup-agentica@v1
+        with:
+          version: ${{ inputs.agentica-version }}
+          sha256: ${{ inputs.agentica-sha256 }}
+
+      - name: Check out Agentica at the commit
+        if: inputs.agentica-commit != ''
+        uses: actions/checkout@v7
+        with:
+          repository: agentica-lang/agentica
+          ref: ${{ inputs.agentica-commit }}
+          path: .native-prebuilt/agentica
+          persist-credentials: false
+
+      - name: Build Agentica at the commit
+        if: inputs.agentica-commit != ''
+        working-directory: .native-prebuilt/agentica
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libssl-dev libgc-dev zlib1g-dev pkg-config
+          git submodule update --init --depth 1
+          make -j"$(nproc)" dist/agentica
+
+      - name: Put agentica on PATH and find its header
+        env:
+          RELEASE_BIN: ${{ steps.release.outputs.path }}
+          COMMIT: ${{ inputs.agentica-commit }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/plan"
+          if [ -n "$COMMIT" ]; then
+            echo "$GITHUB_WORKSPACE/.native-prebuilt/agentica/dist" >> "$GITHUB_PATH"
+            cp .native-prebuilt/agentica/vm/agentica_native.h "$RUNNER_TEMP/plan/"
+          else
+            cp "$RELEASE_BIN/../include/agentica_native.h" "$RUNNER_TEMP/plan/"
+          fi
+
+      - name: Read the source key and the API
+        id: source
+        working-directory: ${{ inputs.directory }}
+        env:
+          MODULE: ${{ inputs.module }}
+        run: |
+          agentica --version
+          agentica --json native source "$MODULE" > "$RUNNER_TEMP/source.json"
+          cat "$RUNNER_TEMP/source.json"
+          source=$(jq -r .source "$RUNNER_TEMP/source.json")
+          api=$(jq -r .api "$RUNNER_TEMP/source.json")
+          [[ "$source" =~ ^[0-9a-f]{16}$ ]] && [[ "$api" =~ ^[0-9]+\.[0-9]+$ ]] || exit 1
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          echo "api=$api" >> "$GITHUB_OUTPUT"
+
+      # One argument per line, relative to `directory`: the header goes to .native-prebuilt/include and the library to
+      # .native-prebuilt/out under the name Agentica's own build gives it.
+      - name: Write the compiler arguments of each system
+        working-directory: ${{ inputs.directory }}
+        env:
+          MODULE: ${{ inputs.module }}
+        run: |
+          python3 -I - "$MODULE" "$RUNNER_TEMP/plan" <<'EOF'
+          import sys, tomllib
+          name, plan = sys.argv[1], sys.argv[2]
+          with open("agentica.toml", "rb") as f:
+              build = tomllib.load(f)["native"][name]["build"]
+          common = ["-std=c11", "-O2", "-fvisibility=hidden", "-I.native-prebuilt/include"]
+          common += ["-D" + d for d in build.get("defines", [])]
+          systems = {
+              "linux": (["-fPIC", "-shared", "-Wl,-z,defs"], f"lib{name}.so"),
+              "macos": (["-dynamiclib", f"-Wl,-install_name,@rpath/lib{name}.dylib"], f"lib{name}.dylib"),
+              "windows": (["-shared", "-static-libgcc"], f"{name}.dll"),
+          }
+          for system, (flags, output) in systems.items():
+              args = common + flags + ["-o", ".native-prebuilt/out/" + output] + build["sources"]
+              args += ["-l" + lib for lib in build.get("libs", [])]
+              with open(f"{plan}/args-{system}", "w") as f:
+                  f.write("".join(a + "\n" for a in args))
+              with open(f"{plan}/output-{system}", "w") as f:
+                  f.write(output + "\n")
+          EOF
+          head -n 100 "$RUNNER_TEMP"/plan/args-*
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-prebuilt-${{ inputs.module }}-plan
+          path: ${{ runner.temp }}/plan
+          if-no-files-found: error
+          retention-days: 1
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runner: ubuntu-latest
+            system: linux
+            ext: .so
+            zig_arch: x86_64
+            zig_sha256: 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            system: linux
+            ext: .so
+            zig_arch: aarch64
+            zig_sha256: 958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f
+          - target: macos-x86_64
+            runner: macos-15-intel
+            system: macos
+            ext: .dylib
+          - target: macos-arm64
+            runner: macos-latest
+            system: macos
+            ext: .dylib
+          - target: windows-x86_64
+            runner: windows-2025
+            system: windows
+            ext: .dll
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      ZIG_VERSION: 0.15.2
+      VM_GLIBC: '2.28'
+      # Read by clang, which writes it as the `minos` of the library.
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      FILE: lib${{ inputs.module }}-${{ needs.source.outputs.api }}-${{ matrix.target }}${{ matrix.ext }}
+    defaults:
+      run:
+        shell: ${{ matrix.system == 'windows' && 'msys2 {0}' || 'bash' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-prebuilt-${{ inputs.module }}-plan
+          path: ${{ inputs.directory }}/.native-prebuilt/plan
+
+      - name: Install zig
+        if: matrix.system == 'linux'
+        env:
+          ZIG_ARCH: ${{ matrix.zig_arch }}
+          ZIG_SHA256: ${{ matrix.zig_sha256 }}
+        run: |
+          dir="$RUNNER_TOOL_CACHE/zig-$ZIG_VERSION"
+          if [ ! -x "$dir/zig" ] || [ "$(cat "$dir.sha256" 2>/dev/null)" != "$ZIG_SHA256" ]; then
+            archive="$RUNNER_TEMP/zig.tar.xz"
+            curl -sSfL "https://ziglang.org/download/$ZIG_VERSION/zig-$ZIG_ARCH-linux-$ZIG_VERSION.tar.xz" -o "$archive"
+            echo "$ZIG_SHA256  $archive" | sha256sum -c
+            rm -rf "$dir.tmp" "$dir" "$dir.sha256"
+            mkdir -p "$dir.tmp"
+            tar -xJf "$archive" -C "$dir.tmp" --strip-components=1
+            mv "$dir.tmp" "$dir"
+            echo "$ZIG_SHA256" > "$dir.sha256"
+            rm "$archive"
+          fi
+          echo "CC=$dir/zig cc -target $ZIG_ARCH-linux-gnu.$VM_GLIBC" >> "$GITHUB_ENV"
+
+      - name: Use Apple clang
+        if: matrix.system == 'macos'
+        run: echo "CC=cc" >> "$GITHUB_ENV"
+
+      - uses: msys2/setup-msys2@v2.33.0
+        if: matrix.system == 'windows'
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          update: false
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: Use the UCRT64 gcc
+        if: matrix.system == 'windows'
+        run: |
+          test "$(command -v gcc)" = /ucrt64/bin/gcc
+          echo "CC=gcc" >> "$GITHUB_ENV"
+
+      - name: Prepare
+        if: inputs.prepare != ''
+        working-directory: ${{ inputs.directory }}
+        env:
+          PREPARE: ${{ inputs.prepare }}
+        run: eval "$PREPARE"
+
+      - name: Build ${{ env.FILE }}
+        working-directory: ${{ inputs.directory }}
+        env:
+          SYSTEM: ${{ matrix.system }}
+          EXTRA_ARGS: ${{ inputs.extra-args }}
+        run: |
+          plan=.native-prebuilt/plan
+          mkdir -p .native-prebuilt/include .native-prebuilt/out
+          cp "$plan/agentica_native.h" .native-prebuilt/include/
+          args=()
+          while IFS= read -r arg; do args+=("$arg"); done < "$plan/args-$SYSTEM"
+          # CC and EXTRA_ARGS are split at spaces, as Agentica splits CC.
+          # shellcheck disable=SC2086
+          set -- $CC
+          "$@" --version
+          echo "$@" "${args[@]}" $EXTRA_ARGS
+          "$@" "${args[@]}" $EXTRA_ARGS
+          output=".native-prebuilt/out/$(cat "$plan/output-$SYSTEM")"
+          # As the release binaries of Agentica: strip removes the linker's signature on macOS, so sign it ad hoc.
+          if [ "$SYSTEM" = macos ]; then
+            strip -x "$output"
+            codesign --force --sign - "$output"
+          else
+            strip "$output"
+          fi
+          mkdir -p .native-prebuilt/dist
+          mv "$output" ".native-prebuilt/dist/$FILE"
+
+      # The library loads in a plain process and exports the entry point of a module. On Windows the step runs outside
+      # MSYS2, so a DLL that needs one of its runtime DLLs fails here.
+      - name: Load ${{ env.FILE }}
+        shell: ${{ matrix.system == 'windows' && 'pwsh' || 'bash' }}
+        working-directory: ${{ inputs.directory }}/.native-prebuilt/dist
+        run: ${{ matrix.system == 'windows' && 'python' || 'python3' }} -I -c "import ctypes, os, sys; ctypes.CDLL(os.path.abspath(sys.argv[1])).agentica_native_init" "${{ env.FILE }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-prebuilt-${{ inputs.module }}-${{ matrix.target }}
+          path: ${{ inputs.directory }}/.native-prebuilt/dist/${{ env.FILE }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [source, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      prebuilt: ${{ steps.table.outputs.prebuilt }}
+    env:
+      MODULE: ${{ inputs.module }}
+      SOURCE: ${{ needs.source.outputs.source }}
+      API: ${{ needs.source.outputs.api }}
+      TAG: native-${{ needs.source.outputs.source }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: native-prebuilt-${{ inputs.module }}-*-*
+          path: ${{ runner.temp }}/built
+          merge-multiple: true
+
+      - name: Check that the five files are there
+        working-directory: ${{ runner.temp }}/built
+        run: |
+          ls -l
+          for target in linux-x86_64 linux-arm64 macos-x86_64 macos-arm64 windows-x86_64; do
+            ls "lib$MODULE-$API-$target".* > /dev/null
+          done
+          [ "$(ls | wc -l)" = 5 ]
+
+      # A file the release already has is kept, and its own bytes go in the table: the files are named by the source
+      # key, so every tag with the same native sources reuses them.
+      - name: Upload to the release ${{ env.TAG }}
+        if: ${{ !inputs.dry-run }}
+        working-directory: ${{ runner.temp }}/built
+        run: |
+          if ! gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release create "$TAG" --repo "$REPO" --target "$GITHUB_SHA" --title "$TAG" \
+              --notes "Prebuilt native modules of the sources with key $SOURCE (native API $API)."
+          fi
+          kept="$RUNNER_TEMP/kept"
+          mkdir "$kept"
+          for file in *; do
+            if gh release view "$TAG" --repo "$REPO" --json assets -q '.assets[].name' | grep -qxF "$file"; then
+              echo "$TAG already has $file: kept"
+              gh release download "$TAG" --repo "$REPO" --pattern "$file" --dir "$kept"
+              mv "$kept/$file" "$file"
+            else
+              gh release upload "$TAG" --repo "$REPO" "$file"
+            fi
+          done
+
+      - name: Print the prebuilt row
+        id: table
+        working-directory: ${{ runner.temp }}/built
+        run: |
+          url="https://github.com/$REPO/releases/download/native-{source}/lib{name}-{api}-{target}{ext}"
+          entries=()
+          for target in linux-x86_64 linux-arm64 macos-x86_64 macos-arm64 windows-x86_64; do
+            sum=$(sha256sum "lib$MODULE-$API-$target".* | cut -d' ' -f1)
+            entries+=("$target = \"$sum\"")
+          done
+          table=$(printf '%s, ' "${entries[@]}")
+          table=${table%, }
+          row="prebuilt = { url = \"$url\", source = \"$SOURCE\", api = \"$API\", sha256 = { $table } }"
+          echo "prebuilt=$row" >> "$GITHUB_OUTPUT"
+          echo "$row"
+          {
+            echo "The \`prebuilt\` row of \`[native.$MODULE]\`:"
+            echo
+            echo '```toml'
+            echo "$row"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

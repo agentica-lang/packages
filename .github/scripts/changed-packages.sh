@@ -7,7 +7,8 @@
 # - A file under PKG/ marks PKG, except PKG/README.md and PKG/CHANGELOG.md: they hold no code. A file of PKG/docs/
 #   marks PKG for `--docs` alone, since `make doc-examples` runs its examples (pages.yml builds the pages); any other
 #   file of PKG marks it for everything.
-# - README.md, AGENTS.md, LICENSE, site/, .gitmodules (the docs theme of site/) and pages.yml at the root mark none.
+# - README.md, AGENTS.md, LICENSE, site/, .gitmodules (the docs theme of site/) and pages.yml at the root mark none,
+#   and so do native-prebuilt*.yml and .github/native-prebuilt-example/ (native-prebuilt-test.yml runs them).
 # - Any other file outside a package (Makefile, ci.yml, .github/scripts/, .github/actions/, a shared config) marks all
 #   of them: an unknown file is safer to treat as shared.
 # - A package stands alone (AGENTS.md), so no package depends on another folder of this repo and a change never
@@ -42,6 +43,7 @@ while IFS= read -r -d '' file; do
   fi
   case $file in
     README.md | AGENTS.md | LICENSE | site/* | .gitmodules | .github/workflows/pages.yml) ;;
+    .github/workflows/native-prebuilt*.yml | .github/native-prebuilt-example/*) ;;
     *) everything=1 ;;
   esac
 done
