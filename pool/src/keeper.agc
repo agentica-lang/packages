@@ -74,3 +74,4 @@ end
 def tell[A, W](keeper: Keeper[A, W], msg: Types.Msg[W]) -> Void
   _ = keeper.inbox.send(msg, SEND_MS)
 end
+# proof
