@@ -30,27 +30,78 @@ jobs:
       extra-args: -DTWICE_LINKED gen/factor.c
       dry-run: true
 
+  # The row against the files the build jobs made, and through Agentica's own reader: the example's manifest with the
+  # row appended must give the same source key and a URL per target.
   check:
     needs: prebuilt
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
+    env:
+      ROW: ${{ needs.prebuilt.outputs.prebuilt }}
+      SOURCE: ${{ needs.prebuilt.outputs.source }}
+      API: ${{ needs.prebuilt.outputs.api }}
     steps:
-      - name: Read the prebuilt row back
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: native-prebuilt-twice-*-*
+          path: ${{ runner.temp }}/built
+          merge-multiple: true
+
+      - name: Compare the row with the built files
         env:
-          ROW: ${{ needs.prebuilt.outputs.prebuilt }}
-          SOURCE: ${{ needs.prebuilt.outputs.source }}
-          API: ${{ needs.prebuilt.outputs.api }}
+          BUILT: ${{ runner.temp }}/built
         run: |
           python3 -I - <<'EOF'
-          import os, re, tomllib
+          import hashlib, os, re, tomllib
           row = tomllib.loads(os.environ["ROW"])["prebuilt"]
           print(row)
           url = "https://github.com/agentica-lang/packages/releases/download/native-{source}/lib{name}-{api}-{target}{ext}"
           assert row["url"] == url, row["url"]
           assert row["source"] == os.environ["SOURCE"] and re.fullmatch(r"[0-9a-f]{16}", row["source"])
           assert row["api"] == os.environ["API"] and re.fullmatch(r"[0-9]+\.[0-9]+", row["api"])
-          targets = ["linux-x86_64", "linux-arm64", "macos-x86_64", "macos-arm64", "windows-x86_64"]
-          assert list(row["sha256"]) == targets, row["sha256"]
-          assert all(re.fullmatch(r"[0-9a-f]{64}", v) for v in row["sha256"].values())
-          assert len(set(row["sha256"].values())) == 5
+          ext = {"linux-x86_64": ".so", "linux-arm64": ".so", "macos-x86_64": ".dylib", "macos-arm64": ".dylib",
+                 "windows-x86_64": ".dll"}
+          assert list(row["sha256"]) == list(ext), row["sha256"]
+          built = os.environ["BUILT"]
+          assert len(os.listdir(built)) == 5, os.listdir(built)
+          for target, digest in row["sha256"].items():
+              with open(f"{built}/libtwice-{row['api']}-{target}{ext[target]}", "rb") as f:
+                  assert hashlib.sha256(f.read()).hexdigest() == digest, target
+          EOF
+
+      # The commit of the `prebuilt` job above.
+      - name: Check out Agentica
+        uses: actions/checkout@v7
+        with:
+          repository: agentica-lang/agentica
+          ref: 45e6c4a8d0b71954da19c9c03b49fadc46fedc02
+          path: .agentica
+          persist-credentials: false
+
+      - name: Build Agentica
+        working-directory: .agentica
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libssl-dev libgc-dev zlib1g-dev pkg-config
+          git submodule update --init --depth 1
+          make -j"$(nproc)" dist/agentica
+
+      - name: Read the row with Agentica
+        working-directory: .github/native-prebuilt-example
+        run: |
+          printf '%s\n' "$ROW" >> agentica.toml
+          ../../.agentica/dist/agentica --json native source twice > "$RUNNER_TEMP/source.json"
+          cat "$RUNNER_TEMP/source.json"
+          python3 -I - "$RUNNER_TEMP/source.json" <<'EOF'
+          import json, os, sys
+          answer = json.load(open(sys.argv[1]))
+          assert answer["source"] == os.environ["SOURCE"] and answer["api"] == os.environ["API"], answer
+          base = f"https://github.com/agentica-lang/packages/releases/download/native-{answer['source']}/libtwice-{answer['api']}-"
+          ext = {"linux-x86_64": ".so", "linux-arm64": ".so", "macos-x86_64": ".dylib", "macos-arm64": ".dylib",
+                 "windows-x86_64": ".dll"}
+          assert answer["urls"] == {t: base + t + e for t, e in ext.items()}, answer["urls"]
           EOF
