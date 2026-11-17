@@ -38,8 +38,9 @@ http-client/         an HTTP/1.1 client: http_client.agc is the API (new, reques
                      of a redirect, src/dial.agc the opt-in dial path (the resolver, its cache and the connect to a
                      checked address), src/address.agc which IP addresses are public (pure), src/encoding.agc the
                      gzip and deflate decoding of a body, src/sse.agc the reading of server-sent events (pure); specs/
-                     has the features (client, retries, redirects, dns, options, streams), whose program under test is specs/driver.agc (a client, its
-                     requests and the peers, driven by JSON lines from specs/steps.agc); the peers are programs the
+                     has the features (client, retries, redirects, dns, options, streams), whose program under test
+                     is specs/driver.agc (a client, its requests and the peers, driven by JSON lines from
+                     specs/steps.agc); the peers are programs the
                      driver starts: fixtures/server.agc (the server of std/http, for the normal flows, or over HTTPS
                      with fixtures/tls/, a certificate for api.test and its CA) and fixtures/raw_peer.agc (a TCP server
                      that reads requests by hand and writes the answers of a script: slow heads, stalls, closes, and
