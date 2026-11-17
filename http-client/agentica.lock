@@ -1,0 +1,9 @@
+version = 1
+
+[[package]]
+name = "pool"
+git = "https://github.com/agentica-lang/packages"
+subdir = "pool"
+tag = "pool-0.1.3"
+commit = "6af323a4646d79c3dd5dff0459e042a6ef7e14ec"
+hash = "sha256:fcdfab562a80d352e8cc90e1bea3d4e4aa27ff365db8c939b1c90422c1b62aad"

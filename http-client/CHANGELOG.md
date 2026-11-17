@@ -1,0 +1,9 @@
+# Changelog
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [Unreleased]
+
+### Added
+
+- `HttpClient.new`, `request`, `get`, `head`, `delete`, `post`, `put`, `patch` and `close`: an HTTP/1.1 client with a pool of keep-alive connections per origin (on the `pool` package), `base_url`, client headers, and timeouts for the connect, each read, the whole request and the wait for a connection.
