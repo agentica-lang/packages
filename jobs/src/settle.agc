@@ -16,7 +16,8 @@ def settle(now: Int, job: Types.Job, result: Result[Void], backoff: Fn[Int, Int]
     ok(_) -> Verdict.Ack
     error(e) if e.is_a?("jobs.discard") -> Verdict.Back(Types.Nack.Dead(e.message))
     error(e) if job.attempt >= job.max_attempts -> Verdict.Back(Types.Nack.Dead(e.message))
-    error(_) -> Verdict.Back(Types.Nack.Retry(now + backoff.call(job.attempt)))
+    error(e) ->
+      Verdict.Back(Types.Nack.Retry(Types.Later(at_ms: now + backoff.call(job.attempt), error: some(e.message))))
   end
 end
 
