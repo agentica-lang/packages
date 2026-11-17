@@ -5,9 +5,9 @@ import Binary from "std/binary"
 import Types from "types"
 
 ## Sends `query` to the server and returns the bytes of the answer. An `error` of the kind `dns.timeout` when the
-## deadline passes, `dns.network` when the connection breaks, or ends before the whole answer, and `dns.malformed` for a
-## length of 0.
-def exchange(server: Types.Server, query: Bytes, timeout_ms: Int, context: TLS.Context) -> Result[Bytes]
+## deadline passes, `dns.network` when the connection breaks, or ends before the whole answer, and `dns.malformed` for
+## a length of 0.
+def exchange(server: Types.Server, query: Bytes, timeout_ms: Int, context: Optional[TLS.Context]) -> Result[Bytes]
   deadline = Time.monotonic_ms() + timeout_ms
   socket = try dial(server, context, timeout_ms, deadline)
   answer = talk(socket, query, deadline)
@@ -28,7 +28,7 @@ def talk(socket: TCP.Socket, query: Bytes, deadline: Int) -> Result[Bytes]
   read_exact(socket, size, deadline)
 end
 
-def dial(server: Types.Server, context: TLS.Context, timeout_ms: Int, deadline: Int) -> Result[TCP.Socket]
+def dial(server: Types.Server, context: Optional[TLS.Context], timeout_ms: Int, deadline: Int) -> Result[TCP.Socket]
   case server
     Types.Server.Tcp(host, port) -> broken(TCP.connect(host, port, timeout_ms), deadline, "connecting to #{host}")
     Types.Server.Tls(host, port, name) ->
@@ -38,12 +38,19 @@ def dial(server: Types.Server, context: TLS.Context, timeout_ms: Int, deadline: 
         checked = host
       end
 
-      case TLS.upgrade(socket, context, checked, try left(deadline))
+      case TLS.upgrade(socket, try trust(context), checked, try left(deadline))
         ok(secure) -> ok(secure)
         error(e) ->
           TCP.close(socket)
           broken(error(e), deadline, "the TLS handshake with #{host}")
       end
+  end
+end
+
+def trust(context: Optional[TLS.Context]) -> Result[TLS.Context]
+  case context
+    some(found) -> ok(found)
+    none -> error("dns: a TLS server needs a TLS context", kind: Types.MALFORMED)
   end
 end
 

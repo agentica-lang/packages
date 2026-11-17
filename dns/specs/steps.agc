@@ -1,7 +1,9 @@
 ## The steps of the features. The steps of `codec.feature` run the codec against `fixtures/dns_peer.py`; the ones of
-## `transport.feature` are below them (see the header of `fixtures/dns_tcp_peer.agc`). The codec peer is `fixtures/dns_peer.py`: a step starts it, reads what it prints (a message in
-## hex and the text that the peer made of it, a tab between), and the codec reads the same bytes. Both sides write a
-## message as the same line of text, so the check is one string compare.
+## `transport.feature` are below them (see the header of `fixtures/dns_tcp_peer.agc`).
+##
+## The codec peer is `fixtures/dns_peer.py`: a step starts it, reads what it prints (a message in hex and the text that
+## the peer made of it, a tab between), and the codec reads the same bytes. Both sides write a message as the same line
+## of text, so the check is one string compare.
 
 import BDD from "std/bdd"
 import DNS from "../dns"
