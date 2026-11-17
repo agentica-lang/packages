@@ -48,15 +48,16 @@ struct Fetch
   wait_ms: Int = 0
 end
 
-## When a failed job runs again, and what went wrong. The handler of the next delivery reads `error` as the `last_error`
-## of its job.
+## When a failed job runs again, and what went wrong. The handler of the next delivery reads `error` as the
+## `last_error` of its job.
 struct Later
   at_ms: Int
   error: Optional[String] = none
 end
 
-## How a job goes back. `Retry(later)`: run again at that time (on the last attempt the job is dead instead). `Release`:
-## back now, and the attempt does not count (a stop that never started it). `Dead(reason)`: never again; kept as dead.
+## How a job goes back. `Retry(later)`: run again at that time (on the last attempt the job is dead instead).
+## `Release`: back now, and the attempt does not count (a stop that never started it). `Dead(reason)`: never again;
+## kept as dead.
 enum Nack
   Retry(Later)
   Release
