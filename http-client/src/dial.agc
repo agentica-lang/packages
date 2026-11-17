@@ -4,12 +4,8 @@
 ## order.
 ##
 ## The connection goes to the very address that was checked, so the filter holds against a DNS answer that changes
-## (rebinding). Until std/http has `connect_to` (agentica#1556), `connect` opens a plain connection to the address
-## with `HTTP.start`, upgrades it to TLS for `https` with the URL host as the server name (SNI and certificate check),
-## and sets the URL host on the connection, which std/http writes in `Host`: it relies on the `host`, `socket` and
-## `scheme` fields of std's `Connection`, which is why the dial path is opt-in. With `connect_to` this becomes
-## `HTTP.start(url, options.with(connect_to: address))`, and the rest of the module stays; the dial path may then be
-## the default for every client.
+## (rebinding): `HTTP.start(url, options.with(connect_to: address))`. std/http connects to the address and uses the
+## host of the URL for `Host`, the TLS server name and the certificate check.
 ##
 ## A host that is an IP literal is not resolved: std/http connects to it as it is, after the filter. With a `proxy`
 ## the proxy reaches the host, so the client refuses a resolver or `public_only` together with one.
@@ -38,13 +34,13 @@ end
 ## `http_client.dns` error, and one with no address the filter keeps an `http_client.address_denied` error; the
 ## errors of the connect itself are std/http's.
 def connect(dialer: Dialer, url: String, options: HTTP.ClientOptions, wait_ms: Int) -> Result[HTTP.Connection]
-  return HTTP.start(url, options.with(timeout_ms: wait_ms)) if not dialer.own or not options.proxy.empty?
+  return HTTP.start(url, limited(options, wait_ms)) if not dialer.own or not options.proxy.empty?
 
   target = try Url.resolve("", url)
   host = Address.unbracketed(target.host)
   if Address.literal?(target.host)
     try allowed(dialer, host, [host])
-    return HTTP.start(url, options.with(timeout_ms: wait_ms))
+    return HTTP.start(url, limited(options, wait_ms))
   end
 
   deadline = Time.monotonic_ms() + wait_ms
@@ -56,7 +52,7 @@ def connect(dialer: Dialer, url: String, options: HTTP.ClientOptions, wait_ms: I
 
     # Each address gets its share of the time left, so that one that never answers leaves time for the next.
     share = [left / (addresses.size - at), 1].max.unwrap!
-    last = reach(target, host, addresses[at], options.with(timeout_ms: share))
+    last = reach(url, addresses[at], limited(options, share))
     return last if last.ok?
   end
 
@@ -69,6 +65,12 @@ private
 MAX_CACHED = 1_024
 # How long a resolver that was cancelled has to end.
 CANCEL_MS = 1_000
+
+# The options of a connect that takes at most `ms`: the whole call and the connect (std/http's `connect_timeout_ms` is
+# 10 s unless set).
+def limited(options: HTTP.ClientOptions, ms: Int) -> HTTP.ClientOptions
+  options.with(timeout_ms: ms, connect_timeout_ms: ms)
+end
 
 def timed_out[T]() -> Result[T] = error("network: operation timed out", kind: "net.timeout")
 
@@ -125,38 +127,9 @@ def allowed(dialer: Dialer, host: String, addresses: List[String]) -> Result[Lis
   ok(kept)
 end
 
-# A connection to `address` that std/http uses as one to `host`: TLS checks `host`, and `Host` names it.
-def reach(target: Url.Target, host: String, address: String, options: HTTP.ClientOptions) -> Result[HTTP.Connection]
-  authority = address
-  if address.include?(":")
-    authority = "[#{address}]"
-  end
-
-  conn = try HTTP.start("http://#{authority}:#{target.port}", options.with(tls: none))
-  return ok(conn.with(host: host)) if target.scheme == "http"
-
-  case secured(conn, host, options)
-    ok(socket) -> ok(conn.with(socket: socket, scheme: target.scheme, host: host))
-    error(e) ->
-      HTTP.finish(conn)
-      error(e)
-  end
-end
-
-# The TLS socket over the connection, with the context of the options or one with the system trust, as std/http
-# makes. It speaks HTTP/1.1 only, as std/http does.
-def secured(conn: HTTP.Connection, host: String, options: HTTP.ClientOptions) -> Result[TCP.Socket]
-  context = case options.tls
-    some(given) -> given
-    none -> try TLS.client_context(TLS.ClientOptions())
-  end
-
-  socket = try TLS.upgrade(conn.socket, context, host, options.timeout_ms)
-  protocol = TLS.alpn(socket)
-  if protocol != "" and protocol != "http/1.1"
-    TCP.close(socket)
-    return error("http_client: the server picked #{protocol}, not HTTP/1.1", kind: "net.tls")
-  end
-
-  ok(socket)
+# A connection to `address` that std/http uses as one to `host`: `connect_to` goes there, while TLS checks the host
+# of the
+# URL and `Host` names it.
+def reach(url: String, address: String, options: HTTP.ClientOptions) -> Result[HTTP.Connection]
+  HTTP.start(url, options.with(connect_to: address))
 end
