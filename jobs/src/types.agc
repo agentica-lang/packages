@@ -88,3 +88,40 @@ struct Clock
   now: Fn[Int]
   advance: Fn[Int, Void]
 end
+
+## The options of the memory backend. `max_jobs` is how many jobs may be live (ready, scheduled or leased) at once;
+## past it `enqueue` fails with `jobs.full`. `max_dead` is how many dead jobs are kept; the oldest is dropped. `clock`
+## gives Unix ms, and defaults to the wall clock. `fetch_timeout_ms` is the longest a caller waits for a fetch, its
+## `wait_ms` included (none: that `wait_ms` and 10 s more); a caller that gave up leaves its fetch parked, and the jobs
+## that the fetch would have got stay in the queue.
+struct MemoryOptions
+  max_jobs: Int = 10_000
+  max_dead: Int = 1_000
+  clock: Optional[Fn[Int]] = none
+  fetch_timeout_ms: Optional[Int] = none
+end
+
+## `Ready` runs the jobs whose time has come; `All` also runs the ones that wait for a time, moving the manual clock of
+## the drain.
+enum Due
+  Ready
+  All
+end
+
+## What `Jobs.drain` runs: the jobs of `queue`, at most `max_runs` of them. `Due.All` needs the `clock` that the
+## backend follows. `backoff` gives the wait in ms before a failed job runs again, from its attempt (the default
+## doubles from 1 s up to 1 h, with some jitter).
+struct Drain
+  queue: String
+  due: Due = Due.Ready
+  max_runs: Int = 1_000
+  clock: Optional[Clock] = none
+  backoff: Optional[Fn[Int, Int]] = none
+end
+
+## How many jobs a drain acked, put back to run again, and made dead.
+struct Drained
+  done: Int
+  retried: Int
+  dead: Int
+end

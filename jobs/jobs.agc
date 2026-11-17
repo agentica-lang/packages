@@ -1,21 +1,29 @@
-## Produce and consume jobs, with the backend swappable (a backend package fills the
+## Produce and consume jobs, with the backend swappable (the memory backend here; `jobs-db` and others fill the same
 ## `Backend` record). A producer calls `enqueue`; a consumer calls `fetch`, runs the job, and `ack`s it, or `nack`s it
 ## to run again later. A fetched job is leased: if its consumer crashes or hangs, the lease runs out and the job comes
 ## back, so every enqueued job runs until it is acked or dead (at least once: handlers must be idempotent).
 ##
 ## Errors have a kind: `jobs.closed`, `jobs.full`, `jobs.lease_lost`, `jobs.discard`, `jobs.timeout` (a backend did not
 ## answer in time), and the builtin `argument` for a bad value.
+##
+## `Jobs.memory` starts an actor that is a child of the task that calls it: make it in `main`.
 
+import Inline from "src/inline"
+import Memory from "src/memory"
 import Types from "src/types"
 
 export Types.Backend
 export Types.Clock
 export Types.Counts
+export Types.Drain
+export Types.Drained
+export Types.Due
 export Types.Enqueued
 export Types.Fetch
 export Types.Job
 export Types.Later
 export Types.Lease
+export Types.MemoryOptions
 export Types.Nack
 export Types.NewJob
 
@@ -66,11 +74,21 @@ end
 ## What a handler returns to say that its job is dead, with no more attempts.
 def discard(message: String) -> Result[Void] = error(message, kind: "jobs.discard")
 
+## A backend that keeps its jobs in memory, in one actor: they die with the process.
+def memory(options: Types.MemoryOptions = Types.MemoryOptions()) -> Result[Types.Backend] = Memory.start(options)
+
 ## A clock that moves only when told, for a backend's `clock` and for tests.
 def manual_clock() -> Types.Clock
   time: ATS[String, Int] = ATS.new()
   time.put(NOW, MANUAL_START_MS)
   Types.Clock(now: -> { time.get(NOW).unwrap_or(MANUAL_START_MS) }, advance: ->(ms) { move(time, ms) })
+end
+
+## Runs the jobs of a queue one at a time in the caller, with the rules of a pipeline: `ok` acks, `Jobs.discard` makes
+## the job dead, and another error runs it again after a backoff, or makes it dead on its last attempt. For the tests
+## of an app: enqueue, drain, and check the effects, with no task left running.
+def drain(backend: Types.Backend, options: Types.Drain, handle: Fn[Types.Job, Result[Void]]) -> Result[Types.Drained]
+  Inline.drain(backend, options, handle)
 end
 
 private
