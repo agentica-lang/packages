@@ -12,6 +12,7 @@ private
 PEERS = {"server": "fixtures/server.agc", "raw": "fixtures/raw_peer.agc"}
 PEER_START_MS = 60_000
 WAIT_MS = 30_000
+QUIET_MS = 500
 # A started request's task stays until it is cancelled or the driver ends, as a caller's task would.
 LINGER_MS = 600_000
 
@@ -84,6 +85,14 @@ def run(driver: Driver, req: Request) -> Handled
       TCP.close_listener(listener)
       done(driver.with(peers: driver.peers.put(req.name, address)))
     "read" -> read_requests(driver, req)
+    "read_only" ->
+      handled = read_requests(driver, req)
+      if handled.reply == Protocol.OK
+        no_more(handled.driver, req.name)
+      else
+        handled
+      end
+
     "sleep" ->
       Task.sleep(req.number)
       done(driver)
@@ -105,7 +114,8 @@ def failed(driver: Driver, text: String) -> Handled = Handled(driver: driver, re
 def start_peer(driver: Driver, req: Request) -> Handled
   program = PEERS.get(req.kind).unwrap_or("")
   script = req.text.split("\n").select { |line| not line.strip.empty? }
-  case Process.spawn("agentica", [program] + script)
+  agentica = System.env("HTTP_CLIENT_AGENTICA").unwrap_or("agentica")
+  case Process.spawn(agentica, [program] + script)
     ok(peer) ->
       case Process.read_line(peer, PEER_START_MS)
         ok(line) ->
@@ -170,6 +180,15 @@ def read_requests(driver: Driver, req: Request) -> Handled
   end
 
   done(driver.with(seen: driver.seen.put(req.name, seen)))
+end
+
+# Checks that the raw peer reads no further request within a while.
+def no_more(driver: Driver, name: String) -> Handled
+  peer = driver.processes.get(name).unwrap!
+  case Process.read_line(peer, QUIET_MS)
+    ok(line) if line.start_with?("request ") -> failed(driver, "#{name} read one more: #{line}")
+    _ -> done(driver)
+  end
 end
 
 def send(driver: Driver, req: Request) -> Handled

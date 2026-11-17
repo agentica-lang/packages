@@ -23,10 +23,12 @@ struct Held
   expires_at: Int
 end
 
-## A link: the inbox of its task, which holds the connection.
+## A link: the inbox of its task, which holds the connection, and the notice of that task's end. A link whose task
+## ended (a crash) answers nothing: it fails at once, and its health check tells the pool to replace it.
 struct Link
   inbox: Channel[Order]
   task: Task[Void]
+  down: Channel[TaskDown]
 end
 
 ## An order for the task of a link, from the request that has the link leased or from the pool's keeper.
@@ -65,7 +67,7 @@ end
 ## closed or wrote to while it was idle, is ended.
 def take(link: Link) -> Optional[Held]
   reply: Channel[Optional[Held]] = Channel.new(1)
-  return none if not link.inbox.send(Order.Take(reply), ORDER_MS).ok?
+  return none if down?(link) or not link.inbox.send(Order.Take(reply), ORDER_MS).ok?
 
   reply.recv(ORDER_MS).unwrap_or(none)
 end
@@ -74,12 +76,13 @@ end
 ## sends `Release`, so a connection made after it gave up is ended. An error is std/http's error of the connect.
 def connect(link: Link, wait_ms: Int) -> Result[Held]
   reply: Channel[Result[Held]] = Channel.new(1)
-  if not link.inbox.send(Order.Connect(Connecting(wait_ms: wait_ms, reply: reply)), ORDER_MS).ok?
+  if down?(link) or not link.inbox.send(Order.Connect(Connecting(wait_ms: wait_ms, reply: reply)), ORDER_MS).ok?
     return error("http_client: the link is gone", kind: "net.closed")
   end
 
   case reply.recv(wait_ms + ANSWER_MS)
     ok(made) -> made
+    error(_) if down?(link) -> error("http_client: the link is gone", kind: "net.closed")
     error(_) ->
       release(link)
       error("network: operation timed out", kind: "net.timeout")
@@ -94,6 +97,13 @@ end
 ## Ends the connection in use.
 def release(link: Link) -> Void
   _ = link.inbox.send(Order.Release, ORDER_MS)
+end
+
+## A link of the task that serves `inbox`, watched for its end.
+def watched(inbox: Channel[Order], task: Task[Void]) -> Link
+  down: Channel[TaskDown] = Channel.new(1)
+  Task.monitor(task, down) do |notice| notice end
+  Link(inbox: inbox, task: task, down: down)
 end
 
 private
@@ -122,11 +132,13 @@ end
 def make(origin: Origin) -> Result[Link]
   inbox: Channel[Order] = Channel.new(8)
   task = Task.spawn do run(origin, inbox) end
-  ok(Link(inbox: inbox, task: task))
+  ok(watched(inbox, task))
 end
 
-# A request that timed out or crashed may have left the connection anywhere: the error ends the link.
-def check_in(_link: Link, outcome: Pool.Outcome) -> Result[Void]
+# A request that timed out or crashed may have left the connection anywhere, and a link whose task ended serves
+# nothing: the error ends the link.
+def check_in(link: Link, outcome: Pool.Outcome) -> Result[Void]
+  return error("http_client: the link task ended") if down?(link)
   return ok() if outcome == Pool.Outcome.Done
 
   error("http_client: the request did not end cleanly")
@@ -134,8 +146,20 @@ end
 
 # The keeper must not wait for a link task that is connecting, so the check is only sent.
 def ping(link: Link) -> Result[Void]
+  return error("http_client: the link task ended") if down?(link)
+
   _ = link.inbox.send(Order.Check, 0)
   ok()
+end
+
+# The notice stays in `down` once it came, for the next look.
+def down?(link: Link) -> Bool
+  case link.down.recv(0)
+    ok(notice) ->
+      _ = link.down.send(notice, 0)
+      true
+    error(_) -> false
+  end
 end
 
 def stop(link: Link) -> Void
@@ -159,6 +183,7 @@ end
 def obey(origin: Origin, slot: Slot, order: Order) -> Slot
   case order
     Order.Take(reply) ->
+      drop_all(slot.with(idle: none))
       woken = awake(slot.idle)
       _ = reply.send(woken, 0)
       Slot(idle: none, busy: woken)

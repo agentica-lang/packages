@@ -15,7 +15,7 @@ OK = "ok"
 ##   `a`, body, header: `name: value` or "") send a request and wait for it, or let it run; `wait` (name) waits for
 ##   one that runs, and `cancel` (name) cancels its task, which stays after the request until then;
 ## - `dead_port` (name) gives a peer name to a port where nobody listens, and `read` (name, number) waits until the
-##   raw peer has read that many requests;
+##   raw peer has read that many requests, and `read_only` also that it reads no other one;
 ## - `sleep` (number: ms) and `close` (the client);
 ## - the expectations, on a request's outcome: `expect_status` (number), `expect_body` (text), `expect_header` (text:
 ##   `name: value`), `expect_kind` (text: the start of the kind of its error) and `expect_within` (number: it ended

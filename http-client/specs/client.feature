@@ -187,6 +187,20 @@ Feature: Requests and the pool of connections
     Then "bad" fails with the kind "argument"
     And "r2" came on connection 1
 
+  Scenario: A request that a connection closed after 100 Continue is not sent again
+    Given the raw peer "a" listens with the script:
+      """
+      ok one
+      continue-close
+      ok again
+      """
+    And a client of "a" with:
+      | setting | value |
+    When "r1" sends "GET" to "/one"
+    And "r2" sends "POST" to "/post" with the body "once"
+    Then "r2" fails with the kind "http_client.network"
+    And the peer "a" has read only 2 requests
+
   Scenario: A request waits at most pool_timeout_ms for a free connection
     Given the raw peer "a" listens with the script:
       """

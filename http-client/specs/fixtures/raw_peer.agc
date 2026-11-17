@@ -9,6 +9,7 @@
 ##   close BODY             a 200 with `Connection: close`, and the connection closes after it
 ##   until-close BODY       a 200 with no length: BODY, then the connection closes
 ##   stray MS BODY          a 200, then MS later a byte out of turn on the idle connection
+##   continue-close         a `100 Continue`, then the connection closes
 ##   keep-alive SECONDS BODY  a 200 with `Keep-Alive: timeout=SECONDS`
 ##   slow-head MS BODY      waits MS before it writes the head of a 200
 ##   stall MS BODY          writes the head of a 200 and half of BODY, waits MS, then writes the rest
@@ -153,6 +154,11 @@ def write_answer(socket: TCP.Socket, number: Int, request: Request, answer: List
 
   if op == "slow-head"
     Task.sleep(wait_ms)
+  end
+
+  if op == "continue-close"
+    _ = TCP.send(socket, "HTTP/1.1 100 Continue#{CRLF}#{CRLF}", STEP_MS)
+    return false
   end
 
   lines = ["HTTP/1.1 #{status} Peer", "x-connection: #{number}"]
