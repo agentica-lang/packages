@@ -1,6 +1,6 @@
 ---
 title: yaml
-description: A YAML 1.2 parser. Read configuration files and fixtures into JSON values, with the core schema only, limits against hostile texts, and errors with a line and a column.
+description: A YAML 1.2 parser. Read config files and fixtures into JSON values, with the core schema only, limits against hostile texts, and errors with line and column.
 ---
 
 `yaml` reads YAML 1.2 text into Agentica's `JSON.Value`. From there, `JSON.decode` turns it into your records, so a configuration file or a test fixture can be YAML. It is pure Agentica and does no I/O: give it the text.
