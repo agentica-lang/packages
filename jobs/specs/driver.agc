@@ -10,6 +10,7 @@
 ## and `fail once` fails the first attempt only.
 
 import Jobs from "../jobs"
+import Logger from "std/logger"
 import Stress from "stress"
 import {Request} from "protocol"
 
@@ -25,6 +26,7 @@ struct Driver
   clock: Jobs.Clock
   held: Map[String, Jobs.Lease]
   waiting: Map[String, Task[Result[List[Jobs.Lease]]]]
+  logs: ATS[String, Int]
 end
 
 struct Handled
@@ -33,7 +35,7 @@ struct Handled
 end
 
 def main() -> Void
-  driver = Driver(backend: none, clock: Jobs.manual_clock(), held: {}, waiting: {})
+  driver = Driver(backend: none, clock: Jobs.manual_clock(), held: {}, waiting: {}, logs: ATS.new())
   line = IO.gets
   while line.ok?
     handled = handle(driver, line.unwrap_or(""))
@@ -66,6 +68,7 @@ def act(driver: Driver, req: Request) -> Handled
     "extend" -> with_backend(driver, req, &extend)
     "counts" -> with_backend(driver, req, &counts)
     "drain" -> with_backend(driver, req, &drain)
+    "logs" -> logs(driver)
     "wait" -> with_backend(driver, req, &wait)
     "wait_end" -> with_backend(driver, req, &wait_end)
     "stress" -> with_backend(driver, req, &stress)
@@ -104,7 +107,11 @@ def start(driver: Driver, req: Request) -> Handled
   )
 
   case Jobs.memory(options)
-    ok(backend) -> Handled(driver: Driver(backend: some(backend), clock: clock, held: {}, waiting: {}), reply: "ok")
+    ok(backend) ->
+      Handled(
+        driver: Driver(backend: some(backend), clock: clock, held: {}, waiting: {}, logs: driver.logs),
+        reply: "ok",
+      )
     error(e) -> Handled(driver: driver, reply: failure(e))
   end
 end
@@ -316,7 +323,7 @@ def drain(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
     clock: clock_for(driver, req.kind),
   )
 
-  drained = Jobs.drain(backend, plan) do |job| behave(job) end
+  drained = captured(driver, -> { Jobs.drain(backend, plan) do |job| behave(job) end })
   answer(driver, drained, ->(d) { "done #{d.done} retried #{d.retried} dead #{d.dead}" })
 end
 
@@ -338,6 +345,34 @@ def if_given(value: Int, default: Int) -> Int
   return default if value == 0
 
   value
+end
+
+# What a drain logs: the level, the message and the fields in the order of their names, to be read with `logs`.
+def captured[T](driver: Driver, run: Fn[T]) -> T
+  _ = Logger.attach("capture", Logger.Level.Debug) do |event| driver.logs.put(log_line(event), driver.logs.size) end
+  result = run.call()
+  _ = Logger.detach("capture")
+  result
+end
+
+def log_line(event: Logger.Event) -> String
+  fields = event.fields.keys.sort.map(->(name) { "#{name}=#{event.fields[name]}" })
+  "#{level_name(event.level)} #{event.message} #{fields.join(" ")}"
+end
+
+def level_name(level: Logger.Level) -> String
+  case level
+    Logger.Level.Debug -> "debug"
+    Logger.Level.Info -> "info"
+    Logger.Level.Warning -> "warning"
+    Logger.Level.Error -> "err"
+  end
+end
+
+def logs(driver: Driver) -> Handled
+  lines = driver.logs.to_map
+  ordered = lines.keys.sort_by(->(line) { lines[line] })
+  Handled(driver: driver, reply: ordered.join("; "))
 end
 
 def behave(job: Jobs.Job) -> Result[Void]

@@ -71,9 +71,17 @@ struct Counts
   dead: Int
 end
 
+## What a backend says about itself to the conformance suite. `has_clock`: it follows an injected clock. A backend that
+## reads its own clock, as a database does, sets it to false, and the cases on time run on the real clock, with a unit
+## of one second.
+struct Caps
+  has_clock: Bool = true
+end
+
 ## The contract: a backend fills the record, and the functions of `Jobs` call it.
 struct Backend
   name: String
+  caps: Caps
   enqueue: Fn[List[NewJob], Result[List[Enqueued]]]
   fetch: Fn[Fetch, Result[List[Lease]]]
   ack: Fn[Lease, Result[Void]]

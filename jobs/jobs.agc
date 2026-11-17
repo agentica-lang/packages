@@ -13,6 +13,7 @@ import Memory from "src/memory"
 import Types from "src/types"
 
 export Types.Backend
+export Types.Caps
 export Types.Clock
 export Types.Counts
 export Types.Drain

@@ -1,5 +1,6 @@
 ## `Jobs.drain`: the jobs of a queue run one at a time in the caller, for an app's tests.
 
+import Logger from "std/logger"
 import Settle from "settle"
 import Types from "types"
 
@@ -22,8 +23,10 @@ def drain(backend: Types.Backend, options: Types.Drain, handle: Fn[Types.Job, Re
     end
 
     held = leases[0]
-    verdict = Settle.settle(now.call(), held.job, handle.call(held.job), backoff)
+    result = handle.call(held.job)
+    verdict = Settle.settle(now.call(), held.job, result, backoff)
     try Settle.apply(backend, held, verdict)
+    log_verdict(held.job, result, verdict)
     drained = tally(drained, verdict)
     runs += 1
   end
@@ -70,6 +73,25 @@ def waiting?(backend: Types.Backend, options: Types.Drain) -> Result[Bool]
   end
 
   ok(true)
+end
+
+# A job that fails is a recovered problem while it will run again, and a failure that is given up when it is dead. The
+# fields are ids and counts, never the payload or the text of the error.
+def log_verdict(job: Types.Job, result: Result[Void], verdict: Settle.Verdict) -> Void
+  fields = {"queue": job.queue, "id": job.id, "attempt": job.attempt.to_s}
+  case verdict
+    Settle.Verdict.Back(Types.Nack.Retry(_)) -> Logger.warning("job failed, it will run again", fields)
+    Settle.Verdict.Back(Types.Nack.Dead(_)) -> Logger.err("job dead", fields.put("reason", reason_of(result)))
+    _ -> nil
+  end
+end
+
+# `discarded` when the handler gave the job up, and `attempts_exhausted` when it failed on its last attempt.
+def reason_of(result: Result[Void]) -> String
+  case result
+    error(e) if e.is_a?("jobs.discard") -> "discarded"
+    _ -> "attempts_exhausted"
+  end
 end
 
 def tally(drained: Types.Drained, verdict: Settle.Verdict) -> Types.Drained
