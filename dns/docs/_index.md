@@ -105,3 +105,4 @@ A name is read once for each place where it starts, so a message with thousands 
 A TTL with the top bit set counts as 0 (RFC 2181), except in an OPT record (type 41), where it holds flags.
 
 An IPv6 address is written as RFC 5952 says, and an IPv4-mapped one as `::ffff:1.2.3.4`.
+
