@@ -179,7 +179,7 @@ def make_client(driver: Driver, req: Request) -> Handled
       params = params.push(pair(row[1]))
     elsif row[0] == "basic"
       credentials = row[1].split(":")
-      headers = headers.push(HttpClient.basic_auth(credentials[0], credentials[1]))
+      headers = headers.push(HttpClient.basic_auth(credentials[0], credentials[1]).unwrap!)
     elsif row[0] == "bearer"
       headers = headers.push(HttpClient.bearer_auth(row[1]))
     elsif row[0] == "request_step"

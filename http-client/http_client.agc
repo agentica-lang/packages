@@ -68,9 +68,9 @@ end
 ## (`http://host:port`) and `tls` (a client `TLS.Context`, the system trust when none) are those of std/http's
 ## `ClientOptions`; a proxy resolves the host itself, so it is refused with a `resolver` or `public_only`. With
 ## `decompress` the client asks for gzip or deflate (unless the request names its own `accept-encoding`) and decodes
-## such a body. `request_steps` run in order on each request before it goes, and `response_steps` on each response
-## before it is given; an error of a step is the error of the request. Make the client in a task that lives as long as
-## it does, such as `main`.
+## such a body. `request_steps` run in order on each call before its first try (not again for a retry or a redirect),
+## and `response_steps` on its final response; an error of a step is the error of the call. Make the client in a task
+## that lives as long as it does, such as `main`.
 def new(
   base_url: String = "",
   headers: List[HTTP.Header] = [],
@@ -213,8 +213,11 @@ def decode[T](response: Exchange.Response, codec: Codec[T]) -> Result[T]
 end
 
 ## The `authorization` header of HTTP Basic, for `headers`.
-def basic_auth(user: String, password: String) -> HTTP.Header
-  HTTP.Header(name: "authorization", value: "Basic #{Base64.strict_encode64("#{user}:#{password}".bytes)}")
+## A user name with a `:` cannot be told from the password (RFC 7617), and is an `argument` error.
+def basic_auth(user: String, password: String) -> Result[HTTP.Header]
+  return argument("a basic auth user name cannot hold a colon") if user.include?(":")
+
+  ok(HTTP.Header(name: "authorization", value: "Basic #{Base64.strict_encode64("#{user}:#{password}".bytes)}"))
 end
 
 ## The `authorization` header of a bearer token, for `headers`.

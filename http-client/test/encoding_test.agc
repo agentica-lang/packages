@@ -40,8 +40,10 @@ def test_gzip_and_both_forms_of_deflate_decode_and_lose_their_headers() -> Resul
   ok()
 end
 
-def test_another_coding_stays_and_a_body_over_the_limit_is_too_large() -> Result[Void]
+def test_another_coding_or_a_part_stays_and_a_body_over_the_limit_is_too_large() -> Result[Void]
   brotli = coded("br", "data".bytes)
   try Test.eq(Encoding.decoded(brotli, 1_000).unwrap!, brotli)
+  part = coded("gzip", "part".bytes).with(status: 206)
+  try Test.eq(Encoding.decoded(part, 1_000).unwrap!, part)
   Test.eq(kind(Encoding.decoded(coded("gzip", try Zlib.gzip(TEXT.bytes)), 5)), "http_client.too_large")
 end

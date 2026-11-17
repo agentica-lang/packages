@@ -66,7 +66,7 @@ HttpClient.post(client: Client, url: String, body: Optional[Bytes] = none, json:
 HttpClient.put(client: Client, url: String, body: Optional[Bytes] = none, json: Optional[JSON.Value] = none, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
 HttpClient.patch(client: Client, url: String, body: Optional[Bytes] = none, json: Optional[JSON.Value] = none, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
 HttpClient.decode(response: Response, codec: Codec[T]) -> Result[T]
-HttpClient.basic_auth(user: String, password: String) -> HTTP.Header
+HttpClient.basic_auth(user: String, password: String) -> Result[HTTP.Header]
 HttpClient.bearer_auth(token: String) -> HTTP.Header
 HttpClient.close(client: Client, drain_ms: Int = 5000) -> Void
 ```
@@ -82,9 +82,9 @@ HttpClient.close(client: Client, drain_ms: Int = 5000) -> Void
 
 ## JSON, auth and steps
 
-`json` sends a `JSON.Value` as the body, with `content-type: application/json` unless the call names another; `body` sends bytes as they are, and a call with both is an `argument` error. `HttpClient.decode(response, User.codec)` reads a JSON body into a type, and a body that is not that JSON is an `http_client.decode` error. `basic_auth` and `bearer_auth` make the `authorization` header, for the `headers` of the client or of a call.
+`json` sends a `JSON.Value` as the body, with `content-type: application/json` unless the call names another; `body` sends bytes as they are, and a call with both is an `argument` error. `HttpClient.decode(response, User.codec)` reads a JSON body into a type, and a body that is not that JSON is an `http_client.decode` error. `basic_auth` and `bearer_auth` make the `authorization` header, for the `headers` of the client or of a call; a user name with a `:` is an `argument` error (RFC 7617).
 
-The steps are Req's model of plugins. `request_steps` run in order on each call, after `base_url`, `params`, `json` and the headers are applied and before the first try: each takes a `Request` (`method`, `url`, `headers`, `body`) and gives the one to send. `response_steps` run in order on the final response, after the retries, the redirects and the decoding of the body. An error of a step is the error of the call.
+The steps are Req's model of plugins. `request_steps` run in order on each call, after `base_url`, `params`, `json` and the headers are applied and before the first try: each takes a `Request` (`method`, `url`, `headers`, `body`) and gives the one to send. They run once, not again for each retry or redirect, so a step that signs the URL signs only the first one. `response_steps` run in order on the final response, after the retries, the redirects and the decoding of the body. An error of a step is the error of the call.
 
 ```agentica
 import HTTP from "std/http"
@@ -129,7 +129,7 @@ ok(Todo(id: 7, title: "milk (r1)"))
 
 ## Compressed bodies
 
-With `decompress` (the default) a request asks for `accept-encoding: gzip, deflate`, unless it names its own, and a body in `gzip` or `deflate` (the zlib format, or raw DEFLATE as some servers send it) is decoded before the response is given, without its `content-encoding` and `content-length` headers. The decoded body is also at most `max_body_bytes` (`http_client.too_large`), and one that does not decode is an `http_client.decode` error. A body in another coding stays as it came. `decompress: false` sends no `accept-encoding` and decodes nothing.
+With `decompress` (the default) a request asks for `accept-encoding: gzip, deflate`, unless it names its own, and a body in `gzip` or `deflate` (the zlib format, or raw DEFLATE as some servers send it) is decoded before the response is given, without its `content-encoding` and `content-length` headers. The decoded body is also at most `max_body_bytes` (`http_client.too_large`), and one that does not decode is an `http_client.decode` error. A body in another coding stays as it came, and so does a 206, the part of a body whose coding applies to the whole. std's decoder takes one gzip member, so a body of several (RFC 1952 allows it, servers rarely send it) is an `http_client.decode` error. `decompress: false` sends no `accept-encoding` and decodes nothing.
 
 ## Timeouts
 
