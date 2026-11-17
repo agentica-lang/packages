@@ -1,6 +1,6 @@
 ---
 title: The contract
-description: What every jobs backend guarantees, the records of the contract, and how to prove a backend with the conformance suite.
+description: What every jobs backend guarantees, and the records of the contract.
 weight: 2
 ---
 
@@ -30,6 +30,12 @@ end
 6. **`enqueue_all` is all or nothing:** a job that is not valid, or that does not fit, fails the call and adds none.
 7. **`close`** refuses new calls with `jobs.closed` and waits up to `drain_ms` for the backend to stop. Closing twice does nothing.
 
-There is no order guarantee. Ready jobs come roughly by `run_at_ms`, then by insertion. Acked jobs are deleted, and dead jobs are kept. The payload is bytes: every store holds bytes, and `Jobs.json` is the typed form on top.
+There is no order guarantee. Ready jobs come roughly by `run_at_ms`, then by insertion. Acked jobs are deleted, and dead jobs are kept (the memory backend keeps `max_dead` of them). The payload is bytes: every store holds bytes, and `Jobs.json` is the typed form on top.
 
 Times are Unix milliseconds. A backend takes a clock option (`Fn[Int]`) and defaults to the wall clock, which a database also stores. The wall clock can jump: a jump forward ends leases early, and at-least-once still holds.
+
+## The memory backend
+
+`Jobs.memory(Jobs.MemoryOptions(...))` keeps the jobs in one actor. `max_jobs` (10 000) is how many live jobs it holds: past it `enqueue` fails with `jobs.full`, and a producer decides to log, drop or answer 503. `max_dead` (1 000) is how many dead jobs it keeps; the oldest is dropped. `clock` is the time source. Every call applies the clock first, so a lease that ran out is back before the call is served.
+
+A fetch with `wait_ms` parks until a job comes or is due, or its time is up. A caller that gives up while it waits does not lose the jobs the actor had for it: they go back to the queue, and the delivery does not count.
