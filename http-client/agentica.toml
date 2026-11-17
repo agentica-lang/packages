@@ -1,5 +1,5 @@
 name = "http-client"
-agentica = "0.33.1"
+agentica = "0.34.0"
 
 # Every bare `end` is followed by an empty line (AGENTS.md).
 [style]
