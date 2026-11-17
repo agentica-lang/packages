@@ -5,7 +5,7 @@ description: An HTTP client with a pool of keep-alive connections per origin, an
 
 `http-client` sends HTTP/1.1 requests from an Agentica program, in the spirit of Elixir's Req. You make a `Client` once, and each request goes through a pool of keep-alive connections for its origin (scheme, host and port), made with the [pool](https://www.agentica-lang.com/packages/pool/) package. It is built on the `HTTP.start`, `send_request` and `read_body` calls of `std/http`.
 
-The package is new: request and response steps, JSON helpers and streamed bodies come in the next releases.
+The package is new: streamed bodies come in a next release.
 
 ## Install
 
@@ -57,24 +57,79 @@ end
 ## API
 
 ```signature
-HttpClient.new(base_url: String = "", headers: List[HTTP.Header] = [], connect_timeout_ms: Int = 10000, read_timeout_ms: Int = 30000, timeout_ms: Int = 60000, max_body_bytes: Int = 16777216, max_retries: Int = 3, retry_delay_ms: Int = 500, max_retry_delay_ms: Int = 30000, max_redirects: Int = 10, pool_size: Int = 10, pool_timeout_ms: Int = 5000, idle_ms: Int = 30000, resolver: Optional[Fn[String, Result[List[String]]]] = none, dns_cache_ms: Int = 10000, public_only: Bool = false, proxy: String = "", tls: Optional[TLS.Context] = none) -> Result[Client]
-HttpClient.request(client: Client, method: String, url: String, body: Bytes, headers: List[HTTP.Header] = []) -> Result[Response]
-HttpClient.get(client: Client, url: String, headers: List[HTTP.Header] = []) -> Result[Response]
-HttpClient.head(client: Client, url: String, headers: List[HTTP.Header] = []) -> Result[Response]
-HttpClient.delete(client: Client, url: String, headers: List[HTTP.Header] = []) -> Result[Response]
-HttpClient.post(client: Client, url: String, body: Bytes, headers: List[HTTP.Header] = []) -> Result[Response]
-HttpClient.put(client: Client, url: String, body: Bytes, headers: List[HTTP.Header] = []) -> Result[Response]
-HttpClient.patch(client: Client, url: String, body: Bytes, headers: List[HTTP.Header] = []) -> Result[Response]
+HttpClient.new(base_url: String = "", headers: List[HTTP.Header] = [], params: List[URI.Pair] = [], connect_timeout_ms: Int = 10000, read_timeout_ms: Int = 30000, timeout_ms: Int = 60000, max_body_bytes: Int = 16777216, max_retries: Int = 3, retry_delay_ms: Int = 500, max_retry_delay_ms: Int = 30000, max_redirects: Int = 10, decompress: Bool = true, request_steps: List[Fn[Request, Result[Request]]] = [], response_steps: List[Fn[Response, Result[Response]]] = [], pool_size: Int = 10, pool_timeout_ms: Int = 5000, idle_ms: Int = 30000, resolver: Optional[Fn[String, Result[List[String]]]] = none, dns_cache_ms: Int = 10000, public_only: Bool = false, proxy: String = "", tls: Optional[TLS.Context] = none) -> Result[Client]
+HttpClient.request(client: Client, method: String, url: String, body: Optional[Bytes] = none, json: Optional[JSON.Value] = none, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
+HttpClient.get(client: Client, url: String, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
+HttpClient.head(client: Client, url: String, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
+HttpClient.delete(client: Client, url: String, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
+HttpClient.post(client: Client, url: String, body: Optional[Bytes] = none, json: Optional[JSON.Value] = none, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
+HttpClient.put(client: Client, url: String, body: Optional[Bytes] = none, json: Optional[JSON.Value] = none, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
+HttpClient.patch(client: Client, url: String, body: Optional[Bytes] = none, json: Optional[JSON.Value] = none, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
+HttpClient.decode(response: Response, codec: Codec[T]) -> Result[T]
+HttpClient.basic_auth(user: String, password: String) -> HTTP.Header
+HttpClient.bearer_auth(token: String) -> HTTP.Header
 HttpClient.close(client: Client, drain_ms: Int = 5000) -> Void
 ```
 
 - The API is the module `http_client.agc` (`pkg/http-client/http_client`); the modules under `src/` are internal and may change in any release.
 - A `url` that starts with `http://` or `https://` is used as it is; any other is a path (or a `?query`) joined to `base_url`. A URL with user info is refused.
 - The `headers` of a call go over the client's headers of the same name. std/http adds `Host` and `Content-Length`.
+- `params` (`URI.Pair` of `std/uri`) go in the query, encoded as a form (`URI.encode_www_form`): after the query of the URL, the client's first, then the call's.
 - The client's `headers` go with every request, to whatever origin its URL names, not only to the one of `base_url`: give a secret such as `Authorization` to the calls that need it, or use a client per origin.
 - A `Response` has `status`, `headers` (names in lowercase), `body` (`Bytes`, read whole) and `url`. A 4xx or 5xx is a response, not an error.
-- `client.with(read_timeout_ms: 500)` gives a client with other values for its public fields (`base_url`, `headers`, the timeouts below, `max_body_bytes` and the retry and redirect settings), and it shares the pools of the first one. A request checks them as `new` does.
+- `client.with(read_timeout_ms: 500)` gives a client with other values for its public fields (`base_url`, `headers`, `params`, the timeouts below, `max_body_bytes`, the retry and redirect settings, `decompress` and the steps), and it shares the pools of the first one. A request checks them as `new` does.
 - Make the client in a task that lives as long as it does, such as `main`, and `close` it at the end: the requests in flight have `drain_ms` to end, and `close` returns once every task of the client has ended, so a test that closes its client leaves no task behind.
+
+## JSON, auth and steps
+
+`json` sends a `JSON.Value` as the body, with `content-type: application/json` unless the call names another; `body` sends bytes as they are, and a call with both is an `argument` error. `HttpClient.decode(response, User.codec)` reads a JSON body into a type, and a body that is not that JSON is an `http_client.decode` error. `basic_auth` and `bearer_auth` make the `authorization` header, for the `headers` of the client or of a call.
+
+The steps are Req's model of plugins. `request_steps` run in order on each call, after `base_url`, `params`, `json` and the headers are applied and before the first try: each takes a `Request` (`method`, `url`, `headers`, `body`) and gives the one to send. `response_steps` run in order on the final response, after the retries, the redirects and the decoding of the body. An error of a step is the error of the call.
+
+```agentica
+import HTTP from "std/http"
+import HttpClient from "pkg/http-client/http_client"
+
+struct Todo
+  id: Int
+  title: String
+end
+
+def created(request: HTTP.Request) -> Result[HTTP.Response]
+  todo = try JSON.decode(try String.from_bytes(request.body), Todo)
+  sent_by = HTTP.header_values(request.headers, "x-request-id").join(",")
+  body = JSON.encode(todo.with(id: 7, title: "#{todo.title} (#{sent_by})"))
+  ok(HTTP.Response(status: 201, headers: [], body: body.bytes))
+end
+
+def tagged(request: HttpClient.Request) -> Result[HttpClient.Request]
+  ok(request.with(headers: request.headers.push(HTTP.Header(name: "x-request-id", value: "r1"))))
+end
+
+def main() -> Void
+  server = HTTP.serve("127.0.0.1", 0, HTTP.app(&created)).unwrap!
+  client = HttpClient.new(
+    base_url: "http://127.0.0.1:#{HTTP.local_port(server)}",
+    headers: [HttpClient.bearer_auth("secret")],
+    request_steps: [&tagged],
+  ).unwrap!
+
+  response = HttpClient.post(client, "/todos", json: some(JSON.from(Todo(id: 0, title: "milk")))).unwrap!
+  puts(response.status)
+  puts(HttpClient.decode(response, Todo.codec))
+  HttpClient.close(client)
+  HTTP.close_server(server)
+end
+```
+
+```output
+201
+ok(Todo(id: 7, title: "milk (r1)"))
+```
+
+## Compressed bodies
+
+With `decompress` (the default) a request asks for `accept-encoding: gzip, deflate`, unless it names its own, and a body in `gzip` or `deflate` (the zlib format, or raw DEFLATE as some servers send it) is decoded before the response is given, without its `content-encoding` and `content-length` headers. The decoded body is also at most `max_body_bytes` (`http_client.too_large`), and one that does not decode is an `http_client.decode` error. A body in another coding stays as it came. `decompress: false` sends no `accept-encoding` and decodes nothing.
 
 ## Timeouts
 
@@ -127,11 +182,14 @@ Each error has a kind, so a caller tests `e.is_a?("http_client.timeout")` or a k
 | `http_client.timeout.request` | the request took longer than `timeout_ms` |
 | `http_client.pool_full` | 1000 requests wait for a connection of the origin already |
 | `http_client.network` | the connect failed, or the connection broke |
-| `http_client.too_large` | the body is over `max_body_bytes` |
+| `http_client.too_large` | the body is over `max_body_bytes`, before or after its decoding |
+| `http_client.decode` | a compressed body that does not decode, or a body that `decode` cannot read |
 | `http_client.dns` | the host does not resolve |
 | `http_client.address_denied` | `public_only` and the host has no public address |
 | `http_client.redirect.too_many` | more than `max_redirects` redirects |
 | `http_client.redirect.location` | a redirect whose `Location` cannot be followed |
 | `http_client.closed` | the client is closed |
 | `http_client.crashed` | the task of the request crashed: a bug, which a retry does not fix |
-| `argument` | a bad URL, setting, method or header; nothing was sent, and the connection stays |
+| `argument` | a bad URL, setting, method or header, or both `body` and `json`; nothing was sent, and the connection stays |
+
+The error of a step is given as it is, with its own kind.

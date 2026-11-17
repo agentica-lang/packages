@@ -36,6 +36,12 @@ def main() -> Void
     BDD.step("{string} sends {string} to {string} with the header {string}") do |ctx, args|
       send(ctx, Request(op: "send", name: args[0], kind: args[1], text: args[2], header: args[3]))
     end,
+    BDD.step("{string} sends {string} to {string} with the JSON {string}") do |ctx, args|
+      send(ctx, Request(op: "send", name: args[0], kind: args[1], text: args[2], json: args[3]))
+    end,
+    BDD.step("{string} sends {string} to {string} with the param {string}") do |ctx, args|
+      send(ctx, Request(op: "send", name: args[0], kind: args[1], text: args[2], param: args[3]))
+    end,
     BDD.step("{string} starts {string} to {string}") do |ctx, args|
       send(ctx, Request(op: "start", name: args[0], kind: args[1], text: args[2]))
     end,
@@ -67,6 +73,15 @@ def main() -> Void
     end,
     BDD.step("{string} ended at {string}") do |ctx, args|
       send(ctx, Request(op: "expect_url", name: args[0], text: args[1]))
+    end,
+    BDD.step("{string} has a body of {int} bytes") do |ctx, args|
+      send(ctx, Request(op: "expect_size", name: args[0], number: args[1].to_i!))
+    end,
+    BDD.step("{string} decodes to the person {string}") do |ctx, args|
+      send(ctx, Request(op: "expect_decoded", name: args[0], text: args[1]))
+    end,
+    BDD.step("{string} does not decode") do |ctx, args|
+      send(ctx, Request(op: "expect_decoded", name: args[0], text: "http_client.decode"))
     end,
     BDD.step("{string} took at least {int} ms") do |ctx, args|
       send(ctx, Request(op: "expect_after", name: args[0], number: args[1].to_i!))
