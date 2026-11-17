@@ -9,7 +9,6 @@ A backend is a `Jobs.Backend`: a record of functions, since Agentica has no trai
 ```text
 struct Backend
   name: String
-  caps: Caps
   enqueue: Fn[List[NewJob], Result[List[Enqueued]]]
   fetch: Fn[Fetch, Result[List[Lease]]]
   ack: Fn[Lease, Result[Void]]
@@ -28,7 +27,8 @@ end
 4. **Attempts count at the fetch.** `attempt` is 1 on the first delivery and counts every delivery, also one whose lease ran out. A delivery past `max_attempts` does not happen: a lease that runs out on the last attempt makes the job dead, and so does a `Retry` on the last attempt. A job that crashes its consumer cannot loop forever. `Release` does not count.
 5. **Unique keys.** While a job with the same queue and `unique_key` is ready, scheduled or leased, `enqueue` gives its id with `duplicate: true`. The key is free when the job is acked or dead.
 6. **`enqueue_all` is all or nothing:** a job that is not valid, or that does not fit, fails the call and adds none. A backend writes the batch in one transaction, or in one step of its owner, so no caller sees part of it.
-7. **`close`** refuses new calls with `jobs.closed` and waits up to `drain_ms` for the backend to stop. Closing twice does nothing.
+7. **`last_error`.** A `Retry` that carries an error makes it the `last_error` of the next delivery, a `Retry` with no error keeps the previous one, and a dead job keeps its error (the one of the `Dead`, of the last `Retry`, or why it ran out of attempts or lease).
+8. **`close`** refuses new calls with `jobs.closed` and waits up to `drain_ms` for the backend to stop. Closing twice does nothing.
 
 There is no order guarantee. Ready jobs come roughly by `run_at_ms`, then by insertion. Acked jobs are deleted, and dead jobs are kept (the memory backend keeps `max_dead` of them). The payload is bytes: every store holds bytes, and `Jobs.json` is the typed form on top.
 

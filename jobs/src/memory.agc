@@ -89,7 +89,6 @@ end
 def backend(link: Link) -> Types.Backend
   Types.Backend(
     name: "memory",
-    caps: Types.Caps(),
     enqueue: ->(jobs) { ask(link, CALL_MS) do |reply| Msg.Enqueue(jobs, reply) end },
     fetch: ->(fetch) { fetch_jobs(link, fetch) },
     ack: ->(lease) { ask(link, CALL_MS) do |reply| Msg.Ack(lease, reply) end },

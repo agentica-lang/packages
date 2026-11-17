@@ -56,7 +56,7 @@ struct Later
 end
 
 ## How a job goes back. `Retry(later)`: run again at that time (on the last attempt the job is dead instead).
-## `Release`: back now, and the attempt does not count (a stop that never started it). `Dead(reason)`: never again;
+## `Release`: back now, and the attempt does not count (a stop that never started it). `Dead(error)`: never again;
 ## kept as dead.
 enum Nack
   Retry(Later)
@@ -71,18 +71,9 @@ struct Counts
   dead: Int
 end
 
-## What a backend can do. `has_clock`: it follows an injected clock. `has_unique_keys`: it keeps unique keys.
-## `extendable`: `extend` moves a lease.
-struct Caps
-  has_clock: Bool = true
-  has_unique_keys: Bool = true
-  extendable: Bool = true
-end
-
 ## The contract: a backend fills the record, and the functions of `Jobs` call it.
 struct Backend
   name: String
-  caps: Caps
   enqueue: Fn[List[NewJob], Result[List[Enqueued]]]
   fetch: Fn[Fetch, Result[List[Lease]]]
   ack: Fn[Lease, Result[Void]]

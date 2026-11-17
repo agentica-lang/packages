@@ -173,7 +173,7 @@ def nack(store: Store, held: Types.Lease, how: Types.Nack) -> Result[Store]
     Types.Nack.Retry(later) -> ok(requeue(store, failed(entry, later.error), later.at_ms))
     Types.Nack.Release ->
       ok(requeue(store, entry.with(job: entry.job.with(attempt: entry.job.attempt - 1)), entry.job.run_at_ms))
-    Types.Nack.Dead(reason) -> ok(kill(store, entry, reason))
+    Types.Nack.Dead(message) -> ok(kill(store, entry, message))
   end
 end
 
@@ -369,16 +369,16 @@ def finish(store: Store, entry: Entry) -> Store
   store.with(entries: store.entries.delete(entry.job.id), keys: keys)
 end
 
-def kill(store: Store, entry: Entry, reason: String) -> Store
+def kill(store: Store, entry: Entry, message: String) -> Store
   gone = finish(store, entry)
-  buried = gone.dead.push(entry.with(job: entry.job.with(last_error: some(reason)), lease: none))
+  buried = gone.dead.push(entry.with(job: entry.job.with(last_error: some(message)), lease: none))
   gone.with(dead: buried.drop((buried.size - store.max_dead).clamp(0, buried.size)))
 end
 
-# A failed delivery keeps what went wrong, for the next one; a retry that says nothing leaves the last reason.
-def failed(entry: Entry, reason: Optional[String]) -> Entry
-  case reason
-    some(_) -> entry.with(job: entry.job.with(last_error: reason))
+# A failed delivery keeps what went wrong, for the next one; a retry that says nothing leaves the last error.
+def failed(entry: Entry, message: Optional[String]) -> Entry
+  case message
+    some(_) -> entry.with(job: entry.job.with(last_error: message))
     none -> entry
   end
 end
