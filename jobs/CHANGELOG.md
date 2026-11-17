@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- A limit of concurrent jobs per group: `NewJob.group` and `Job.group`, and `Fetch.max_per_group` (0 is no limit). A fetch skips a ready job whose group already has that many live leases and takes the next one; an ack, a nack of any kind and a lease that expires free a place, and a fetch that waits for a full group is woken. It is guarantee 9 of the contract, with 12 conformance cases (the suite has 39), and `Jobs.drain` logs the `group` of a job when it has one.
+- A limit of concurrent jobs per group: `NewJob.group` and `Fetch.max_per_group` (0 is no limit), and `Jobs.drain` logs the `group`.
 
 ## [0.1.0] - 2026-11-17
 

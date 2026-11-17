@@ -86,8 +86,7 @@ FETCHED_JOBS = 200
 AWAIT_MS = 30_000
 PENDING_MS = 100
 # A fetch that waits for a group is woken when a lease ends: at once on a manual clock, and after the unit of the
-# lease on
-# a real one. It fails, for a backend that does not wake it, when its wait is over.
+# lease on a real one. It fails, for a backend that does not wake it, when its wait is over.
 GROUP_WAIT_MS = 5_000
 AWAIT_GRACE_MS = 1_000
 ADVANCES = 600

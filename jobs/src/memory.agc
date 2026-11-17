@@ -69,6 +69,7 @@ end
 struct Served
   state: State
   served: Bool
+  held_back: Bool
 end
 
 # What the functions of the backend share: the actor, and whether `close` ran.
@@ -246,7 +247,7 @@ def serve_queue(state: State, now: Int, queue: String) -> State
         served = serve_waiter(current, now, waiter)
         current = served.state
         going = served.served
-        if not served.served and waiter.fetch.max_per_group > 0
+        if served.held_back
           current = serve_unlimited_behind(current, now, waiter)
         end
 
@@ -273,13 +274,26 @@ end
 # 0 is no limit, so it is higher than any.
 def higher?(limit: Int, than: Int) -> Bool = limit == 0 or limit > than
 
-# The waiter leaves when it gets jobs or an error; one that finds no job stays, and so do the ones behind it.
+# The waiter leaves when it gets jobs or an error; one that finds no job stays, and so do the ones behind it. One
+# that a
+# limit held back is not asked again until a job has come or a lease has ended since, or a job has come due.
 def serve_waiter(state: State, now: Int, waiter: Parked.Waiter) -> Served
+  return Served(state: state, served: false, held_back: false) if Parked.looked_at?(waiter, state.store.changes, now)
+
   case Store.take(state.store, now, waiter.fetch)
-    error(e) -> Served(state: reply_with(waiter.reply, error(e), gone(state, waiter)), served: true)
-    ok(taken) if taken.leases.empty? -> Served(state: state, served: false)
-    ok(taken) -> Served(state: deliver(gone(state, waiter), taken, waiter.reply), served: true)
+    error(e) -> Served(state: reply_with(waiter.reply, error(e), gone(state, waiter)), served: true, held_back: false)
+    ok(taken) if taken.leases.empty? ->
+      Served(state: look(state, waiter, taken), served: false, held_back: taken.held_back)
+    ok(taken) -> Served(state: deliver(gone(state, waiter), taken, waiter.reply), served: true, held_back: false)
   end
+end
+
+# A waiter that a limit held back remembers what it saw.
+def look(state: State, waiter: Parked.Waiter, taken: Store.Taken) -> State
+  return state if not taken.held_back
+
+  looked = Parked.Looked(changes: taken.store.changes, until_ms: taken.later_at_ms)
+  state.with(parked: Parked.look(state.parked, waiter, looked))
 end
 
 def gone(state: State, waiter: Parked.Waiter) -> State = state.with(parked: Parked.remove(state.parked, waiter.seq))
@@ -308,10 +322,15 @@ def wake_in(state: State) -> Optional[Int]
   now = state.clock.call()
   times: List[Int] = []
   for queue in Parked.queues(state.parked)
-    case Store.next_due(state.store, queue)
-      some(at) if at > now -> times = times.push(at)
-      _ -> nil
+    case Store.next_job_at(state.store, queue, now)
+      some(at) -> times = times.push(at)
+      none -> nil
     end
+  end
+
+  case Store.next_expiry(state.store)
+    some(at) -> times = times.push(at)
+    none -> nil
   end
 
   case Parked.next_wait(state.parked, now, Time.monotonic_ms())

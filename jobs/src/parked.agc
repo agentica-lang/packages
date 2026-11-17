@@ -8,13 +8,22 @@
 import Heap from "std/heap"
 import Types from "types"
 
-## A fetch that waits: until when (on the clock of the backend, and on the real one) and where to answer.
+## A fetch that waits: until when (on the clock of the backend, and on the real one) and where to answer. `looked` is
+## what it saw when a limit per group held every job back, so that it looks again only when that can have changed.
 struct Waiter
   seq: Int
   fetch: Types.Fetch
   until_ms: Int
   real_until_ms: Int
   reply: Channel[Result[List[Types.Lease]]]
+  looked: Optional[Looked]
+end
+
+## The count of changes of the store (a job that waits, a lease that ended) and the time when a job that was not due
+## comes due (none when there is no such job).
+struct Looked
+  changes: Int
+  until_ms: Optional[Int]
 end
 
 struct Mark
@@ -61,7 +70,7 @@ end
 ## Adds a fetch that waits.
 def park(parked: Parked, fetch: Types.Fetch, until: Until, reply: Channel[Result[List[Types.Lease]]]) -> Parked
   seq = parked.next_seq
-  waiter = Waiter(seq: seq, fetch: fetch, until_ms: until.ms, real_until_ms: until.real_ms, reply: reply)
+  waiter = Waiter(seq: seq, fetch: fetch, until_ms: until.ms, real_until_ms: until.real_ms, reply: reply, looked: none)
   line = parked.queues.get(fetch.queue, Heap.new(&ints_first))
   Parked(
     waiters: parked.waiters.put(seq, waiter),
@@ -96,6 +105,24 @@ end
 ## that a limit per group holds back, and not for each call.
 def line(parked: Parked, queue: String) -> List[Waiter]
   parked.waiters.values.select(->(waiter) { waiter.fetch.queue == queue }).sort_by(->(waiter) { waiter.seq })
+end
+
+## What the waiter saw when a limit held every job back.
+def look(parked: Parked, waiter: Waiter, looked: Looked) -> Parked
+  parked.with(waiters: parked.waiters.put(waiter.seq, waiter.with(looked: some(looked))))
+end
+
+## Whether the waiter saw this store (its count of changes) and no job has come due since.
+def looked_at?(waiter: Waiter, changes: Int, now: Int) -> Bool
+  case waiter.looked
+    some(looked) ->
+      case looked.until_ms
+        some(at) -> looked.changes == changes and now < at
+        none -> looked.changes == changes
+      end
+
+    none -> false
+  end
 end
 
 ## The waiter leaves.

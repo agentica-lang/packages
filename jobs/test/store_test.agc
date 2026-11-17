@@ -44,6 +44,14 @@ def fetch_limited(store: Store.Store, now: Int, max: Int, limit: Int) -> Result[
   Store.take(store, now, Jobs.Fetch(queue: "q", max: max, lease_ms: LEASE_MS, max_per_group: limit))
 end
 
+# A group of `size` jobs with one leased under a limit of 1, and the fetch that then finds the group full.
+def held_group(size: Int) -> Result[Store.Taken]
+  jobs = (1..size).map(->(n) { in_group("g", "j#{n}") })
+  added = try Store.enqueue(Store.empty(5000, 10), NOW, jobs)
+  first = try fetch_limited(added.store, NOW, 1, 1)
+  fetch_limited(first.store, NOW, 1, 1)
+end
+
 def texts(taken: Store.Taken) -> List[String]
   taken.leases.map(->(held) { String.from_bytes(held.job.payload).unwrap_or("?") })
 end
@@ -157,6 +165,54 @@ def main() -> Void
       try Test.eq(texts(try fetch_limited(first.store, NOW, 3, 1)), [])
       acked = try Store.ack(first.store, first.leases[0])
       return Test.eq(texts(try fetch_limited(acked, NOW, 3, 1)), ["a2"])
+    end,
+    Test.test(
+      "a fetch passes over a full group in as many steps for 10 jobs as for 1000, and over each full group once",
+    ) do
+      small = try held_group(10)
+      big = try held_group(1000)
+      try Test.eq(small.leases, [])
+      try Test.eq(small.held_back, true)
+      try Test.eq(big.visits, small.visits)
+      try Test.eq(big.visits <= 3, true)
+      many: List[Jobs.NewJob] = []
+      for group in ["a", "b", "c", "d"]
+        many = many + (1..50).map(->(n) { in_group(group, "#{group}#{n}") })
+      end
+
+      added = try Store.enqueue(Store.empty(5000, 10), NOW, many)
+      first = try fetch_limited(added.store, NOW, 4, 1)
+      again = try fetch_limited(first.store, NOW, 4, 1)
+      try Test.eq(again.leases, [])
+      return Test.eq(again.visits <= 5, true)
+    end,
+    Test.test(
+      "the next job time is a job that is not due: a held job has none, and the end of a lease is its own time",
+    ) do
+      added = try Store.enqueue(
+        Store.empty(10, 10),
+        NOW,
+        [in_group("g", "x"), in_group("g", "y"), Jobs.NewJob(queue: "q", payload: "z".bytes, run_at_ms: NOW + 500)],
+      )
+
+      first = try fetch_limited(added.store, NOW, 1, 1)
+      try Test.eq(Store.next_job_at(first.store, "q", NOW), some(NOW + 500))
+      try Test.eq(Store.next_expiry(first.store), some(NOW + LEASE_MS))
+      only_held = try Store.enqueue(Store.empty(10, 10), NOW, [in_group("g", "x"), in_group("g", "y")])
+      held = try fetch_limited(only_held.store, NOW, 1, 1)
+      try Test.eq(Store.next_job_at(held.store, "q", NOW), none)
+      return Test.eq(Store.next_expiry(held.store), some(NOW + LEASE_MS))
+    end,
+    Test.test(
+      "the count of changes moves when a job waits or a lease ends, and not when a fetch takes or finds nothing",
+    ) do
+      added = try Store.enqueue(Store.empty(10, 10), NOW, [in_group("g", "x"), in_group("g", "y")])
+      first = try fetch_limited(added.store, NOW, 1, 1)
+      held = try fetch_limited(first.store, NOW, 1, 1)
+      try Test.eq(first.store.changes, added.store.changes)
+      try Test.eq(held.store.changes, added.store.changes)
+      try Test.eq((try Store.ack(first.store, first.leases[0])).changes, added.store.changes + 1)
+      return Test.eq((try add(first.store, in_group("g", "z"))).store.changes, added.store.changes + 1)
     end,
     Test.test("every end of a lease frees its group: ack, retry, release, dead, expiry and a fetch nobody got") do
       added = try Store.enqueue(Store.empty(10, 10), NOW, [in_group("g", "x"), in_group("g", "y")])

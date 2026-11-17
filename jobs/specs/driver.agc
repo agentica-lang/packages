@@ -1,10 +1,10 @@
 ## The program under test of the features: it holds one memory backend, a clock, and the leases that the steps named,
 ## and runs the requests that `steps.agc` sends (`protocol.agc`), one JSON line in and one reply line out.
 ##
-## Replies: `ok`, `ok ID` (an enqueue; `ok ID duplicate` for one that was), `ok PAYLOAD attempt N` (a fetch, with `
-## last_error TEXT` and ` group NAME` when the job has them, and `, ` between the jobs when it gave more than one; `ok
-## none` when it gave none), `ready N scheduled N leased N dead N` (counts), `done N retried N dead N` (a drain), and
-## `error KIND` for a failed call.
+## Replies: `ok`, `ok ID` (an enqueue; `ok ID duplicate` for one that was), `ok PAYLOAD attempt N` (a fetch, with
+## the last error and the group of the job when it has them, and `, ` between the jobs when it gave more than one;
+## `ok none` when it gave none), `ready N scheduled N leased N dead N` (counts), `done N retried N dead N` (a drain),
+## and `error KIND` for a failed call.
 ##
 ## The payload of a job says what a drain does with it: `ok` acks it, `fail` returns an error, `discard` discards it,
 ## and `fail once` fails the first attempt only.
