@@ -107,10 +107,13 @@ end
 def read_at(data: Bytes, offset: Int, names: Names, depth: Int) -> Result[Found]
   return checked(names.entries[offset], names, depth) if names.entries.has_key?(offset)
 
+  starts: List[Int] = []
   labels: List[String] = []
+  lengths: List[Int] = []
   position = offset
   size = 0
   tail = ""
+  base = 1
   pointers = 0
   after = 0
   known = names
@@ -118,7 +121,6 @@ def read_at(data: Bytes, offset: Int, names: Names, depth: Int) -> Result[Found]
     return malformed("a name runs past the end of the message") if position >= data.size
     first = data[position]
     if first == 0
-      size += 1
       after = position + 1
       break
     elsif first >= POINTER
@@ -129,7 +131,7 @@ def read_at(data: Bytes, offset: Int, names: Names, depth: Int) -> Result[Found]
       found = try read_at(data, target, known, depth + 1)
       known = found.names
       tail = found.entry.text
-      size += found.entry.size
+      base = found.entry.size
       pointers = found.entry.pointers + 1
       after = position + 2
       break
@@ -139,13 +141,33 @@ def read_at(data: Bytes, offset: Int, names: Names, depth: Int) -> Result[Found]
       return malformed("a label runs past the end of the message") if position + 1 + first > data.size
       size += first + 1
       return malformed("a name is over #{MAX_NAME_BYTES} bytes") if size > MAX_NAME_BYTES
+      starts = starts.push(position)
       labels = labels.push(escaped(data.slice(position + 1, first)))
+      lengths = lengths.push(first + 1)
       position += first + 1
     end
   end
 
-  entry = Entry(text: joined(labels, tail), size: size, pointers: pointers, next: after)
-  checked(entry, Names(entries: known.entries.put(offset, entry)), depth)
+  # Every label start is a name of its own, which a later pointer may name: it ends where this one does.
+  text = tail
+  total = base
+  entries = known.entries
+  top = Entry(text: tail, size: base, pointers: pointers, next: after)
+  index = labels.length - 1
+  while index >= 0
+    text = joined([labels[index]], text)
+    total += lengths[index]
+    top = Entry(text: text, size: total, pointers: pointers, next: after)
+    entries = entries.put(starts[index], top)
+    index -= 1
+  end
+
+  if labels.empty?
+    entries = entries.put(offset, top)
+  end
+
+  return malformed("a name is over #{MAX_NAME_BYTES} bytes") if top.size > MAX_NAME_BYTES
+  checked(top, Names(entries: entries), depth)
 end
 
 # A name that was read before still has to fit where it is read now: the pointers add up along the way.

@@ -106,7 +106,8 @@ def test_data_of_the_wrong_size_is_refused() -> Result[Void]
   try Test.assert(malformed?(a + "0005" + "0102030405"), "an A of 5 bytes")
   aaaa = ONE_ANSWER + "001c0001" + "00000000"
   try Test.assert(not malformed?(aaaa + "0010" + "00000000000000000000000000000001"), "an AAAA of 16 bytes")
-  Test.assert(malformed?(aaaa + "000f" + "000000000000000000000000000001"), "an AAAA of 15 bytes")
+  try Test.assert(malformed?(aaaa + "000f" + "000000000000000000000000000001"), "an AAAA of 15 bytes")
+  Test.assert(malformed?(aaaa + "0011" + "0000000000000000000000000000000102"), "an AAAA of 17 bytes")
 end
 
 def test_a_name_in_the_data_of_a_record_must_fill_it() -> Result[Void]
@@ -125,7 +126,10 @@ def test_a_pointer_must_go_before_its_name() -> Result[Void]
   try Test.assert(malformed?(question_pair("0161" + "00", "0161c013")), "a pointer into its own name")
   try Test.assert(not malformed?(question_pair("0161" + "00", "0161c00c")), "a pointer to the question before")
   # Offset 0 to 11 is the header.
-  Test.assert(malformed?(question_pair("0161" + "00", "c005")), "a pointer into the header")
+  try Test.assert(malformed?(question_pair("0161" + "00", "c005")), "a pointer into the header")
+  # The label of 3 bytes holds a 0, and the pointer goes to it: read from there the name ends, so only the rule that a
+  # pointer goes before its name refuses it.
+  Test.assert(malformed?("abcd01000001000000000000" + "03006162c00d" + "00010001"), "a pointer into its own label")
 end
 
 def test_a_name_follows_32_pointers_and_not_33() -> Result[Void]
@@ -171,14 +175,67 @@ def test_a_name_that_pointers_make_longer_than_255_bytes_is_refused() -> Result[
   Test.assert(malformed?(question_pair(long, "3e" + "62" * 62 + "c00c")), "256 bytes")
 end
 
+def test_pointers_to_many_label_starts_cost_the_bytes_of_the_names() -> Result[Void]
+  # 20 names of 120 labels, then a record for each label start of each name, 2400 in all.
+  names = 20
+  labels = 120
+  question_bytes = labels * 2 + 1 + 4
+  body = ""
+  for index in 0...names
+    body = body + one_letter_name(index, labels) + "00010001"
+  end
+
+  rows: List[Bytes] = []
+  for index in 0...names
+    for label in 0...labels
+      offset = 12 + index * question_bytes + label * 2
+      owner = hex(try Binary.write_u16_be(49_152 + offset))
+      rows = rows.push(bytes_of(owner + "00010001" + "00000000" + "0004" + "01020304"))
+    end
+  end
+
+  count = names * labels
+  header = "abcd8180" + hex(try Binary.write_u16_be(names)) + hex(try Binary.write_u16_be(count)) + "00000000"
+  data = Bytes.concat([bytes_of(header + body)] + rows)
+  before = System.Profile.steps()
+  message = try Wire.decode(data)
+  try Test.eq(message.answers.length, count)
+  Test.assert(System.Profile.steps() - before < 1000 * count, "the work grows with the bytes, not with their names")
+end
+
+def test_a_chain_of_pointers_that_nobody_read_is_cut_before_it_is_followed() -> Result[Void]
+  # A record of an unknown type holds 3000 names, each a pointer to the one before. The owner of the next record points
+  # at the last of them: the 33rd pointer ends the walk, whatever the length of the chain.
+  chain_size = 3000
+  first = 12 + 3 + 4 + 12
+  links = "c00c"
+  for index in 1...chain_size
+    links = links + hex(try Binary.write_u16_be(49_152 + first + 2 * (index - 1)))
+  end
+
+  last = first + 2 * (chain_size - 1)
+  record = "c00c" + "00100001" + "00000000" + hex(try Binary.write_u16_be(chain_size * 2)) + links
+  header = "abcd81800001000200000000" + "016100" + "00010001"
+  owner = hex(try Binary.write_u16_be(49_152 + last))
+  data = header + record + owner + "00010001" + "00000000" + "0004" + "01020304"
+  before = System.Profile.steps()
+  try Test.assert(malformed?(data), "the chain is too long")
+  Test.assert(System.Profile.steps() - before < 100_000, "the walk stops at 33 pointers")
+end
+
+# A name of `labels` labels of one byte, the letter of `index`: hex.
+def one_letter_name(index: Int, labels: Int) -> String
+  label = "01" + hex(Bytes.from_list([97 + index]).unwrap!)
+  label * labels + "00"
+end
+
 # Two questions: the first is `first` (a name as hex) and the type and class, the second is `second`.
 def question_pair(first: String, second: String) -> String
   "abcd01000002000000000000" + first + "00010001" + second + "00010001"
 end
 
-# `count` questions in a row: the first is a label and the end of a name, each of the others a label and a pointer
-# to the
-# name before it, so the last one follows `count - 1` pointers.
+# `count` questions in a row: the first is a label and the end of a name, each of the others a label and a pointer to
+# the name before it, so the last one follows `count - 1` pointers.
 def chain(count: Int) -> String
   text = "abcd0100" + hex(Binary.write_u16_be(count).unwrap!) + "000000000000" + "016100" + "00010001"
   previous = 12
