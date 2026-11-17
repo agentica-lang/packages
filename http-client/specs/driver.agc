@@ -13,6 +13,8 @@ PEERS = {"server": "fixtures/server.agc", "tls_server": "fixtures/server.agc", "
 PEER_START_MS = 60_000
 WAIT_MS = 30_000
 QUIET_MS = 500
+# How long the resolver answers a name whose address is `hang`: longer than any scenario.
+HANG_MS = 60_000
 # A started request's task stays until it is cancelled or the driver ends, as a caller's task would.
 LINGER_MS = 600_000
 
@@ -204,7 +206,7 @@ def make_client(driver: Driver, req: Request) -> Handled
   end
 end
 
-# A resolver that knows only `names` and counts each question in `asked`.
+# A resolver that knows only `names` and counts each question in `asked`. A name of `hang` never gets its answer.
 def resolver_of(names: Map[String, List[String]], asked: ATS[String, Int]) -> Fn[String, Result[List[String]]]
   ->(host) { answer(names, asked, host) }
 end
@@ -212,6 +214,9 @@ end
 def answer(names: Map[String, List[String]], asked: ATS[String, Int], host: String) -> Result[List[String]]
   _ = asked.add(host, 1)
   case names.get(host)
+    some(addresses) if addresses == ["hang"] ->
+      Task.sleep(HANG_MS)
+      ok([])
     some(addresses) -> ok(addresses)
     none -> error("network: host not found: #{host}", kind: "net.host_not_found")
   end

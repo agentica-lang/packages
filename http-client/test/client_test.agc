@@ -32,6 +32,8 @@ def test_a_proxy_is_refused_with_a_resolver_or_public_only_and_the_dns_cache_is_
   try Test.eq(made(HttpClient.new(proxy: "http://127.0.0.1:9", resolver: some(&nowhere))), "argument")
   try Test.eq(made(HttpClient.new(dns_cache_ms: -1)), "argument")
   try Test.eq(made(HttpClient.new(timeout_ms: 9_000_000_000_000_000_000)), "argument")
+  try Test.eq(made(HttpClient.new(idle_ms: 9_000_000_000_000_000_000)), "argument")
+  try Test.eq(made(HttpClient.new(pool_timeout_ms: 9_000_000_000_000_000_000)), "argument")
   Test.eq(made(HttpClient.new(proxy: "http://127.0.0.1:9")), "ok")
 end
 

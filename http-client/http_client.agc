@@ -72,7 +72,10 @@ def new(
   proxy: String = "",
   tls: Optional[TLS.Context] = none,
 ) -> Result[Client]
-  return argument("pool_timeout_ms and idle_ms must be at least 1") if pool_timeout_ms < 1 or idle_ms < 1
+  if pool_timeout_ms < 1 or idle_ms < 1 or pool_timeout_ms > MAX_MS or idle_ms > MAX_MS
+    return argument("pool_timeout_ms and idle_ms must be 1 to #{MAX_MS}")
+  end
+
   return argument("pool_size must be at least 1") if pool_size < 1
   return argument("dns_cache_ms must be 0 to #{MAX_MS}") if dns_cache_ms < 0 or dns_cache_ms > MAX_MS
   if not proxy.empty? and (resolver.some? or public_only)

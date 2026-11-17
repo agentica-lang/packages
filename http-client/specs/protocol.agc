@@ -12,7 +12,8 @@ OK = "ok"
 ##   `fixtures/raw_peer.agc`, text: the script of a raw peer, one answer per line) starts a peer;
 ## - `client` (name: the peer of `base_url`, table: a header row, then a setting and a value per row) makes the client,
 ##   with `max_retries` 0 and `retry_delay_ms` 10 unless a row sets them, so that only the scenarios of retries retry;
-##   a `resolve` row (`name=address,address`) gives it a resolver that knows those names and counts its questions, and
+##   a `resolve` row (`name=address,address`, or `name=hang` for one it never answers) gives it a resolver that knows
+##   those names and counts its questions, and
 ##   a `ca` row a TLS context that trusts that CA file;
 ## - `send` and `start` (name: the request, kind: the method, text: the URL, where `{a}` is the address of the peer
 ##   `a` and `{a:port}` its port alone, body, header: `name: value` or "") send a request and wait for it, or let it run; `wait` (name) waits for
