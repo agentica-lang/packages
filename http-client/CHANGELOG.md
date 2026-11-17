@@ -12,3 +12,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `resolver` and `public_only`, opt-in: the client then resolves the host itself, with a DNS cache (`dns_cache_ms`, 10 s), and `public_only` refuses loopback, private, link-local and other non-public addresses on the address the connection goes to.
 - `params`, `json` bodies, `HttpClient.decode` into a type, `basic_auth` and `bearer_auth`, and request and response steps (`request_steps`, `response_steps`).
 - gzip and deflate bodies are decoded (`decompress`, on by default), within `max_body_bytes`.
+- `HttpClient.stream`: the body of a response as a channel of pieces, as the server sends them; `events` and `get_events` read it as server-sent events.

@@ -15,6 +15,8 @@
 ##   keep-alive SECONDS BODY  a 200 with `Keep-Alive: timeout=SECONDS`
 ##   slow-head MS BODY      waits MS before it writes the head of a 200
 ##   stall MS BODY          writes the head of a 200 and half of BODY, waits MS, then writes the rest
+##   chunks MS P1,P2,...    a 200, chunked, with each piece as a chunk and MS between them; in a piece `_` is a
+##                          space and `\n` a line end
 ##   idle MS                not an answer: a connection idle for MS between requests is closed (else it stays)
 ##
 ## Each answer has `x-connection: N`, the number of its TCP connection from 1, and the peer prints
@@ -128,6 +130,20 @@ def read_exact(socket: TCP.Socket, count: Int) -> Result[Bytes]
   ok(Bytes.concat(parts))
 end
 
+def chunked(socket: TCP.Socket, number: Int, wait_ms: Int, pieces: List[String]) -> Bool
+  head = "HTTP/1.1 200 Peer#{CRLF}x-connection: #{number}#{CRLF}transfer-encoding: chunked#{CRLF}#{CRLF}"
+  return false if not TCP.send(socket, head, STEP_MS).ok?
+
+  for piece in pieces
+    text = piece.replace("_", " ").replace("\\n", "\n")
+    return false if not TCP.send(socket, "#{format("%x", text.bytesize)}#{CRLF}#{text}#{CRLF}", STEP_MS).ok?
+
+    Task.sleep(wait_ms)
+  end
+
+  TCP.send(socket, "0#{CRLF}#{CRLF}", STEP_MS).ok?
+end
+
 # Writes the answer and says whether the connection stays open.
 def write_answer(socket: TCP.Socket, number: Int, request: Request, answer: List[String]) -> Bool
   op = answer[0]
@@ -162,6 +178,8 @@ def write_answer(socket: TCP.Socket, number: Int, request: Request, answer: List
   if op == "slow-head"
     Task.sleep(wait_ms)
   end
+
+  return chunked(socket, number, answer[1].to_i!, answer[2].split(",")) if op == "chunks"
 
   return false if op == "drop"
 

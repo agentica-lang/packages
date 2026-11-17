@@ -18,10 +18,13 @@ import Pools from "src/pools"
 import Redirect from "src/redirect"
 import {Hop} from "src/redirect"
 import Retry from "src/retry"
+import Sse from "src/sse"
 import URI from "std/uri"
 import Url from "src/url"
 
 export Exchange.Response
+export Exchange.Stream
+export Sse.Event
 
 ## A request as the request steps see it: the method, the whole URL with its query, the headers and the body.
 struct Request
@@ -168,6 +171,82 @@ def request(
   params: List[URI.Pair] = [],
   headers: List[HTTP.Header] = [],
 ) -> Result[Exchange.Response]
+  first = try prepared(client, method, url, body, json, params, headers, client.decompress)
+  got = try sent(client, first, false)
+  response = try decoded(client, got.response)
+  for step in client.response_steps
+    response = try step.call(response)
+  end
+
+  ok(response)
+end
+
+## Sends a request as `request` does, and gives the response once its head has come: its body comes in pieces through
+## `body` (`Stream`), as the server sends them, for a reader that is a task of the caller's. The client asks for no
+## compression and decodes none, and runs no response steps. A response that is retried or redirected is read whole
+## and dropped, as for `request`; so is one that cannot go again for lack of time, which then comes as one piece.
+## `timeout_ms` bounds the call up to the head; after it, each piece has `read_timeout_ms` to come, and the reader as
+## long to take it, else the stream ends. Read `body` to its end, or close it, so that its connection goes back to the
+## pool.
+def stream(
+  client: Client,
+  method: String,
+  url: String,
+  body: Optional[Bytes] = none,
+  json: Optional[JSON.Value] = none,
+  params: List[URI.Pair] = [],
+  headers: List[HTTP.Header] = [],
+) -> Result[Exchange.Stream]
+  first = try prepared(client, method, url, body, json, params, headers, false)
+  got = try sent(client, first, true)
+  case got.stream
+    some(streamed) -> ok(streamed)
+    none ->
+      pieces: Channel[Result[Bytes]] = Channel.new(1)
+      if not got.response.body.empty?
+        _ = pieces.send(ok(got.response.body), 0)
+      end
+
+      pieces.close
+      response = got.response
+      ok(Exchange.Stream(status: response.status, headers: response.headers, url: response.url, body: pieces))
+  end
+end
+
+## The server-sent events of `stream` (`text/event-stream`), read by a task of their own: `ok(event)` for each, or one
+## `error` when the body fails or an event is over `max_event_bytes` (`http_client.too_large`); the channel closes at
+## the end of the body. Closing it early closes the body. The client does not reconnect: a reader that wants to goes
+## again with the `last-event-id` header, from the `id` of the last event.
+def events(stream: Exchange.Stream, max_event_bytes: Int = 1_048_576) -> Channel[Result[Sse.Event]]
+  out: Channel[Result[Sse.Event]] = Channel.new(EVENTS)
+  Task.spawn do relay(stream.body, out, max_event_bytes) end
+  out
+end
+
+## A `GET` request whose body comes as a stream of server-sent events, with `accept: text/event-stream` unless
+## `headers` name another.
+def get_events(
+  client: Client,
+  url: String,
+  params: List[URI.Pair] = [],
+  headers: List[HTTP.Header] = [],
+  max_event_bytes: Int = 1_048_576,
+) -> Result[Channel[Result[Sse.Event]]]
+  streamed = try stream(client, "GET", url, params: params, headers: merge([EVENT_STREAM], headers))
+  ok(events(streamed, max_event_bytes))
+end
+
+# The request of a call, before its first try: the URL with its params, the headers, the body and the steps.
+def prepared(
+  client: Client,
+  method: String,
+  url: String,
+  body: Optional[Bytes],
+  json: Optional[JSON.Value],
+  params: List[URI.Pair],
+  headers: List[HTTP.Header],
+  compressed: Bool,
+) -> Result[Request]
   try valid(client)
   return argument("give a body or json, not both") if body.some? and json.some?
 
@@ -182,7 +261,7 @@ def request(
     first = first.with(body: JSON.encode(json.unwrap!).bytes, headers: merge([JSON_TYPE], first.headers))
   end
 
-  if client.decompress
+  if compressed
     first = first.with(headers: merge([ACCEPT_ENCODING], first.headers))
   end
 
@@ -190,12 +269,7 @@ def request(
     first = try step.call(first)
   end
 
-  response = try sent(client, first)
-  for step in client.response_steps
-    response = try step.call(response)
-  end
-
-  ok(response)
+  ok(first)
 end
 
 ## The body of the response read as JSON into the type of `codec`: `HttpClient.decode(response, User.codec)`. A body
@@ -308,9 +382,21 @@ MAX_MS = 31_536_000_000
 HEALTH_MS = 5_000
 # How long a try that ran out of time has to end once cancelled.
 CANCEL_MS = 1_000
+EVENT_STREAM = HTTP.Header(name: "accept", value: "text/event-stream")
+# The events that wait for the reader, and how long the relay waits for a piece and for the reader. Each piece comes
+# within the `read_timeout_ms` of the client, or the body ends, so these waits only bound a reader that forgets the
+# channel.
+EVENTS = 16
+RELAY_MS = 3_600_000
 
-# The request after its retries and redirects, with its body decoded.
-def sent(client: Client, first: Request) -> Result[Exchange.Response]
+# What a try gives: the response, whole, or its head and the stream of its body.
+struct Got
+  response: Exchange.Response
+  stream: Optional[Exchange.Stream]
+end
+
+# The request after its retries and redirects.
+def sent(client: Client, first: Request, streamed: Bool) -> Result[Got]
   target = try Url.resolve(client.base_url, first.url)
   deadline = Time.monotonic_ms() + client.timeout_ms
   policy = Retry.Policy(
@@ -323,20 +409,22 @@ def sent(client: Client, first: Request) -> Result[Exchange.Response]
   tries = 0
   redirects = 0
   while redirects <= client.max_redirects
-    result = once(client, hop, deadline)
-    case Retry.wait_ms(policy, hop.method, result, tries, Time.now_ms(), &jitter)
+    result = once(client, hop, deadline, streamed, tries)
+    case Retry.wait_ms(policy, hop.method, responded(result), tries, Time.now_ms(), &jitter)
       some(ms) if Time.monotonic_ms() + ms < deadline ->
+        dropped(result)
         Task.sleep(ms)
         tries = tries + 1
         next
       _ -> nil
     end
 
-    response = try result
-    location = Redirect.location(response)
-    return decoded(client, response) if client.max_redirects == 0 or not location.some?
+    got = try result
+    location = Redirect.location(got.response)
+    return ok(got) if client.max_redirects == 0 or not location.some?
 
-    hop = try Redirect.next(target, hop, response.status, location.unwrap!, client.proxied)
+    dropped(result)
+    hop = try Redirect.next(target, hop, got.response.status, location.unwrap!, client.proxied)
     redirects = redirects + 1
   end
 
@@ -376,8 +464,69 @@ end
 # Between half the backoff and all of it, so that clients that failed together do not come back together.
 def jitter(backoff_ms: Int) -> Int = Random.int(backoff_ms / 2, backoff_ms)
 
+def responded(result: Result[Got]) -> Result[Exchange.Response]
+  case result
+    ok(got) -> ok(got.response)
+    error(e) -> error(e)
+  end
+end
+
+# A stream that is not given to the caller is closed, which ends its request.
+def dropped(result: Result[Got]) -> Void
+  case result
+    ok(got) if got.stream.some? -> got.stream.unwrap!.body.close
+    _ -> nil
+  end
+end
+
+# Whether a response of a streamed call is read whole all the same, from its head: one that may be redirected or
+# retried.
+def kept_whole?(client: Client, hop: Hop, tries: Int, head: Exchange.Response) -> Bool
+  return true if client.max_redirects > 0 and Redirect.location(head).some?
+
+  policy = Retry.Policy(
+    max_retries: client.max_retries,
+    delay_ms: client.retry_delay_ms,
+    max_delay_ms: client.max_retry_delay_ms,
+  )
+
+  Retry.wait_ms(policy, hop.method, ok(head), tries, Time.now_ms(), &jitter).some?
+end
+
+# Reads the pieces of `body` into events until its end, or until the reader closes `out`.
+def relay(body: Channel[Result[Bytes]], out: Channel[Result[Sse.Event]], max_bytes: Int) -> Result[Void]
+  parser = Sse.parser()
+  piece = body.recv(RELAY_MS)
+  while piece.ok? and not out.closed?
+    case piece.unwrap!
+      ok(bytes) ->
+        case Sse.feed(parser, bytes, max_bytes)
+          ok(fed) ->
+            parser = fed.parser
+            for event in fed.events
+              _ = out.send(ok(event), RELAY_MS)
+            end
+
+          error(e) ->
+            _ = out.send(error(e), RELAY_MS)
+            out.close
+        end
+
+      error(e) ->
+        _ = out.send(error(e), RELAY_MS)
+        out.close
+    end
+
+    piece = body.recv(RELAY_MS)
+  end
+
+  body.close
+  out.close
+  ok()
+end
+
 # One try of the hop, within what is left of the call.
-def once(client: Client, hop: Hop, deadline: Int) -> Result[Exchange.Response]
+def once(client: Client, hop: Hop, deadline: Int, streamed: Bool, tries: Int) -> Result[Got]
   return timed_out(client) if deadline - Time.monotonic_ms() < 1
 
   pool = try Pools.pool_for(client.pools, hop.target.origin, client.timeout_ms)
@@ -393,16 +542,38 @@ def once(client: Client, hop: Hop, deadline: Int) -> Result[Exchange.Response]
     read_timeout_ms: client.read_timeout_ms,
     deadline: deadline,
     max_body_bytes: client.max_body_bytes,
+    streaming: none,
   )
 
+  arrivals: Channel[Exchange.Arrival] = Channel.new(2)
+  if streamed
+    whole = ->(head) { kept_whole?(client, hop, tries, head) }
+    call = call.with(streaming: some(Exchange.Streaming(whole: whole, arrivals: arrivals)))
+  end
+
   # A task of its own, so that `timeout_ms` can cancel the request wherever it is; the pool then ends its connection.
+  # The task of a streamed response goes on after its head, until the end of its body.
   running = Task.spawn do Pool.with(pool) do |link| Exchange.run(link, call) end end
-  case Task.await(running, left)
-    Await.Done(result) -> pool_failure(result)
-    Await.TimedOut ->
+  Task.monitor(running, arrivals) do |_down| Exchange.Arrival.Over end
+  case arrivals.recv(left)
+    ok(arrival) -> arrived(client, running, arrival)
+    error(_) ->
       Task.cancel(running)
       _ = Task.await(running, CANCEL_MS)
       timed_out(client)
+  end
+end
+
+def arrived(client: Client, running: Task[Result[Exchange.Response]], arrival: Exchange.Arrival) -> Result[Got]
+  case arrival
+    Exchange.Arrival.Head(head) ->
+      response = Exchange.Response(status: head.status, headers: head.headers, body: NO_BODY, url: head.url)
+      ok(Got(response: response, stream: some(head)))
+    Exchange.Arrival.Over ->
+      case Task.await(running, 1)
+        Await.Done(result) -> ok(Got(response: try pool_failure(result), stream: none))
+        Await.TimedOut -> timed_out(client)
+      end
   end
 end
 

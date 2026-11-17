@@ -18,8 +18,31 @@ struct Response
   url: String
 end
 
+## A response whose body comes in pieces: `body` gives `ok(piece)` for each piece as it comes, or one `error` when the
+## body fails, and closes at its end. The client waits `read_timeout_ms` for each piece, and as long for the reader to
+## take it; closing `body` ends the request early, and its connection.
+struct Stream
+  status: Int
+  headers: List[HTTP.Header]
+  url: String
+  body: Channel[Result[Bytes]]
+end
+
+## What reaches the caller of a try: the head of a streamed response, and the end of the task of the try.
+enum Arrival
+  Head(Stream)
+  Over
+end
+
+## How a call streams: `whole` says which responses are read whole all the same (given with their head only), and
+## the head of a streamed one goes to `arrivals`.
+struct Streaming
+  whole: Fn[Response, Bool]
+  arrivals: Channel[Arrival]
+end
+
 ## What one request needs: where it goes, what it sends, and its limits. `deadline` is the monotonic time at which
-## `timeout_ms` of the whole request runs out.
+## `timeout_ms` of the whole request runs out; it does not bound the body of a streamed response.
 struct Call
   method: String
   target: Url.Target
@@ -29,6 +52,7 @@ struct Call
   read_timeout_ms: Int
   deadline: Int
   max_body_bytes: Int
+  streaming: Optional[Streaming]
 end
 
 ## Runs the request on the link: on its idle connection, or on a new one. When std/http finds that the idle
@@ -58,6 +82,8 @@ end
 private
 
 READ_BYTES = 65_536
+# The pieces of a streamed body that wait for the reader.
+PIECES = 16
 NO_BYTES = "".bytes
 # The longest `Keep-Alive: timeout=` that is taken as it is: a day.
 MAX_KEEP_ALIVE_S = 86_400
@@ -159,14 +185,46 @@ def sent(held: Held, call: Call, wait: Wait, head: Result[HTTP.ResponseHead]) ->
 end
 
 def answered(held: Held, call: Call, head: HTTP.ResponseHead) -> Result[Done]
-  body = try read_all(held, call)
-  ok(
-    Done(
-      response: Response(status: head.status, headers: head.headers, body: body, url: Url.to_s(call.target)),
-      reusable: reusable?(call.method, head),
-      expires_at: keep_alive_end(head.headers),
-    ),
-  )
+  response = Response(status: head.status, headers: head.headers, body: NO_BYTES, url: Url.to_s(call.target))
+  case call.streaming
+    some(streaming) if not streaming.whole.call(response) -> try streamed(held, call, response, streaming)
+    _ -> response = response.with(body: try read_all(held, call))
+  end
+
+  ok(Done(response: response, reusable: reusable?(call.method, head), expires_at: keep_alive_end(head.headers)))
+end
+
+# Gives the head to the caller, then each piece of the body to the reader, until its end.
+def streamed(held: Held, call: Call, response: Response, streaming: Streaming) -> Result[Void]
+  body: Channel[Result[Bytes]] = Channel.new(PIECES)
+  head = Stream(status: response.status, headers: response.headers, url: response.url, body: body)
+  _ = streaming.arrivals.send(Arrival.Head(head), 0)
+  pumped = pump(held, call, body)
+  body.close
+  pumped
+end
+
+def pump(held: Held, call: Call, body: Channel[Result[Bytes]]) -> Result[Void]
+  piece = try next_piece(held, call, body)
+  while not piece.empty?
+    return failure("the reader closed the body", "network") if not body.send(ok(piece), call.read_timeout_ms).ok?
+
+    piece = try next_piece(held, call, body)
+  end
+
+  ok()
+end
+
+# The next piece of a streamed body, empty at its end. A failure goes to the reader too.
+def next_piece(held: Held, call: Call, body: Channel[Result[Bytes]]) -> Result[Bytes]
+  wait = Wait(ms: call.read_timeout_ms, kind: "timeout.read")
+  case HTTP.read_body(waiting(held, wait), READ_BYTES)
+    ok(piece) -> ok(piece)
+    error(e) ->
+      failed: Result[Bytes] = read_failure(e, wait, "the body did not come")
+      _ = body.send(failed, call.read_timeout_ms)
+      failed
+  end
 end
 
 # A connection can take the next request when the server did not close it and the body had a known end: a length,
