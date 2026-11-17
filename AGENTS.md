@@ -50,6 +50,10 @@ dock/                a TCP server: dock.agc is the API (start, stop, wait, watch
                      the task of one client, src/outbox.agc its queue and writer, src/stats.agc the counters,
                      src/types.agc the records; test/dock_test.agc has the socket tests (real localhost sockets,
                      port 0)
+dns/                 a DNS client: dns.agc is the API (encode_query, decode); src/wire.agc the messages, src/name.agc the
+                     names and their compression (all pure), src/types.agc the records; test/ has the unit tests;
+                     specs/codec.feature checks the codec against specs/fixtures/dns_peer.py (an independent encoder
+                     and decoder in Python's standard library, which also writes random and damaged messages)
 pool/                a generic pool of resources: pool.agc is the API (start, with, close, timeout?) and the caller's
                      side (the ticket, the body in the caller or in a task of its own); src/owner.agc the owner task
                      (the line, the workers' states, the health tick, the close), src/keeper.agc the task of one

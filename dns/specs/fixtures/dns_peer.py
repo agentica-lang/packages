@@ -22,8 +22,8 @@ import sys
 
 TYPE_A, TYPE_NS, TYPE_CNAME, TYPE_PTR, TYPE_AAAA = 1, 2, 5, 12, 28
 NAME_TYPES = {TYPE_CNAME: "CNAME", TYPE_NS: "NS", TYPE_PTR: "PTR"}
-# Types whose data the decoder keeps as raw bytes: TXT, MX, SRV and one that nobody knows.
-RAW_TYPES = [16, 15, 33, 65280]
+# Types whose data the decoder keeps as raw bytes: TXT, MX, SRV, OPT and one that nobody knows.
+RAW_TYPES = [16, 15, 33, 41, 65280]
 
 
 class Malformed(Exception):
@@ -43,23 +43,10 @@ def escape_label(label):
 
 
 def ipv6_text(data):
-    groups = [int.from_bytes(data[i : i + 2], "big") for i in range(0, 16, 2)]
-    best, best_size, index = -1, 0, 0
-    while index < 8:
-        size = 0
-        while index + size < 8 and groups[index + size] == 0:
-            size += 1
-        if size > best_size:
-            best, best_size = index, size
-        index += size + 1
-    shown = lambda items: ":".join("%x" % item for item in items)
-    if best_size < 2:
-        text = shown(groups)
-    else:
-        text = shown(groups[:best]) + "::" + shown(groups[best + best_size :])
-    reference = str(ipaddress.IPv6Address(bytes(data)))
-    assert "." in reference or reference == text, (reference, text)
-    return text
+    # `ipaddress` writes the mapped form with hex groups before Python 3.13, so it is a case of its own (RFC 5952 5).
+    if data[:12] == bytes(10) + b"\xff\xff":
+        return "::ffff:" + str(ipaddress.IPv4Address(bytes(data[12:])))
+    return str(ipaddress.IPv6Address(bytes(data)))
 
 
 def name_text(labels):
@@ -119,39 +106,46 @@ class Encoder:
 # --- the decoder -----------------------------------------------------------------------------------------------
 
 
-def read_name(data, position):
+def read_name(data, start, depth=0, seen=frozenset()):
+    """The labels of the name at `start` and the offset after it. A pointer may only go to a place before the start of
+    the name that holds it (and not into the header), so the labels it leads to are read by the same function, one
+    level deeper, and `seen` holds the starts that are being read."""
+    if start in seen or depth > 32:
+        raise Malformed("pointer loop or too many pointers")
+    if start >= len(data):
+        raise Malformed("name past the end")
     labels = []
-    after = None
-    jumps = 0
-    size = 1
+    position = start
     while True:
         if position >= len(data):
             raise Malformed("name past the end")
         length = data[position]
-        if length == 0:
-            return labels, (position + 1 if after is None else after)
-        if length & 0xC0 == 0xC0:
+        kind = length >> 6
+        if kind == 0 and length == 0:
+            return labels, position + 1
+        if kind == 3:
             if position + 1 >= len(data):
                 raise Malformed("pointer past the end")
             target = ((length & 0x3F) << 8) | data[position + 1]
-            if after is None:
-                after = position + 2
-            if target >= position:
-                raise Malformed("pointer does not go back")
-            jumps += 1
-            if jumps > 32:
-                raise Malformed("too many pointers")
-            position = target
-        elif length & 0xC0:
+            if not 12 <= target < start:
+                raise Malformed("pointer outside the allowed range")
+            more, _ = read_name(data, target, depth + 1, seen | {start})
+            return labels + more, position + 2
+        if kind != 0:
             raise Malformed("reserved label type")
-        else:
-            if position + 1 + length > len(data):
-                raise Malformed("label past the end")
-            size += 1 + length
-            if size > 255:
-                raise Malformed("name over 255 bytes")
-            labels.append(bytes(data[position + 1 : position + 1 + length]))
-            position += 1 + length
+        if position + 1 + length > len(data):
+            raise Malformed("label past the end")
+        labels.append(bytes(data[position + 1 : position + 1 + length]))
+        position += 1 + length
+        if sum(1 + len(label) for label in labels) + 1 > 255:
+            raise Malformed("name over 255 bytes")
+
+
+def checked_name(data, start):
+    labels, after = read_name(data, start)
+    if 1 + sum(1 + len(label) for label in labels) > 255:
+        raise Malformed("name over 255 bytes")
+    return labels, after
 
 
 def decode(data):
@@ -161,19 +155,19 @@ def decode(data):
     position = 12
     parts = []
     for _ in range(qd):
-        labels, position = read_name(data, position)
+        labels, position = checked_name(data, position)
         kind, klass = struct.unpack(">HH", data[position : position + 4])
         position += 4
         parts.append("Q %s %d %d" % (name_text(labels), kind, klass))
     for tag, count in (("AN", an), ("NS", ns), ("AR", ar)):
         for _ in range(count):
-            labels, position = read_name(data, position)
+            labels, position = checked_name(data, position)
             kind, klass, ttl, length = struct.unpack(">HHIH", data[position : position + 10])
             position += 10
             end = position + length
             if end > len(data):
                 raise Malformed("data past the end")
-            if ttl >= 0x80000000:
+            if ttl >= 0x80000000 and kind != 41:
                 ttl = 0
             parts.append("%s %s %d %d %d %s" % (tag, name_text(labels), kind, klass, ttl, rdata_text(data, kind, position, end)))
             position = end
@@ -200,7 +194,7 @@ def rdata_text(data, kind, start, end):
             raise Malformed("AAAA is not 16 bytes")
         return "AAAA:" + ipv6_text(data[start:end])
     if kind in NAME_TYPES:
-        labels, after = read_name(data, start)
+        labels, after = checked_name(data, start)
         if after != end:
             raise Malformed("name does not fill the data")
         return NAME_TYPES[kind] + ":" + name_text(labels)
@@ -236,6 +230,8 @@ def random_name(rng, pool):
 def random_address(rng, size):
     if size == 4:
         return bytes(rng.randint(0, 255) for _ in range(4))
+    if rng.random() < 0.15:
+        return bytes(10) + b"\xff\xff" + bytes(rng.randint(0, 255) for _ in range(4))
     # Mostly zero groups, so that the longest run of zeros has to be found.
     groups = [rng.choice([0, 0, 0, 1, 0xFFFF, rng.randint(0, 0xFFFF)]) for _ in range(size // 2)]
     return b"".join(struct.pack(">H", group) for group in groups)
@@ -273,7 +269,7 @@ def random_message(rng):
                 data = bytes(rng.randint(0, 255) for _ in range(rng.randint(0, 20)))
                 text = "RAW:" + data.hex()
             encoder.record(labels, kind, klass, ttl, data)
-            shown = 0 if ttl >= 0x80000000 else ttl
+            shown = 0 if ttl >= 0x80000000 and kind != 41 else ttl
             parts.append("%s %s %d %d %d %s" % (tag, name_text(labels), kind, klass, shown, text))
     head = "id=%d qr=%d op=%d aa=%d tc=%d rd=%d ra=%d rcode=%d" % (
         ident,

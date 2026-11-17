@@ -17,6 +17,7 @@ export Types.TYPE_NS
 export Types.TYPE_CNAME
 export Types.TYPE_PTR
 export Types.TYPE_AAAA
+export Types.TYPE_OPT
 export Types.CLASS_IN
 export Types.RCODE_NOERROR
 export Types.RCODE_FORMERR
