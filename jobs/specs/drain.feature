@@ -48,6 +48,29 @@ Feature: Jobs.drain
     And I drain "q", with the jobs that wait for a time, and no clock
     Then the reply is "error argument"
 
+  Scenario: A job that fails logs a warning with its queue, id and attempt, and not its payload
+    Given a memory backend on a manual clock
+    When I enqueue "fail" into "mail"
+    And I drain "mail"
+    And the drain logged
+    Then the reply is "warning job failed, it will run again attempt=1 id=1 queue=mail"
+
+  Scenario: A discarded job logs an error with the reason discarded
+    Given a memory backend on a manual clock
+    When I enqueue "discard" into "mail"
+    And I drain "mail"
+    And the drain logged
+    Then the reply is "err job dead attempt=1 id=1 queue=mail reason=discarded"
+
+  Scenario: A job that fails on its last attempt logs an error with the reason attempts_exhausted
+    Given a memory backend on a manual clock
+    When I enqueue "fail" into "mail" with:
+      | setting      | value |
+      | max_attempts | 1     |
+    And I drain "mail"
+    And the drain logged
+    Then the reply is "err job dead attempt=1 id=1 queue=mail reason=attempts_exhausted"
+
   Scenario: A job that is not due is left alone
     Given a memory backend on a manual clock
     When I enqueue "ok" into "q" with:

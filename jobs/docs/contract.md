@@ -23,13 +23,13 @@ end
 ## What every backend guarantees
 
 1. **At least once.** After `enqueue` gives `ok`, the job is delivered until it is acked or dead. A consumer that crashes or hangs loses its lease when it runs out, and the job comes back.
-2. **One live lease.** While a lease is live, no fetch gets that job. A new delivery has a new `token`, and ack, nack and extend with the old token fail with `jobs.lease_lost`.
+2. **One live lease.** While a lease is live, no fetch gets that job. A new delivery has a new `token`, and ack, nack and extend with the old token fail with `jobs.lease_lost`. A lease is over at its `expires_at_ms`: a call at exactly that time finds it expired, and one a millisecond before finds it live.
 3. **Not early.** No job is delivered before its `run_at_ms`.
 4. **Attempts count at the fetch.** `attempt` is 1 on the first delivery and counts every delivery, also one whose lease ran out. A delivery past `max_attempts` does not happen: a lease that runs out on the last attempt makes the job dead, and so does a `Retry` on the last attempt. A job that crashes its consumer cannot loop forever. `Release` does not count.
 5. **Unique keys.** While a job with the same queue and `unique_key` is ready, scheduled or leased, `enqueue` gives its id with `duplicate: true`. The key is free when the job is acked or dead.
 6. **`enqueue_all` is all or nothing:** a job that is not valid, or that does not fit, fails the call and adds none. A backend writes the batch in one transaction, or in one step of its owner, so no caller sees part of it.
-7. **`last_error`.** A `Retry` that carries an error makes it the `last_error` of the next delivery, a `Retry` with no error keeps the previous one, and a dead job keeps its error (the one of the `Dead`, of the last `Retry`, or why it ran out of attempts or lease).
-8. **`close`** refuses new calls with `jobs.closed` and waits up to `drain_ms` for the backend to stop. Closing twice does nothing.
+7. **`last_error`.** A `Retry` that carries an error makes it the `last_error` of the next delivery, a `Retry` with no error keeps the previous one, and a dead job keeps its error (the one of the `Dead`, of the last `Retry`, or why it ran out of attempts or lease). Version 1 has no call that reads a dead job, so a caller cannot observe that last part: only `test/store_test.agc` checks it, for the memory store, and the conformance suite does not.
+8. **`close`** refuses new calls with `jobs.closed` and waits up to `drain_ms` for the backend to stop. Closing twice does nothing. A fetch that waits when `close` runs ends with `jobs.closed`.
 
 There is no order guarantee. Ready jobs come roughly by `run_at_ms`, then by insertion. Acked jobs are deleted, and dead jobs are kept (the memory backend keeps `max_dead` of them). The payload is bytes: every store holds bytes, and `Jobs.json` is the typed form on top.
 
@@ -37,7 +37,7 @@ Times are Unix milliseconds. A backend takes a clock option (`Fn[Int]`) and defa
 
 ## The memory backend
 
-`Jobs.memory(Jobs.MemoryOptions(...))` keeps the jobs in one actor. `max_jobs` (10 000) is how many live jobs it holds: past it `enqueue` fails with `jobs.full`, and a producer decides to log, drop or answer 503. `max_dead` (1 000) is how many dead jobs it keeps; the oldest is dropped. `clock` is the time source. Every call applies the clock first, so a lease that ran out is back before the call is served.
+`Jobs.memory(Jobs.MemoryOptions(...))` keeps the jobs in one actor. `max_jobs` (10 000) is how many live jobs it holds: past it `enqueue` fails with `jobs.full`, and a producer decides to log, drop or answer 503. `max_dead` (1 000) is how many dead jobs it keeps; the oldest is dropped. `clock` is the time source. Two behaviors are the memory backend's own, not the contract's, and the conformance suite does not check them: a job that a caller that gave up would have got goes back to the queue without counting an attempt, and a fetch that waits also ends at `wait_ms` of real time. `specs/memory.feature` tests both ("A job that a caller that gave up would have got stays in the queue" and "A fetch that waits ends at its wait_ms of real time"). Every call applies the clock first, so a lease that ran out is back before the call is served.
 
 A fetch with `wait_ms` parks until a job comes or is due, or its time is up: `wait_ms` on the clock of the backend, and also `wait_ms` of real time, so on a manual clock that nobody moves a fetch still ends with `ok([])`. `fetch_timeout_ms` is the longest a caller waits for a fetch, its wait included (the default is `wait_ms` and 10 s more); a caller that gives up with `jobs.timeout` leaves its fetch parked for one more second at most, and a job that the fetch gets goes back to the queue. `fetch_timeout_ms` must be at least 1. A caller that gives up while it waits does not lose the jobs the actor had for it: they go back to the queue, and the delivery does not count.
 
@@ -54,7 +54,7 @@ Conformance.failed(outcomes: List[Outcome]) -> List[String]
 Conformance.failures(outcomes: List[Outcome]) -> String
 ```
 
-A backend package has one scenario, "the backend passes every contract case", that runs `run_all` and fails with `Conformance.failures`. A backend that moves to a newer `jobs` tag runs the new cases with no change to its specs. A backend that cannot follow an injected clock (`Caps.has_clock` false, as a database that uses its own time) gets the real clock: its time cases sleep, with a unit of one second, and check what holds a little before and a little after a time, not to the millisecond. `has_clock` is the only capability: every guarantee above, unique keys and `extend` included, is required of every backend, so a store that has no unique index or no way to move a lease keeps them in its own code, or does not fill the contract.
+A backend package has one scenario, "the backend passes every contract case", that runs `run_all` and fails with `Conformance.failures`. A backend that cannot follow an injected clock (`Caps.has_clock` false, as a database that uses its own time) gets the real clock: its time cases sleep, with a unit of one second, and check what holds a little before and a little after a time, not to the millisecond. `has_clock` is the only capability: every guarantee above, unique keys and `extend` included, is required of every backend, so a store that has no unique index or no way to move a lease keeps them in its own code, or does not fill the contract.
 
 ```agentica
 import Conformance from "pkg/jobs/conformance"
@@ -70,8 +70,36 @@ end
 ```
 
 ```output
-cases: 24
+cases: 27
 failed: []
 ```
 
 The cases cover: the `last_error` of a retry, the job as it was enqueued, byte for byte; empty queues and queues that do not see each other; a fetch that waits, for a job that comes and for a job that is due; leases that run out, a late ack, nack or extend with an old token, and the same calls after the lease ran out but before any other fetch; ack, retry, release and dead; the last attempt; extend, and the job that comes back at the new end; a job that is not delivered early; unique keys, held through a retry, a release and an expired lease, and two jobs of one batch with one key; `enqueue_all` with a job that is not valid; eight tasks that fetch 200 jobs at once, each delivered once; and the calls after `close`.
+
+## For the author of a backend
+
+A backend package tests itself with the suite, in BDD first: one scenario runs every case, and a new case of a newer `jobs` tag needs no change in the package.
+
+```gherkin
+Scenario: The backend passes every contract case
+  When the suite runs on the backend
+  Then no case failed
+```
+
+```agentica
+import BDD from "std/bdd"
+import Conformance from "pkg/jobs/conformance"
+import Jobs from "pkg/jobs/jobs"
+
+def make(clock: Fn[Int]) -> Result[Jobs.Backend] = Jobs.memory(Jobs.MemoryOptions(clock: some(clock)))
+
+def run_suite(ctx: BDD.Context) -> BDD.Context
+  failed = Conformance.failed(Conformance.run_all(&make))
+  BDD.assert(ctx, failed.empty?, "cases failed: #{failed.join("; ")}")
+end
+```
+
+- Each case needs a fresh, empty backend: the maker is called once for each case, and a backend that shares a database between calls must empty its tables, or use a schema of its own.
+- The cases use the queue names `conformance` and `other`, and the keys and payloads that they make up. A table of the backend can hold nothing else that those names would meet.
+- The maker runs in the task that calls `run_all`, so a backend that starts tasks (an actor) is a child of it and stays up while the case runs. The suite closes the backend after each case, so the maker must not close it.
+- On a backend with `has_clock: false` the cases on time run on the real clock and sleep. The whole suite takes about 30 s then, and under a second on a manual clock. Measure it with `time agentica test specs/`, or `time agentica` on a file that calls `run_all`.

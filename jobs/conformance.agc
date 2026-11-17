@@ -8,7 +8,7 @@
 ## of one second, and a case only checks what holds a little before and a little after a time. Cases that start tasks
 ## run in the task that calls the suite, which makes the backend, so the backend stays up while the case runs.
 
-import Cases from "src/cases"
+import Cases from "conformance/cases"
 import Jobs from "jobs"
 
 ## Makes a fresh, empty backend that reads time from the given clock (`Jobs.Clock.now`).
@@ -56,8 +56,7 @@ private
 
 CASE_MS = 120_000
 CLOSE_MS = 1_000
-MANUAL_UNIT_MS = 1_000
-REAL_UNIT_MS = 1_000
+UNIT_MS = 1_000
 
 def failed?(outcome: Outcome) -> Bool
   case outcome.status
@@ -96,10 +95,10 @@ end
 
 # The manual clock, or the real one for a backend that does not follow an injected clock.
 def environment(backend: Jobs.Backend, clock: Jobs.Clock) -> Cases.Env
-  return Cases.Env(backend: backend, clock: clock, exact: true, unit_ms: MANUAL_UNIT_MS) if backend.caps.has_clock
+  return Cases.Env(backend: backend, clock: clock, exact: true, unit_ms: UNIT_MS) if backend.caps.has_clock
 
   real = Jobs.Clock(now: &Time.now_ms, advance: ->(ms) { Task.sleep(ms) })
-  Cases.Env(backend: backend, clock: real, exact: false, unit_ms: REAL_UNIT_MS)
+  Cases.Env(backend: backend, clock: real, exact: false, unit_ms: UNIT_MS)
 end
 
 # The case runs in a task of its own, so that a crash or a hang in it is a failed case and not the end of the suite.

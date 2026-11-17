@@ -78,6 +78,7 @@ def main() -> Void
     BDD.step("I drain {string}, with the jobs that wait for a time") do |ctx, args|
       ask(ctx, Request(op: "drain", queue: args[0], kind: "all"))
     end,
+    BDD.step("the drain logged") do |ctx, _args| ask(ctx, Request(op: "logs")) end,
     BDD.step("{int} consumers work off {int} jobs of one queue while producers add them") do |ctx, args|
       ask(ctx, Request(op: "stress", number: args[0].to_i!, wait: args[1].to_i!))
     end,
@@ -93,6 +94,12 @@ def main() -> Void
     BDD.step("the suite runs on the memory backend") do |ctx, _args| run_suite(ctx, &memory) end,
     BDD.step("the suite runs on a memory backend whose ack never fails") do |ctx, _args|
       run_suite(ctx, &lenient_acks)
+    end,
+    BDD.step("the suite runs on a memory backend that ignores the wait of a fetch") do |ctx, _args|
+      run_suite(ctx, &ignores_wait)
+    end,
+    BDD.step("the suite runs on a memory backend whose nack and extend work after close") do |ctx, _args|
+      run_suite(ctx, &open_after_close)
     end,
     BDD.step("the case {string} passes on a memory backend that reads the real clock") do |ctx, args|
       real_clock_case(ctx, args[0])
@@ -129,7 +136,37 @@ def lenient_acks(clock: Fn[Int]) -> Result[Jobs.Backend]
   ok(backend.with(ack: ->(_lease) { ok() }))
 end
 
-# A memory backend that ignores the clock it is given and reads the wall clock, as a database does.
+# A fetch that never waits: it answers at once, as a backend that ignores `wait_ms` does.
+def ignores_wait(clock: Fn[Int]) -> Result[Jobs.Backend]
+  backend = try memory(clock)
+  ok(backend.with(fetch: ->(fetch) { backend.fetch.call(fetch.with(wait_ms: 0)) }))
+end
+
+# A backend that keeps nack and extend working after close, the two calls that a check of close may forget.
+def open_after_close(clock: Fn[Int]) -> Result[Jobs.Backend]
+  backend = try memory(clock)
+  closed: ATS[String, Int] = ATS.new()
+  ok(
+    backend.with(
+      nack: ->(lease, how) {
+        return ok() if closed.has_key?("closed")
+
+        backend.nack.call(lease, how)
+      },
+      extend: ->(lease, ms) {
+        return ok(lease) if closed.has_key?("closed")
+
+        backend.extend.call(lease, ms)
+      },
+      close: ->(ms) {
+        closed.put("closed", 1)
+        backend.close.call(ms)
+      },
+    ),
+  )
+end
+
+# A backend that ignores the clock it is given and reads the wall clock, as a database does.
 def real_clock(_clock: Fn[Int]) -> Result[Jobs.Backend]
   backend = try Jobs.memory()
   ok(backend.with(caps: Jobs.Caps(has_clock: false)))

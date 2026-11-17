@@ -10,8 +10,9 @@
 ## jobs), `ack`, `retry` (number: ms from now, text: what went wrong, if anything), `release`, `kill` and `extend`
 ## (number: ms) of the lease `name`, `counts` (queue), `advance` (number: ms), `drain` (queue, kind: `ready`, `all` or
 ## `all without clock`, number: `max_runs` if there is one), `wait` (queue, name: a fetch that waits is parked;
-## `wait_end` ends it; number: its `wait_ms` if there is one), `close` (number: the drain in ms), and `stress` (number:
-## the consumers, wait: the jobs, wait_ms: how long a consumer waits for a job, if it does).
+## `wait_end` ends it; number: its `wait_ms` if there is one), `logs` (what the drains logged, one line each), `close`
+## (number: the drain in ms), and `stress` (number: the consumers, wait: the jobs, wait_ms: how long a consumer waits
+## for a job, if it does).
 struct Request
   op: String
   queue: String = ""

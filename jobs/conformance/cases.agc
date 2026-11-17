@@ -24,33 +24,42 @@ end
 ## Every case, in the order the suite runs them.
 def all() -> List[Case]
   [
-    plain("enqueue then fetch gives the job, byte for byte, with attempt 1", &roundtrip),
-    plain("a fetch of an empty queue gives no jobs", &empty_queue),
-    plain("queues do not see each other's jobs", &queues_apart),
-    plain("a fetch that waits gets a job that is enqueued meanwhile", &waiting_fetch),
-    plain("a fetch that waits gives no jobs when its time is up", &waiting_fetch_times_out),
-    plain("a fetch that waits for a scheduled job gets it when it is due", &waiting_fetch_scheduled),
-    plain("a leased job is not fetched again, and comes back when its lease expires", &lease_expires),
-    plain("a late ack, nack or extend of an older delivery changes nothing", &stale_token),
-    plain("an ack, nack or extend after the lease ran out fails, before any other fetch", &lease_lost_after_expiry),
-    plain("ack removes the job, and a second ack fails", &ack_once),
-    plain("a retry hides the job until its time", &retry_waits),
-    plain("a release gives the job back at once, without counting the attempt", &release_keeps_attempt),
-    plain(
-      "the error of a retry is the last_error of the next delivery, and a retry without one keeps it",
-      &last_error,
+    Case(name: "enqueue then fetch gives the job, byte for byte, with attempt 1", run: &roundtrip),
+    Case(name: "a fetch of an empty queue gives no jobs", run: &empty_queue),
+    Case(name: "queues do not see each other's jobs", run: &queues_apart),
+    Case(name: "a fetch that waits gets a job that is enqueued meanwhile", run: &waiting_fetch),
+    Case(name: "a fetch that waits gives no jobs when its time is up", run: &waiting_fetch_times_out),
+    Case(name: "a fetch that waits for a scheduled job gets it when it is due", run: &waiting_fetch_scheduled),
+    Case(name: "a leased job is not fetched again, and comes back when its lease expires", run: &lease_expires),
+    Case(name: "a late ack, nack or extend of an older delivery changes nothing", run: &stale_token),
+    Case(
+      name: "an ack, nack or extend after the lease ran out fails, before any other fetch",
+      run: &lease_lost_after_expiry,
     ),
-    plain("a dead job is never delivered again, and is counted", &dead_for_good),
-    plain("the expiry of the last attempt makes the job dead", &last_attempt_expires),
-    plain("a retry on the last attempt makes the job dead", &last_attempt_retries),
-    plain("extend moves the end of the lease, and the job comes back at the new end", &extend_moves),
-    plain("a job is not delivered before its time", &not_early),
-    plain("a unique key gives a duplicate until the job is acked or dead", &unique_key),
-    plain("a unique key stays held through a retry, a release and an expired lease", &unique_key_held),
-    plain("two jobs of one batch with the same key are one job", &same_key_in_batch),
-    plain("enqueue_all adds every job, or none", &all_or_nothing),
-    plain("eight tasks fetch 200 jobs at once and each job is delivered once", &competing_fetchers),
-    plain("after close, calls fail with jobs.closed", &closed_calls),
+    Case(name: "ack removes the job, and a second ack fails", run: &ack_once),
+    Case(name: "a retry hides the job until its time", run: &retry_waits),
+    Case(name: "a release gives the job back at once, without counting the attempt", run: &release_keeps_attempt),
+    Case(
+      name: "the error of a retry is the last_error of the next delivery, and a retry without one keeps it",
+      run: &last_error,
+    ),
+    Case(name: "a dead job is never delivered again, and is counted", run: &dead_for_good),
+    Case(name: "the expiry of the last attempt makes the job dead", run: &last_attempt_expires),
+    Case(name: "a retry on the last attempt makes the job dead", run: &last_attempt_retries),
+    Case(name: "a lease is over at exactly its end, and not a millisecond before", run: &lease_end),
+    Case(name: "extend moves the end of the lease, and the job comes back at the new end", run: &extend_moves),
+    Case(name: "a job is not delivered before its time", run: &not_early),
+    Case(name: "a unique key gives a duplicate until the job is acked or dead", run: &unique_key),
+    Case(name: "a unique key stays held through a retry, a release and an expired lease", run: &unique_key_held),
+    Case(
+      name: "a unique key is free when the job dies on its last attempt, by expiry or by a retry",
+      run: &unique_key_dies,
+    ),
+    Case(name: "two jobs of one batch with the same key are one job", run: &same_key_in_batch),
+    Case(name: "enqueue_all adds every job, or none", run: &all_or_nothing),
+    Case(name: "eight tasks fetch 200 jobs at once and each job is delivered once", run: &competing_fetchers),
+    Case(name: "after close, calls fail with jobs.closed, and a second close does nothing", run: &closed_calls),
+    Case(name: "a fetch that waits when the backend is closed ends with jobs.closed", run: &closed_while_waiting),
   ]
 end
 
@@ -63,11 +72,10 @@ LONG_LEASE_MS = 600_000
 FETCHERS = 8
 FETCHED_JOBS = 200
 AWAIT_MS = 30_000
+PENDING_MS = 100
 ADVANCES = 600
 ADVANCE_MS = 50
 DAY_MS = 86_400_000
-
-def plain(name: String, run: Fn[Env, Result[Void]]) -> Case = Case(name: name, run: run)
 
 def expect(condition: Bool, text: String) -> Result[Void]
   return error("conformance: #{text}", kind: "conformance.failed") if not condition
@@ -193,15 +201,27 @@ def empty_queue(env: Env) -> Result[Void] = fetch_none(env, QUEUE)
 def queues_apart(env: Env) -> Result[Void]
   _ = try add(env, job(QUEUE, "a"))
   try fetch_none(env, OTHER)
+  try expect_counts(env, OTHER, counted(0, 0, 0, 0))
+  try expect_counts(env, QUEUE, counted(1, 0, 0, 0))
   held = try lease_one(env, QUEUE)
   expect(held.job.queue == QUEUE, "the job is of the queue #{held.job.queue}")
 end
 
-def waiting_fetch(env: Env) -> Result[Void]
+# A fetch that waits, in a task of its own. It is still waiting a moment later: a backend that ignores `wait_ms` has
+# answered by then.
+def spawn_waiting(env: Env, wait_ms: Int) -> Result[Task[Result[List[Jobs.Lease]]]]
   waiting = Task.spawn do
-    Jobs.fetch(env.backend, Jobs.Fetch(queue: QUEUE, lease_ms: env.unit_ms, wait_ms: AWAIT_MS))
+    Jobs.fetch(env.backend, Jobs.Fetch(queue: QUEUE, lease_ms: env.unit_ms, wait_ms: wait_ms))
   end
 
+  case Task.await(waiting, PENDING_MS)
+    Await.Done(_) -> error("conformance: a fetch that waits ended at once", kind: "conformance.failed")
+    Await.TimedOut -> ok(waiting)
+  end
+end
+
+def waiting_fetch(env: Env) -> Result[Void]
+  waiting = try spawn_waiting(env, AWAIT_MS)
   _ = try add(env, job(QUEUE, "late"))
   case Task.await(waiting, AWAIT_MS)
     Await.Done(answer) -> got_one(answer)
@@ -216,10 +236,7 @@ end
 
 def waiting_fetch_times_out(env: Env) -> Result[Void]
   wait_ms = if_exact(env, 5_000, env.unit_ms)
-  waiting = Task.spawn do
-    Jobs.fetch(env.backend, Jobs.Fetch(queue: QUEUE, lease_ms: env.unit_ms, wait_ms: wait_ms))
-  end
-
+  waiting = try spawn_waiting(env, wait_ms)
   answer = try advance_until(env, waiting, wait_ms)
   leases = try answer
   expect(leases.empty?, "a fetch that waited for nothing gave #{leases.size} jobs")
@@ -228,10 +245,7 @@ end
 def waiting_fetch_scheduled(env: Env) -> Result[Void]
   at_ms = env.clock.now.call() + delay(env)
   _ = try add(env, Jobs.NewJob(queue: QUEUE, payload: "later".bytes, run_at_ms: at_ms))
-  waiting = Task.spawn do
-    Jobs.fetch(env.backend, Jobs.Fetch(queue: QUEUE, lease_ms: env.unit_ms, wait_ms: 3_600_000))
-  end
-
+  waiting = try spawn_waiting(env, 3_600_000)
   answer = try advance_until(env, waiting, delay(env))
   leases = try answer
   try expect(leases.size == 1, "the fetch that waited for a scheduled job gave #{leases.size} jobs, and should give 1")
@@ -355,6 +369,19 @@ def last_attempt_retries(env: Env) -> Result[Void]
   expect_counts(env, QUEUE, counted(0, 0, 0, 1))
 end
 
+# A lease is over at its end and not before. A real clock cannot be stopped at a millisecond, so only a manual one is
+# checked.
+def lease_end(env: Env) -> Result[Void]
+  return ok() if not env.exact
+
+  _ = try add(env, job(QUEUE, "a"))
+  _ = try lease_one(env, QUEUE)
+  advance(env, env.unit_ms - 1)
+  try expect_counts(env, QUEUE, counted(0, 0, 1, 0))
+  advance(env, 1)
+  expect_counts(env, QUEUE, counted(1, 0, 0, 0))
+end
+
 # The lease is moved to four units from now. The job stays leased past the first end, and comes back after the new one.
 def extend_moves(env: Env) -> Result[Void]
   _ = try add(env, job(QUEUE, "a"))
@@ -403,6 +430,36 @@ def unique_key(env: Env) -> Result[Void]
   try Jobs.nack(env.backend, dying, Jobs.Nack.Dead("no"))
   fifth = try add(env, keyed("k"))
   expect(not fifth.duplicate, "the key is not free after the job is dead")
+end
+
+# The key is free when the job is dead, however it died: by expiry or by a retry on its last attempt (the explicit dead
+# is in `unique_key`).
+def unique_key_dies(env: Env) -> Result[Void]
+  try dies_by_expiry(env)
+  dies_by_retry(env)
+end
+
+def last_attempt_job(key: String) -> Jobs.NewJob
+  Jobs.NewJob(queue: QUEUE, payload: key.bytes, unique_key: some(key), max_attempts: 1)
+end
+
+def dies_by_expiry(env: Env) -> Result[Void]
+  _ = try add(env, last_attempt_job("expiry"))
+  _ = try lease_one(env, QUEUE)
+  expire(env)
+  try expect_counts(env, QUEUE, counted(0, 0, 0, 1))
+  again = try add(env, keyed("expiry"))
+  try expect(not again.duplicate, "the key is not free after the job died by expiry")
+  fresh = try lease_one(env, QUEUE)
+  Jobs.ack(env.backend, fresh)
+end
+
+def dies_by_retry(env: Env) -> Result[Void]
+  _ = try add(env, last_attempt_job("retry"))
+  held = try lease_one(env, QUEUE)
+  try Jobs.nack(env.backend, held, retry_now(env, none))
+  again = try add(env, keyed("retry"))
+  expect(not again.duplicate, "the key is not free after the job died by a retry on its last attempt")
 end
 
 def expect_duplicate(env: Env, first: Jobs.Enqueued, when: String) -> Result[Void]
@@ -484,5 +541,18 @@ def closed_calls(env: Env) -> Result[Void]
   try expect_kind(Jobs.enqueue(env.backend, job(QUEUE, "b")), "jobs.closed", "an enqueue after close")
   try expect_kind(Jobs.fetch(env.backend, Jobs.Fetch(queue: QUEUE)), "jobs.closed", "a fetch after close")
   try expect_kind(Jobs.ack(env.backend, held), "jobs.closed", "an ack after close")
-  expect_kind(Jobs.counts(env.backend, QUEUE), "jobs.closed", "counts after close")
+  try expect_kind(Jobs.nack(env.backend, held, Jobs.Nack.Release), "jobs.closed", "a nack after close")
+  try expect_kind(Jobs.extend(env.backend, held, env.unit_ms), "jobs.closed", "an extend after close")
+  try expect_kind(Jobs.counts(env.backend, QUEUE), "jobs.closed", "counts after close")
+  Jobs.close(env.backend, 1_000)
+  expect_kind(Jobs.counts(env.backend, QUEUE), "jobs.closed", "counts after a second close")
+end
+
+def closed_while_waiting(env: Env) -> Result[Void]
+  waiting = try spawn_waiting(env, AWAIT_MS)
+  Jobs.close(env.backend, 1_000)
+  case Task.await(waiting, AWAIT_MS)
+    Await.Done(answer) -> expect_kind(answer, "jobs.closed", "a fetch that waited when the backend was closed")
+    Await.TimedOut -> error("conformance: a fetch that waits did not end at close", kind: "conformance.failed")
+  end
 end
