@@ -50,19 +50,12 @@ http-client/         an HTTP/1.1 client: http_client.agc is the API (new, reques
                      which connection served each); test/ the unit tests (URL, addresses, retry policy, redirects, link,
                      a client's checks) and a reuse test (many requests on one connection, no task left after close)
 jobs/                jobs to produce and consume, with the backend swappable: jobs.agc is the API (the `Backend`
-                     record, enqueue, fetch, ack, nack, extend, counts, close, discard, json, decode, memory, drain,
-                     manual_clock); src/types.agc the records, src/store.agc the jobs of the memory backend and their
-                     rules (pure: each function takes the store and the time), src/memory.agc the actor that owns a
-                     store (the calls, the fetches that wait, the close), src/parked.agc the fetches that wait (by queue
-                     and by deadline), src/settle.agc what happens to a job after its handler (shared by `Jobs.drain`
-                     and the later pipeline), src/inline.agc `Jobs.drain`; specs/ has the features (memory, drain,
-                     stress: many consumers and producers), whose program under test is specs/driver.agc (a memory
-                     backend and a manual clock that a step program drives by JSON lines, specs/protocol.agc,
-                     specs/steps.agc), specs/stress.agc the consumers and producers, and specs/model.agc an
-                     independent model of the contract (plain lists, written from docs/contract.md, nothing of src/)
-                     that the memory feature compares the backend with on random calls; test/jobs_test.agc,
-                     test/store_test.agc (the guarantees of the store: leases, expiry, unique keys, batches, the
-                     last error) and test/model_test.agc have the unit tests
+                     record, enqueue, fetch, ack, nack, extend, counts, close, discard, json, decode, manual_clock);
+                     src/types.agc the records, src/store.agc the jobs of a memory backend and their rules (pure: each
+                     function takes the store and the time), src/settle.agc what happens to a job after its handler
+                     (the backoff, ack, retry or dead); test/jobs_test.agc and test/store_test.agc have the unit tests
+                     of the helpers and of what no call shows (the reason of a dead job, the delivery that is taken
+                     back)
 native-gen/          the C header of an `extern module` block: cli.agc is the command, native_gen.agc the API
                      (`header`), src/header.agc the text of the header, src/codecs.agc the C values of the structs and
                      enums, src/collections.agc the Lists, Maps, Optionals and Results, src/types.agc the type
