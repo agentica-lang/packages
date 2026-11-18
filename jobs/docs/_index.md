@@ -8,14 +8,14 @@ description: Produce and consume jobs with a swappable backend. A contract with 
 Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
-agentica add jobs https://github.com/agentica-lang/packages --tag jobs-0.1.0 --subdir jobs
+agentica add jobs https://github.com/agentica-lang/packages --tag jobs-0.2.0 --subdir jobs
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-jobs = { git = "https://github.com/agentica-lang/packages", tag = "jobs-0.1.0", subdir = "jobs" }
+jobs = { git = "https://github.com/agentica-lang/packages", tag = "jobs-0.2.0", subdir = "jobs" }
 ```
 
 A job is a payload (bytes) in a named queue. `Jobs.json` makes one from a value, and `Jobs.decode` reads it back with a codec. A consumer calls `fetch`, which leases the jobs: nobody else gets them until the lease runs out. `ack` says the job is done and removes it. If the consumer crashes or hangs, the lease runs out and the job comes back, so a job that was enqueued runs until it is acked or dead. That is at-least-once delivery: a handler can run twice for one job, so it must be idempotent.
