@@ -163,7 +163,7 @@ Telemetry.dropped(id: String) -> Int
 Telemetry.flush(timeout_ms: Int = 5000) -> Result[Void]
 ```
 
-- `start` starts the hub, an actor that is the only task that changes the handlers; it is a child of the task that calls it, so call it in `main`. Emitters read the routes without asking the hub. Before `start`, `execute` does nothing and `attach` fails.
+- `start` starts the hub, an actor that is the only task that changes the handlers; it is a child of the task that calls it, so call it in `main`. Emitters read the routes without asking the hub. Before `start`, `execute` does nothing and `attach` fails. Starts take turns: a `start` that finds another running waits for it (up to 2 seconds) and gives `telemetry.started`, so after any `start` returns, the hub is registered.
 - `stop` drains the handlers (as `flush`), detaches them all and ends the hub. A test that shares a process with others calls `stop` at its end and `start` at its beginning.
 - `detach` removes a handler at once: the events in its queue are not delivered, and none is routed to it once `detach` has returned.
 - `flush` and `stop` wait for the handlers, so a handler that calls them would wait for itself: they give `telemetry.in_handler`. A hub that ended with the task that started it is replaced by the next `start`; until then `flush` gives `ok`, and `stop`, `attach` and `detach` give `telemetry.not_started`.

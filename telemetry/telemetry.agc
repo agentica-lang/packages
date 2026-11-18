@@ -101,7 +101,7 @@ private
 
 def deliver(route: Types.Route, event: Types.Event) -> Void
   case Actor.cast(route.address, Types.Msg.Deliver(event), 0)
-    error(e) if e.is_a?("channel.timeout") -> Routes.count_drop(route.id)
+    error(e) if e.is_a?("channel.timeout") -> Routes.DROPPED.add(route.id, 1)
     _ -> nil
   end
 end

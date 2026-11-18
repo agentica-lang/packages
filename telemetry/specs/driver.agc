@@ -21,6 +21,9 @@ LOGS: ATS[String, List[String]] = ATS.new()
 IDLE_MS = 2_000
 BLOCK_MS = 10_000
 SLOW_MS = 20
+BUSY_MAX_MS = 1_300
+FLUSH_BUDGET_MS = 300
+FLUSH_SLACK_MS = 300
 FLUSH_MS = 500
 
 struct Driver
@@ -83,6 +86,12 @@ def act(driver: Driver, req: Request) -> Handled
     "forge_end" -> same(driver, forge_end(req))
     "failures_gone" -> same(driver, failures_gone(req.number))
     "detaches_at_once" -> same(driver, detaches_at_once(req.number))
+    "stale_claim" -> same(driver, stale_claim())
+    "busy_hub" -> same(driver, busy_hub())
+    "forget_other" -> same(driver, forget_other())
+    "claims" -> same(driver, claims())
+    "forget_under_claim" -> same(driver, forget_under_claim())
+    "flush_budget" -> same(driver, flush_budget())
     "steps" -> same(driver, "ok #{steps_of(req.name)}")
     _ -> same(driver, "unknown op #{req.op}")
   end
@@ -314,6 +323,121 @@ def detaches_at_once(rounds: Int) -> String
     return "#{id} still has a route after detach" if Telemetry.enabled?("gone.once")
     return "#{id} is still listed after detach" if Telemetry.handlers().include?(id)
   end
+
+  "ok"
+end
+
+# What a start that was cancelled while it held the claim leaves behind: a claim whose time has passed.
+def stale_claim() -> String
+  Routes.STARTING.put(Routes.LOCK_KEY, Time.monotonic_ms - 5)
+  "ok"
+end
+
+# A hub that never answers, as one that is busy in its handler: it is alive, so `start` says so, in about the time of a
+# ping, and the hub stays registered.
+def busy_hub() -> String
+  silent: Channel[Types.HubMsg] = Channel.new(4)
+  Routes.HUB.put(Routes.HUB_KEY, silent.address)
+  began = Time.monotonic_ms
+  started = answer(Telemetry.start())
+  took = Time.monotonic_ms - began
+  kept = registered(silent.address)
+  Routes.HUB.delete(Routes.HUB_KEY)
+  silent.close
+  return "start gave #{started}, not error telemetry.started" if started != "error telemetry.started"
+  return "start took #{took} ms" if took > BUSY_MAX_MS
+  return "the busy hub was forgotten" if not kept
+
+  "ok"
+end
+
+# The end of an old hub does not clear the tables of a newer one.
+def forget_other() -> String
+  old: Channel[Types.HubMsg] = Channel.new(1)
+  current: Channel[Types.HubMsg] = Channel.new(1)
+  handler: Channel[Types.Msg] = Channel.new(1)
+  Routes.HUB.put(Routes.HUB_KEY, current.address)
+  Routes.HANDLERS.put("kept", handler.address)
+  Routes.forget_hub(old.address)
+  kept = registered(current.address) and Routes.HANDLERS.has_key?("kept")
+  Routes.forget_hub(current.address)
+  cleared = not Routes.HANDLERS.has_key?("kept") and Routes.hub().none?
+  old.close
+  current.close
+  handler.close
+  return "the old hub cleared the newer one" if not kept
+  return "the hub itself was not cleared" if not cleared
+
+  "ok"
+end
+
+def registered(address: Address[Types.HubMsg]) -> Bool
+  case Routes.hub()
+    some(found) -> found == address
+    none -> false
+  end
+end
+
+# A claim that ran out and was taken over: the first holder's release must not delete the new holder's claim, and a
+# third task cannot take the claim while it is held.
+def claims() -> String
+  Routes.STARTING.clear()
+  first = Routes.claim()
+  return "no first claim" if first.none?
+
+  # The claims are told apart by their time, which is 1.5 s apart when one runs out for real.
+  Task.sleep(5)
+  Routes.STARTING.put(Routes.LOCK_KEY, Time.monotonic_ms - 1)
+  second = Routes.claim()
+  return "the claim that ran out was not taken over" if second.none?
+
+  Routes.release(first.unwrap!)
+  return "the first holder deleted the claim of the second" if not Routes.STARTING.has_key?(Routes.LOCK_KEY)
+  return "a claim that is held was given twice" if Routes.claim().some?
+
+  Routes.release(second.unwrap!)
+  return "the claim was not released" if Routes.STARTING.has_key?(Routes.LOCK_KEY)
+
+  "ok"
+end
+
+# While another task holds the claim (a start is running), the end of a hub is not reported to the tables: that start
+# finds the hub gone by itself. Without the claim in hand it is.
+def forget_under_claim() -> String
+  Routes.STARTING.clear()
+  old: Channel[Types.HubMsg] = Channel.new(1)
+  handler: Channel[Types.Msg] = Channel.new(1)
+  Routes.HUB.put(Routes.HUB_KEY, old.address)
+  Routes.HANDLERS.put("kept", handler.address)
+  held = Routes.claim()
+  Routes.forget_hub(old.address)
+  kept = registered(old.address) and Routes.HANDLERS.has_key?("kept")
+  Routes.release(held.unwrap_or(0))
+  Routes.forget_hub(old.address)
+  cleared = Routes.hub().none? and not Routes.HANDLERS.has_key?("kept")
+  old.close
+  handler.close
+  return "the tables were cleared while a start held the claim" if not kept
+  return "the tables were not cleared" if not cleared
+
+  "ok"
+end
+
+# `flush` keeps to its time even when the hub does not answer: the ping and the barriers share the budget.
+def flush_budget() -> String
+  silent_hub: Channel[Types.HubMsg] = Channel.new(4)
+  silent_handler: Channel[Types.Msg] = Channel.new(4)
+  Routes.HUB.put(Routes.HUB_KEY, silent_hub.address)
+  Routes.HANDLERS.put("silent", silent_handler.address)
+  began = Time.monotonic_ms
+  flushed = answer(Telemetry.flush(FLUSH_BUDGET_MS))
+  took = Time.monotonic_ms - began
+  Routes.clear()
+  Routes.HUB.clear()
+  silent_hub.close
+  silent_handler.close
+  return "flush gave #{flushed}, not error telemetry.timeout" if flushed != "error telemetry.timeout"
+  return "flush of #{FLUSH_BUDGET_MS} ms took #{took} ms" if took > FLUSH_BUDGET_MS + FLUSH_SLACK_MS
 
   "ok"
 end

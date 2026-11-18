@@ -9,14 +9,24 @@ import Names from "names"
 import Routes from "routes"
 import Types from "types"
 
-## Starts the hub, a child of the task that calls this. Only one start runs at a time: a start that finds another
-## running, or a hub that answers (or is too busy to), gives `telemetry.started`.
+## Starts the hub, a child of the task that calls this. Starts take turns: one that finds another running waits for it
+## (at most `WAIT_MS`), and then finds its hub, which answers (or is too busy to), and gives `telemetry.started`.
 def start() -> Result[Void]
-  return started() if not Routes.STARTING.put_new(Routes.HUB_KEY, 1)
+  deadline = Time.monotonic_ms + WAIT_MS
+  while true
+    case Routes.claim()
+      some(token) ->
+        made = launch()
+        Routes.release(token)
+        return made
+      none ->
+        return started() if Time.monotonic_ms >= deadline
 
-  made = launch()
-  Routes.STARTING.delete(Routes.HUB_KEY)
-  made
+        Task.sleep(WAIT_STEP_MS)
+    end
+  end
+
+  started()
 end
 
 ## Attaches a handler: its actor starts and the routes of its patterns get it.
@@ -29,10 +39,18 @@ def detach(id: String) -> Result[Void] = ask(->(reply) { Types.HubMsg.Detach(id,
 def stop() -> Result[Void] = ask(->(reply) { Types.HubMsg.Stop(reply) })
 
 ## True when the hub that the tables name has ended, as a hub does with the task that started it: the tables are then
-## cleared. A hub that is only busy is not gone.
-def gone?() -> Bool
+## cleared. A hub that is only busy is not gone. The ping takes at most `timeout_ms`.
+def gone?(timeout_ms: Int) -> Bool
   case Routes.hub()
-    some(address) -> ended?(address, pulse(address, PING_MS))
+    some(address) ->
+      case pulse(address, within(PING_MS, timeout_ms))
+        Pulse.Gone ->
+          Routes.forget_hub(address)
+          true
+        Pulse.Alive -> false
+        Pulse.Busy -> false
+      end
+
     none -> false
   end
 end
@@ -42,7 +60,7 @@ end
 def sync(timeout_ms: Int) -> Void
   case Routes.hub()
     some(address) ->
-      _ = pulse(address, [timeout_ms, 1].max.unwrap!)
+      _ = pulse(address, within(PING_MS, timeout_ms))
       nil
     none -> nil
   end
@@ -53,6 +71,9 @@ private
 INBOX = 1_024
 CALL_MS = 5_000
 PING_MS = 1_000
+# A start that finds another waits for it this long, more than a claim lasts, so a claim that leaked is taken over.
+WAIT_MS = 2_000
+WAIT_STEP_MS = 5
 
 enum Pulse
   Alive
@@ -75,10 +96,16 @@ def started() -> Result[Void] = error("telemetry error: already started", kind: 
 
 def not_started[T]() -> Result[T] = error("telemetry error: not started", kind: "telemetry.not_started")
 
-# Starts the actor, unless a hub is there. The tables of a hub that ended are cleared first.
+# Starts the actor, unless a hub is there, with the claim held. The tables of a hub that ended are cleared first.
 def launch() -> Result[Void]
   case Routes.hub()
-    some(address) -> return started() if not ended?(address, pulse(address, PING_MS))
+    some(address) ->
+      case pulse(address, PING_MS)
+        Pulse.Gone -> Routes.drop_hub(address)
+        Pulse.Alive -> return started()
+        Pulse.Busy -> return started()
+      end
+
     none -> nil
   end
 
@@ -97,15 +124,8 @@ def pulse(address: Address[Types.HubMsg], timeout_ms: Int) -> Pulse
   end
 end
 
-def ended?(address: Address[Types.HubMsg], pulse: Pulse) -> Bool
-  case pulse
-    Pulse.Gone ->
-      Routes.forget_hub(address)
-      true
-    Pulse.Alive -> false
-    Pulse.Busy -> false
-  end
-end
+# The time to wait: at most `most_ms`, at most `left_ms`, and at least 1.
+def within(most_ms: Int, left_ms: Int) -> Int = [[most_ms, left_ms].min.unwrap!, 1].max.unwrap!
 
 def boot() -> State
   inbox: Channel[Types.HubMsg] = Actor.inbox
@@ -124,9 +144,8 @@ def ask(make: Fn[Channel[Result[Void]], Types.HubMsg]) -> Result[Void]
   end
 end
 
-# An answer that did not come: the hub ended (and its tables are cleared), or it took more than `CALL_MS`, in
-# which case
-# the call may still apply later.
+# An answer that did not come: the hub ended (and its tables are cleared), or it took more than `CALL_MS`, in which
+# case the call may still apply later.
 def ask_error(address: Address[Types.HubMsg], e: Error) -> Result[Void]
   if e.is_a?("channel.gone")
     Routes.forget_hub(address)

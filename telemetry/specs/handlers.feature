@@ -50,6 +50,33 @@ Feature: Attaching and detaching handlers
     When 50 handlers are attached and detached one after the other
     Then the reply is "ok"
 
+  Scenario: A claim that a cancelled start left behind does not stop the next start
+    Given a start that was cancelled left its claim behind
+    When the hub is started
+    Then the reply is "ok"
+    When I attach "h" to "jobs"
+    Then the reply is "ok"
+
+  Scenario: A hub that is too busy to answer is alive: start says so, and keeps it
+    Given a hub that does not answer is registered and the hub is started
+    Then the reply is "ok"
+
+  Scenario: The end of an old hub does not clear a newer hub
+    Given the end of an old hub is reported while a newer one is registered
+    Then the reply is "ok"
+
+  Scenario: A claim that ran out and was taken over is not deleted by its first holder
+    Given claims are taken, run out and are given back
+    Then the reply is "ok"
+
+  Scenario: The end of a hub is not reported to the tables while a start holds the claim
+    Given the end of a hub is reported while a start holds the claim
+    Then the reply is "ok"
+
+  Scenario: Flush keeps to its time when the hub and a handler do not answer
+    Given a flush of 300 ms meets a hub and a handler that do not answer
+    Then the reply is "ok"
+
   Scenario: Detaching an unknown id fails
     Given the hub is started
     When I detach "nobody"

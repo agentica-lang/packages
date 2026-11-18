@@ -21,9 +21,10 @@ end
 def barrier(timeout_ms: Int) -> Result[Void]
   try outside_handler("flush")
   return ok() if Routes.HANDLERS.size == 0
-  return ok() if Hub.gone?()
 
   deadline = Time.monotonic_ms + timeout_ms
+  return ok() if Hub.gone?(timeout_ms)
+
   waiting: List[Pending] = []
   for id in Routes.handler_ids()
     case Routes.HANDLERS.get(id)

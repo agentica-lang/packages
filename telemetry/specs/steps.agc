@@ -51,6 +51,22 @@ def main() -> Void
     BDD.step("{int} handlers are attached and detached one after the other") do |ctx, args|
       ask(ctx, Request(op: "detaches_at_once", number: args[0].to_i!))
     end,
+    BDD.step("a start that was cancelled left its claim behind") do |ctx, _args|
+      ask(ctx, Request(op: "stale_claim"))
+    end,
+    BDD.step("a hub that does not answer is registered and the hub is started") do |ctx, _args|
+      ask(ctx, Request(op: "busy_hub"))
+    end,
+    BDD.step("the end of an old hub is reported while a newer one is registered") do |ctx, _args|
+      ask(ctx, Request(op: "forget_other"))
+    end,
+    BDD.step("claims are taken, run out and are given back") do |ctx, _args| ask(ctx, Request(op: "claims")) end,
+    BDD.step("the end of a hub is reported while a start holds the claim") do |ctx, _args|
+      ask(ctx, Request(op: "forget_under_claim"))
+    end,
+    BDD.step("a flush of 300 ms meets a hub and a handler that do not answer") do |ctx, _args|
+      ask(ctx, Request(op: "flush_budget"))
+    end,
     BDD.step("I measure the steps of emitting {string}") do |ctx, args|
       ask(ctx, Request(op: "steps", name: args[0]))
     end,

@@ -27,9 +27,8 @@ private
 # How long a handler waits for room in the inbox of the hub, which only gets attaches, detaches and failures.
 HUB_MS = 5_000
 
-# `failed` is set once the hub was told: the actor then ignores events and answers barriers until the hub cancels
-# it, so
-# the hub hears of the failure from the message and not from the end of the task.
+# `failed` is set once the hub was told: the actor then ignores events and answers barriers until the hub cancels it,
+# so the hub hears of the failure from the message and not from the end of the task.
 struct State
   id: String
   call: Fn[Types.Event, Result[Void]]

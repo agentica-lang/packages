@@ -16,8 +16,11 @@ DROPPED: ATS[String, Int] = ATS.new()
 # The address of the hub, under one key.
 HUB: ATS[String, Address[Types.HubMsg]] = ATS.new()
 HUB_KEY = "hub"
-# Held by the task that is starting a hub, so two starts never run at once.
+# The claim on starting or clearing a hub: the time (`Time.monotonic_ms`) at which it runs out, so that a task that was
+# cancelled while it held it does not hold it for ever.
 STARTING: ATS[String, Int] = ATS.new()
+LOCK_KEY = "start"
+LOCK_MS = 1_500
 
 ## True while no handler is attached: the whole cost of an event nobody hears.
 def idle?() -> Bool = ROUTES.size == 0
@@ -50,13 +53,6 @@ def handler_ids() -> List[String] = HANDLERS.keys().sort()
 
 ## True in the task of a handler: a call that waits for the handlers would wait for itself.
 def in_handler?() -> Bool = TASKS.has_key?(Task.current().id)
-
-## Counts an event that the full queue of the handler `id` refused. An id that was detached is not counted again.
-def count_drop(id: String) -> Void
-  if DROPPED.has_key?(id)
-    _ = DROPPED.add(id, 1)
-  end
-end
 
 ## The address of the hub, if there is one.
 def hub() -> Optional[Address[Types.HubMsg]]
@@ -100,13 +96,45 @@ def clear() -> Void
   DROPPED.clear()
 end
 
-## Forgets the handlers and the hub at `address`, which has ended. A hub that started since is not touched.
-def forget_hub(address: Address[Types.HubMsg]) -> Void
+## Takes the claim on starting or clearing a hub, and gives the token that `release` takes, or none when another task
+## holds it. A claim that ran out is taken over by one task only: the key of the take-over names the time it ran out
+## at.
+def claim() -> Optional[Int]
+  deadline = Time.monotonic_ms + LOCK_MS
+  return some(deadline) if STARTING.put_new(LOCK_KEY, deadline)
+
+  case STARTING.get(LOCK_KEY)
+    ok(held) if held < Time.monotonic_ms -> take_over(held, deadline)
+    _ -> none
+  end
+end
+
+## Gives the claim back. A claim that another task took over after it ran out is not theirs to delete.
+def release(token: Int) -> Void
+  case STARTING.get(LOCK_KEY)
+    ok(held) if held == token -> STARTING.delete(LOCK_KEY)
+    _ -> nil
+  end
+end
+
+## Forgets the handlers and the hub at `address`, which has ended; the task that calls this holds the claim. A hub that
+## started since is not touched.
+def drop_hub(address: Address[Types.HubMsg]) -> Void
   case hub()
     some(current) if current == address ->
       clear()
       HUB.delete(HUB_KEY)
     _ -> nil
+  end
+end
+
+## `drop_hub` under the claim. A start that holds it will find the hub gone by itself, so this gives up then.
+def forget_hub(address: Address[Types.HubMsg]) -> Void
+  case claim()
+    some(token) ->
+      drop_hub(address)
+      release(token)
+    none -> nil
   end
 end
 
@@ -117,4 +145,11 @@ def routes_of(pattern: String) -> List[Types.Route]
     ok(routes) -> routes
     error(_) -> []
   end
+end
+
+def take_over(held: Int, deadline: Int) -> Optional[Int]
+  return none if not STARTING.put_new("#{LOCK_KEY}/#{held}", 1)
+
+  STARTING.put(LOCK_KEY, deadline)
+  some(deadline)
 end
