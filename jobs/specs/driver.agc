@@ -181,7 +181,6 @@ def enqueue(driver: Driver, backend: Jobs.Backend, add: Add) -> Handled
   answer(driver, Jobs.enqueue(backend, new), ->(added) { enqueued_text(added) })
 end
 
-# The payloads of the text, split at the commas, in one batch.
 # The unique key of the job at a position of a batch, if the batch gives one.
 def key_of(keys: List[String], position: Int) -> Optional[String]
   return none if position >= keys.size or keys[position] == ""
@@ -189,6 +188,7 @@ def key_of(keys: List[String], position: Int) -> Optional[String]
   some(keys[position])
 end
 
+# The payloads of the text, split at the commas, in one batch.
 def enqueue_all(driver: Driver, backend: Jobs.Backend, batch: Batch) -> Handled
   jobs = batch.text.split(",").map(->(text) { Jobs.NewJob(queue: batch.queue, payload: text.bytes) })
   jobs = (0...jobs.size).map(->(position) { jobs[position].with(unique_key: key_of(batch.keys, position)) })

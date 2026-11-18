@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-18
+
+Needs Agentica 0.34.1.
+
 ### Fixed
 
 - `jobs.enqueue`: a batch with a duplicate of a unique key emitted one event for each duplicate, with the same totals; it is now one event for each queue, with the jobs added in `count` and the duplicates in `duplicate_count`.

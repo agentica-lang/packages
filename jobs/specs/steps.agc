@@ -189,9 +189,9 @@ def settings_of(table: List[List[String]]) -> Settings
   settings = Settings()
   for row in table.drop(1)
     case row[0]
-      "max_jobs" -> settings = settings.with(max_jobs: row[1].to_i!)
-      "max_dead" -> settings = settings.with(max_dead: row[1].to_i!)
-      "fetch_timeout_ms" -> settings = settings.with(fetch_timeout_ms: some(row[1].to_i!))
+      "max_jobs" -> settings = settings.with(max_jobs: row[1].to_i.unwrap_or(settings.max_jobs))
+      "max_dead" -> settings = settings.with(max_dead: row[1].to_i.unwrap_or(settings.max_dead))
+      "fetch_timeout_ms" -> settings = settings.with(fetch_timeout_ms: some(row[1].to_i.unwrap_or(0)))
       _ -> nil
     end
   end

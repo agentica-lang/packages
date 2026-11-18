@@ -1,6 +1,7 @@
 import Events from "../src/events"
 import Jobs from "../jobs"
 import Telemetry from "pkg/telemetry/telemetry"
+import Testing from "pkg/telemetry/testing"
 
 private
 
@@ -22,6 +23,23 @@ def seed(backend: Jobs.Backend, count: Int) -> Void
 end
 
 def handled(_job: Jobs.Job) -> Result[Void] = ok()
+
+def offered(queue: String) -> Jobs.NewJob = Jobs.NewJob(queue: queue, payload: "x".bytes)
+
+def answered(duplicate: Bool) -> Jobs.Enqueued = Jobs.Enqueued(id: "1", duplicate: duplicate)
+
+def line(event: Telemetry.Event) -> String
+  "#{event.metadata.get("queue", "")} #{event.ints.get("count", -1)} #{event.ints.get("duplicate_count", -1)}"
+end
+
+# A batch in which the queues come mixed, and some jobs are duplicates, on a backend that answers as told.
+def enqueue_mixed(backend: Jobs.Backend, capture: Testing.Capture) -> Result[List[String]]
+  jobs = ["b", "a", "a", "c", "b", "c", "d"].map(&offered)
+  said = [true, false, true, false, false, true, false].map(&answered)
+  _ = Jobs.enqueue_all(backend.with(enqueue: ->(_jobs) { ok(said) }), jobs).unwrap!
+  found = try Testing.events(capture)
+  ok(found.map(&line))
+end
 
 def main() -> Void
   Test.run([
@@ -52,6 +70,12 @@ def main() -> Void
       Jobs.close(backend, 1_000)
       try Test.eq(span - body <= 55, true)
       return Test.eq(settled <= FACADE_EXTRA_STEPS, true)
+    end,
+    Test.test("a batch of mixed queues and duplicates is one event for each queue, in the order they first appear") do
+      backend = Jobs.memory().unwrap!
+      lines = Testing.session(["jobs.enqueue"], ->(capture) { enqueue_mixed(backend, capture) })
+      Jobs.close(backend, 1_000)
+      return Test.eq(lines, ok(["b 1 1", "a 1 1", "c 1 1", "d 1 0"]))
     end,
   ])
 end
