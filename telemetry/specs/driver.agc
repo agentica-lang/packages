@@ -94,6 +94,7 @@ def act(driver: Driver, req: Request) -> Handled
     "forget_under_claim" -> same(driver, forget_under_claim())
     "flush_budget" -> same(driver, flush_budget())
     "second_hub" -> same(driver, second_hub())
+    "span" -> same(driver, span(req))
     "steps" -> same(driver, "ok #{steps_of(req.name)}")
     _ -> same(driver, "unknown op #{req.op}")
   end
@@ -462,4 +463,38 @@ def second_hub() -> String
   return "#{extra} tasks run, not one hub" if extra != 1
 
   "ok"
+end
+
+# Runs a span whose body does what `mode` says: `ok` gives 42, `error` gives an error of the kind `span.bad`, `crash`
+# crashes (in a task of its own, which the driver awaits). The body waits `number` ms first.
+def span(req: Request) -> String
+  metadata: Map[String, String] = {}
+  for row in req.table.drop(1)
+    metadata = metadata.put(row[1], row[2])
+  end
+
+  return spanned(Task.await(Task.spawn(&crashing_span, req.name))) if req.mode == "crash"
+
+  spanned(Telemetry.span(req.name, metadata, -> { work(req.mode, req.number) }))
+end
+
+def spanned(result: Result[Int]) -> String
+  case result
+    ok(value) -> "ok #{value}"
+    error(e) -> "error #{e.kind}"
+  end
+end
+
+def work(mode: String, sleep_ms: Int) -> Result[Int]
+  Task.sleep(sleep_ms)
+  return error("the body failed", kind: "span.bad") if mode == "error"
+
+  ok(42)
+end
+
+def crashing_span(name: String) -> Result[Int] = Telemetry.span(name, {}, -> { crashing_body() })
+
+def crashing_body() -> Result[Int]
+  empty: List[Int] = []
+  ok(empty[1])
 end

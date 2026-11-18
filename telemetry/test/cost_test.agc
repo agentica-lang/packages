@@ -1,6 +1,7 @@
 ## What `execute` costs the task that calls it, in steps (`System.Profile.steps`), which are the same on every run, so
 ## no test depends on the clock. The steps are the emitter's own: the handlers run in other tasks.
 
+import Routes from "../src/routes"
 import Telemetry from "../telemetry"
 
 private
@@ -13,6 +14,22 @@ UNHEARD_STEPS = 110
 BASE_STEPS = 120
 PER_HANDLER_STEPS = 40
 ENDED_MS = 2_000
+# Measured: a span with no handler costs 15 steps more than calling its body.
+SPAN_EXTRA_STEPS = 20
+
+def body() -> Result[Int] = ok(1)
+
+def steps_of_body() -> Int
+  before = System.Profile.steps()
+  _ = body()
+  System.Profile.steps() - before
+end
+
+def steps_of_span() -> Int
+  before = System.Profile.steps()
+  _ = Telemetry.span("cost.work", {"queue": "mail"}, &body)
+  System.Profile.steps() - before
+end
 
 def quiet(_event: Telemetry.Event) -> Result[Void] = ok()
 
@@ -78,5 +95,22 @@ def main() -> Void
 
       ok()
     end,
+    Test.test("with no handler a span only calls its body: a few steps more, and no id is made") do
+      direct = steps_of_body()
+      bare = steps_of_span()
+      hub = try steps_of_span_in_hub()
+      try Test.assert(bare <= direct + SPAN_EXTRA_STEPS, "a span took #{bare} steps, its body #{direct}")
+      try Test.assert(hub <= direct + SPAN_EXTRA_STEPS + 2, "a span in a hub with no handler took #{hub} steps")
+      Test.eq(Routes.SPAN_IDS.size, 0)
+    end,
   ])
+end
+
+def steps_of_span_in_hub() -> Result[Int]
+  running = Task.pending_count()
+  try Telemetry.start()
+  used = steps_of_span()
+  try Telemetry.stop()
+  try ended(running)
+  ok(used)
 end

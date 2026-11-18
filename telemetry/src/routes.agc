@@ -16,6 +16,8 @@ DROPPED: ATS[String, Int] = ATS.new()
 # The address of the hub, under one key.
 HUB: ATS[String, Address[Types.HubMsg]] = ATS.new()
 HUB_KEY = "hub"
+# The last id that a span took.
+SPAN_IDS: ATS[String, Int] = ATS.new()
 # The claim on starting or clearing a hub: the time (`Time.monotonic_ms`) at which it runs out, so that a task that was
 # cancelled while it held it does not hold it for ever.
 STARTING: ATS[String, Int] = ATS.new()

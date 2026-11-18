@@ -82,8 +82,8 @@ private
 INBOX = 1_024
 CALL_MS = 5_000
 PING_MS = 1_000
-# A start that finds another waits for it this long, more than a claim lasts, so a claim that leaked is taken over.
 STOP_MS = 1_000
+# A start that finds another waits for it this long, more than a claim lasts, so a claim that leaked is taken over.
 WAIT_MS = 2_000
 WAIT_STEP_MS = 5
 

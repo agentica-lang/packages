@@ -82,4 +82,39 @@ end
 {"mailer.send.stop welcome": 2, "bytes": 6144, "mailer.send.stop reset": 1}
 ```
 
+## Check the events in a test
+
+`Conformance.check(event)` is for the tests of a library: it gives `ok` for an event that follows these rules, and an error for the first one that does not. Collect what the library emits with a handler that keeps the events, and check each. It checks:
+
+- the name: one to four words (`conformance.name`);
+- each measurement key: a unit that says what it is (`count`, `size`, `_ns`, `_bytes`, `_total` in `ints`; `ratio` or `_ratio` in `floats`), in one map only, and `duration_ns` only on a `.stop` or `.error` event (`conformance.measurement`);
+- each metadata key: a `snake_case` word (`conformance.metadata`).
+
+```agentica
+import Conformance from "pkg/telemetry/conformance"
+import Telemetry from "pkg/telemetry/telemetry"
+
+def check(name: String, ints: Map[String, Int]) -> Void
+  event = Telemetry.Event(name: name, ints: ints, metadata: {"queue": "mail"})
+  case Conformance.check(event)
+    ok(_) -> puts("#{name}: ok")
+    error(e) -> puts("#{name}: #{e.kind}")
+  end
+end
+
+def main() -> Void
+  check("jobs.job.stop", {"duration_ns": 40_000})
+  check("jobs.job.start", {"duration_ns": 0})
+  check("Jobs.job.stop", {})
+  check("jobs.fetch", {"waiting": 3})
+end
+```
+
+```output
+jobs.job.stop: ok
+jobs.job.start: conformance.measurement
+Jobs.job.stop: conformance.name
+jobs.fetch: conformance.measurement
+```
+
 The events of a library are part of its API: a rename is a breaking change, and the CHANGELOG lists the events with their keys.
