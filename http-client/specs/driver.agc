@@ -511,14 +511,17 @@ end
 
 def check(driver: Driver, expectation: Expectation, outcome: Outcome) -> String
   name = expectation.name
-  case expectation.check
+  wanted = expectation.check
+  case wanted
     Check.Within(ms) -> timed(name, outcome.elapsed < ms, outcome)
     Check.After(ms) -> timed(name, outcome.elapsed >= ms, outcome)
-    _ ->
-      case outcome.result
-        ok(response) -> check_response(driver, name, expectation.check, response)
-        error(e) -> check_error(name, expectation.check, e)
-      end
+    Check.Status(_) -> check_result(driver, name, wanted, outcome.result)
+    Check.Body(_) -> check_result(driver, name, wanted, outcome.result)
+    Check.Size(_) -> check_result(driver, name, wanted, outcome.result)
+    Check.Header(_) -> check_result(driver, name, wanted, outcome.result)
+    Check.Url(_) -> check_result(driver, name, wanted, outcome.result)
+    Check.Decoded(_) -> check_result(driver, name, wanted, outcome.result)
+    Check.Kind(_) -> check_result(driver, name, wanted, outcome.result)
   end
 end
 
@@ -528,25 +531,54 @@ def timed(name: String, fits: Bool, outcome: Outcome) -> String
   "#{name} took #{outcome.elapsed} ms"
 end
 
-# An error is what `Kind` expects, if its kind starts with the text, and a failed check for the others.
-def check_error(name: String, wanted: Check, e: Error) -> String
-  case wanted
-    Check.Kind(start) if e.kind.start_with?(start) -> Protocol.OK
-    _ -> "#{name} failed: #{e.kind} #{e.message}"
+# A check of what the request gave: a response is looked at by `holds?`, and an error is only what `Kind` expects.
+def check_result(driver: Driver, name: String, wanted: Check, result: Result[HttpClient.Response]) -> String
+  case result
+    ok(response) -> check_response(driver, name, wanted, response)
+    error(e) -> check_error(name, wanted, e)
   end
 end
 
+def check_error(name: String, wanted: Check, e: Error) -> String
+  return Protocol.OK if kind_matches?(wanted, e)
+
+  "#{name} failed: #{e.kind} #{e.message}"
+end
+
 def check_response(driver: Driver, name: String, wanted: Check, response: HttpClient.Response) -> String
+  return Protocol.OK if holds?(driver, wanted, response)
+
+  text = String.from_bytes(response.body).unwrap_or("<binary>")
+  "#{name}: #{response.status} #{response.url} #{response.headers} #{text}"
+end
+
+# Only `Kind` can be met by an error: its kind starts with the text.
+def kind_matches?(wanted: Check, e: Error) -> Bool
   case wanted
-    Check.Status(status) if response.status == status -> Protocol.OK
-    Check.Body(text) if String.from_bytes(response.body).unwrap_or("") == addressed(driver, text) -> Protocol.OK
-    Check.Header(text) if has_header?(response, header(addressed(driver, text))) -> Protocol.OK
-    Check.Url(text) if response.url == addressed(driver, text) -> Protocol.OK
-    Check.Size(size) if response.body.size == size -> Protocol.OK
-    Check.Decoded(text) if decoded(response) == addressed(driver, text) -> Protocol.OK
-    _ ->
-      text = String.from_bytes(response.body).unwrap_or("<binary>")
-      "#{name}: #{response.status} #{response.url} #{response.headers} #{text}"
+    Check.Kind(start) -> e.kind.start_with?(start)
+    Check.Status(_) -> false
+    Check.Body(_) -> false
+    Check.Size(_) -> false
+    Check.Header(_) -> false
+    Check.Url(_) -> false
+    Check.Decoded(_) -> false
+    Check.Within(_) -> false
+    Check.After(_) -> false
+  end
+end
+
+# What a response must be for the check; `Kind`, `Within` and `After` are not about a response.
+def holds?(driver: Driver, wanted: Check, response: HttpClient.Response) -> Bool
+  case wanted
+    Check.Status(status) -> response.status == status
+    Check.Body(text) -> String.from_bytes(response.body).unwrap_or("") == addressed(driver, text)
+    Check.Header(text) -> has_header?(response, header(addressed(driver, text)))
+    Check.Url(text) -> response.url == addressed(driver, text)
+    Check.Size(size) -> response.body.size == size
+    Check.Decoded(text) -> decoded(response) == addressed(driver, text)
+    Check.Kind(_) -> false
+    Check.Within(_) -> false
+    Check.After(_) -> false
   end
 end
 
