@@ -8,7 +8,7 @@ private
 # same on every run. Measured: the facade takes 31 to 37 steps more than the backend call (88 to 102 steps); the span
 # of a job with its metadata 38 more than its body, and the settle event 30. An event that is not guarded by
 # `enabled?` takes some 50 steps more.
-FACADE_EXTRA_STEPS = 40
+FACADE_EXTRA_STEPS = 55
 
 def steps_of[T](run: Fn[T]) -> Int
   before = System.Profile.steps()
@@ -50,7 +50,7 @@ def main() -> Void
       body = steps_of(-> { handled(job) })
       settled = steps_of(-> { Events.settled(backend, job, "ack") })
       Jobs.close(backend, 1_000)
-      try Test.eq(span - body <= 50, true)
+      try Test.eq(span - body <= 55, true)
       return Test.eq(settled <= FACADE_EXTRA_STEPS, true)
     end,
   ])

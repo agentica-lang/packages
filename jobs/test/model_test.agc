@@ -1,9 +1,9 @@
 import Model from "../specs/model"
-import {Add, Backoff, Batch, Extension, Request, Take} from "../specs/protocol"
+import {Add, Backoff, Batch, Extension, Request, Settings, Take} from "../specs/protocol"
 
 private
 
-def start(max_jobs: Int) -> Request = Request.Start([["setting", "value"], ["max_jobs", "#{max_jobs}"]])
+def start(max_jobs: Int) -> Request = Request.Start(Settings(max_jobs: max_jobs))
 
 def enqueue(queue: String, text: String, rows: List[List[String]]) -> Request
   Request.Enqueue(Add(queue: queue, text: text, table: [["setting", "value"]] + rows))

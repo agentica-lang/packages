@@ -11,10 +11,12 @@ struct Add
   table: List[List[String]] = []
 end
 
-## The payloads in `text`, split at the commas, in one batch.
+## The payloads in `text`, split at the commas, in one batch. `keys` are the unique keys of the jobs, in order (an empty
+## key for none, and fewer keys than jobs leave the last ones with none).
 struct Batch
   queue: String
   text: String
+  keys: List[String] = []
 end
 
 ## A fetch: `name` is where the lease is kept (`name/2` for a second one), `lease_ms` the lease in ms, `max` how many
@@ -40,12 +42,34 @@ struct Extension
   ms: Int
 end
 
-## A drain of `queue`: `kind` is `ready`, `all` or `all without clock`, and `max_runs` is the most jobs it runs (0: the
-## default).
+## Which jobs a drain runs: the ones that are due (`Ready`), also the ones that wait for a time, with the clock of the
+## backend (`All`), or with no clock, which a drain refuses (`AllWithoutClock`).
+enum Mode
+  Ready
+  All
+  AllWithoutClock
+end
+
+## A drain of `queue`, and `max_runs` is the most jobs it runs (0: the default).
 struct Run
   queue: String
-  kind: String
+  mode: Mode
   max_runs: Int = 0
+end
+
+## The clock of a backend: one that moves only when a step says so, or the wall clock.
+enum Clocking
+  Manual
+  Wall
+end
+
+## The settings of a backend: `max_jobs` and `max_dead` as in `Jobs.MemoryOptions`, and `fetch_timeout_ms` when it has
+## one.
+struct Settings
+  clock: Clocking = Clocking.Manual
+  max_jobs: Int = 10_000
+  max_dead: Int = 1_000
+  fetch_timeout_ms: Optional[Int] = none
 end
 
 ## A fetch that waits is parked as `name`, until `WaitEnd`. `wait_ms` is its wait (0: a very long one), and `limit` its
@@ -73,14 +97,13 @@ struct Crowd
   limit: Int = 0
 end
 
-## A request, one for each thing a step asks of the driver. `Start` takes the settings of the backend (a header, then a
-## name and a value per row: `clock` is `manual` or `wall`, `max_jobs`, `max_dead`, `fetch_timeout_ms`). `Ack`,
+## A request, one for each thing a step asks of the driver. `Start` takes the settings of the backend. `Ack`,
 ## `Release` and `Kill` take the name of a lease. `Counts` takes a queue, `Advance` ms, and `Close` the drain in ms.
 ## `Logs` is what the drains logged, one line each. `Watch` starts the hub of `telemetry` and captures the events that
 ## match the patterns, and `Events` and `EventNames` read the events since the last read, one line each or only their
 ## names, after a check of each against the conventions.
 enum Request
-  Start(List[List[String]])
+  Start(Settings)
   Advance(Int)
   Close(Int)
   Enqueue(Add)

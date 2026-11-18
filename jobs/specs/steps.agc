@@ -6,7 +6,9 @@ import BDD from "std/bdd"
 import Conformance from "../conformance"
 import Jobs from "../jobs"
 import Model from "model"
-import {Add, Backoff, Batch, Crowd, Extension, Park, Request, Run, Take, Unpark} from "protocol"
+import {
+  Add, Backoff, Batch, Clocking, Crowd, Extension, Mode, Park, Request, Run, Settings, Take, Unpark,
+} from "protocol"
 
 private
 
@@ -18,10 +20,12 @@ HEADER = [["setting", "value"]]
 
 def main() -> Void
   BDD.run([
-    BDD.step("a memory backend on a manual clock") do |ctx, _args| ask(ctx, Request.Start(HEADER)) end,
-    BDD.step("a memory backend on a manual clock with:") do |ctx, _args| ask(ctx, Request.Start(BDD.table(ctx))) end,
+    BDD.step("a memory backend on a manual clock") do |ctx, _args| ask(ctx, Request.Start(Settings())) end,
+    BDD.step("a memory backend on a manual clock with:") do |ctx, _args|
+      ask(ctx, Request.Start(settings_of(BDD.table(ctx))))
+    end,
     BDD.step("a memory backend on the wall clock") do |ctx, _args|
-      ask(ctx, Request.Start([["setting", "value"], ["clock", "wall"]]))
+      ask(ctx, Request.Start(Settings(clock: Clocking.Wall)))
     end,
     BDD.step("I enqueue {string} into {string}") do |ctx, args|
       ask(ctx, Request.Enqueue(Add(queue: args[1], text: args[0], table: HEADER)))
@@ -31,6 +35,9 @@ def main() -> Void
     end,
     BDD.step("I enqueue the jobs {string} into {string} in one batch") do |ctx, args|
       ask(ctx, Request.EnqueueAll(Batch(queue: args[1], text: args[0])))
+    end,
+    BDD.step("I enqueue the jobs {string} into {string} in one batch, with the unique keys {string}") do |ctx, args|
+      ask(ctx, Request.EnqueueAll(Batch(queue: args[1], text: args[0], keys: args[2].split(","))))
     end,
     BDD.step("I fetch a job of {string} as {string}") do |ctx, args|
       ask(ctx, Request.Fetch(Take(queue: args[0], name: args[1], lease_ms: LEASE_MS)))
@@ -72,15 +79,15 @@ def main() -> Void
     BDD.step("the clock moves {int} ms at a time until the fetch {string} ends") do |ctx, args|
       ask(ctx, Request.WaitEnd(Unpark(name: args[1], step_ms: args[0].to_i!)))
     end,
-    BDD.step("I drain {string}") do |ctx, args| ask(ctx, Request.Drain(Run(queue: args[0], kind: "ready"))) end,
+    BDD.step("I drain {string}") do |ctx, args| ask(ctx, Request.Drain(Run(queue: args[0], mode: Mode.Ready))) end,
     BDD.step("I drain {string}, at most {int} jobs") do |ctx, args|
-      ask(ctx, Request.Drain(Run(queue: args[0], kind: "ready", max_runs: args[1].to_i!)))
+      ask(ctx, Request.Drain(Run(queue: args[0], mode: Mode.Ready, max_runs: args[1].to_i!)))
     end,
     BDD.step("I drain {string}, with the jobs that wait for a time, and no clock") do |ctx, args|
-      ask(ctx, Request.Drain(Run(queue: args[0], kind: "all without clock")))
+      ask(ctx, Request.Drain(Run(queue: args[0], mode: Mode.AllWithoutClock)))
     end,
     BDD.step("I drain {string}, with the jobs that wait for a time") do |ctx, args|
-      ask(ctx, Request.Drain(Run(queue: args[0], kind: "all")))
+      ask(ctx, Request.Drain(Run(queue: args[0], mode: Mode.All)))
     end,
     BDD.step("{int} consumers work off {int} jobs in {int} groups with at most {int} per group") do |ctx, args|
       ask(ctx, stress_in_groups(args, 0))
@@ -175,6 +182,21 @@ def expect_names(ctx: BDD.Context, names: String) -> BDD.Context
   return expect_reply(read, "ok") if names == ""
 
   expect_reply(read, "ok #{names}")
+end
+
+# The settings that a table gives (a header, then a name and a value per row); the others keep their default.
+def settings_of(table: List[List[String]]) -> Settings
+  settings = Settings()
+  for row in table.drop(1)
+    case row[0]
+      "max_jobs" -> settings = settings.with(max_jobs: row[1].to_i!)
+      "max_dead" -> settings = settings.with(max_dead: row[1].to_i!)
+      "fetch_timeout_ms" -> settings = settings.with(fetch_timeout_ms: some(row[1].to_i!))
+      _ -> nil
+    end
+  end
+
+  settings
 end
 
 def memory(clock: Fn[Int]) -> Result[Jobs.Backend] = Jobs.memory(Jobs.MemoryOptions(clock: some(clock)))

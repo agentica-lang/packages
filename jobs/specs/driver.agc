@@ -15,7 +15,9 @@ import Logger from "std/logger"
 import Stress from "stress"
 import Telemetry from "pkg/telemetry/telemetry"
 import Testing from "pkg/telemetry/testing"
-import {Add, Backoff, Batch, Crowd, Extension, Park, Request, Run, Take, Unpark} from "protocol"
+import {
+  Add, Backoff, Batch, Clocking, Crowd, Extension, Mode, Park, Request, Run, Settings, Take, Unpark,
+} from "protocol"
 
 private
 
@@ -61,7 +63,7 @@ end
 
 def act(driver: Driver, req: Request) -> Handled
   case req
-    Request.Start(table) -> start(driver, table)
+    Request.Start(settings) -> start(driver, settings)
     Request.Advance(ms) -> advance(driver, ms)
     Request.Close(ms) -> with_backend(driver, ->(backend) { close(driver, backend, ms) })
     Request.Enqueue(add) -> with_backend(driver, ->(backend) { enqueue(driver, backend, add) })
@@ -104,14 +106,13 @@ def number(values: Map[String, String], name: String, default: Int) -> Int
   end
 end
 
-def start(driver: Driver, table: List[List[String]]) -> Handled
-  values = settings(table)
-  clock = if_manual(values)
+def start(driver: Driver, settings: Settings) -> Handled
+  clock = clock_of(settings.clock)
   options = Jobs.MemoryOptions(
-    max_jobs: number(values, "max_jobs", 10_000),
-    max_dead: number(values, "max_dead", 1_000),
+    max_jobs: settings.max_jobs,
+    max_dead: settings.max_dead,
     clock: some(clock.now),
-    fetch_timeout_ms: fetch_timeout(values),
+    fetch_timeout_ms: settings.fetch_timeout_ms,
   )
 
   case Jobs.memory(options)
@@ -132,17 +133,10 @@ def start(driver: Driver, table: List[List[String]]) -> Handled
 end
 
 # A manual clock, or one that reads the wall clock (the steps do not move it).
-def if_manual(values: Map[String, String]) -> Jobs.Clock
-  case values.get("clock", "manual")
-    "wall" -> Jobs.Clock(now: &Time.now_ms, advance: ->(_ms) { nil })
-    _ -> Jobs.manual_clock()
-  end
-end
-
-def fetch_timeout(values: Map[String, String]) -> Optional[Int]
-  case values.get("fetch_timeout_ms")
-    some(text) -> some(text.to_i.unwrap_or(0))
-    none -> none
+def clock_of(clocking: Clocking) -> Jobs.Clock
+  case clocking
+    Clocking.Wall -> Jobs.Clock(now: &Time.now_ms, advance: ->(_ms) { nil })
+    Clocking.Manual -> Jobs.manual_clock()
   end
 end
 
@@ -188,8 +182,16 @@ def enqueue(driver: Driver, backend: Jobs.Backend, add: Add) -> Handled
 end
 
 # The payloads of the text, split at the commas, in one batch.
+# The unique key of the job at a position of a batch, if the batch gives one.
+def key_of(keys: List[String], position: Int) -> Optional[String]
+  return none if position >= keys.size or keys[position] == ""
+
+  some(keys[position])
+end
+
 def enqueue_all(driver: Driver, backend: Jobs.Backend, batch: Batch) -> Handled
   jobs = batch.text.split(",").map(->(text) { Jobs.NewJob(queue: batch.queue, payload: text.bytes) })
+  jobs = (0...jobs.size).map(->(position) { jobs[position].with(unique_key: key_of(batch.keys, position)) })
   answer(driver, Jobs.enqueue_all(backend, jobs), ->(added) { "ok #{added.map(->(one) { one.id }).join(",")}" })
 end
 
@@ -344,26 +346,29 @@ end
 def drain(driver: Driver, backend: Jobs.Backend, spec: Run) -> Handled
   plan = Jobs.Drain(
     queue: spec.queue,
-    due: due_of(spec.kind),
+    due: due_of(spec.mode),
     max_runs: if_given(spec.max_runs, DRAIN_RUNS),
-    clock: clock_for(driver, spec.kind),
+    clock: clock_for(driver, spec.mode),
   )
 
   drained = captured(driver, -> { Jobs.drain(backend, plan) do |job| behave(job) end })
   answer(driver, drained, ->(d) { "done #{d.done} retried #{d.retried} dead #{d.dead}" })
 end
 
-def due_of(kind: String) -> Jobs.Due
-  case kind
-    "ready" -> Jobs.Due.Ready
-    _ -> Jobs.Due.All
+def due_of(mode: Mode) -> Jobs.Due
+  case mode
+    Mode.Ready -> Jobs.Due.Ready
+    Mode.All -> Jobs.Due.All
+    Mode.AllWithoutClock -> Jobs.Due.All
   end
 end
 
-def clock_for(driver: Driver, kind: String) -> Optional[Jobs.Clock]
-  return none if kind == "all without clock"
-
-  some(driver.clock)
+def clock_for(driver: Driver, mode: Mode) -> Optional[Jobs.Clock]
+  case mode
+    Mode.Ready -> some(driver.clock)
+    Mode.All -> some(driver.clock)
+    Mode.AllWithoutClock -> none
+  end
 end
 
 # The number of a request, or the default when the request has none.

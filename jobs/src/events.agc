@@ -97,11 +97,13 @@ end
 
 def enqueued(backend: String, jobs: List[Types.NewJob], added: List[Types.Enqueued]) -> List[Said]
   queues: List[String] = []
+  seen: Map[String, Bool] = {}
   counts: Map[String, Int] = {}
   duplicates: Map[String, Int] = {}
   for position in 0...[jobs.size, added.size].min.unwrap_or(0)
     queue = jobs[position].queue
-    if not counts.has_key?(queue)
+    if not seen.has_key?(queue)
+      seen = seen.put(queue, true)
       queues = queues.push(queue)
     end
 

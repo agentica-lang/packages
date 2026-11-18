@@ -8,7 +8,7 @@
 ## scans, so nothing here can share a mistake with the code under test. A random number comes from a generator of its
 ## own, so that a seed gives the same script on every run.
 
-import {Add, Backoff, Batch, Extension, Request, Take} from "protocol"
+import {Add, Backoff, Batch, Extension, Request, Settings, Take} from "protocol"
 
 ## One call of the script: the request, and the reply that the contract gives to it.
 struct Call
@@ -20,7 +20,7 @@ end
 def script(seed: Int, count: Int) -> List[Call]
   gen: ATS[String, Int] = ATS.new()
   gen.put(STATE, seed % MODULUS + SALT)
-  start = Request.Start(settings([["max_jobs", "8"], ["max_dead", "1000"]]))
+  start = Request.Start(Settings(max_jobs: 8, max_dead: 1000))
   stepped = apply(empty(MAX_JOBS), start)
   world = stepped.world
   calls = [Call(req: start, reply: stepped.reply)]
@@ -206,7 +206,7 @@ end
 def apply(before: World, req: Request) -> Step
   world = tick(before)
   case req
-    Request.Start(table) -> Step(world: empty(number(table, "max_jobs", MAX_JOBS)), reply: "ok")
+    Request.Start(settings) -> Step(world: empty(settings.max_jobs), reply: "ok")
     Request.Enqueue(add) -> enqueue(world, add)
     Request.EnqueueAll(batch) -> enqueue_all(world, batch)
     Request.Fetch(take) -> fetch(world, take)
@@ -223,6 +223,8 @@ def apply(before: World, req: Request) -> Step
     Request.Extend(extension) ->
       on_lease(world, extension.name, ->(item) { replace(world, item.with(expires: world.now + extension.ms)) })
     Request.Retry(backoff) -> on_lease(world, backoff.name, ->(item) { retry(world, item, backoff) })
+    # The calls of the contract are modeled. Not modeled: Close, Drain, Logs, Wait, WaitEnd, Stress, Watch, Events and
+    # EventNames, which are not calls of the backend or read what the driver saw.
     _ -> Step(world: world, reply: "the model does not know this call")
   end
 end
