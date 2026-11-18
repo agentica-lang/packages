@@ -1,0 +1,6 @@
+name = "telemetry"
+agentica = "0.34.1"
+
+# Every bare `end` is followed by an empty line (AGENTS.md).
+[style]
+blank_line_after_end = true
