@@ -4,7 +4,7 @@
 
 import BDD from "std/bdd"
 import Protocol from "protocol"
-import {Count, Expect, Failing, Flood, Job, Match, Race, Request, Timeout} from "protocol"
+import {Count, Expect, Failing, Flood, Job, Kind, Match, Race, Request, Timeout} from "protocol"
 
 private
 
@@ -24,13 +24,13 @@ def main() -> Void
       send(ctx, Request.StartFails(Failing(text: args[0], table: BDD.table(ctx))))
     end,
     BDD.step("job {string} holds a resource for {int} ms") do |ctx, args|
-      send(ctx, Request.Job(Job(name: args[0], kind: "holds", ms: args[1].to_i!)))
+      send(ctx, Request.Job(Job(name: args[0], kind: Kind.Holds, ms: args[1].to_i!)))
     end,
     BDD.step("job {string} holds a resource for {int} ms, {int} times") do |ctx, args|
-      send(ctx, Request.Job(Job(name: args[0], kind: "holds", ms: args[1].to_i!, times: args[2].to_i!)))
+      send(ctx, Request.Job(Job(name: args[0], kind: Kind.Holds, ms: args[1].to_i!, times: args[2].to_i!)))
     end,
     BDD.step("job {string} probes the pool for {int} ms") do |ctx, args|
-      send(ctx, Request.Job(Job(name: args[0], kind: "probe", ms: args[1].to_i!)))
+      send(ctx, Request.Job(Job(name: args[0], kind: Kind.Probe, ms: args[1].to_i!)))
     end,
     BDD.step("{int} callers each take a resource and give it back at once") do |ctx, args|
       send(ctx, Request.Flood(Flood(callers: args[0].to_i!)))
@@ -42,13 +42,13 @@ def main() -> Void
       send(ctx, Request.Flood(Flood(callers: args[0].to_i!, times: args[1].to_i!)))
     end,
     BDD.step("job {string} keeps taking a resource for {int} ms") do |ctx, args|
-      send(ctx, Request.Job(Job(name: args[0], kind: "loops", ms: args[1].to_i!)))
+      send(ctx, Request.Job(Job(name: args[0], kind: Kind.Loops, ms: args[1].to_i!)))
     end,
-    job_step("job {string} crashes", "crashes"),
-    job_step("job {string} returns an error", "fails"),
-    job_step("job {string} never returns", "hangs"),
-    job_step("job {string} holds a resource until the jobs are released", "gated"),
-    job_step("job {string} checks out again inside its body", "nests"),
+    job_step("job {string} crashes", Kind.Crashes),
+    job_step("job {string} returns an error", Kind.Fails),
+    job_step("job {string} never returns", Kind.Hangs),
+    job_step("job {string} holds a resource until the jobs are released", Kind.Gated),
+    job_step("job {string} checks out again inside its body", Kind.Nests),
     BDD.step("the caller of job {string} is cancelled") do |ctx, args| send(ctx, Request.CancelJob(args[0])) end,
     BDD.step("{int} callers are cancelled one after the other as their bodies crash {int} ms in") do |ctx, args|
       send(ctx, Request.RaceCrash(Race(callers: args[0].to_i!, crash_ms: args[1].to_i!)))
@@ -100,7 +100,7 @@ def main() -> Void
   ])
 end
 
-def job_step(pattern: String, kind: String) -> BDD.Step
+def job_step(pattern: String, kind: Kind) -> BDD.Step
   BDD.step(pattern) do |ctx, args| send(ctx, Request.Job(Job(name: args[0], kind: kind))) end
 end
 

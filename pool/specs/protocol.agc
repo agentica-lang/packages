@@ -7,12 +7,25 @@
 ## The reply that means the request worked.
 OK = "ok"
 
-## A job that a step starts: `name` names it for the expectations, `kind` is `holds`, `probe`, `loops`, `crashes`, `fails`,
-## `hangs`, `gated` or `nests` (a checkout inside the body), `ms` is the time a `holds` job keeps its resource or a
-## `loops` job runs, and `times` how many times a `holds` job takes one in turn (0: once).
+## What the body of a job does with its resource: `Holds` it for `ms`, `Probe` is the same but counts in a peak of its
+## own, `Loops` takes one again and again for `ms`, `Crashes`, `Fails`, `Hangs` (never returns), `Gated` holds it until
+## the jobs are released, and `Nests` does a checkout inside its body.
+enum Kind
+  Holds
+  Probe
+  Loops
+  Crashes
+  Fails
+  Hangs
+  Gated
+  Nests
+end
+
+## A job that a step starts: `name` names it for the expectations, `kind` is what it does, `ms` is the time a `Holds` job
+## keeps its resource or a `Loops` job runs, and `times` how many times a `Holds` job takes one in turn (0: once).
 struct Job
   name: String
-  kind: String
+  kind: Kind
   ms: Int = 0
   times: Int = 0
 end

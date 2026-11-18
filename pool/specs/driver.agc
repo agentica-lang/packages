@@ -8,7 +8,7 @@
 
 import Pool from "../pool"
 import Protocol from "protocol"
-import {Count, Expect, Failing, Flood, Job, Match, Race, Request, Timeout} from "protocol"
+import {Count, Expect, Failing, Flood, Job, Kind, Match, Race, Request, Timeout} from "protocol"
 
 private
 
@@ -65,7 +65,7 @@ end
 struct JobArgs
   pool: Pool.Pool[Fake, Cell]
   name: String
-  kind: String
+  kind: Kind
   ms: Int
   times: Int
   stats: ATS[String, Int]
@@ -269,9 +269,8 @@ def start_job(driver: Driver, job: Job) -> Handled
   end
 end
 
-# Starts `callers` callers at once that take a resource (`times` times each, at least once), hold it for `hold_ms`
-# ms and
-# give it back; they have no name, and `flood_failed` counts the checkouts that got an error.
+# Starts `callers` callers at once that take a resource (`times` times each, at least once), hold it for `hold_ms` ms
+# and give it back; they have no name, and `flood_failed` counts the checkouts that got an error.
 def flood(driver: Driver, spec: Flood) -> Handled
   case driver.pool
     none -> reply(driver, "no pool is started")
@@ -282,7 +281,7 @@ def flood(driver: Driver, spec: Flood) -> Handled
         args = JobArgs(
           pool: pool,
           name: "",
-          kind: "holds",
+          kind: Kind.Holds,
           ms: spec.hold_ms,
           times: [spec.times, 1].max.unwrap!,
           stats: driver.stats,
@@ -309,9 +308,8 @@ def cancel_job(driver: Driver, name: String) -> Handled
   end
 end
 
-# `callers` callers one after the other, each cancelled in the 2 ms after its body crashes (`crash_ms` in): a
-# crash that
-# lands as the caller goes. The crash must still be observed, or the driver ends with exit code 1.
+# `callers` callers one after the other, each cancelled in the 2 ms after its body crashes (`crash_ms` in), so
+# that a crash lands as the caller goes. The crash must still be observed, or the driver ends with exit code 1.
 def race_crash(driver: Driver, race: Race) -> Handled
   case driver.pool
     none -> reply(driver, "no pool is started")
@@ -319,7 +317,7 @@ def race_crash(driver: Driver, race: Race) -> Handled
       args = JobArgs(
         pool: pool,
         name: "race",
-        kind: "crashes_late",
+        kind: Kind.Crashes,
         ms: race.crash_ms,
         times: 1,
         stats: driver.stats,
@@ -589,7 +587,7 @@ def ping(cell: Cell) -> Result[Void]
 end
 
 def run_job(args: JobArgs) -> Result[Void]
-  return loop_job(args) if args.kind == "loops"
+  return loop_job(args) if args.kind == Kind.Loops
 
   for _i in 1..args.times
     result = Pool.with(args.pool) do |cell| use(args, cell) end
@@ -638,7 +636,7 @@ end
 # jobs count in `probe_peak` instead, so that a check can ignore the jobs that came before them.
 def use(args: JobArgs, cell: Cell) -> Result[Int]
   prefix = ""
-  if args.kind == "probe"
+  if args.kind == Kind.Probe
     prefix = "probe_"
   end
 
@@ -654,21 +652,23 @@ def use(args: JobArgs, cell: Cell) -> Result[Int]
   end
 
   case args.kind
-    "hangs" -> Task.sleep(HANG_MS)
-    "gated" -> wait_release(args.stats)
-    "crashes" ->
+    Kind.Hangs -> Task.sleep(HANG_MS)
+    Kind.Gated -> wait_release(args.stats)
+    Kind.Crashes ->
       args.stats.add("active", -1)
       args.stats.add("cell #{cell.id}", -1)
       return ok("not a number".to_i!)
-    "fails" ->
+    Kind.Fails ->
       args.stats.add("active", -1)
       args.stats.add("cell #{cell.id}", -1)
       return error("the body failed")
-    "nests" ->
+    Kind.Nests ->
       args.stats.add("active", -1)
       args.stats.add("cell #{cell.id}", -1)
       return nested(args)
-    _ -> Task.sleep(args.ms)
+    Kind.Holds -> Task.sleep(args.ms)
+    Kind.Probe -> Task.sleep(args.ms)
+    Kind.Loops -> Task.sleep(args.ms)
   end
 
   args.stats.add("#{prefix}active", -1)
