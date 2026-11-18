@@ -7,24 +7,86 @@
 ## The reply that means the request worked.
 OK = "ok"
 
-## A request. The ops are `start`, `start_owned` (in a task that `end_starter` ends) and `start_fails` (table: the
-## settings, a header and a name and value per row; text: for `start_fails`, the start of the error), `job` (name, kind:
-## `holds`, `probe`, `loops`, `crashes`, `fails`, `hangs` or `nests` (a checkout inside the body), number: the
-## milliseconds a `holds` job keeps its resource, or a `loops` job runs, times: how many times a `holds` job takes one
-## in turn), `flood` (number: the callers, wait: the milliseconds each one holds its resource, times: how many times
-## each takes one), `cancel_job` (name), `race_crash` (number: the callers, one after the other, wait: the milliseconds before the body of each crashes, which is when its caller is cancelled), `wait_jobs`, `sleep` (number), `close` (number: the drain in milliseconds), and
-## the expectations `expect_job` (name, text: the start of its result), `expect_timeout` (name; kind `or_ok` lets it
-## succeed too), `expect_kind` (name, text: the start of the kind of its error), `expect_order` (text: the names in the
-## order they finished, joined by commas), `expect_count` (name: the counter, number: its value, kind: `is`, `at_most` or
-## `reaches`, wait: the milliseconds to wait for it), and `expect_pool_count` (the same, for a count of the pool) and `expect_one_task` (the checkout and the body of the last
-## resource lent ran in one task).
-struct Request
-  op: String
-  name: String = ""
-  kind: String = ""
-  text: String = ""
-  number: Int = 0
-  wait: Int = 0
+## A job that a step starts: `name` names it for the expectations, `kind` is `holds`, `probe`, `loops`, `crashes`, `fails`,
+## `hangs`, `gated` or `nests` (a checkout inside the body), `ms` is the time a `holds` job keeps its resource or a
+## `loops` job runs, and `times` how many times a `holds` job takes one in turn (0: once).
+struct Job
+  name: String
+  kind: String
+  ms: Int = 0
   times: Int = 0
-  table: List[List[String]] = []
+end
+
+## `callers` callers at once that each take a resource `times` times (0: once) and hold it for `hold_ms`.
+struct Flood
+  callers: Int
+  hold_ms: Int = 0
+  times: Int = 0
+end
+
+## `callers` callers one after the other, each cancelled as its body crashes, `crash_ms` in.
+struct Race
+  callers: Int
+  crash_ms: Int
+end
+
+## A start that must fail: the start of its error is `text`.
+struct Failing
+  text: String
+  table: List[List[String]]
+end
+
+## What a job `name` must have got: a result or the kind of its error that starts with `text`.
+struct Expect
+  name: String
+  text: String
+end
+
+## A job that must fail with a pool timeout, or, with `or_ok`, may succeed too.
+struct Timeout
+  name: String
+  or_ok: Bool = false
+end
+
+## How a count is compared with a value: exactly (`Is`), at most (`AtMost`), or at least once it is polled long
+## enough (`Reaches`).
+enum Match
+  Is
+  AtMost
+  Reaches
+end
+
+## A counter (of the driver, or of the pool) that must match `value`, polled for up to `wait_ms`.
+struct Count
+  name: String
+  value: Int
+  match: Match
+  wait_ms: Int = 0
+end
+
+## A request, one for each thing a step asks of the driver. `Start`, `StartOwned` (in a task that `EndStarter` ends) take
+## the settings of the pool (a header, then a name and a value per row), and `StartFails` those of a pool that must
+## not start. `CancelJob` takes the name of a job, `Sleep` the ms, `Close` the drain in ms, `Release` lets the gated
+## jobs go, and `ExpectOrder` the names of the jobs in the order they finished, joined by commas. The `Expect` ones
+## are the expectations.
+enum Request
+  Start(List[List[String]])
+  StartOwned(List[List[String]])
+  StartFails(Failing)
+  EndStarter
+  Job(Job)
+  Flood(Flood)
+  CancelJob(String)
+  RaceCrash(Race)
+  WaitJobs
+  Sleep(Int)
+  Release
+  Close(Int)
+  ExpectJob(Expect)
+  ExpectTimeout(Timeout)
+  ExpectKind(Expect)
+  ExpectOrder(String)
+  ExpectCount(Count)
+  ExpectPoolCount(Count)
+  ExpectOneTask
 end

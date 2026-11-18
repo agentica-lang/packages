@@ -8,7 +8,7 @@
 
 import Pool from "../pool"
 import Protocol from "protocol"
-import {Request} from "protocol"
+import {Count, Expect, Failing, Flood, Job, Match, Race, Request, Timeout} from "protocol"
 
 private
 
@@ -111,27 +111,26 @@ def handle(driver: Driver, line: String) -> Handled
 end
 
 def act(driver: Driver, req: Request) -> Handled
-  case req.op
-    "start" -> start(driver, req)
-    "start_fails" -> start_fails(driver, req)
-    "start_owned" -> start_owned(driver, req)
-    "end_starter" -> end_starter(driver)
-    "job" -> start_job(driver, req)
-    "flood" -> flood(driver, req)
-    "cancel_job" -> cancel_job(driver, req.name)
-    "race_crash" -> race_crash(driver, req)
-    "wait_jobs" -> wait_jobs(driver)
-    "sleep" -> slept(driver, req.number)
-    "release" -> released(driver)
-    "close" -> close(driver, req.number)
-    "expect_job" -> expect_job(collect(driver), req)
-    "expect_timeout" -> expect_timeout(collect(driver), req)
-    "expect_kind" -> expect_kind(collect(driver), req)
-    "expect_order" -> expect_order(collect(driver), req.text)
-    "expect_count" -> expect_count(driver, req)
-    "expect_one_task" -> expect_one_task(driver)
-    "expect_pool_count" -> expect_pool_count(driver, req)
-    _ -> Handled(driver: driver, reply: "unknown op #{req.op.inspect}")
+  case req
+    Request.Start(table) -> start(driver, table)
+    Request.StartFails(failing) -> start_fails(driver, failing)
+    Request.StartOwned(table) -> start_owned(driver, table)
+    Request.EndStarter -> end_starter(driver)
+    Request.Job(job) -> start_job(driver, job)
+    Request.Flood(spec) -> flood(driver, spec)
+    Request.CancelJob(name) -> cancel_job(driver, name)
+    Request.RaceCrash(race) -> race_crash(driver, race)
+    Request.WaitJobs -> wait_jobs(driver)
+    Request.Sleep(ms) -> slept(driver, ms)
+    Request.Release -> released(driver)
+    Request.Close(ms) -> close(driver, ms)
+    Request.ExpectJob(expect) -> expect_job(collect(driver), expect)
+    Request.ExpectTimeout(timeout) -> expect_timeout(collect(driver), timeout)
+    Request.ExpectKind(expect) -> expect_kind(collect(driver), expect)
+    Request.ExpectOrder(order) -> expect_order(collect(driver), order)
+    Request.ExpectCount(count) -> expect_count(driver, count)
+    Request.ExpectOneTask -> expect_one_task(driver)
+    Request.ExpectPoolCount(count) -> expect_pool_count(driver, count)
   end
 end
 
@@ -189,8 +188,8 @@ def spec_of(driver: Driver, table: List[List[String]]) -> Result[Pool.Spec[Fake,
   )
 end
 
-def start(driver: Driver, req: Request) -> Handled
-  case spec_of(driver, req.table)
+def start(driver: Driver, table: List[List[String]]) -> Handled
+  case spec_of(driver, table)
     error(message) -> reply(driver, message.message)
     ok(spec) ->
       case Pool.start(spec)
@@ -203,8 +202,8 @@ end
 def with_pool(driver: Driver, pool: Pool.Pool[Fake, Cell]) -> Driver = driver.with(pool: some(pool))
 
 # Starts the pool in a task that then waits, so that a step can end it, and the owner task of the pool with it.
-def start_owned(driver: Driver, req: Request) -> Handled
-  case spec_of(driver, req.table)
+def start_owned(driver: Driver, table: List[List[String]]) -> Handled
+  case spec_of(driver, table)
     error(message) -> reply(driver, message.message)
     ok(spec) ->
       started: Channel[Result[Pool.Pool[Fake, Cell]]] = Channel.new(1)
@@ -230,13 +229,13 @@ def end_starter(driver: Driver) -> Handled
   end
 end
 
-def start_fails(driver: Driver, req: Request) -> Handled
-  case spec_of(driver, req.table)
+def start_fails(driver: Driver, failing: Failing) -> Handled
+  case spec_of(driver, failing.table)
     error(message) -> reply(driver, message.message)
     ok(spec) ->
       case Pool.start(spec)
         ok(_) -> reply(driver, "the pool started")
-        error(message) -> reply(driver, expected_prefix(message.message, req.text))
+        error(message) -> reply(driver, expected_prefix(message.message, failing.text))
       end
   end
 end
@@ -248,16 +247,16 @@ def expected_prefix(text: String, expected: String) -> String
   text
 end
 
-def start_job(driver: Driver, req: Request) -> Handled
+def start_job(driver: Driver, job: Job) -> Handled
   case driver.pool
     none -> reply(driver, "no pool is started")
     some(pool) ->
       args = JobArgs(
         pool: pool,
-        name: req.name,
-        kind: req.kind,
-        ms: req.number,
-        times: [req.times, 1].max.unwrap!,
+        name: job.name,
+        kind: job.kind,
+        ms: job.ms,
+        times: [job.times, 1].max.unwrap!,
         stats: driver.stats,
         kinds: driver.kinds,
         finished: driver.finished,
@@ -266,25 +265,26 @@ def start_job(driver: Driver, req: Request) -> Handled
       run_fn: Fn[JobArgs, Result[Void]] = &run_job
       task = Task.spawn(run_fn, args)
       Task.sleep(JOB_GAP_MS)
-      reply(driver.with(tasks: driver.tasks.put(req.name, task)), Protocol.OK)
+      reply(driver.with(tasks: driver.tasks.put(job.name, task)), Protocol.OK)
   end
 end
 
-# Starts `number` callers at once that take a resource (`times` times each, at least once), hold it for `wait` ms and
+# Starts `callers` callers at once that take a resource (`times` times each, at least once), hold it for `hold_ms`
+# ms and
 # give it back; they have no name, and `flood_failed` counts the checkouts that got an error.
-def flood(driver: Driver, req: Request) -> Handled
+def flood(driver: Driver, spec: Flood) -> Handled
   case driver.pool
     none -> reply(driver, "no pool is started")
     some(pool) ->
       run_fn: Fn[JobArgs, Result[Void]] = &run_job
       tasks = driver.tasks
-      for i in 1..req.number
+      for i in 1..spec.callers
         args = JobArgs(
           pool: pool,
           name: "",
           kind: "holds",
-          ms: req.wait,
-          times: [req.times, 1].max.unwrap!,
+          ms: spec.hold_ms,
+          times: [spec.times, 1].max.unwrap!,
           stats: driver.stats,
           kinds: driver.kinds,
           finished: driver.finished,
@@ -309,9 +309,10 @@ def cancel_job(driver: Driver, name: String) -> Handled
   end
 end
 
-# `number` callers one after the other, each cancelled in the 2 ms after its body crashes (`wait` ms in): a crash that
+# `callers` callers one after the other, each cancelled in the 2 ms after its body crashes (`crash_ms` in): a
+# crash that
 # lands as the caller goes. The crash must still be observed, or the driver ends with exit code 1.
-def race_crash(driver: Driver, req: Request) -> Handled
+def race_crash(driver: Driver, race: Race) -> Handled
   case driver.pool
     none -> reply(driver, "no pool is started")
     some(pool) ->
@@ -319,7 +320,7 @@ def race_crash(driver: Driver, req: Request) -> Handled
         pool: pool,
         name: "race",
         kind: "crashes_late",
-        ms: req.wait,
+        ms: race.crash_ms,
         times: 1,
         stats: driver.stats,
         kinds: driver.kinds,
@@ -327,9 +328,9 @@ def race_crash(driver: Driver, req: Request) -> Handled
       )
 
       crash_fn: Fn[JobArgs, Result[Void]] = &crash_late
-      for i in 0...req.number
+      for i in 0...race.callers
         caller = Task.spawn(crash_fn, args)
-        Task.sleep(req.wait + i % 3)
+        Task.sleep(race.crash_ms + i % 3)
         Task.cancel(caller)
         Task.sleep(RACE_GAP_MS)
       end
@@ -406,31 +407,31 @@ def collect(driver: Driver) -> Driver
   current
 end
 
-def expect_job(driver: Driver, req: Request) -> Handled
-  case driver.results.get(req.name)
-    none -> reply(driver, "job #{req.name.inspect} has not ended")
-    some(result) -> reply(driver, expected_prefix(result, req.text))
+def expect_job(driver: Driver, expect: Expect) -> Handled
+  case driver.results.get(expect.name)
+    none -> reply(driver, "job #{expect.name.inspect} has not ended")
+    some(result) -> reply(driver, expected_prefix(result, expect.text))
   end
 end
 
-# `kind` `or_ok` lets the job succeed too.
-def expect_timeout(driver: Driver, req: Request) -> Handled
-  case driver.results.get(req.name)
-    none -> reply(driver, "job #{req.name.inspect} has not ended")
+# `or_ok` lets the job succeed too.
+def expect_timeout(driver: Driver, timeout: Timeout) -> Handled
+  case driver.results.get(timeout.name)
+    none -> reply(driver, "job #{timeout.name.inspect} has not ended")
     some(result) ->
       message = result.split(" ").drop(1).join(" ")
       return reply(driver, Protocol.OK) if result.start_with?("error ") and Pool.timeout?(message)
 
-      return reply(driver, Protocol.OK) if req.kind == "or_ok" and result.start_with?("ok ")
+      return reply(driver, Protocol.OK) if timeout.or_ok and result.start_with?("ok ")
 
       reply(driver, "not a pool timeout: #{result}")
   end
 end
 
-def expect_kind(driver: Driver, req: Request) -> Handled
-  case driver.kinds.get(req.name)
-    error(_) -> reply(driver, "job #{req.name.inspect} has no error")
-    ok(kind) -> reply(driver, expected_prefix(kind, req.text))
+def expect_kind(driver: Driver, expect: Expect) -> Handled
+  case driver.kinds.get(expect.name)
+    error(_) -> reply(driver, "job #{expect.name.inspect} has no error")
+    ok(kind) -> reply(driver, expected_prefix(kind, expect.text))
   end
 end
 
@@ -438,35 +439,35 @@ def expect_order(driver: Driver, expected: String) -> Handled
   reply(driver, expected_prefix(driver.order.join(","), expected))
 end
 
-# Polls the counter every POLL_MS up to `wait` milliseconds: `is` wants the value exactly, `reaches` at least.
-def expect_count(driver: Driver, req: Request) -> Handled
-  deadline = Time.monotonic_ms() + req.wait
-  value = driver.stats.get(req.name).unwrap_or(0)
-  while not counted?(req, value) and Time.monotonic_ms() < deadline
+# Polls the counter every POLL_MS up to `wait_ms` milliseconds: `Is` wants the value exactly, `Reaches` at least.
+def expect_count(driver: Driver, count: Count) -> Handled
+  deadline = Time.monotonic_ms() + count.wait_ms
+  value = driver.stats.get(count.name).unwrap_or(0)
+  while not counted?(count, value) and Time.monotonic_ms() < deadline
     Task.sleep(POLL_MS)
-    value = driver.stats.get(req.name).unwrap_or(0)
+    value = driver.stats.get(count.name).unwrap_or(0)
   end
 
-  return reply(driver, Protocol.OK) if counted?(req, value)
+  return reply(driver, Protocol.OK) if counted?(count, value)
 
-  reply(driver, "the count #{req.name.inspect} is #{value}, not #{req.number}")
+  reply(driver, "the count #{count.name.inspect} is #{value}, not #{count.value}")
 end
 
 # A count that the pool keeps (`waiting`, `live`), polled like `expect_count`.
-def expect_pool_count(driver: Driver, req: Request) -> Handled
+def expect_pool_count(driver: Driver, count: Count) -> Handled
   case driver.pool
     none -> reply(driver, "no pool is started")
     some(pool) ->
-      deadline = Time.monotonic_ms() + req.wait
-      value = pool.counts.get(req.name).unwrap_or(0)
-      while not counted?(req, value) and Time.monotonic_ms() < deadline
+      deadline = Time.monotonic_ms() + count.wait_ms
+      value = pool.counts.get(count.name).unwrap_or(0)
+      while not counted?(count, value) and Time.monotonic_ms() < deadline
         Task.sleep(POLL_MS)
-        value = pool.counts.get(req.name).unwrap_or(0)
+        value = pool.counts.get(count.name).unwrap_or(0)
       end
 
-      return reply(driver, Protocol.OK) if counted?(req, value)
+      return reply(driver, Protocol.OK) if counted?(count, value)
 
-      reply(driver, "the pool count #{req.name.inspect} is #{value}, not #{req.number}")
+      reply(driver, "the pool count #{count.name.inspect} is #{value}, not #{count.value}")
   end
 end
 
@@ -483,10 +484,12 @@ def expect_one_task(driver: Driver) -> Handled
   reply(driver, "the checkout ran in task #{checkout} and the body in task #{body}")
 end
 
-def counted?(req: Request, value: Int) -> Bool
-  return value <= req.number if req.kind == "at_most"
-
-  value == req.number or (req.kind == "reaches" and value > req.number)
+def counted?(count: Count, value: Int) -> Bool
+  case count.match
+    Match.Is -> value == count.value
+    Match.AtMost -> value <= count.value
+    Match.Reaches -> value >= count.value
+  end
 end
 
 # The fake resource: a numbered cell that counts what the pool does with it.
