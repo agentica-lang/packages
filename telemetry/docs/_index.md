@@ -7,7 +7,7 @@ description: Events for numbers, as std/logger is for text. A library says that 
 
 `std/logger` is for text that a person reads. An event of `telemetry` is data for a program: a name, numbers and a few strings.
 
-Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir` (the first tag will be `telemetry-0.1.0`):
+Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
 agentica add telemetry https://github.com/agentica-lang/packages --tag telemetry-0.1.0 --subdir telemetry
