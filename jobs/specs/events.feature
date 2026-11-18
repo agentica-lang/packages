@@ -16,7 +16,7 @@ Feature: The events of jobs
       | jobs.fetch mail count=1              |
       | jobs.ack mail count=1 attempt=1      |
 
-  Scenario: A batch is one event for each queue, and a duplicate of a unique key is counted
+  Scenario: A batch is one event for each queue, and a duplicate of a unique key is counted apart from the jobs added
     Given a memory backend on a manual clock
     And I watch the events
     When I enqueue "ok" into "mail" with:
@@ -29,7 +29,7 @@ Feature: The events of jobs
     Then the events are:
       | event                                         |
       | jobs.enqueue mail count=1 duplicate_count=0   |
-      | jobs.enqueue mail count=1 duplicate_count=1   |
+      | jobs.enqueue mail count=0 duplicate_count=1   |
       | jobs.enqueue push count=3 duplicate_count=0   |
 
   Scenario: A fetch that leased some jobs counts them, and an empty fetch says nothing
@@ -155,3 +155,24 @@ Feature: The events of jobs
     And I drain "mail"
     And the drain logged
     Then the reply is "warning job failed, it will run again attempt=1 id=1 queue=mail"
+
+  Scenario Outline: A handler gets the events that its pattern names, and no others
+    Given a memory backend on a manual clock
+    And I watch the events of "<pattern>"
+    When I enqueue "ok" into "mail"
+    And I enqueue "discard" into "mail"
+    And I drain "mail"
+    Then the event names are "<names>"
+
+    Examples:
+      | pattern          | names |
+      | jobs.enqueue     | jobs.enqueue; jobs.enqueue |
+      | jobs.fetch       | jobs.fetch; jobs.fetch |
+      | jobs.ack         | jobs.ack |
+      | jobs.nack        | jobs.nack |
+      | jobs.job.stop    | jobs.job.stop |
+      | jobs.job.error   | jobs.job.error |
+      | jobs.job.settle  | jobs.job.settle; jobs.job.settle |
+      | jobs.job         | jobs.job.start; jobs.job.stop; jobs.job.settle; jobs.job.start; jobs.job.error; jobs.job.settle |
+      | *                | jobs.enqueue; jobs.enqueue; jobs.fetch; jobs.job.start; jobs.job.stop; jobs.ack; jobs.job.settle; jobs.fetch; jobs.job.start; jobs.job.error; jobs.nack; jobs.job.settle |
+      | pool             | |

@@ -9,8 +9,8 @@ import Types from "types"
 ## `error_kind` of the handler's error, `jobs.discard` for a job it gave up).
 JOB = "jobs.job"
 
-## `jobs.enqueue`: one event for each queue of the batch, with the jobs added (`count`) and how many of them were
-## duplicates of a unique key (`duplicate_count`).
+## `jobs.enqueue`: one event for each queue of the batch, with the jobs added (`count`) and the ones that were
+## duplicates of a unique key and so were not added (`duplicate_count`): together they are the jobs offered.
 def enqueue(backend: Types.Backend, jobs: List[Types.NewJob]) -> Result[List[Types.Enqueued]]
   added = try backend.enqueue.call(jobs)
   if Telemetry.enabled?(ENQUEUE)
@@ -80,14 +80,15 @@ def enqueued(backend: String, jobs: List[Types.NewJob], added: List[Types.Enqueu
       queues = queues.push(queue)
     end
 
-    counts = counts.put(queue, counts.get(queue, 0) + 1)
     if added[position].duplicate
       duplicates = duplicates.put(queue, duplicates.get(queue, 0) + 1)
+    else
+      counts = counts.put(queue, counts.get(queue, 0) + 1)
     end
   end
 
   for queue in queues
-    ints = {"count": counts[queue], "duplicate_count": duplicates.get(queue, 0)}
+    ints = {"count": counts.get(queue, 0), "duplicate_count": duplicates.get(queue, 0)}
     Telemetry.execute(ENQUEUE, ints, {}, {"queue": queue, "backend": backend})
   end
 end

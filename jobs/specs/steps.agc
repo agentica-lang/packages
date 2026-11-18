@@ -90,7 +90,9 @@ def main() -> Void
     BDD.step(
       "{int} consumers that wait {int} ms work off {int} jobs in {int} groups with at most {int} per group",
     ) do |ctx, args| ask(ctx, stress_in_groups([args[0], args[2], args[3], args[4]], args[1].to_i!)) end,
-    BDD.step("I watch the events") do |ctx, _args| ask(ctx, Request(op: "watch")) end,
+    BDD.step("I watch the events") do |ctx, _args| ask(ctx, Request(op: "watch", text: "jobs")) end,
+    BDD.step("I watch the events of {string}") do |ctx, args| ask(ctx, Request(op: "watch", text: args[0])) end,
+    BDD.step("the event names are {string}") do |ctx, args| expect_names(ctx, args[0]) end,
     BDD.step("I read the events") do |ctx, _args| ask(ctx, Request(op: "events")) end,
     BDD.step("the events are:") do |ctx, _args| expect_events(ctx, BDD.table(ctx)) end,
     BDD.step("the drain logged") do |ctx, _args| ask(ctx, Request(op: "logs")) end,
@@ -166,6 +168,14 @@ def expect_events(ctx: BDD.Context, table: List[List[String]]) -> BDD.Context
   return expect_reply(read, "ok") if rows.empty?
 
   expect_reply(read, "ok #{rows.join("; ")}")
+end
+
+# The names of the events since the last read, in the order they came, as the driver says them.
+def expect_names(ctx: BDD.Context, names: String) -> BDD.Context
+  read = ask(ctx, Request(op: "events", kind: "names"))
+  return expect_reply(read, "ok") if names == ""
+
+  expect_reply(read, "ok #{names}")
 end
 
 def memory(clock: Fn[Int]) -> Result[Jobs.Backend] = Jobs.memory(Jobs.MemoryOptions(clock: some(clock)))

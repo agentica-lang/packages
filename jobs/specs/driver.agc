@@ -75,8 +75,8 @@ def act(driver: Driver, req: Request) -> Handled
     "counts" -> with_backend(driver, req, &counts)
     "drain" -> with_backend(driver, req, &drain)
     "logs" -> logs(driver)
-    "watch" -> watch(driver)
-    "events" -> Handled(driver: driver, reply: events(driver))
+    "watch" -> watch(driver, req)
+    "events" -> Handled(driver: driver, reply: events(driver, req.kind == "names"))
     "wait" -> with_backend(driver, req, &wait)
     "wait_end" -> with_backend(driver, req, &wait_end)
     "stress" -> with_backend(driver, req, &stress)
@@ -424,9 +424,9 @@ def stress(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
 end
 
 # The hub of `telemetry`, and a capture of the events of `jobs`: it runs in the main task, like the backend's actor.
-def watch(driver: Driver) -> Handled
+def watch(driver: Driver, req: Request) -> Handled
   _ = Telemetry.start()
-  case Testing.capture(["jobs"])
+  case Testing.capture(req.text.split(","))
     ok(made) -> Handled(driver: driver.with(events: some(made)), reply: "ok")
     error(e) -> Handled(driver: driver, reply: failure(e))
   end
@@ -434,21 +434,21 @@ end
 
 # The events since the last read, one line each: the name, the queue, and the numbers and words that the steps check.
 # An event that breaks the conventions of `telemetry` is the reply instead.
-def events(driver: Driver) -> String
+def events(driver: Driver, names_only: Bool) -> String
   case driver.events
-    some(made) -> read_events(made)
+    some(made) -> read_events(made, names_only)
     none -> "no watch: say so first"
   end
 end
 
-def read_events(made: Testing.Capture) -> String
+def read_events(made: Testing.Capture, names_only: Bool) -> String
   case Testing.events(made)
     error(e) -> failure(e)
-    ok(found) -> lines_of(found)
+    ok(found) -> lines_of(found, names_only)
   end
 end
 
-def lines_of(found: List[Telemetry.Event]) -> String
+def lines_of(found: List[Telemetry.Event], names_only: Bool) -> String
   for event in found
     case Conformance.check(event)
       error(e) -> return "#{event.name} breaks the conventions: #{e.kind}"
@@ -457,6 +457,8 @@ def lines_of(found: List[Telemetry.Event]) -> String
   end
 
   return "ok" if found.empty?
+
+  return "ok #{found.map(->(event) { event.name }).join("; ")}" if names_only
 
   "ok #{found.map(->(event) { event_line(event) }).join("; ")}"
 end

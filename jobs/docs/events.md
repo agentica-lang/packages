@@ -4,13 +4,13 @@ description: What jobs tells the telemetry package, by name, with its measuremen
 weight: 4
 ---
 
-`jobs` says what happens to a job with the [telemetry](https://www.agentica-lang.com/packages/telemetry/) package, as `std/logger` says it in text for a person. The calls of `Jobs` (`enqueue`, `enqueue_all`, `fetch`, `ack`, `nack`) emit an event after the backend answered, so every backend gets them, and `Jobs.drain` also runs each job in a span. Nothing is emitted for a call that failed: an event says what happened. With no handler attached a call costs a few dozen steps more (one table read, and no map is built), so a program that does not use telemetry pays nothing it can see.
+`jobs` says what happens to a job with the [telemetry](https://www.agentica-lang.com/packages/telemetry/) package, as `std/logger` says it in text for a person. The calls of `Jobs` (`enqueue`, `enqueue_all`, `fetch`, `ack`, `nack`) emit an event after the backend answered, so every backend gets them, and `Jobs.drain` also runs each job in a span. Nothing is emitted for a call that failed: an event says what happened. With no handler attached a call costs a few dozen steps more (one table read, and no map is built), so a program that does not use telemetry pays nothing it can see. Once any handler is attached, even one for other events, each call costs a little more, about 100 steps for each check of whether a handler hears it.
 
 An app attaches the handlers, after `Telemetry.start()` in its `main`, with the names it wants (`["jobs"]` for all of them). Use the same `telemetry` tag as `jobs` does, or the manifest has two sources for one name (`PKG-SOURCE-CONFLICT`).
 
 | Event | Measurements | Metadata |
 |---|---|---|
-| `jobs.enqueue` | `count` (jobs added), `duplicate_count` | `queue`, `backend` |
+| `jobs.enqueue` | `count` (jobs added), `duplicate_count` (jobs not added) | `queue`, `backend` |
 | `jobs.fetch` | `count` (jobs leased) | `queue`, `backend` |
 | `jobs.ack` | `count` (1) | `queue`, `id`, `attempt`, `backend` |
 | `jobs.nack` | `count` (1) | `queue`, `id`, `attempt`, `backend`, `how` (`retry`, `release` or `dead`) |
@@ -19,7 +19,8 @@ An app attaches the handlers, after `Telemetry.start()` in its `main`, with the 
 | `jobs.job.error` | `duration_ns` | as `start`, and `error_kind` |
 | `jobs.job.settle` | `count` (1) | `queue`, `id`, `attempt`, `backend`, `verdict` (`ack`, `retry` or `dead`) |
 
-- `jobs.enqueue` is one event for each queue of a batch, and a job that was a duplicate of a unique key is in `duplicate_count`, as well as in `count`.
+- `jobs.enqueue` is one event for each queue of a batch. `count` is the jobs that were added, and `duplicate_count` the ones that were a duplicate of a unique key and so were not added: together they are the jobs that the caller offered.
+- `jobs.job.start|stop|error` and `jobs.job.settle` come only from `Jobs.drain`: a consumer that calls `fetch`, `ack` and `nack` itself gets the four events of the calls, and no span of its own.
 - A fetch that leased nothing emits nothing: a consumer that polls would fill a handler with empty events. The event of a fetch that did lease has the number of jobs.
 - `jobs.job.start|stop|error` are the span of the handler in `Jobs.drain`. A handler that returns an error ends in `jobs.job.error`, with the `error_kind` of that error (`jobs.discard` for `Jobs.discard`, and `error` for a plain one). The time is the time of the handler, not of the ack.
 - `jobs.job.settle` is what the drain decided after the handler: `ack`, `retry` (the job runs again) or `dead` (a discard, or a failure on the last attempt). It comes after the `jobs.ack` or `jobs.nack` that carried it out.
