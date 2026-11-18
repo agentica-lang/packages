@@ -112,15 +112,15 @@ prop/                property-based testing: prop.agc is the API (check, eq, ass
                      are the unit tests (the API is plain function calls)
 telemetry/           events for numbers: telemetry.agc is the API (start, stop, execute, enabled?, span, attach, detach,
                      handlers, dropped, flush); conformance.agc the check of an event against the conventions
-                     (check); src/hub.agc the hub (the one actor that writes the routes, starts the actor of each
+                     (check); testing.agc the helper for tests (capture, events, stop, session); src/hub.agc the hub (the one actor that writes the routes, starts the actor of each
                      handler and detaches one that fails), src/handler.agc the actor of one handler (its bounded
                      queue), src/routes.agc the ATS tables that emitters read, src/names.agc the names and patterns
                      (pure), src/flush.agc the barrier, src/types.agc the records and messages; specs/ has the
-                     features (emitting, handlers, failures, stress, spans, conventions), whose program under test is
+                     features (emitting, handlers, failures, stress, spans, conventions, testing), whose program under test is
                      specs/driver.agc (the hub and its handlers, driven by JSON lines from specs/steps.agc), and
                      specs/stress.agc and specs/starts.agc the tasks that attach, detach, emit and start together;
                      test/cost_test.agc holds the steps of `execute` and of a span to a bound (System.Profile.steps,
-                     no clock) and test/names_test.agc the pure names
+                     no clock), test/names_test.agc the pure names and test/testing_test.agc a session in a unit test
 websocket-client/    a WebSocket client (RFC 6455): websocket.agc is the API (connect, handshake, send_text, send_binary, send_ping,
                      send_pong, receive, close); src/frame.agc the frames (pure), src/handshake.agc the URL, the request
                      and the check of the answer (pure), src/connection.agc the socket, src/types.agc the records;

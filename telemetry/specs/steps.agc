@@ -4,6 +4,8 @@
 import BDD from "std/bdd"
 import Regex from "std/regex"
 import Conformance from "../conformance"
+import Telemetry from "../telemetry"
+import Testing from "../testing"
 import Types from "../src/types"
 import {Request} from "protocol"
 
@@ -103,6 +105,23 @@ def main() -> Void
     BDD.step("I check the event {string} with:") do |ctx, args| check_event(ctx, args[0], BDD.table(ctx)) end,
     BDD.step("{int} tasks run {int} spans each at once") do |ctx, args|
       ask(ctx, Request(op: "span_stress", number: args[0].to_i!, wait: args[1].to_i!))
+    end,
+    BDD.step("I capture {string} as {string}") do |ctx, args| capture(ctx, args, 0) end,
+    BDD.step("I capture {string} as {string} with room for {int} events") do |ctx, args|
+      capture(ctx, args, args[2].to_i!)
+    end,
+    BDD.step("I read the events of the capture {string}") do |ctx, args|
+      ask(ctx, Request(op: "captured", id: args[0]))
+    end,
+    BDD.step("I stop the capture {string}") do |ctx, args| ask(ctx, Request(op: "capture_stop", id: args[0])) end,
+    BDD.step("{int} tasks emit {int} events each, into a capture") do |ctx, args|
+      ask(ctx, Request(op: "capture_stress", number: args[0].to_i!, wait: args[1].to_i!))
+    end,
+    BDD.step("the driver runs a session that captures {string} and emits {string}") do |ctx, args|
+      ask(ctx, Request(op: "session", patterns: args[0].split(","), name: args[1]))
+    end,
+    BDD.step("a session in this step captures {string} and emits {string}") do |ctx, args|
+      session_in_step(ctx, args[0], args[1])
     end,
     BDD.step("I measure the steps of emitting {string}") do |ctx, args|
       ask(ctx, Request(op: "steps", name: args[0]))
@@ -310,4 +329,26 @@ def check_event(ctx: BDD.Context, name: String, rows: List[List[String]]) -> BDD
   end
 
   BDD.set(ctx, REPLY, JSON.from(text))
+end
+
+def capture(ctx: BDD.Context, args: List[String], room: Int) -> BDD.Context
+  ask(ctx, Request(op: "capture", id: args[1], patterns: args[0].split(","), number: room))
+end
+
+# The whole helper in the step itself: it starts the hub, captures, reads, and ends everything, so the step leaves no
+# task running (the scenario fails with RUNTIME-BDD-PENDING-TASKS otherwise).
+def session_in_step(ctx: BDD.Context, patterns: String, name: String) -> BDD.Context
+  result = Testing.session(patterns.split(","), ->(made) { emit_and_read(made, name) })
+  text = "ok"
+  case result
+    ok(found) -> text = "ok #{found.map(->(event) { event.name }).join(", ")}"
+    error(e) -> text = "error #{e.kind}"
+  end
+
+  BDD.set(ctx, REPLY, JSON.from(text))
+end
+
+def emit_and_read(made: Testing.Capture, name: String) -> Result[List[Telemetry.Event]]
+  Telemetry.execute(name)
+  Testing.events(made)
 end
