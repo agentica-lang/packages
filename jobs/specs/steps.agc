@@ -6,7 +6,7 @@ import BDD from "std/bdd"
 import Conformance from "../conformance"
 import Jobs from "../jobs"
 import Model from "model"
-import {Request} from "protocol"
+import {Add, Backoff, Batch, Crowd, Extension, Park, Request, Run, Take, Unpark} from "protocol"
 
 private
 
@@ -18,71 +18,69 @@ HEADER = [["setting", "value"]]
 
 def main() -> Void
   BDD.run([
-    BDD.step("a memory backend on a manual clock") do |ctx, _args| ask(ctx, Request(op: "start", table: HEADER)) end,
-    BDD.step("a memory backend on a manual clock with:") do |ctx, _args|
-      ask(ctx, Request(op: "start", table: BDD.table(ctx)))
-    end,
+    BDD.step("a memory backend on a manual clock") do |ctx, _args| ask(ctx, Request.Start(HEADER)) end,
+    BDD.step("a memory backend on a manual clock with:") do |ctx, _args| ask(ctx, Request.Start(BDD.table(ctx))) end,
     BDD.step("a memory backend on the wall clock") do |ctx, _args|
-      ask(ctx, Request(op: "start", table: [["setting", "value"], ["clock", "wall"]]))
+      ask(ctx, Request.Start([["setting", "value"], ["clock", "wall"]]))
     end,
     BDD.step("I enqueue {string} into {string}") do |ctx, args|
-      ask(ctx, Request(op: "enqueue", text: args[0], queue: args[1], table: HEADER))
+      ask(ctx, Request.Enqueue(Add(queue: args[1], text: args[0], table: HEADER)))
     end,
     BDD.step("I enqueue {string} into {string} with:") do |ctx, args|
-      ask(ctx, Request(op: "enqueue", text: args[0], queue: args[1], table: BDD.table(ctx)))
+      ask(ctx, Request.Enqueue(Add(queue: args[1], text: args[0], table: BDD.table(ctx))))
     end,
     BDD.step("I enqueue the jobs {string} into {string} in one batch") do |ctx, args|
-      ask(ctx, Request(op: "enqueue_all", text: args[0], queue: args[1]))
+      ask(ctx, Request.EnqueueAll(Batch(queue: args[1], text: args[0])))
     end,
     BDD.step("I fetch a job of {string} as {string}") do |ctx, args|
-      ask(ctx, Request(op: "fetch", queue: args[0], name: args[1], number: LEASE_MS))
+      ask(ctx, Request.Fetch(Take(queue: args[0], name: args[1], lease_ms: LEASE_MS)))
     end,
     BDD.step("I fetch a job of {string} as {string}, leased for {int} ms") do |ctx, args|
-      ask(ctx, Request(op: "fetch", queue: args[0], name: args[1], number: args[2].to_i!))
+      ask(ctx, Request.Fetch(Take(queue: args[0], name: args[1], lease_ms: args[2].to_i!)))
     end,
     BDD.step("I fetch a job of {string} as {string}, at most {int} per group") do |ctx, args|
-      ask(ctx, Request(op: "fetch", queue: args[0], name: args[1], number: LEASE_MS, limit: args[2].to_i!))
+      ask(ctx, Request.Fetch(Take(queue: args[0], name: args[1], lease_ms: LEASE_MS, limit: args[2].to_i!)))
     end,
     BDD.step("I fetch {int} jobs of {string} as {string}") do |ctx, args|
-      ask(ctx, Request(op: "fetch", queue: args[1], name: args[2], number: LEASE_MS, max: args[0].to_i!))
+      ask(ctx, Request.Fetch(Take(queue: args[1], name: args[2], lease_ms: LEASE_MS, max: args[0].to_i!)))
     end,
-    BDD.step("I ack {string}") do |ctx, args| ask(ctx, Request(op: "ack", name: args[0])) end,
+    BDD.step("I ack {string}") do |ctx, args| ask(ctx, Request.Ack(args[0])) end,
     BDD.step("I retry {string} in {int} ms") do |ctx, args|
-      ask(ctx, Request(op: "retry", name: args[0], number: args[1].to_i!))
+      ask(ctx, Request.Retry(Backoff(name: args[0], ms: args[1].to_i!)))
     end,
     BDD.step("I retry {string} in {int} ms, with the error {string}") do |ctx, args|
-      ask(ctx, Request(op: "retry", name: args[0], number: args[1].to_i!, text: args[2]))
+      ask(ctx, Request.Retry(Backoff(name: args[0], ms: args[1].to_i!, why: args[2])))
     end,
-    BDD.step("I release {string}") do |ctx, args| ask(ctx, Request(op: "release", name: args[0])) end,
-    BDD.step("I kill {string}") do |ctx, args| ask(ctx, Request(op: "kill", name: args[0])) end,
+    BDD.step("I release {string}") do |ctx, args| ask(ctx, Request.Release(args[0])) end,
+    BDD.step("I kill {string}") do |ctx, args| ask(ctx, Request.Kill(args[0])) end,
     BDD.step("I extend {string} by {int} ms") do |ctx, args|
-      ask(ctx, Request(op: "extend", name: args[0], number: args[1].to_i!))
+      ask(ctx, Request.Extend(Extension(name: args[0], ms: args[1].to_i!)))
     end,
-    BDD.step("the clock moves {int} ms") do |ctx, args| ask(ctx, Request(op: "advance", number: args[0].to_i!)) end,
-    BDD.step("I ask for the counts of {string}") do |ctx, args| ask(ctx, Request(op: "counts", queue: args[0])) end,
-    BDD.step("I close the backend") do |ctx, _args| ask(ctx, Request(op: "close", number: 1_000)) end,
+    BDD.step("the clock moves {int} ms") do |ctx, args| ask(ctx, Request.Advance(args[0].to_i!)) end,
+    BDD.step("I ask for the counts of {string}") do |ctx, args| ask(ctx, Request.Counts(args[0])) end,
+    BDD.step("I close the backend") do |ctx, _args| ask(ctx, Request.Close(1_000)) end,
     BDD.step("a fetch of {string} starts to wait as {string}") do |ctx, args|
-      ask(ctx, Request(op: "wait", queue: args[0], name: args[1]))
+      ask(ctx, Request.Wait(Park(queue: args[0], name: args[1])))
     end,
     BDD.step("a fetch of {string} starts to wait as {string} for {int} ms") do |ctx, args|
-      ask(ctx, Request(op: "wait", queue: args[0], name: args[1], number: args[2].to_i!))
+      ask(ctx, Request.Wait(Park(queue: args[0], name: args[1], wait_ms: args[2].to_i!)))
     end,
     BDD.step("a fetch of {string} starts to wait as {string}, at most {int} per group") do |ctx, args|
-      ask(ctx, Request(op: "wait", queue: args[0], name: args[1], limit: args[2].to_i!))
+      ask(ctx, Request.Wait(Park(queue: args[0], name: args[1], limit: args[2].to_i!)))
     end,
-    BDD.step("the fetch {string} ends") do |ctx, args| ask(ctx, Request(op: "wait_end", name: args[0])) end,
+    BDD.step("the fetch {string} ends") do |ctx, args| ask(ctx, Request.WaitEnd(Unpark(name: args[0]))) end,
     BDD.step("the clock moves {int} ms at a time until the fetch {string} ends") do |ctx, args|
-      ask(ctx, Request(op: "wait_end", name: args[1], number: args[0].to_i!))
+      ask(ctx, Request.WaitEnd(Unpark(name: args[1], step_ms: args[0].to_i!)))
     end,
-    BDD.step("I drain {string}") do |ctx, args| ask(ctx, Request(op: "drain", queue: args[0], kind: "ready")) end,
+    BDD.step("I drain {string}") do |ctx, args| ask(ctx, Request.Drain(Run(queue: args[0], kind: "ready"))) end,
     BDD.step("I drain {string}, at most {int} jobs") do |ctx, args|
-      ask(ctx, Request(op: "drain", queue: args[0], kind: "ready", number: args[1].to_i!))
+      ask(ctx, Request.Drain(Run(queue: args[0], kind: "ready", max_runs: args[1].to_i!)))
     end,
     BDD.step("I drain {string}, with the jobs that wait for a time, and no clock") do |ctx, args|
-      ask(ctx, Request(op: "drain", queue: args[0], kind: "all without clock"))
+      ask(ctx, Request.Drain(Run(queue: args[0], kind: "all without clock")))
     end,
     BDD.step("I drain {string}, with the jobs that wait for a time") do |ctx, args|
-      ask(ctx, Request(op: "drain", queue: args[0], kind: "all"))
+      ask(ctx, Request.Drain(Run(queue: args[0], kind: "all")))
     end,
     BDD.step("{int} consumers work off {int} jobs in {int} groups with at most {int} per group") do |ctx, args|
       ask(ctx, stress_in_groups(args, 0))
@@ -90,19 +88,19 @@ def main() -> Void
     BDD.step(
       "{int} consumers that wait {int} ms work off {int} jobs in {int} groups with at most {int} per group",
     ) do |ctx, args| ask(ctx, stress_in_groups([args[0], args[2], args[3], args[4]], args[1].to_i!)) end,
-    BDD.step("I watch the events") do |ctx, _args| ask(ctx, Request(op: "watch", text: "jobs")) end,
-    BDD.step("I watch the events of {string}") do |ctx, args| ask(ctx, Request(op: "watch", text: args[0])) end,
+    BDD.step("I watch the events") do |ctx, _args| ask(ctx, Request.Watch(["jobs"])) end,
+    BDD.step("I watch the events of {string}") do |ctx, args| ask(ctx, Request.Watch(args[0].split(","))) end,
     BDD.step("the event names are {string}") do |ctx, args| expect_names(ctx, args[0]) end,
-    BDD.step("I read the events") do |ctx, _args| ask(ctx, Request(op: "events")) end,
+    BDD.step("I read the events") do |ctx, _args| ask(ctx, Request.Events) end,
     BDD.step("the events are:") do |ctx, _args| expect_events(ctx, BDD.table(ctx)) end,
-    BDD.step("the drain logged") do |ctx, _args| ask(ctx, Request(op: "logs")) end,
+    BDD.step("the drain logged") do |ctx, _args| ask(ctx, Request.Logs) end,
     BDD.step("{int} consumers work off {int} jobs of one queue while producers add them") do |ctx, args|
-      ask(ctx, Request(op: "stress", number: args[0].to_i!, wait: args[1].to_i!))
+      ask(ctx, Request.Stress(Crowd(consumers: args[0].to_i!, jobs: args[1].to_i!)))
     end,
     BDD.step(
       "{int} consumers that wait {int} ms work off {int} jobs of one queue while producers add them",
     ) do |ctx, args|
-      ask(ctx, Request(op: "stress", number: args[0].to_i!, wait_ms: args[1].to_i!, wait: args[2].to_i!))
+      ask(ctx, Request.Stress(Crowd(consumers: args[0].to_i!, jobs: args[2].to_i!, wait_ms: args[1].to_i!)))
     end,
     BDD.step("the memory backend answers like the model on {int} random calls from seed {int}") do |ctx, args|
       agree_with_model(ctx, args[0].to_i!, args[1].to_i!)
@@ -133,13 +131,14 @@ end
 
 # The consumers, the jobs, the groups and the limit of a stress in groups.
 def stress_in_groups(args: List[String], wait_ms: Int) -> Request
-  Request(
-    op: "stress",
-    number: args[0].to_i!,
-    wait: args[1].to_i!,
-    groups: args[2].to_i!,
-    limit: args[3].to_i!,
-    wait_ms: wait_ms,
+  Request.Stress(
+    Crowd(
+      consumers: args[0].to_i!,
+      jobs: args[1].to_i!,
+      groups: args[2].to_i!,
+      limit: args[3].to_i!,
+      wait_ms: wait_ms,
+    ),
   )
 end
 
@@ -163,7 +162,7 @@ end
 
 # The events since the last read, one per row of the table (the header first), as the driver says them.
 def expect_events(ctx: BDD.Context, table: List[List[String]]) -> BDD.Context
-  read = ask(ctx, Request(op: "events"))
+  read = ask(ctx, Request.Events)
   rows = table.drop(1).map(->(row) { row[0] })
   return expect_reply(read, "ok") if rows.empty?
 
@@ -172,7 +171,7 @@ end
 
 # The names of the events since the last read, in the order they came, as the driver says them.
 def expect_names(ctx: BDD.Context, names: String) -> BDD.Context
-  read = ask(ctx, Request(op: "events", kind: "names"))
+  read = ask(ctx, Request.EventNames)
   return expect_reply(read, "ok") if names == ""
 
   expect_reply(read, "ok #{names}")
