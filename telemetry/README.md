@@ -6,7 +6,7 @@ away. A call with no handler costs one table read. Each handler runs in an actor
 broken handler never hurts the code that emits: a full queue drops the newest event and counts it, and a handler that
 fails is detached with one warning.
 
-Add it in a project with an `agentica.toml` (not released yet; the first tag will be `telemetry-0.1.0`):
+Add it in a project with an `agentica.toml`:
 
 ```sh
 agentica add telemetry https://github.com/agentica-lang/packages --tag telemetry-0.1.0 --subdir telemetry
