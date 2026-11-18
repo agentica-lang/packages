@@ -4,8 +4,8 @@
 ## every request with one line, and the step program checks the line.
 
 ## What a handler does with an event: `Record` records it, `Fail` returns an error, `Crash` crashes, `Slow` pauses
-## first, `Flush` calls `flush` and records the answer, `Who` records its task, `Doomed` waits for its gate and then
-## fails, and `Block` records it and waits for `Release`.
+## first, `Flush` calls `flush` and records the answer, `Who` records its task, and `Block` records it and waits for
+## `Release`.
 enum Acts
   Record
   Fail
@@ -13,7 +13,6 @@ enum Acts
   Slow
   Flush
   Who
-  Doomed
   Block
 end
 

@@ -153,7 +153,6 @@ def handler(id: String, acts: Acts, gate: Channel[Bool]) -> Fn[Telemetry.Event, 
     Acts.Slow -> ->(event) { slowly(id, event) }
     Acts.Flush -> ->(_event) { flushing(id) }
     Acts.Who -> ->(_event) { who(id) }
-    Acts.Doomed -> ->(_event) { doomed(gate) }
     Acts.Block -> ->(event) { blocked(id, gate, event) }
     Acts.Record -> ->(event) { record(id, event) }
   end
@@ -246,10 +245,9 @@ def doomed(gate: Channel[Bool]) -> Result[Void]
   error("too late", kind: "handler.late")
 end
 
-# Attaches a handler that is cancelled at once, `count` times, and then the handler of the request (whose queue
-# has room
-# for `count` events, as the step gives it). What the old ones tell the hub late must not touch the newest handler of
-# the same id.
+# Attaches a handler that is cancelled at once, `count` times, and then the handler of the request, whose queue has
+# room for `count` events, as the step gives it. What the old ones tell the hub late must not touch the newest handler
+# of the same id.
 def churn(driver: Driver, spec: Churn) -> Handled
   gate: Channel[Bool] = Channel.new(1)
   for _i in 1..spec.count
