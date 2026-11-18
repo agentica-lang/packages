@@ -35,9 +35,8 @@ Feature: The testing helper
     And I stop the capture "c"
     And I ask for the handlers
     Then the reply is "ok"
-    When I emit "jobs.b"
-    And I read the events of the capture "c"
-    Then the reply is "ok"
+    When I read the events of the capture "c"
+    Then the reply is "error telemetry.unknown"
 
   Scenario: Stopping a capture twice fails
     Given the hub is started
@@ -52,6 +51,33 @@ Feature: The testing helper
     And I emit 10 events "jobs.n"
     And I read the events of the capture "c"
     Then the reply is "error telemetry.lost"
+
+  Scenario: Reading a capture after the hub stopped is an error, not an empty list
+    Given the hub is started
+    When I capture "jobs" as "c"
+    And I emit "jobs.a"
+    And I stop the hub
+    And I read the events of the capture "c"
+    Then the reply is "error telemetry.unknown"
+
+  Scenario: After the lost error a capture still works, and the next read starts clean
+    Given the hub is started
+    When I capture "jobs" as "c" with room for 2 events
+    And I emit 10 events "jobs.n"
+    And I read the events of the capture "c"
+    Then the reply is "error telemetry.lost"
+    When I read the events of the capture "c"
+    Then the reply is "ok"
+    When I emit "jobs.after"
+    And I read the events of the capture "c"
+    Then the reply is "ok jobs.after"
+
+  Scenario: Tasks that capture at once all get a capture of their own
+    Given the hub is started
+    When 2 tasks capture at once
+    Then the reply is "ok"
+    When 8 tasks capture at once
+    Then the reply is "ok"
 
   Scenario: A capture needs a hub
     When I capture "jobs" as "c"

@@ -70,6 +70,30 @@ def run_capture(workers: Int, count: Int) -> String
   in_order(found.unwrap!, workers * count)
 end
 
+## Runs `workers` tasks that call `Testing.capture` at once: all must succeed, with distinct ids, and stop detaches them.
+def run_captures(workers: Int) -> String
+  tasks = (1..workers).to_a
+  made = Task.map(tasks, workers, TASK_MS, ->(_worker) { Testing.capture(["stress.cap"]) })
+  captures: List[Testing.Capture] = []
+  for result in made
+    case result
+      ok(taken) -> captures = captures.push(taken)
+      error(_) -> nil
+    end
+  end
+
+  ids = captures.map(->(taken) { taken.id })
+  for taken in captures
+    _ = Testing.stop(taken)
+  end
+
+  return "#{captures.size} captures were made, not #{workers}" if captures.size != workers
+  return "the ids are not distinct: #{ids}" if ids.uniq.size != workers
+  return "the captures are still attached" if not Telemetry.handlers().empty?
+
+  "ok"
+end
+
 private
 
 TASK_MS = 60_000

@@ -117,6 +117,9 @@ def main() -> Void
     BDD.step("{int} tasks emit {int} events each, into a capture") do |ctx, args|
       ask(ctx, Request(op: "capture_stress", number: args[0].to_i!, wait: args[1].to_i!))
     end,
+    BDD.step("{int} tasks capture at once") do |ctx, args|
+      ask(ctx, Request(op: "capture_race", number: args[0].to_i!))
+    end,
     BDD.step("the driver runs a session that captures {string} and emits {string}") do |ctx, args|
       ask(ctx, Request(op: "session", patterns: args[0].split(","), name: args[1]))
     end,

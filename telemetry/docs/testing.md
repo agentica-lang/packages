@@ -14,6 +14,8 @@ import Testing from "pkg/telemetry/testing"
 
 `Testing.session(patterns, body)` starts a hub when none runs, attaches a capture for `patterns` (as `Telemetry.attach` takes them), runs `body` with the capture, and then detaches it and ends the hub and its tasks. `Testing.events(capture)` flushes and gives the events emitted since the last read, in order. The session leaves no task running, so it fits in a unit test or a single step of a BDD feature.
 
+A session is for one task at a time. Two sessions that overlap share the hub, and the first to end stops it, so the other one gets `telemetry.unknown` from `events`. The session also waits for the process-wide count of tasks to return to what it was when it began: a body that leaves tasks of its own, or other tasks that run meanwhile, can make it wait and end with `telemetry.timeout`.
+
 ```agentica
 import Telemetry from "pkg/telemetry/telemetry"
 import Testing from "pkg/telemetry/testing"
@@ -110,7 +112,7 @@ jobs.fetch.stop: ok
 
 ## A program that owns the hub
 
-When the app already started the hub in `main`, use `capture` and `stop` yourself, and `session` also works: it uses the running hub and leaves it running. `stop(capture)` detaches the handler; read the events first, since the ones not read are gone.
+When the app already started the hub in `main`, use `capture` and `stop` yourself, and `session` also works: it uses the running hub and leaves it running. `stop(capture)` detaches the handler; read the events first, since the ones not read are gone, and a read after it is the error `telemetry.unknown`. The same error comes from `events` when the hub ended (another task called `Telemetry.stop`), instead of an empty list.
 
 ```agentica
 import Telemetry from "pkg/telemetry/telemetry"
@@ -134,7 +136,7 @@ end
 
 ## When events do not fit
 
-A capture has room for 4096 events between two reads (`capture(patterns, room)` changes it). A test that emits more and does not read gets the error `telemetry.lost` from `events`, with the number, and not a list with a hole in it: raise `room`, or read more often.
+A capture has room for 4096 events between two reads (`capture(patterns, room)` changes it). A test that emits more and does not read gets the error `telemetry.lost` from `events`, with the number, and not a list with a hole in it: raise `room`, or read more often. The events that were kept are dropped with the error and the count starts again, so the capture stays attached and the next read gives what came after.
 
 ## In a BDD feature
 

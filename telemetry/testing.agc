@@ -4,9 +4,14 @@
 ## There are two ways to use it. In a program or a unit test that owns its tasks, start the hub with `Telemetry.start`,
 ## `capture`, emit, read with `events`, then `stop` the capture. In a BDD step, or any test that must leave no task
 ## running, `session` does all of it in one call: it starts the hub when none runs, captures, runs the body, detaches,
-## and ends the hub and waits for its tasks to end, so nothing is left running when it returns.
+## and ends the hub and waits for its tasks to end, so nothing is left running when it returns. That wait is on the
+## process-wide count of tasks: a body that leaves tasks of its own, or other tasks that run meanwhile, can make it wait
+## and end with `telemetry.timeout`.
 ##
-## Errors have a kind: those of `Telemetry`, and `telemetry.lost` when events did not fit (`events` says how many).
+## Errors have a kind: those of `Telemetry`, `telemetry.unknown` when `events` reads a capture that is not attached, and
+## `telemetry.lost` when events did not fit (`events` says how many).
+##
+## A session is for one task at a time: two sessions that overlap in time share the hub, and the first to end stops it.
 
 import Telemetry from "telemetry"
 
@@ -23,7 +28,7 @@ end
 ## Attaches a handler under a new id for the events that match `patterns` (as `Telemetry.attach`), with room for `room`
 ## events between two reads. Needs a running hub.
 def capture(patterns: List[String], room: Int = ROOM) -> Result[Capture]
-  id = "capture#{IDS.add("last", 1)}"
+  id = "telemetry_capture#{IDS.add("last", 1)}"
   events: Channel[Telemetry.Event] = Channel.new(room)
   lost: ATS[String, Int] = ATS.new()
   try Telemetry.attach(id, patterns, ->(event) { keep(events, lost, event) }, Telemetry.Options(capacity: room))
@@ -31,20 +36,26 @@ def capture(patterns: List[String], room: Int = ROOM) -> Result[Capture]
 end
 
 ## Waits until the handler has handled everything emitted before this call (a `flush`), and gives the events since the
-## last call, in the order the handler got them: the events of one task are in order. An error with the kind
-## `telemetry.lost` when more than `room` events came between two reads, since a test must not miss one without
-## knowing.
+## last call, in the order the handler got them: the events of one task are in order. Two errors: `telemetry.unknown`
+## when the capture is not attached any more (it was stopped, or the hub ended), and `telemetry.lost` when events did
+## not fit since the last read, since a test must not miss one without knowing. The `lost` error says how many; the
+## events that were kept are dropped with it, and the next read starts clean.
 def events(capture: Capture, timeout_ms: Int = 5_000) -> Result[List[Telemetry.Event]]
   try Telemetry.flush(timeout_ms)
-  lost = capture.lost.get("lost").unwrap_or(0) + Telemetry.dropped(capture.id)
+  if not Telemetry.handlers().include?(capture.id)
+    return error("telemetry testing: #{capture.id} is not attached", kind: "telemetry.unknown")
+  end
+
+  found = drain(capture.events)
+  lost = missed(capture)
   if lost > 0
     return error("telemetry testing: #{lost} events did not fit, give capture more room", kind: "telemetry.lost")
   end
 
-  ok(drain(capture.events))
+  ok(found)
 end
 
-## Detaches the handler. Read the events first: the ones not read are gone.
+## Detaches the handler. Read the events first: after this, `events` is an error `telemetry.unknown`.
 def stop(capture: Capture) -> Result[Void] = Telemetry.detach(capture.id)
 
 ## Runs `body` with a capture of `patterns`, in one call that leaves no task running. A hub that runs already (an
@@ -73,6 +84,17 @@ def keep(events: Channel[Telemetry.Event], lost: ATS[String, Int], event: Teleme
   end
 
   ok()
+end
+
+# The events that did not fit since the last call: the handler's count, and the drops of its queue. Both are taken
+# off, so the next read counts from here.
+def missed(capture: Capture) -> Int
+  kept = capture.lost.get("lost").unwrap_or(0)
+  _ = capture.lost.add("lost", 0 - kept)
+  dropped = Telemetry.dropped(capture.id)
+  seen = capture.lost.get("seen").unwrap_or(0)
+  _ = capture.lost.add("seen", dropped - seen)
+  kept + dropped - seen
 end
 
 def drain(events: Channel[Telemetry.Event]) -> List[Telemetry.Event]

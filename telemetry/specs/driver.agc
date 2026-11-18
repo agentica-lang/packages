@@ -101,6 +101,7 @@ def act(driver: Driver, req: Request) -> Handled
     "capture" -> start_capture(driver, req)
     "captured" -> same(driver, captured(driver, req.id))
     "capture_stop" -> capture_stop(driver, req.id)
+    "capture_race" -> same(driver, Stress.run_captures(req.number))
     "capture_stress" -> same(driver, Stress.run_capture(req.number, req.wait))
     "session" -> same(driver, session(req))
     "steps" -> same(driver, "ok #{steps_of(req.name)}")
