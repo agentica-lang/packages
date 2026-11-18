@@ -67,6 +67,9 @@ def main() -> Void
     BDD.step("a flush of 300 ms meets a hub and a handler that do not answer") do |ctx, _args|
       ask(ctx, Request(op: "flush_budget"))
     end,
+    BDD.step("two hubs are begun, as two tasks that both hold the claim would") do |ctx, _args|
+      ask(ctx, Request(op: "second_hub"))
+    end,
     BDD.step("I measure the steps of emitting {string}") do |ctx, args|
       ask(ctx, Request(op: "steps", name: args[0]))
     end,

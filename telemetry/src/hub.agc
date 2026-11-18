@@ -29,6 +29,17 @@ def start() -> Result[Void]
   started()
 end
 
+## Starts a hub actor and registers it. The registration is what keeps one hub, whatever the claim does: a hub that is
+## registered already keeps its place, the actor just made is stopped, and this gives `telemetry.started`.
+def begin() -> Result[Void]
+  behaviour: Actor.Behaviour[State, Types.HubMsg] = Actor.Behaviour(init: &boot, handle: &handle)
+  hub = Actor.start(behaviour, Actor.Options(capacity: INBOX))
+  return ok() if Routes.HUB.put_new(Routes.HUB_KEY, hub.address)
+
+  _ = Actor.stop(hub, STOP_MS)
+  started()
+end
+
 ## Attaches a handler: its actor starts and the routes of its patterns get it.
 def attach(attachment: Types.Attachment) -> Result[Void] = ask(->(reply) { Types.HubMsg.Attach(attachment, reply) })
 
@@ -72,6 +83,7 @@ INBOX = 1_024
 CALL_MS = 5_000
 PING_MS = 1_000
 # A start that finds another waits for it this long, more than a claim lasts, so a claim that leaked is taken over.
+STOP_MS = 1_000
 WAIT_MS = 2_000
 WAIT_STEP_MS = 5
 
@@ -109,10 +121,7 @@ def launch() -> Result[Void]
     none -> nil
   end
 
-  behaviour: Actor.Behaviour[State, Types.HubMsg] = Actor.Behaviour(init: &boot, handle: &handle)
-  hub = Actor.start(behaviour, Actor.Options(capacity: INBOX))
-  Routes.HUB.put(Routes.HUB_KEY, hub.address)
-  ok()
+  begin()
 end
 
 # A hub that does not answer in time is busy, not gone: only a closed inbox says it ended.

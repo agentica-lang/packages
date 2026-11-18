@@ -77,6 +77,10 @@ Feature: Attaching and detaching handlers
     Given a flush of 300 ms meets a hub and a handler that do not answer
     Then the reply is "ok"
 
+  Scenario: Two hubs begun at once leave one hub and no task behind
+    Given two hubs are begun, as two tasks that both hold the claim would
+    Then the reply is "ok"
+
   Scenario: Detaching an unknown id fails
     Given the hub is started
     When I detach "nobody"

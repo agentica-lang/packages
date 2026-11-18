@@ -6,6 +6,7 @@
 
 import Actor from "std/actor"
 import Logger from "std/logger"
+import Hub from "../src/hub"
 import Routes from "../src/routes"
 import Starts from "starts"
 import Stress from "stress"
@@ -92,6 +93,7 @@ def act(driver: Driver, req: Request) -> Handled
     "claims" -> same(driver, claims())
     "forget_under_claim" -> same(driver, forget_under_claim())
     "flush_budget" -> same(driver, flush_budget())
+    "second_hub" -> same(driver, second_hub())
     "steps" -> same(driver, "ok #{steps_of(req.name)}")
     _ -> same(driver, "unknown op #{req.op}")
   end
@@ -438,6 +440,26 @@ def flush_budget() -> String
   silent_handler.close
   return "flush gave #{flushed}, not error telemetry.timeout" if flushed != "error telemetry.timeout"
   return "flush of #{FLUSH_BUDGET_MS} ms took #{took} ms" if took > FLUSH_BUDGET_MS + FLUSH_SLACK_MS
+
+  "ok"
+end
+
+# Two hubs are begun, as two tasks that both hold the claim would: the second finds the first registered, stops its
+# actor, and no task is left over.
+def second_hub() -> String
+  before = Task.pending_count()
+  first = answer(Hub.begin())
+  second = answer(Hub.begin())
+  waited = 0
+  while Task.pending_count() > before + 1 and waited < IDLE_MS
+    Task.sleep(5)
+    waited += 5
+  end
+
+  extra = Task.pending_count() - before
+  return "the first hub gave #{first}" if first != "ok"
+  return "the second hub gave #{second}, not error telemetry.started" if second != "error telemetry.started"
+  return "#{extra} tasks run, not one hub" if extra != 1
 
   "ok"
 end

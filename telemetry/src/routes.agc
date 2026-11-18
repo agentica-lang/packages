@@ -97,8 +97,9 @@ def clear() -> Void
 end
 
 ## Takes the claim on starting or clearing a hub, and gives the token that `release` takes, or none when another task
-## holds it. A claim that ran out is taken over by one task only: the key of the take-over names the time it ran out
-## at.
+## holds it. The claim is best effort (two tasks can hold it when one is slow past its time): the registration of the
+## hub, `HUB.put_new`, is what keeps one hub. A claim that ran out is taken over by one task only: the key of the
+## take-over names the time it ran out at.
 def claim() -> Optional[Int]
   deadline = Time.monotonic_ms + LOCK_MS
   return some(deadline) if STARTING.put_new(LOCK_KEY, deadline)
