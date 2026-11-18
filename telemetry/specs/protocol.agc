@@ -3,12 +3,25 @@
 ## The driver owns the hub: a step cannot leave tasks running, and the hub and its handlers are tasks. It answers
 ## every request with one line, and the step program checks the line.
 
-## How a handler acts: `mode` is `record`, `fail`, `crash`, `slow`, `flush`, `who`, `doomed` or `block`, and
-## `capacity` is the size of its queue (0 for the default).
+## What a handler does with an event: `Record` records it, `Fail` returns an error, `Crash` crashes, `Slow` pauses
+## first, `Flush` calls `flush` and records the answer, `Who` records its task, `Doomed` waits for its gate and then
+## fails, and `Block` records it and waits for `Release`.
+enum Acts
+  Record
+  Fail
+  Crash
+  Slow
+  Flush
+  Who
+  Doomed
+  Block
+end
+
+## A handler: what it does, and `capacity`, the size of its queue (0 for the default).
 struct Handler
   id: String
   patterns: List[String]
-  mode: String = "record"
+  acts: Acts = Acts.Record
   capacity: Int = 0
 end
 
@@ -38,11 +51,18 @@ struct Churn
   count: Int
 end
 
-## A span with the metadata in the rows of `table` (after a header row), whose body does what `mode` says (`ok`,
-## `error` or `crash`) after `sleep_ms` ms.
+## What the body of a span does: returns 42, returns an error of the kind `span.bad`, or crashes.
+enum Body
+  Returns
+  Fails
+  Crashes
+end
+
+## A span with the metadata in the rows of `table` (after a header row), whose body does what `body` says after
+## `sleep_ms` ms.
 struct SpanRun
   name: String
-  mode: String
+  body: Body
   sleep_ms: Int
   table: List[List[String]] = []
 end

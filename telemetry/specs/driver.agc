@@ -13,7 +13,7 @@ import Starts from "starts"
 import Stress from "stress"
 import Telemetry from "../telemetry"
 import Types from "../src/types"
-import {Churn, Emit, Flood, Handler, Request, Session, SpanRun, Watch} from "protocol"
+import {Acts, Body, Churn, Emit, Flood, Handler, Request, Session, SpanRun, Watch} from "protocol"
 
 private
 
@@ -139,23 +139,23 @@ def attach(driver: Driver, spec: Handler) -> Handled
     options = Telemetry.Options(capacity: spec.capacity)
   end
 
-  result = Telemetry.attach(spec.id, spec.patterns, handler(spec.id, spec.mode, gate), options)
+  result = Telemetry.attach(spec.id, spec.patterns, handler(spec.id, spec.acts, gate), options)
   case result
     ok(_) -> Handled(driver: driver.with(gates: driver.gates.put(spec.id, gate)), reply: "ok")
     error(e) -> same(driver, "error #{e.kind}")
   end
 end
 
-def handler(id: String, mode: String, gate: Channel[Bool]) -> Fn[Telemetry.Event, Result[Void]]
-  case mode
-    "fail" -> &failing
-    "crash" -> &crashing
-    "slow" -> ->(event) { slowly(id, event) }
-    "flush" -> ->(_event) { flushing(id) }
-    "who" -> ->(_event) { who(id) }
-    "doomed" -> ->(_event) { doomed(gate) }
-    "block" -> ->(event) { blocked(id, gate, event) }
-    _ -> ->(event) { record(id, event) }
+def handler(id: String, acts: Acts, gate: Channel[Bool]) -> Fn[Telemetry.Event, Result[Void]]
+  case acts
+    Acts.Fail -> &failing
+    Acts.Crash -> &crashing
+    Acts.Slow -> ->(event) { slowly(id, event) }
+    Acts.Flush -> ->(_event) { flushing(id) }
+    Acts.Who -> ->(_event) { who(id) }
+    Acts.Doomed -> ->(_event) { doomed(gate) }
+    Acts.Block -> ->(event) { blocked(id, gate, event) }
+    Acts.Record -> ->(event) { record(id, event) }
   end
 end
 
@@ -246,8 +246,10 @@ def doomed(gate: Channel[Bool]) -> Result[Void]
   error("too late", kind: "handler.late")
 end
 
-# Attaches a handler that is cancelled at once, `count` times, and then the handler of the request. What the old
-# ones tell the hub late must not touch the newest handler of the same id.
+# Attaches a handler that is cancelled at once, `count` times, and then the handler of the request (whose queue
+# has room
+# for `count` events, as the step gives it). What the old ones tell the hub late must not touch the newest handler of
+# the same id.
 def churn(driver: Driver, spec: Churn) -> Handled
   gate: Channel[Bool] = Channel.new(1)
   for _i in 1..spec.count
@@ -474,17 +476,19 @@ def second_hub() -> String
   "ok"
 end
 
-# Runs a span whose body does what `mode` says: `ok` gives 42, `error` gives an error of the kind `span.bad`, `crash`
-# crashes (in a task of its own, which the driver awaits). The body waits `number` ms first.
+# Runs a span whose body does what `body` says: `Returns` gives 42, `Fails` gives an error of the kind `span.bad`,
+# `Crashes` crashes (in a task of its own, which the driver awaits). The body waits `sleep_ms` ms first.
 def span(run: SpanRun) -> String
   metadata: Map[String, String] = {}
   for row in run.table.drop(1)
     metadata = metadata.put(row[1], row[2])
   end
 
-  return spanned(Task.await(Task.spawn(&crashing_span, run.name))) if run.mode == "crash"
-
-  spanned(Telemetry.span(run.name, metadata, -> { work(run.mode, run.sleep_ms) }))
+  case run.body
+    Body.Crashes -> spanned(Task.await(Task.spawn(&crashing_span, run.name)))
+    Body.Fails -> spanned(Telemetry.span(run.name, metadata, -> { work(true, run.sleep_ms) }))
+    Body.Returns -> spanned(Telemetry.span(run.name, metadata, -> { work(false, run.sleep_ms) }))
+  end
 end
 
 def spanned(result: Result[Int]) -> String
@@ -494,9 +498,9 @@ def spanned(result: Result[Int]) -> String
   end
 end
 
-def work(mode: String, sleep_ms: Int) -> Result[Int]
+def work(fails: Bool, sleep_ms: Int) -> Result[Int]
   Task.sleep(sleep_ms)
-  return error("the body failed", kind: "span.bad") if mode == "error"
+  return error("the body failed", kind: "span.bad") if fails
 
   ok(42)
 end

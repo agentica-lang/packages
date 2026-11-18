@@ -7,7 +7,7 @@ import Conformance from "../conformance"
 import Telemetry from "../telemetry"
 import Testing from "../testing"
 import Types from "../src/types"
-import {Emit, Flood, Handler, Load, Churn, Request, Session, SpanRun, Watch} from "protocol"
+import {Acts, Body, Churn, Emit, Flood, Handler, Load, Request, Session, SpanRun, Watch} from "protocol"
 
 private
 
@@ -21,23 +21,23 @@ def main() -> Void
   BDD.run([
     BDD.step("the hub is started") do |ctx, _args| ask(ctx, Request.Start) end,
     BDD.step("I stop the hub") do |ctx, _args| ask(ctx, Request.Stop(STOP_MS)) end,
-    BDD.step("I attach {string} to {string}") do |ctx, args| attach(ctx, args, "record", 0) end,
+    BDD.step("I attach {string} to {string}") do |ctx, args| attach(ctx, args, Acts.Record, 0) end,
     BDD.step("I attach {string} to {string} with a queue of {int}") do |ctx, args|
-      attach(ctx, args, "record", args[2].to_i!)
+      attach(ctx, args, Acts.Record, args[2].to_i!)
     end,
-    BDD.step("I attach {string} to {string} and it fails") do |ctx, args| attach(ctx, args, "fail", 0) end,
-    BDD.step("I attach {string} to {string} and it crashes") do |ctx, args| attach(ctx, args, "crash", 0) end,
-    BDD.step("I attach {string} to {string} and it is slow") do |ctx, args| attach(ctx, args, "slow", 0) end,
-    BDD.step("I attach {string} to {string} and it tells its task") do |ctx, args| attach(ctx, args, "who", 0) end,
+    BDD.step("I attach {string} to {string} and it fails") do |ctx, args| attach(ctx, args, Acts.Fail, 0) end,
+    BDD.step("I attach {string} to {string} and it crashes") do |ctx, args| attach(ctx, args, Acts.Crash, 0) end,
+    BDD.step("I attach {string} to {string} and it is slow") do |ctx, args| attach(ctx, args, Acts.Slow, 0) end,
+    BDD.step("I attach {string} to {string} and it tells its task") do |ctx, args| attach(ctx, args, Acts.Who, 0) end,
     BDD.step("the hub is told that an older handler {string} failed") do |ctx, args|
       ask(ctx, Request.ForgeFailure(args[0]))
     end,
     BDD.step("the hub is told that the task of {string} returned") do |ctx, args|
       ask(ctx, Request.ForgeEnd(args[0]))
     end,
-    BDD.step("I attach {string} to {string} and it flushes") do |ctx, args| attach(ctx, args, "flush", 0) end,
+    BDD.step("I attach {string} to {string} and it flushes") do |ctx, args| attach(ctx, args, Acts.Flush, 0) end,
     BDD.step("I attach {string} to {string} and it blocks, with a queue of {int}") do |ctx, args|
-      attach(ctx, args, "block", args[2].to_i!)
+      attach(ctx, args, Acts.Block, args[2].to_i!)
     end,
     BDD.step("the hub is started by a task of its own") do |ctx, _args| ask(ctx, Request.StartInTask) end,
     BDD.step("that task is cancelled") do |ctx, _args| ask(ctx, Request.CancelStarter) end,
@@ -49,7 +49,7 @@ def main() -> Void
         ctx,
         Request.Churn(
           Churn(
-            handler: Handler(id: args[0], patterns: args[1].split(",")),
+            handler: Handler(id: args[0], patterns: args[1].split(","), capacity: args[2].to_i!),
             name: "churn.start",
             count: args[2].to_i!,
           ),
@@ -79,15 +79,17 @@ def main() -> Void
     BDD.step("two hubs are begun, as two tasks that both hold the claim would") do |ctx, _args|
       ask(ctx, Request.SecondHub)
     end,
-    BDD.step("I run a span {string}") do |ctx, args| run_span(ctx, args[0], "ok", 0, []) end,
+    BDD.step("I run a span {string}") do |ctx, args| run_span(ctx, args[0], Body.Returns, 0, []) end,
     BDD.step("I run a span {string} that sleeps {int} ms") do |ctx, args|
-      run_span(ctx, args[0], "ok", args[1].to_i!, [])
+      run_span(ctx, args[0], Body.Returns, args[1].to_i!, [])
     end,
     BDD.step("I run a span {string} whose body returns an error") do |ctx, args|
-      run_span(ctx, args[0], "error", 0, [])
+      run_span(ctx, args[0], Body.Fails, 0, [])
     end,
-    BDD.step("I run a span {string} whose body crashes") do |ctx, args| run_span(ctx, args[0], "crash", 0, []) end,
-    BDD.step("I run a span {string} with:") do |ctx, args| run_span(ctx, args[0], "ok", 0, BDD.table(ctx)) end,
+    BDD.step("I run a span {string} whose body crashes") do |ctx, args|
+      run_span(ctx, args[0], Body.Crashes, 0, [])
+    end,
+    BDD.step("I run a span {string} with:") do |ctx, args| run_span(ctx, args[0], Body.Returns, 0, BDD.table(ctx)) end,
     BDD.step("the handler {string} got events with one span_id") do |ctx, args| expect_one_span(ctx, args[0]) end,
     BDD.step("the handler {string} got {int} span_ids") do |ctx, args|
       expect_span_ids(ctx, args[0], args[1].to_i!)
@@ -160,8 +162,8 @@ def main() -> Void
   ])
 end
 
-def attach(ctx: BDD.Context, args: List[String], mode: String, capacity: Int) -> BDD.Context
-  ask(ctx, Request.Attach(Handler(id: args[0], patterns: args[1].split(","), mode: mode, capacity: capacity)))
+def attach(ctx: BDD.Context, args: List[String], acts: Acts, capacity: Int) -> BDD.Context
+  ask(ctx, Request.Attach(Handler(id: args[0], patterns: args[1].split(","), acts: acts, capacity: capacity)))
 end
 
 def start(ctx: BDD.Context) -> BDD.Context
@@ -250,8 +252,8 @@ def expect_clean(ctx: BDD.Context, text: String) -> BDD.Context
   BDD.assert(asked, found.empty?, "a warning includes #{text}: #{found}")
 end
 
-def run_span(ctx: BDD.Context, name: String, mode: String, sleep_ms: Int, table: List[List[String]]) -> BDD.Context
-  ask(ctx, Request.Span(SpanRun(name: name, mode: mode, sleep_ms: sleep_ms, table: table)))
+def run_span(ctx: BDD.Context, name: String, body: Body, sleep_ms: Int, table: List[List[String]]) -> BDD.Context
+  ask(ctx, Request.Span(SpanRun(name: name, body: body, sleep_ms: sleep_ms, table: table)))
 end
 
 # The events of the handler as the driver wrote them, one text each.
