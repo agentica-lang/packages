@@ -5,12 +5,13 @@ import HTTP from "std/http"
 import HttpClient from "../http_client"
 import Protocol from "protocol"
 import URI from "std/uri"
-import {Request} from "protocol"
+import {Call, Check, Expectation, How, Reads, Request, Setup} from "protocol"
 
 private
 
 # The peers are programs of their own, so that they share nothing with the client under test.
-PEERS = {"server": "fixtures/server.agc", "tls_server": "fixtures/server.agc", "raw": "fixtures/raw_peer.agc"}
+SERVER = "fixtures/server.agc"
+RAW = "fixtures/raw_peer.agc"
 PEER_START_MS = 60_000
 WAIT_MS = 30_000
 QUIET_MS = 500
@@ -90,59 +91,55 @@ def handle(driver: Driver, line: String) -> Handled
 end
 
 def run(driver: Driver, req: Request) -> Handled
-  case req.op
-    "peer" -> start_peer(driver, req)
-    "client" -> make_client(driver, req)
-    "send" -> send(driver, req)
-    "stream" -> send(driver, req)
-    "stream_first" -> send(driver, req)
-    "stream_released" -> send(driver, req)
-    "events" -> send(driver, req)
-    "events_closed" -> send(driver, req)
-    "events_twice" -> send(driver, req)
-    "events_abandoned" -> send(driver, req)
-    "start" -> started(driver, req)
-    "wait" -> waited(driver, req.name)
-    "cancel" ->
-      case driver.running.get(req.name)
+  case req
+    Request.Server(name) -> start_peer(driver, name, SERVER, [])
+    Request.TlsServer(name) -> start_peer(driver, name, SERVER, ["tls"])
+    Request.Raw(script) ->
+      start_peer(driver, script.name, RAW, script.text.split("\n").select { |line| not line.strip.empty? })
+    Request.Client(setup) -> make_client(driver, setup)
+    Request.Send(call) -> send(driver, call)
+    Request.Start(call) -> started(driver, call)
+    Request.Wait(name) -> waited(driver, name)
+    Request.Cancel(name) ->
+      case driver.running.get(name)
         some(running) -> Task.cancel(running.task)
         none -> nil
       end
 
       done(driver)
-    "dead_port" ->
+    Request.DeadPort(name) ->
       listener = TCP.listen("127.0.0.1", 0).unwrap!
       address = "http://127.0.0.1:#{TCP.local_port(listener)}"
       TCP.close_listener(listener)
-      done(driver.with(peers: driver.peers.put(req.name, address)))
-    "read" -> read_requests(driver, req)
-    "asked" ->
+      done(driver.with(peers: driver.peers.put(name, address)))
+    Request.Read(reads) -> read_requests(driver, reads)
+    Request.Asked(count) ->
       times = driver.asked.to_map.values.sum
-      if times == req.number
+      if times == count
         done(driver)
       else
         failed(driver, "the resolver was asked #{times} times")
       end
 
-    "read_only" ->
-      handled = read_requests(driver, req)
+    Request.ReadOnly(reads) ->
+      handled = read_requests(driver, reads)
       if handled.reply == Protocol.OK
-        no_more(handled.driver, req.name)
+        no_more(handled.driver, reads.name)
       else
         handled
       end
 
-    "sleep" ->
-      Task.sleep(req.number)
+    Request.Sleep(ms) ->
+      Task.sleep(ms)
       done(driver)
-    "close" ->
+    Request.Close ->
       case driver.client
         some(client) -> HttpClient.close(client)
         none -> nil
       end
 
       done(driver)
-    _ -> expect(driver, req)
+    Request.Expect(expectation) -> expect(driver, expectation)
   end
 end
 
@@ -150,22 +147,14 @@ def done(driver: Driver) -> Handled = Handled(driver: driver, reply: Protocol.OK
 
 def failed(driver: Driver, text: String) -> Handled = Handled(driver: driver, reply: text)
 
-def start_peer(driver: Driver, req: Request) -> Handled
-  program = PEERS.get(req.kind).unwrap_or("")
-  script = req.text.split("\n").select { |line| not line.strip.empty? }
-  if req.kind == "tls_server"
-    script = ["tls"]
-  end
-
+def start_peer(driver: Driver, name: String, program: String, script: List[String]) -> Handled
   agentica = System.env("HTTP_CLIENT_AGENTICA").unwrap_or("agentica")
   case Process.spawn(agentica, [program] + script)
     ok(peer) ->
       case Process.read_line(peer, PEER_START_MS)
         ok(line) ->
           address = "http://127.0.0.1:#{line.split(" ").last}"
-          done(
-            driver.with(peers: driver.peers.put(req.name, address), processes: driver.processes.put(req.name, peer)),
-          )
+          done(driver.with(peers: driver.peers.put(name, address), processes: driver.processes.put(name, peer)))
         error(e) -> failed(driver, "the peer did not start: #{e.message}")
       end
 
@@ -173,8 +162,8 @@ def start_peer(driver: Driver, req: Request) -> Handled
   end
 end
 
-def make_client(driver: Driver, req: Request) -> Handled
-  base = driver.peers.get(req.name).unwrap_or("")
+def make_client(driver: Driver, setup: Setup) -> Handled
+  base = driver.peers.get(setup.name).unwrap_or("")
   settings: Map[String, Int] = {}
   headers: List[HTTP.Header] = []
   names: Map[String, List[String]] = {}
@@ -182,7 +171,7 @@ def make_client(driver: Driver, req: Request) -> Handled
   params: List[URI.Pair] = []
   request_steps: List[Fn[HttpClient.Request, Result[HttpClient.Request]]] = []
   response_steps: List[Fn[HttpClient.Response, Result[HttpClient.Response]]] = []
-  for row in req.table.drop(1)
+  for row in setup.table.drop(1)
     if row[0] == "header"
       headers = headers.push(header(row[1]))
     elsif row[0] == "param"
@@ -275,20 +264,20 @@ def header(text: String) -> HTTP.Header
 end
 
 # Waits until the raw peer has printed its `number`th `request` line.
-def read_requests(driver: Driver, req: Request) -> Handled
-  peer = driver.processes.get(req.name)
-  return failed(driver, "no peer #{req.name}") if not peer.some?
+def read_requests(driver: Driver, reads: Reads) -> Handled
+  peer = driver.processes.get(reads.name)
+  return failed(driver, "no peer #{reads.name}") if not peer.some?
 
-  seen = driver.seen.get(req.name).unwrap_or(0)
-  while seen < req.number
+  seen = driver.seen.get(reads.name).unwrap_or(0)
+  while seen < reads.count
     case Process.read_line(peer.unwrap!, WAIT_MS)
       ok(line) if line.start_with?("request ") -> seen = seen + 1
       ok(_) -> nil
-      error(e) -> return failed(driver, "#{req.name} read #{seen} requests: #{e.message}")
+      error(e) -> return failed(driver, "#{reads.name} read #{seen} requests: #{e.message}")
     end
   end
 
-  done(driver.with(seen: driver.seen.put(req.name, seen)))
+  done(driver.with(seen: driver.seen.put(reads.name, seen)))
 end
 
 # Checks that the raw peer reads no further request within a while.
@@ -300,16 +289,16 @@ def no_more(driver: Driver, name: String) -> Handled
   end
 end
 
-def send(driver: Driver, req: Request) -> Handled
-  started_one = started(driver, req)
+def send(driver: Driver, call: Call) -> Handled
+  started_one = started(driver, call)
   return started_one if started_one.reply != Protocol.OK
 
-  waited(started_one.driver, req.name)
+  waited(started_one.driver, call.name)
 end
 
-def started(driver: Driver, req: Request) -> Handled
-  case start_request(driver, req)
-    ok(running) -> done(driver.with(running: driver.running.put(req.name, running)))
+def started(driver: Driver, call: Call) -> Handled
+  case start_request(driver, call)
+    ok(running) -> done(driver.with(running: driver.running.put(call.name, running)))
     error(e) -> failed(driver, e.message)
   end
 end
@@ -326,28 +315,28 @@ def waited(driver: Driver, name: String) -> Handled
   end
 end
 
-def start_request(driver: Driver, req: Request) -> Result[Running]
+def start_request(driver: Driver, call: Call) -> Result[Running]
   client = try driver.client.to_result("no client")
-  url = addressed(driver, req.text)
+  url = addressed(driver, call.url)
 
   headers: List[HTTP.Header] = []
-  if not req.header.empty?
-    headers = [header(req.header)]
+  if not call.header.empty?
+    headers = [header(call.header)]
   end
 
   params: List[URI.Pair] = []
-  if not req.param.empty?
-    params = [pair(req.param)]
+  if not call.param.empty?
+    params = [pair(call.param)]
   end
 
   body: Optional[Bytes] = none
-  if not req.body.empty?
-    body = some(req.body.bytes)
+  if not call.body.empty?
+    body = some(call.body.bytes)
   end
 
   json: Optional[JSON.Value] = none
-  if not req.json.empty?
-    json = some(try JSON.parse(req.json))
+  if not call.json.empty?
+    json = some(try JSON.parse(call.json))
   end
 
   outcome: Channel[Outcome] = Channel.new(1)
@@ -355,28 +344,28 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
   task = Task.spawn do
     began = Time.monotonic_ms()
     done = Outcome(result: error("no request"), elapsed: 0)
-    case req.op
-      "stream" ->
-        streamed = HttpClient.stream(client, req.kind, url, headers: headers)
-        pause(req.number)
-        done = read_stream(streamed, began, false, req.pace, "")
-      "stream_first" ->
-        done = read_stream(HttpClient.stream(client, req.kind, url, headers: headers), began, true, 0, "")
-      "stream_released" ->
-        released = HttpClient.stream(client, req.kind, url, headers: headers)
-        done = read_stream(released, began, false, 0, addressed(driver, "{#{req.release}}/release"))
-      "events" ->
+    case call.how
+      How.Stream ->
+        streamed = HttpClient.stream(client, call.method, url, headers: headers)
+        pause(call.wait_ms)
+        done = read_stream(streamed, began, false, call.pace_ms, "")
+      How.StreamFirst ->
+        done = read_stream(HttpClient.stream(client, call.method, url, headers: headers), began, true, 0, "")
+      How.StreamReleased ->
+        released = HttpClient.stream(client, call.method, url, headers: headers)
+        done = read_stream(released, began, false, 0, addressed(driver, "{#{call.release}}/release"))
+      How.Events ->
         events = HttpClient.get_events(client, url, headers: headers)
-        pause(req.number)
-        done = read_events(events, began, req.pace)
-      "events_abandoned" ->
+        pause(call.wait_ms)
+        done = read_events(events, began, call.pace_ms)
+      How.EventsAbandoned ->
         result: Result[HttpClient.Response] = error("no stream")
         case HttpClient.stream(client, "GET", url, headers: headers)
           ok(streamed) ->
-            crash = req.kind == "crash"
+            crash = call.crash
             reader: Task[Result[Void]] = Task.spawn do abandoned(streamed, crash) end
             if not crash
-              pause(req.number)
+              pause(call.wait_ms)
               Task.cancel(reader)
             end
 
@@ -386,7 +375,7 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
         end
 
         done = Outcome(result: result, elapsed: 0)
-      "events_twice" ->
+      How.EventsTwice ->
         case HttpClient.stream(client, "GET", url, headers: headers)
           ok(streamed) ->
             first = HttpClient.events(streamed)
@@ -395,19 +384,19 @@ def start_request(driver: Driver, req: Request) -> Result[Running]
           error(e) -> done = Outcome(result: error(e), elapsed: 0)
         end
 
-      "events_closed" ->
+      How.EventsClosed ->
         result: Result[HttpClient.Response] = error("no events")
         case HttpClient.get_events(client, url, headers: headers)
           ok(events) ->
-            Task.sleep(req.number)
+            Task.sleep(call.wait_ms)
             events.close
             result = ok(HttpClient.Response(status: 200, headers: [], body: "".bytes, url: url))
           error(e) -> result = error(e)
         end
 
         done = Outcome(result: result, elapsed: 0)
-      _ ->
-        result = HttpClient.request(client, req.kind, url, body: body, json: json, params: params, headers: headers)
+      How.Plain ->
+        result = HttpClient.request(client, call.method, url, body: body, json: json, params: params, headers: headers)
         done = Outcome(result: result, elapsed: Time.monotonic_ms() - began)
     end
 
@@ -513,44 +502,51 @@ def read_events(events: Result[Channel[Result[HttpClient.Event]]], began: Int, p
   end
 end
 
-def expect(driver: Driver, req: Request) -> Handled
-  case driver.outcomes.get(req.name)
-    some(outcome) -> Handled(driver: driver, reply: check(req.with(text: addressed(driver, req.text)), outcome))
-    none -> failed(driver, "no outcome for #{req.name}")
+def expect(driver: Driver, expectation: Expectation) -> Handled
+  case driver.outcomes.get(expectation.name)
+    some(outcome) -> Handled(driver: driver, reply: check(driver, expectation, outcome))
+    none -> failed(driver, "no outcome for #{expectation.name}")
   end
 end
 
-def check(req: Request, outcome: Outcome) -> String
-  if req.op == "expect_within"
-    return Protocol.OK if outcome.elapsed < req.number
-
-    return "#{req.name} took #{outcome.elapsed} ms"
-  end
-
-  if req.op == "expect_after"
-    return Protocol.OK if outcome.elapsed >= req.number
-
-    return "#{req.name} took #{outcome.elapsed} ms"
-  end
-
-  case outcome.result
-    ok(response) -> check_response(req, response)
-    error(e) if req.op == "expect_kind" and e.kind.start_with?(req.text) -> Protocol.OK
-    error(e) -> "#{req.name} failed: #{e.kind} #{e.message}"
+def check(driver: Driver, expectation: Expectation, outcome: Outcome) -> String
+  name = expectation.name
+  case expectation.check
+    Check.Within(ms) -> timed(name, outcome.elapsed < ms, outcome)
+    Check.After(ms) -> timed(name, outcome.elapsed >= ms, outcome)
+    _ ->
+      case outcome.result
+        ok(response) -> check_response(driver, name, expectation.check, response)
+        error(e) -> check_error(name, expectation.check, e)
+      end
   end
 end
 
-def check_response(req: Request, response: HttpClient.Response) -> String
-  case req.op
-    "expect_status" if response.status == req.number -> Protocol.OK
-    "expect_body" if String.from_bytes(response.body).unwrap_or("") == req.text -> Protocol.OK
-    "expect_header" if has_header?(response, header(req.text)) -> Protocol.OK
-    "expect_url" if response.url == req.text -> Protocol.OK
-    "expect_size" if response.body.size == req.number -> Protocol.OK
-    "expect_decoded" if decoded(response) == req.text -> Protocol.OK
+def timed(name: String, fits: Bool, outcome: Outcome) -> String
+  return Protocol.OK if fits
+
+  "#{name} took #{outcome.elapsed} ms"
+end
+
+# An error is what `Kind` expects, if its kind starts with the text, and a failed check for the others.
+def check_error(name: String, wanted: Check, e: Error) -> String
+  case wanted
+    Check.Kind(start) if e.kind.start_with?(start) -> Protocol.OK
+    _ -> "#{name} failed: #{e.kind} #{e.message}"
+  end
+end
+
+def check_response(driver: Driver, name: String, wanted: Check, response: HttpClient.Response) -> String
+  case wanted
+    Check.Status(status) if response.status == status -> Protocol.OK
+    Check.Body(text) if String.from_bytes(response.body).unwrap_or("") == addressed(driver, text) -> Protocol.OK
+    Check.Header(text) if has_header?(response, header(addressed(driver, text))) -> Protocol.OK
+    Check.Url(text) if response.url == addressed(driver, text) -> Protocol.OK
+    Check.Size(size) if response.body.size == size -> Protocol.OK
+    Check.Decoded(text) if decoded(response) == addressed(driver, text) -> Protocol.OK
     _ ->
       text = String.from_bytes(response.body).unwrap_or("<binary>")
-      "#{req.name}: #{response.status} #{response.url} #{response.headers} #{text}"
+      "#{name}: #{response.status} #{response.url} #{response.headers} #{text}"
   end
 end
 
