@@ -7,7 +7,7 @@ import Conformance from "../conformance"
 import Telemetry from "../telemetry"
 import Testing from "../testing"
 import Types from "../src/types"
-import {Request} from "protocol"
+import {Acts, Body, Churn, Emit, Flood, Handler, Load, Request, Session, SpanRun, Watch} from "protocol"
 
 private
 
@@ -19,73 +19,77 @@ DURATION = /"duration_ns": ([0-9]+)/
 
 def main() -> Void
   BDD.run([
-    BDD.step("the hub is started") do |ctx, _args| ask(ctx, Request(op: "start")) end,
-    BDD.step("I stop the hub") do |ctx, _args| ask(ctx, Request(op: "stop", number: STOP_MS)) end,
-    BDD.step("I attach {string} to {string}") do |ctx, args| attach(ctx, args, "record", 0) end,
+    BDD.step("the hub is started") do |ctx, _args| ask(ctx, Request.Start) end,
+    BDD.step("I stop the hub") do |ctx, _args| ask(ctx, Request.Stop(STOP_MS)) end,
+    BDD.step("I attach {string} to {string}") do |ctx, args| attach(ctx, args, Acts.Record, 0) end,
     BDD.step("I attach {string} to {string} with a queue of {int}") do |ctx, args|
-      attach(ctx, args, "record", args[2].to_i!)
+      attach(ctx, args, Acts.Record, args[2].to_i!)
     end,
-    BDD.step("I attach {string} to {string} and it fails") do |ctx, args| attach(ctx, args, "fail", 0) end,
-    BDD.step("I attach {string} to {string} and it crashes") do |ctx, args| attach(ctx, args, "crash", 0) end,
-    BDD.step("I attach {string} to {string} and it is slow") do |ctx, args| attach(ctx, args, "slow", 0) end,
-    BDD.step("I attach {string} to {string} and it tells its task") do |ctx, args| attach(ctx, args, "who", 0) end,
+    BDD.step("I attach {string} to {string} and it fails") do |ctx, args| attach(ctx, args, Acts.Fail, 0) end,
+    BDD.step("I attach {string} to {string} and it crashes") do |ctx, args| attach(ctx, args, Acts.Crash, 0) end,
+    BDD.step("I attach {string} to {string} and it is slow") do |ctx, args| attach(ctx, args, Acts.Slow, 0) end,
+    BDD.step("I attach {string} to {string} and it tells its task") do |ctx, args| attach(ctx, args, Acts.Who, 0) end,
     BDD.step("the hub is told that an older handler {string} failed") do |ctx, args|
-      ask(ctx, Request(op: "forge_failure", id: args[0]))
+      ask(ctx, Request.ForgeFailure(args[0]))
     end,
     BDD.step("the hub is told that the task of {string} returned") do |ctx, args|
-      ask(ctx, Request(op: "forge_end", id: args[0]))
+      ask(ctx, Request.ForgeEnd(args[0]))
     end,
-    BDD.step("I attach {string} to {string} and it flushes") do |ctx, args| attach(ctx, args, "flush", 0) end,
+    BDD.step("I attach {string} to {string} and it flushes") do |ctx, args| attach(ctx, args, Acts.Flush, 0) end,
     BDD.step("I attach {string} to {string} and it blocks, with a queue of {int}") do |ctx, args|
-      attach(ctx, args, "block", args[2].to_i!)
+      attach(ctx, args, Acts.Block, args[2].to_i!)
     end,
-    BDD.step("the hub is started by a task of its own") do |ctx, _args| ask(ctx, Request(op: "start_in_task")) end,
-    BDD.step("that task is cancelled") do |ctx, _args| ask(ctx, Request(op: "cancel_starter")) end,
-    BDD.step("{int} tasks start the hub at once") do |ctx, args|
-      ask(ctx, Request(op: "starts", number: args[0].to_i!))
-    end,
+    BDD.step("the hub is started by a task of its own") do |ctx, _args| ask(ctx, Request.StartInTask) end,
+    BDD.step("that task is cancelled") do |ctx, _args| ask(ctx, Request.CancelStarter) end,
+    BDD.step("{int} tasks start the hub at once") do |ctx, args| ask(ctx, Request.Starts(args[0].to_i!)) end,
     BDD.step(
       "I attach {string} to {string} {int} times, cancel it at once each time, and attach it again",
     ) do |ctx, args|
       ask(
         ctx,
-        Request(op: "churn", id: args[0], patterns: args[1].split(","), name: "churn.start", number: args[2].to_i!),
+        Request.Churn(
+          Churn(
+            handler: Handler(id: args[0], patterns: args[1].split(","), capacity: args[2].to_i!),
+            name: "churn.start",
+            count: args[2].to_i!,
+          ),
+        ),
       )
     end,
     BDD.step("{int} handlers fail one after the other, each on its first event") do |ctx, args|
-      ask(ctx, Request(op: "failures_gone", number: args[0].to_i!))
+      ask(ctx, Request.FailuresGone(args[0].to_i!))
     end,
     BDD.step("{int} handlers are attached and detached one after the other") do |ctx, args|
-      ask(ctx, Request(op: "detaches_at_once", number: args[0].to_i!))
+      ask(ctx, Request.DetachesAtOnce(args[0].to_i!))
     end,
-    BDD.step("a start that was cancelled left its claim behind") do |ctx, _args|
-      ask(ctx, Request(op: "stale_claim"))
-    end,
+    BDD.step("a start that was cancelled left its claim behind") do |ctx, _args| ask(ctx, Request.StaleClaim) end,
     BDD.step("a hub that does not answer is registered and the hub is started") do |ctx, _args|
-      ask(ctx, Request(op: "busy_hub"))
+      ask(ctx, Request.BusyHub)
     end,
     BDD.step("the end of an old hub is reported while a newer one is registered") do |ctx, _args|
-      ask(ctx, Request(op: "forget_other"))
+      ask(ctx, Request.ForgetOther)
     end,
-    BDD.step("claims are taken, run out and are given back") do |ctx, _args| ask(ctx, Request(op: "claims")) end,
+    BDD.step("claims are taken, run out and are given back") do |ctx, _args| ask(ctx, Request.Claims) end,
     BDD.step("the end of a hub is reported while a start holds the claim") do |ctx, _args|
-      ask(ctx, Request(op: "forget_under_claim"))
+      ask(ctx, Request.ForgetUnderClaim)
     end,
     BDD.step("a flush of 300 ms meets a hub and a handler that do not answer") do |ctx, _args|
-      ask(ctx, Request(op: "flush_budget"))
+      ask(ctx, Request.FlushBudget)
     end,
     BDD.step("two hubs are begun, as two tasks that both hold the claim would") do |ctx, _args|
-      ask(ctx, Request(op: "second_hub"))
+      ask(ctx, Request.SecondHub)
     end,
-    BDD.step("I run a span {string}") do |ctx, args| run_span(ctx, args[0], "ok", 0, []) end,
+    BDD.step("I run a span {string}") do |ctx, args| run_span(ctx, args[0], Body.Returns, 0, []) end,
     BDD.step("I run a span {string} that sleeps {int} ms") do |ctx, args|
-      run_span(ctx, args[0], "ok", args[1].to_i!, [])
+      run_span(ctx, args[0], Body.Returns, args[1].to_i!, [])
     end,
     BDD.step("I run a span {string} whose body returns an error") do |ctx, args|
-      run_span(ctx, args[0], "error", 0, [])
+      run_span(ctx, args[0], Body.Fails, 0, [])
     end,
-    BDD.step("I run a span {string} whose body crashes") do |ctx, args| run_span(ctx, args[0], "crash", 0, []) end,
-    BDD.step("I run a span {string} with:") do |ctx, args| run_span(ctx, args[0], "ok", 0, BDD.table(ctx)) end,
+    BDD.step("I run a span {string} whose body crashes") do |ctx, args|
+      run_span(ctx, args[0], Body.Crashes, 0, [])
+    end,
+    BDD.step("I run a span {string} with:") do |ctx, args| run_span(ctx, args[0], Body.Returns, 0, BDD.table(ctx)) end,
     BDD.step("the handler {string} got events with one span_id") do |ctx, args| expect_one_span(ctx, args[0]) end,
     BDD.step("the handler {string} got {int} span_ids") do |ctx, args|
       expect_span_ids(ctx, args[0], args[1].to_i!)
@@ -104,47 +108,41 @@ def main() -> Void
     BDD.step("I check the event {string}") do |ctx, args| check_event(ctx, args[0], []) end,
     BDD.step("I check the event {string} with:") do |ctx, args| check_event(ctx, args[0], BDD.table(ctx)) end,
     BDD.step("{int} tasks run {int} spans each at once") do |ctx, args|
-      ask(ctx, Request(op: "span_stress", number: args[0].to_i!, wait: args[1].to_i!))
+      ask(ctx, Request.SpanStress(Load(tasks: args[0].to_i!, events: args[1].to_i!)))
     end,
     BDD.step("I capture {string} as {string}") do |ctx, args| capture(ctx, args, 0) end,
     BDD.step("I capture {string} as {string} with room for {int} events") do |ctx, args|
       capture(ctx, args, args[2].to_i!)
     end,
-    BDD.step("I read the events of the capture {string}") do |ctx, args|
-      ask(ctx, Request(op: "captured", id: args[0]))
-    end,
-    BDD.step("I stop the capture {string}") do |ctx, args| ask(ctx, Request(op: "capture_stop", id: args[0])) end,
+    BDD.step("I read the events of the capture {string}") do |ctx, args| ask(ctx, Request.Captured(args[0])) end,
+    BDD.step("I stop the capture {string}") do |ctx, args| ask(ctx, Request.CaptureStop(args[0])) end,
     BDD.step("{int} tasks emit {int} events each, into a capture") do |ctx, args|
-      ask(ctx, Request(op: "capture_stress", number: args[0].to_i!, wait: args[1].to_i!))
+      ask(ctx, Request.CaptureStress(Load(tasks: args[0].to_i!, events: args[1].to_i!)))
     end,
-    BDD.step("{int} tasks capture at once") do |ctx, args|
-      ask(ctx, Request(op: "capture_race", number: args[0].to_i!))
-    end,
+    BDD.step("{int} tasks capture at once") do |ctx, args| ask(ctx, Request.CaptureRace(args[0].to_i!)) end,
     BDD.step("the driver runs a session that captures {string} and emits {string}") do |ctx, args|
-      ask(ctx, Request(op: "session", patterns: args[0].split(","), name: args[1]))
+      ask(ctx, Request.Session(Session(patterns: args[0].split(","), name: args[1])))
     end,
     BDD.step("a session in this step captures {string} and emits {string}") do |ctx, args|
       session_in_step(ctx, args[0], args[1])
     end,
-    BDD.step("I measure the steps of emitting {string}") do |ctx, args|
-      ask(ctx, Request(op: "steps", name: args[0]))
-    end,
-    BDD.step("I detach {string}") do |ctx, args| ask(ctx, Request(op: "detach", id: args[0])) end,
-    BDD.step("I release {string}") do |ctx, args| ask(ctx, Request(op: "release", id: args[0])) end,
-    BDD.step("I emit {string}") do |ctx, args| ask(ctx, Request(op: "execute", name: args[0])) end,
+    BDD.step("I measure the steps of emitting {string}") do |ctx, args| ask(ctx, Request.Steps(args[0])) end,
+    BDD.step("I detach {string}") do |ctx, args| ask(ctx, Request.Detach(args[0])) end,
+    BDD.step("I release {string}") do |ctx, args| ask(ctx, Request.Release(args[0])) end,
+    BDD.step("I emit {string}") do |ctx, args| ask(ctx, Request.Execute(Emit(name: args[0]))) end,
     BDD.step("I emit {string} with:") do |ctx, args|
-      ask(ctx, Request(op: "execute", name: args[0], table: BDD.table(ctx)))
+      ask(ctx, Request.Execute(Emit(name: args[0], table: BDD.table(ctx))))
     end,
     BDD.step("I emit {int} events {string}") do |ctx, args|
-      ask(ctx, Request(op: "flood", name: args[1], number: args[0].to_i!))
+      ask(ctx, Request.Flood(Flood(name: args[1], count: args[0].to_i!)))
     end,
-    BDD.step("I flush") do |ctx, _args| ask(ctx, Request(op: "flush")) end,
-    BDD.step("I ask for the handlers") do |ctx, _args| ask(ctx, Request(op: "handlers")) end,
-    BDD.step("I ask whether {string} is enabled") do |ctx, args| ask(ctx, Request(op: "enabled", name: args[0])) end,
-    BDD.step("I wait for the tasks of the hub to end") do |ctx, _args| ask(ctx, Request(op: "idle")) end,
+    BDD.step("I flush") do |ctx, _args| ask(ctx, Request.Flush) end,
+    BDD.step("I ask for the handlers") do |ctx, _args| ask(ctx, Request.Handlers) end,
+    BDD.step("I ask whether {string} is enabled") do |ctx, args| ask(ctx, Request.Enabled(args[0])) end,
+    BDD.step("I wait for the tasks of the hub to end") do |ctx, _args| ask(ctx, Request.Idle) end,
     BDD.step(
       "{int} tasks attach, emit {int} events each and detach, while one handler hears everything",
-    ) do |ctx, args| ask(ctx, Request(op: "stress", number: args[0].to_i!, wait: args[1].to_i!)) end,
+    ) do |ctx, args| ask(ctx, Request.Stress(Load(tasks: args[0].to_i!, events: args[1].to_i!))) end,
     BDD.step("the reply is {string}") do |ctx, args| expect_reply(ctx, args[0]) end,
     BDD.step("the reply is a number up to {int}") do |ctx, args| expect_up_to(ctx, args[0].to_i!) end,
     BDD.step("the Logger got nothing") do |ctx, _args| expect_warnings(ctx, "") end,
@@ -164,8 +162,8 @@ def main() -> Void
   ])
 end
 
-def attach(ctx: BDD.Context, args: List[String], mode: String, capacity: Int) -> BDD.Context
-  ask(ctx, Request(op: "attach", id: args[0], patterns: args[1].split(","), mode: mode, number: capacity))
+def attach(ctx: BDD.Context, args: List[String], acts: Acts, capacity: Int) -> BDD.Context
+  ask(ctx, Request.Attach(Handler(id: args[0], patterns: args[1].split(","), acts: acts, capacity: capacity)))
 end
 
 def start(ctx: BDD.Context) -> BDD.Context
@@ -202,9 +200,9 @@ def items(reply: String) -> List[String]
 end
 
 # Asks for what the handler recorded, as the driver wrote it, one text per event: the context holds the answer.
-def read_log(ctx: BDD.Context, id: String) -> BDD.Context = ask(ctx, Request(op: "log", id: id))
+def read_log(ctx: BDD.Context, id: String) -> BDD.Context = ask(ctx, Request.Log(id))
 
-def read_dropped(ctx: BDD.Context, id: String) -> BDD.Context = ask(ctx, Request(op: "dropped", id: id))
+def read_dropped(ctx: BDD.Context, id: String) -> BDD.Context = ask(ctx, Request.Dropped(id))
 
 def count(ctx: BDD.Context) -> Int = reply(ctx).replace("ok ", "").to_i!
 
@@ -243,19 +241,19 @@ def expect_all(ctx: BDD.Context, id: String, total: Int) -> BDD.Context
 end
 
 def expect_warnings(ctx: BDD.Context, want: String) -> BDD.Context
-  asked = ask(ctx, Request(op: "warnings"))
+  asked = ask(ctx, Request.Warnings)
   got = items(reply(asked)).join("\n")
   BDD.assert(asked, got == want.strip, "the Logger got:\n#{got}\nand should get:\n#{want}")
 end
 
 def expect_clean(ctx: BDD.Context, text: String) -> BDD.Context
-  asked = ask(ctx, Request(op: "warnings"))
+  asked = ask(ctx, Request.Warnings)
   found = items(reply(asked)).select(->(line) { line.include?(text) })
   BDD.assert(asked, found.empty?, "a warning includes #{text}: #{found}")
 end
 
-def run_span(ctx: BDD.Context, name: String, mode: String, sleep_ms: Int, table: List[List[String]]) -> BDD.Context
-  ask(ctx, Request(op: "span", name: name, mode: mode, number: sleep_ms, table: table))
+def run_span(ctx: BDD.Context, name: String, body: Body, sleep_ms: Int, table: List[List[String]]) -> BDD.Context
+  ask(ctx, Request.Span(SpanRun(name: name, body: body, sleep_ms: sleep_ms, table: table)))
 end
 
 # The events of the handler as the driver wrote them, one text each.
@@ -335,7 +333,7 @@ def check_event(ctx: BDD.Context, name: String, rows: List[List[String]]) -> BDD
 end
 
 def capture(ctx: BDD.Context, args: List[String], room: Int) -> BDD.Context
-  ask(ctx, Request(op: "capture", id: args[1], patterns: args[0].split(","), number: room))
+  ask(ctx, Request.Capture(Watch(id: args[1], patterns: args[0].split(","), room: room)))
 end
 
 # The whole helper in the step itself: it starts the hub, captures, reads, and ends everything, so the step leaves no

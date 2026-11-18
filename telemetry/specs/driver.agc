@@ -13,7 +13,7 @@ import Starts from "starts"
 import Stress from "stress"
 import Telemetry from "../telemetry"
 import Types from "../src/types"
-import {Request} from "protocol"
+import {Acts, Body, Churn, Emit, Flood, Handler, Request, Session, SpanRun, Watch} from "protocol"
 
 private
 
@@ -65,47 +65,47 @@ def handle(driver: Driver, line: String) -> Handled
 end
 
 def act(driver: Driver, req: Request) -> Handled
-  case req.op
-    "start" -> same(driver, answer(Telemetry.start()))
-    "stop" -> same(driver, answer(Telemetry.stop(req.number)))
-    "attach" -> attach(driver, req)
-    "detach" -> same(driver, answer(Telemetry.detach(req.id)))
-    "execute" -> same(driver, execute(req))
-    "flood" -> same(driver, flood(req))
-    "flush" -> same(driver, answer(Telemetry.flush()))
-    "release" -> release(driver, req)
-    "handlers" -> same(driver, read(Telemetry.handlers().join(",")))
-    "enabled" -> same(driver, "ok #{Telemetry.enabled?(req.name)}")
-    "dropped" -> same(driver, "ok #{Telemetry.dropped(req.id)}")
-    "log" -> same(driver, read(lines(LOGS, req.id)))
-    "warnings" -> same(driver, read(lines(WARNINGS, "all")))
-    "idle" -> same(driver, idle())
-    "stress" -> same(driver, Stress.run(req.number, req.wait))
-    "starts" -> same(driver, Starts.run(req.number))
-    "start_in_task" -> start_in_task(driver)
-    "cancel_starter" -> cancel_starter(driver)
-    "churn" -> churn(driver, req)
-    "forge_failure" -> same(driver, forge(Types.HubMsg.Failed(Types.Failure(id: req.id, task: -1, kind: "forged"))))
-    "forge_end" -> same(driver, forge_end(req))
-    "failures_gone" -> same(driver, failures_gone(req.number))
-    "detaches_at_once" -> same(driver, detaches_at_once(req.number))
-    "stale_claim" -> same(driver, stale_claim())
-    "busy_hub" -> same(driver, busy_hub())
-    "forget_other" -> same(driver, forget_other())
-    "claims" -> same(driver, claims())
-    "forget_under_claim" -> same(driver, forget_under_claim())
-    "flush_budget" -> same(driver, flush_budget())
-    "second_hub" -> same(driver, second_hub())
-    "span" -> same(driver, span(req))
-    "span_stress" -> same(driver, Stress.run_spans(req.number, req.wait))
-    "capture" -> start_capture(driver, req)
-    "captured" -> same(driver, captured(driver, req.id))
-    "capture_stop" -> capture_stop(driver, req.id)
-    "capture_race" -> same(driver, Stress.run_captures(req.number))
-    "capture_stress" -> same(driver, Stress.run_capture(req.number, req.wait))
-    "session" -> same(driver, session(req))
-    "steps" -> same(driver, "ok #{steps_of(req.name)}")
-    _ -> same(driver, "unknown op #{req.op}")
+  case req
+    Request.Start -> same(driver, answer(Telemetry.start()))
+    Request.Stop(timeout_ms) -> same(driver, answer(Telemetry.stop(timeout_ms)))
+    Request.Attach(spec) -> attach(driver, spec)
+    Request.Detach(id) -> same(driver, answer(Telemetry.detach(id)))
+    Request.Execute(emit) -> same(driver, execute(emit))
+    Request.Flood(spec) -> same(driver, flood(spec))
+    Request.Flush -> same(driver, answer(Telemetry.flush()))
+    Request.Release(id) -> release(driver, id)
+    Request.Handlers -> same(driver, read(Telemetry.handlers().join(",")))
+    Request.Enabled(name) -> same(driver, "ok #{Telemetry.enabled?(name)}")
+    Request.Dropped(id) -> same(driver, "ok #{Telemetry.dropped(id)}")
+    Request.Log(id) -> same(driver, read(lines(LOGS, id)))
+    Request.Warnings -> same(driver, read(lines(WARNINGS, "all")))
+    Request.Idle -> same(driver, idle())
+    Request.Stress(load) -> same(driver, Stress.run(load.tasks, load.events))
+    Request.Starts(tasks) -> same(driver, Starts.run(tasks))
+    Request.StartInTask -> start_in_task(driver)
+    Request.CancelStarter -> cancel_starter(driver)
+    Request.Churn(spec) -> churn(driver, spec)
+    Request.ForgeFailure(id) ->
+      same(driver, forge(Types.HubMsg.Failed(Types.Failure(id: id, task: -1, kind: "forged"))))
+    Request.ForgeEnd(id) -> same(driver, forge_end(id))
+    Request.FailuresGone(count) -> same(driver, failures_gone(count))
+    Request.DetachesAtOnce(count) -> same(driver, detaches_at_once(count))
+    Request.StaleClaim -> same(driver, stale_claim())
+    Request.BusyHub -> same(driver, busy_hub())
+    Request.ForgetOther -> same(driver, forget_other())
+    Request.Claims -> same(driver, claims())
+    Request.ForgetUnderClaim -> same(driver, forget_under_claim())
+    Request.FlushBudget -> same(driver, flush_budget())
+    Request.SecondHub -> same(driver, second_hub())
+    Request.Span(run) -> same(driver, span(run))
+    Request.SpanStress(load) -> same(driver, Stress.run_spans(load.tasks, load.events))
+    Request.Capture(watch) -> start_capture(driver, watch)
+    Request.Captured(id) -> same(driver, captured(driver, id))
+    Request.CaptureStop(id) -> capture_stop(driver, id)
+    Request.CaptureRace(tasks) -> same(driver, Stress.run_captures(tasks))
+    Request.CaptureStress(load) -> same(driver, Stress.run_capture(load.tasks, load.events))
+    Request.Session(spec) -> same(driver, session(spec))
+    Request.Steps(name) -> same(driver, "ok #{steps_of(name)}")
   end
 end
 
@@ -132,30 +132,29 @@ def lines(table: ATS[String, List[String]], key: String) -> String
   end
 end
 
-def attach(driver: Driver, req: Request) -> Handled
+def attach(driver: Driver, spec: Handler) -> Handled
   gate: Channel[Bool] = Channel.new(1)
   options = Telemetry.Options()
-  if req.number != 0
-    options = Telemetry.Options(capacity: req.number)
+  if spec.capacity != 0
+    options = Telemetry.Options(capacity: spec.capacity)
   end
 
-  result = Telemetry.attach(req.id, req.patterns, handler(req.id, req.mode, gate), options)
+  result = Telemetry.attach(spec.id, spec.patterns, handler(spec.id, spec.acts, gate), options)
   case result
-    ok(_) -> Handled(driver: driver.with(gates: driver.gates.put(req.id, gate)), reply: "ok")
+    ok(_) -> Handled(driver: driver.with(gates: driver.gates.put(spec.id, gate)), reply: "ok")
     error(e) -> same(driver, "error #{e.kind}")
   end
 end
 
-def handler(id: String, mode: String, gate: Channel[Bool]) -> Fn[Telemetry.Event, Result[Void]]
-  case mode
-    "fail" -> &failing
-    "crash" -> &crashing
-    "slow" -> ->(event) { slowly(id, event) }
-    "flush" -> ->(_event) { flushing(id) }
-    "who" -> ->(_event) { who(id) }
-    "doomed" -> ->(_event) { doomed(gate) }
-    "block" -> ->(event) { blocked(id, gate, event) }
-    _ -> ->(event) { record(id, event) }
+def handler(id: String, acts: Acts, gate: Channel[Bool]) -> Fn[Telemetry.Event, Result[Void]]
+  case acts
+    Acts.Fail -> &failing
+    Acts.Crash -> &crashing
+    Acts.Slow -> ->(event) { slowly(id, event) }
+    Acts.Flush -> ->(_event) { flushing(id) }
+    Acts.Who -> ->(_event) { who(id) }
+    Acts.Block -> ->(event) { blocked(id, gate, event) }
+    Acts.Record -> ->(event) { record(id, event) }
   end
 end
 
@@ -181,21 +180,21 @@ def crashing(event: Telemetry.Event) -> Result[Void]
   ok()
 end
 
-def release(driver: Driver, req: Request) -> Handled
-  case driver.gates.get(req.id)
+def release(driver: Driver, id: String) -> Handled
+  case driver.gates.get(id)
     some(gate) ->
       gate.close
       same(driver, "ok")
-    none -> same(driver, "no handler #{req.id}")
+    none -> same(driver, "no handler #{id}")
   end
 end
 
 # The rows of the table: `int`, `float` or `meta`, a key and a value.
-def execute(req: Request) -> String
+def execute(emit: Emit) -> String
   ints: Map[String, Int] = {}
   floats: Map[String, Float] = {}
   metadata: Map[String, String] = {}
-  for row in req.table.drop(1)
+  for row in emit.table.drop(1)
     case row[0]
       "int" -> ints = ints.put(row[1], row[2].to_i!)
       "float" -> floats = floats.put(row[1], row[2].to_f!)
@@ -203,13 +202,13 @@ def execute(req: Request) -> String
     end
   end
 
-  Telemetry.execute(req.name, ints, floats, metadata)
+  Telemetry.execute(emit.name, ints, floats, metadata)
   "ok"
 end
 
-def flood(req: Request) -> String
-  for i in 1..req.number
-    Telemetry.execute(req.name, {"i": i})
+def flood(spec: Flood) -> String
+  for i in 1..spec.count
+    Telemetry.execute(spec.name, {"i": i})
   end
 
   "ok"
@@ -246,17 +245,18 @@ def doomed(gate: Channel[Bool]) -> Result[Void]
   error("too late", kind: "handler.late")
 end
 
-# Attaches a handler that is cancelled at once, `number` times, and then the handler of the request. What the old
-# ones tell the hub late must not touch the newest handler of the same id.
-def churn(driver: Driver, req: Request) -> Handled
+# Attaches a handler that is cancelled at once, `count` times, and then the handler of the request, whose queue has
+# room for `count` events, as the step gives it. What the old ones tell the hub late must not touch the newest handler
+# of the same id.
+def churn(driver: Driver, spec: Churn) -> Handled
   gate: Channel[Bool] = Channel.new(1)
-  for _i in 1..req.number
-    _ = Telemetry.attach(req.id, req.patterns, doomed_handler(gate))
-    Telemetry.execute(req.name)
-    _ = Telemetry.detach(req.id)
+  for _i in 1..spec.count
+    _ = Telemetry.attach(spec.handler.id, spec.handler.patterns, doomed_handler(gate))
+    Telemetry.execute(spec.name)
+    _ = Telemetry.detach(spec.handler.id)
   end
 
-  attach(driver, req)
+  attach(driver, spec.handler)
 end
 
 def doomed_handler(gate: Channel[Bool]) -> Fn[Telemetry.Event, Result[Void]] = ->(_event) { doomed(gate) }
@@ -300,8 +300,8 @@ def forge(message: Types.HubMsg) -> String
 end
 
 # The hub is told that the task of the handler `id` returned, as it is when the handler could not send `Failed`.
-def forge_end(req: Request) -> String
-  task = lines(LOGS, req.id).to_i.unwrap_or(-1)
+def forge_end(id: String) -> String
+  task = lines(LOGS, id).to_i.unwrap_or(-1)
   down = TaskDown(task_id: task, reason: TaskExit.Ok, code: "", message: "", file: "", line: 0, column: 0)
   forge(Types.HubMsg.Down(down))
 end
@@ -474,17 +474,19 @@ def second_hub() -> String
   "ok"
 end
 
-# Runs a span whose body does what `mode` says: `ok` gives 42, `error` gives an error of the kind `span.bad`, `crash`
-# crashes (in a task of its own, which the driver awaits). The body waits `number` ms first.
-def span(req: Request) -> String
+# Runs a span whose body does what `body` says: `Returns` gives 42, `Fails` gives an error of the kind `span.bad`,
+# `Crashes` crashes (in a task of its own, which the driver awaits). The body waits `sleep_ms` ms first.
+def span(run: SpanRun) -> String
   metadata: Map[String, String] = {}
-  for row in req.table.drop(1)
+  for row in run.table.drop(1)
     metadata = metadata.put(row[1], row[2])
   end
 
-  return spanned(Task.await(Task.spawn(&crashing_span, req.name))) if req.mode == "crash"
-
-  spanned(Telemetry.span(req.name, metadata, -> { work(req.mode, req.number) }))
+  case run.body
+    Body.Crashes -> spanned(Task.await(Task.spawn(&crashing_span, run.name)))
+    Body.Fails -> spanned(Telemetry.span(run.name, metadata, -> { work(true, run.sleep_ms) }))
+    Body.Returns -> spanned(Telemetry.span(run.name, metadata, -> { work(false, run.sleep_ms) }))
+  end
 end
 
 def spanned(result: Result[Int]) -> String
@@ -494,9 +496,9 @@ def spanned(result: Result[Int]) -> String
   end
 end
 
-def work(mode: String, sleep_ms: Int) -> Result[Int]
+def work(fails: Bool, sleep_ms: Int) -> Result[Int]
   Task.sleep(sleep_ms)
-  return error("the body failed", kind: "span.bad") if mode == "error"
+  return error("the body failed", kind: "span.bad") if fails
 
   ok(42)
 end
@@ -509,14 +511,14 @@ def crashing_body() -> Result[Int]
 end
 
 # A capture of the testing helper, kept under the name `id` of the request.
-def start_capture(driver: Driver, req: Request) -> Handled
+def start_capture(driver: Driver, watch: Watch) -> Handled
   room = Testing.ROOM
-  if req.number != 0
-    room = req.number
+  if watch.room != 0
+    room = watch.room
   end
 
-  case Testing.capture(req.patterns, room)
-    ok(made) -> Handled(driver: driver.with(captures: driver.captures.put(req.id, made)), reply: "ok")
+  case Testing.capture(watch.patterns, room)
+    ok(made) -> Handled(driver: driver.with(captures: driver.captures.put(watch.id, made)), reply: "ok")
     error(e) -> same(driver, "error #{e.kind}")
   end
 end
@@ -543,8 +545,8 @@ def capture_stop(driver: Driver, id: String) -> Handled
 end
 
 # A session in the driver, whose hub runs: the session uses it and leaves it running, with no handler of its own.
-def session(req: Request) -> String
-  result = Testing.session(req.patterns, ->(made) { emit_and_read(made, req.name) })
+def session(spec: Session) -> String
+  result = Testing.session(spec.patterns, ->(made) { emit_and_read(made, spec.name) })
   left = Telemetry.handlers()
   return "the session left the handlers #{left}" if not left.empty?
 
