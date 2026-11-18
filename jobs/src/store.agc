@@ -1,12 +1,20 @@
 ## The jobs of the memory backend and the rules they follow, as plain values: every function takes the store and the
 ## time and gives a new store, so the actor of `memory.agc` is the only owner and nothing here sleeps or reads a clock.
 ##
-## A live job is waiting (in the heap of its queue, ordered by `run_at_ms`, then by insertion) or leased (with an entry
-## in the heap of expiries). The heap of expiries is not cleaned when a lease ends: an entry whose lease is gone or
-## moved is skipped when it comes up.
+## A live job is waiting or leased (with an entry in the heap of expiries). The heap of expiries is not cleaned when a
+## lease ends: an entry whose lease is gone or moved is skipped when it comes up.
+##
+## The waiting jobs of a queue are `Ready` (ordered by `run_at_ms`, then by insertion): a heap for the jobs with no
+## group, a heap for each group, and a heap of the first slot of each group. A fetch takes the first of the plain heap
+## and of the heads, and a head of a full group is set aside, so it passes over a group in one step, however many jobs
+## the group holds. `groups` counts the live leases of each group of a queue, kept in step by every function that
+## starts or ends a lease (`lease`, `finish`, `requeue`).
 
 import Heap from "std/heap"
 import Types from "types"
+
+# The stale heads that the heap of heads may hold beyond twice the groups before it is rebuilt.
+HEADS_SLACK = 8
 
 ## A lease that `ack`, `nack` or `extend` found to be live; the entry of a job that is not live gives none.
 struct Held
@@ -24,12 +32,14 @@ struct Store
   max_jobs: Int
   max_dead: Int
   entries: Map[String, Entry]
-  waiting: Map[String, Heap.Heap[Slot]]
+  waiting: Map[String, Ready]
   expiries: Heap.Heap[Expiry]
   keys: Map[String, String]
+  groups: Map[String, Int]
   dead: List[Entry]
   next_ord: Int
   next_token: Int
+  changes: Int
 end
 
 ## A store and what an operation gave.
@@ -38,9 +48,15 @@ struct Added
   enqueued: List[Types.Enqueued]
 end
 
+## What a fetch took. `held_back` is whether it passed over a group that was full, `later_at_ms` when the first job
+## that is not due comes due, and `visits` how many slots and heads it looked at, which does not grow with the jobs of
+## a full group.
 struct Taken
   store: Store
   leases: List[Types.Lease]
+  held_back: Bool
+  later_at_ms: Optional[Int]
+  visits: Int
 end
 
 struct Extended
@@ -52,6 +68,39 @@ struct Slot
   run_at_ms: Int
   ord: Int
   id: String
+end
+
+## The first slot of a group, and the group. A head is current while its `version` is the one that `Ready.versions` has
+## for its group; a head that is not is dropped when it comes to the front.
+struct Head
+  slot: Slot
+  group: String
+  version: Int
+end
+
+## The waiting jobs of a queue. A group has one current head: a new first slot (a job that waits ahead of it, or the
+## next one after a take) makes a new head with a new version from `head_seq`, and the old head is stale. The heap of
+## heads is rebuilt when stale heads are more than the groups, so it stays in proportion to them.
+struct Ready
+  plain: Heap.Heap[Slot]
+  groups: Map[String, Heap.Heap[Slot]]
+  heads: Heap.Heap[Head]
+  versions: Map[String, Int]
+  head_seq: Int
+end
+
+## The slot that a fetch takes, and its group when it came from a group.
+struct Found
+  slot: Slot
+  group: Optional[String]
+end
+
+## The store, the heads that a fetch set aside (full groups), what it found and how many slots and heads it looked at.
+struct Seen
+  store: Store
+  set_aside: List[Head]
+  found: Optional[Found]
+  visits: Int
 end
 
 struct Expiry
@@ -74,9 +123,11 @@ def empty(max_jobs: Int, max_dead: Int) -> Store
     waiting: {},
     expiries: Heap.new(&expires_first),
     keys: {},
+    groups: {},
     dead: [],
     next_ord: 1,
     next_token: 1,
+    changes: 0,
   )
 end
 
@@ -92,20 +143,30 @@ def tick(store: Store, now: Int) -> Store
   state
 end
 
-## When something waits for the clock: the first job due in `queue`, or the first lease to expire, whichever is first.
-def next_due(store: Store, queue: String) -> Optional[Int]
+## When the next waiting job of `queue` that is not due yet comes due. A job that is due and waits is held by a limit
+## per group, and only the end of a lease frees it, so it has no time here.
+def next_job_at(store: Store, queue: String, now: Int) -> Optional[Int]
+  ready = ready_of(store, queue)
   times: List[Int] = []
-  case Heap.peek(store.waiting.get(queue, Heap.new(&starts_first)))
-    ok(slot) -> times = times.push(slot.run_at_ms)
-    error(_) -> nil
+  case Heap.peek(ready.plain)
+    ok(slot) if slot.run_at_ms > now -> times = times.push(slot.run_at_ms)
+    _ -> nil
   end
 
-  case Heap.peek(store.expiries)
-    ok(expiry) -> times = times.push(expiry.at_ms)
-    error(_) -> nil
+  case Heap.peek(ready.heads)
+    ok(head) if head.slot.run_at_ms > now -> times = times.push(head.slot.run_at_ms)
+    _ -> nil
   end
 
   times.min
+end
+
+## When the first lease expires.
+def next_expiry(store: Store) -> Optional[Int]
+  case Heap.peek(store.expiries)
+    ok(expiry) -> some(expiry.at_ms)
+    error(_) -> none
+  end
 end
 
 ## Adds the jobs, or none of them: one that is not valid, or one that does not fit, fails the call.
@@ -122,7 +183,8 @@ def enqueue(store: Store, now: Int, jobs: List[Types.NewJob]) -> Result[Added]
   ok(Added(store: state, enqueued: enqueued))
 end
 
-## Leases up to `fetch.max` of the jobs of the queue whose time has come, the first due first.
+## Leases up to `fetch.max` of the jobs of the queue whose time has come, the first due first. A job whose group has
+## `fetch.max_per_group` live leases is left where it is, and the next one is taken; the leases of this call count.
 def take(store: Store, now: Int, fetch: Types.Fetch) -> Result[Taken]
   if fetch.max < 1 or fetch.lease_ms < 1
     return error("jobs error: fetch max and lease_ms must be at least 1", kind: "argument")
@@ -130,19 +192,37 @@ def take(store: Store, now: Int, fetch: Types.Fetch) -> Result[Taken]
 
   return error("jobs error: fetch wait_ms cannot be negative", kind: "argument") if fetch.wait_ms < 0
 
+  if fetch.max_per_group < 0
+    return error("jobs error: fetch max_per_group cannot be negative, got #{fetch.max_per_group}", kind: "argument")
+  end
+
   state = store
   leases: List[Types.Lease] = []
+  set_aside: List[Head] = []
+  visits = 0
   while leases.size < fetch.max
-    case due_slot(state, fetch.queue, now)
-      some(slot) ->
-        leased = lease(pop_slot(state, fetch.queue), slot, now, fetch.lease_ms)
+    seen = first_ready(state, fetch.queue, now, fetch.max_per_group, set_aside)
+    state = seen.store
+    set_aside = seen.set_aside
+    visits += seen.visits
+    case seen.found
+      some(found) ->
+        leased = lease(take_slot(state, fetch.queue, found), found.slot, now, fetch.lease_ms)
         state = leased.store
         leases = leases.push(leased.lease)
       none -> break
     end
   end
 
-  ok(Taken(store: state, leases: leases))
+  ok(
+    Taken(
+      store: put_back(state, fetch.queue, set_aside),
+      leases: leases,
+      held_back: not set_aside.empty?,
+      later_at_ms: next_job_at(state, fetch.queue, now),
+      visits: visits,
+    ),
+  )
 end
 
 ## Puts back leases that nobody got (the caller gave up): the delivery does not count.
@@ -211,6 +291,8 @@ end
 
 private
 
+def heads_first(a: Head, b: Head) -> Bool = starts_first(a.slot, b.slot)
+
 def starts_first(a: Slot, b: Slot) -> Bool
   a.run_at_ms < b.run_at_ms or (a.run_at_ms == b.run_at_ms and a.ord < b.ord)
 end
@@ -229,6 +311,11 @@ def key_of(queue: String, unique_key: String) -> String = "#{queue.size}:#{queue
 
 def valid(new: Types.NewJob) -> Result[Void]
   return error("jobs error: queue cannot be empty", kind: "argument") if new.queue == ""
+
+  case new.group
+    some("") -> return error("jobs error: group cannot be empty", kind: "argument")
+    _ -> nil
+  end
 
   if new.max_attempts < 1
     return error("jobs error: max_attempts must be at least 1, got #{new.max_attempts}", kind: "argument")
@@ -280,6 +367,7 @@ def insert(store: Store, now: Int, new: Types.NewJob) -> Added
     unique_key: new.unique_key,
     meta: new.meta,
     last_error: none,
+    group: new.group,
   )
 
   keys = case new.unique_key
@@ -299,28 +387,187 @@ def insert(store: Store, now: Int, new: Types.NewJob) -> Added
   )
 end
 
-def push_slot(store: Store, entry: Entry) -> Store
-  slot = Slot(run_at_ms: entry.job.run_at_ms, ord: entry.ord, id: entry.job.id)
-  heap = store.waiting.get(entry.job.queue, Heap.new(&starts_first))
-  store.with(waiting: store.waiting.put(entry.job.queue, Heap.push(heap, slot)))
+def ready_of(store: Store, queue: String) -> Ready
+  store.waiting.get(
+    queue,
+    Ready(plain: Heap.new(&starts_first), groups: {}, heads: Heap.new(&heads_first), versions: {}, head_seq: 0),
+  )
 end
 
-def due_slot(store: Store, queue: String, now: Int) -> Optional[Slot]
-  case store.waiting.get(queue)
-    some(heap) ->
-      case Heap.peek(heap)
-        ok(slot) if slot.run_at_ms <= now -> some(slot)
-        _ -> none
-      end
-
-    none -> none
+# A job that waits, or a lease that ended, is what can give a fetch that found nothing its job: `changes` counts both.
+def push_slot(store: Store, entry: Entry) -> Store
+  slot = Slot(run_at_ms: entry.job.run_at_ms, ord: entry.ord, id: entry.job.id)
+  ready = ready_of(store, entry.job.queue)
+  changed = store.with(changes: store.changes + 1)
+  case entry.job.group
+    some(group) -> changed.with(waiting: store.waiting.put(entry.job.queue, push_grouped(ready, slot, group)))
+    none ->
+      plain = ready.with(plain: Heap.push(ready.plain, slot))
+      changed.with(waiting: store.waiting.put(entry.job.queue, plain))
   end
 end
 
-def pop_slot(store: Store, queue: String) -> Store
-  # The caller saw a slot in this heap, so it is not empty.
-  popped = Heap.pop(store.waiting[queue]).unwrap!
-  store.with(waiting: store.waiting.put(queue, popped.remaining))
+# The slot goes in the heap of its group, and it is the head when it comes before the one that is there.
+def push_grouped(ready: Ready, slot: Slot, group: String) -> Ready
+  line = ready.groups.get(group, Heap.new(&starts_first))
+  pushed = ready.with(groups: ready.groups.put(group, Heap.push(line, slot)))
+  case Heap.peek(line)
+    ok(first) if starts_first(first, slot) -> pushed
+    _ -> compact(with_head(pushed, group, slot))
+  end
+end
+
+# The slot is the current head of the group; the head that it replaces is stale.
+def with_head(ready: Ready, group: String, slot: Slot) -> Ready
+  version = ready.head_seq + 1
+  ready.with(
+    heads: Heap.push(ready.heads, Head(slot: slot, group: group, version: version)),
+    versions: ready.versions.put(group, version),
+    head_seq: version,
+  )
+end
+
+# The heads of the groups again, one each, when the stale ones are more than the groups.
+def compact(ready: Ready) -> Ready
+  return ready if Heap.size(ready.heads) <= ready.versions.size * 2 + HEADS_SLACK
+
+  fresh = ready.with(heads: Heap.new(&heads_first), versions: {})
+  for group in ready.groups.keys
+    # A group in the map has a slot.
+    fresh = with_head(fresh, group, Heap.peek(ready.groups[group]).unwrap!)
+  end
+
+  fresh
+end
+
+# The first waiting job that is due and that a limit does not hold back. The head of a full group is taken out of
+# its heap and set aside, and a head that is not current is dropped.
+def first_ready(store: Store, queue: String, now: Int, limit: Int, set_aside: List[Head]) -> Seen
+  state = store
+  aside = set_aside
+  visits = 0
+  while true
+    visits += 1
+    ready = ready_of(state, queue)
+    plain = Heap.peek(ready.plain)
+    case Heap.peek(ready.heads)
+      ok(head) if not current?(ready, head) -> state = drop_head(state, queue)
+      ok(head) if head_first?(head, plain) and head.slot.run_at_ms > now -> break
+      ok(head) if head_first?(head, plain) and full?(state, queue, head.group, limit) ->
+        state = drop_head(state, queue)
+        aside = aside.push(head)
+      ok(head) if head_first?(head, plain) ->
+        return Seen(
+          store: state,
+          set_aside: aside,
+          found: some(Found(slot: head.slot, group: some(head.group))),
+          visits: visits,
+        )
+      _ ->
+        case plain
+          ok(slot) if slot.run_at_ms <= now ->
+            return Seen(store: state, set_aside: aside, found: some(Found(slot: slot, group: none)), visits: visits)
+          _ -> break
+        end
+    end
+  end
+
+  Seen(store: state, set_aside: aside, found: none, visits: visits)
+end
+
+# Whether the head comes before the first of the plain heap.
+def head_first?(head: Head, plain: Result[Slot]) -> Bool
+  case plain
+    ok(slot) -> starts_first(head.slot, slot)
+    error(_) -> true
+  end
+end
+
+def current?(ready: Ready, head: Head) -> Bool = ready.versions.get(head.group) == some(head.version)
+
+def drop_head(store: Store, queue: String) -> Store
+  ready = ready_of(store, queue)
+  # The caller saw a head in this heap, so it is not empty.
+  popped = Heap.pop(ready.heads).unwrap!
+  store.with(waiting: store.waiting.put(queue, ready.with(heads: popped.remaining)))
+end
+
+# The slot leaves the heap that it was found in. A group has its next slot as the head, and no heap when it is empty.
+def take_slot(store: Store, queue: String, found: Found) -> Store
+  ready = ready_of(store, queue)
+  case found.group
+    some(group) ->
+      state = drop_head(store, queue)
+      store_of(state, queue, without_first(ready_of(state, queue), group))
+    none ->
+      # The caller saw a slot in this heap, so it is not empty.
+      popped = Heap.pop(ready.plain).unwrap!
+      store_of(store, queue, ready.with(plain: popped.remaining))
+  end
+end
+
+def store_of(store: Store, queue: String, ready: Ready) -> Store = store.with(waiting: store.waiting.put(queue, ready))
+
+def without_first(ready: Ready, group: String) -> Ready
+  # The group had a slot, and it is the one that was found.
+  popped = Heap.pop(ready.groups[group]).unwrap!
+  if Heap.empty?(popped.remaining)
+    return ready.with(groups: ready.groups.delete(group), versions: ready.versions.delete(group))
+  end
+
+  # The group goes on with its next slot, which is the head now.
+  next_slot = Heap.peek(popped.remaining).unwrap!
+  with_head(ready.with(groups: ready.groups.put(group, popped.remaining)), group, next_slot)
+end
+
+# Whether the group already has `limit` live leases; no limit is never full.
+def full?(store: Store, queue: String, group: String, limit: Int) -> Bool
+  limit > 0 and store.groups.get(key_of(queue, group), 0) >= limit
+end
+
+# The heads that a fetch set aside go back, and the heads that are not current leave the front.
+def put_back(store: Store, queue: String, heads: List[Head]) -> Store
+  ready = ready_of(store, queue)
+  pushed = heads.reduce(ready.heads, ->(all, head) { Heap.push(all, head) })
+  cleaned = ready.with(heads: pushed)
+  store_of(store, queue, drop_stale(cleaned))
+end
+
+def drop_stale(ready: Ready) -> Ready
+  heads = ready.heads
+  while true
+    case Heap.peek(heads)
+      ok(head) if not current?(ready, head) -> heads = Heap.pop(heads).unwrap!.remaining
+      _ -> break
+    end
+  end
+
+  ready.with(heads: heads)
+end
+
+# The group of a job has one more live lease, or one less.
+def count_group(store: Store, job: Types.Job, change: Int) -> Store
+  case job.group
+    some(group) ->
+      freed = note_freed(store, change)
+      freed.with(groups: counted(store.groups, key_of(job.queue, group), change))
+    none -> store
+  end
+end
+
+# A lease that ends can free a job that a limit held back.
+def note_freed(store: Store, change: Int) -> Store
+  return store.with(changes: store.changes + 1) if change < 0
+
+  store
+end
+
+# A count that falls to 0 leaves the map, so the map holds the groups that have a lease.
+def counted(groups: Map[String, Int], key: String, change: Int) -> Map[String, Int]
+  count = groups.get(key, 0) + change
+  return groups.delete(key) if count <= 0
+
+  groups.put(key, count)
 end
 
 def lease(store: Store, slot: Slot, now: Int, lease_ms: Int) -> Leased
@@ -330,10 +577,14 @@ def lease(store: Store, slot: Slot, now: Int, lease_ms: Int) -> Leased
   at_ms = now + lease_ms
   job = entry.job.with(attempt: entry.job.attempt + 1)
   held = Entry(job: job, ord: entry.ord, lease: some(Held(token: token, expires_at_ms: at_ms)))
-  state = store.with(
-    entries: store.entries.put(job.id, held),
-    expiries: Heap.push(store.expiries, Expiry(at_ms: at_ms, id: job.id, token: token)),
-    next_token: store.next_token + 1,
+  state = count_group(
+    store.with(
+      entries: store.entries.put(job.id, held),
+      expiries: Heap.push(store.expiries, Expiry(at_ms: at_ms, id: job.id, token: token)),
+      next_token: store.next_token + 1,
+    ),
+    job,
+    1,
   )
 
   Leased(store: state, lease: Types.Lease(job: job, token: token, expires_at_ms: at_ms))
@@ -366,7 +617,7 @@ def finish(store: Store, entry: Entry) -> Store
     none -> store.keys
   end
 
-  store.with(entries: store.entries.delete(entry.job.id), keys: keys)
+  count_group(store.with(entries: store.entries.delete(entry.job.id), keys: keys), entry.job, -1)
 end
 
 def kill(store: Store, entry: Entry, message: String) -> Store
@@ -385,7 +636,7 @@ end
 
 def requeue(store: Store, entry: Entry, run_at_ms: Int) -> Store
   waiting = Entry(job: entry.job.with(run_at_ms: run_at_ms), ord: entry.ord, lease: none)
-  push_slot(store.with(entries: store.entries.put(entry.job.id, waiting)), waiting)
+  push_slot(count_group(store.with(entries: store.entries.put(entry.job.id, waiting)), entry.job, -1), waiting)
 end
 
 # The lease of this expiry, when it is still the live one of its job.

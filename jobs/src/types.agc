@@ -1,13 +1,15 @@
 ## The records that the files of `jobs` share. `jobs.agc` re-exports them.
 
 ## A job to add. `run_at_ms` 0 means now; a later Unix time schedules it. A `unique_key` makes a second enqueue of the
-## same key in the same queue a duplicate while the first is not finished (acked or dead).
+## same key in the same queue a duplicate while the first is not finished (acked or dead). A job of a `group` counts
+## against the limit of a fetch with `max_per_group`: the group is a name in the queue, such as a bot or a customer.
 struct NewJob
   queue: String
   payload: Bytes
   max_attempts: Int = 5
   run_at_ms: Int = 0
   unique_key: Optional[String] = none
+  group: Optional[String] = none
   meta: Map[String, String] = {}
 end
 
@@ -24,6 +26,7 @@ struct Job
   unique_key: Optional[String]
   meta: Map[String, String]
   last_error: Optional[String]
+  group: Optional[String] = none
 end
 
 ## A job held by one consumer until `expires_at_ms`. `token` names this delivery: ack, nack and extend with the token
@@ -40,12 +43,14 @@ struct Enqueued
 end
 
 ## Up to `max` jobs of `queue`, each leased for `lease_ms`, waiting up to `wait_ms` for the first one (0 does not
-## wait). No job in time gives `ok([])`.
+## wait). No job in time gives `ok([])`. With `max_per_group` above 0 the fetch skips a ready job whose group already
+## has that many live leases, and takes the next ready one; 0 is no limit, and a job with no group is never skipped.
 struct Fetch
   queue: String
   max: Int = 1
   lease_ms: Int = 30_000
   wait_ms: Int = 0
+  max_per_group: Int = 0
 end
 
 ## When a failed job runs again, and what went wrong. The handler of the next delivery reads `error` as the

@@ -4,6 +4,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A limit of concurrent jobs per group: `NewJob.group` and `Fetch.max_per_group` (0 is no limit), and `Jobs.drain` logs the `group`.
+
 ## [0.1.0] - 2026-11-17
 
 Needs Agentica 0.34.0.

@@ -78,11 +78,19 @@ end
 # A job that fails is a recovered problem while it will run again, and a failure that is given up when it is dead. The
 # fields are ids and counts, never the payload or the text of the error.
 def log_verdict(job: Types.Job, result: Result[Void], verdict: Settle.Verdict) -> Void
-  fields = {"queue": job.queue, "id": job.id, "attempt": job.attempt.to_s}
+  fields = log_fields(job)
   case verdict
     Settle.Verdict.Back(Types.Nack.Retry(_)) -> Logger.warning("job failed, it will run again", fields)
     Settle.Verdict.Back(Types.Nack.Dead(_)) -> Logger.err("job dead", fields.put("reason", reason_of(result)))
     _ -> nil
+  end
+end
+
+def log_fields(job: Types.Job) -> Map[String, String]
+  fields = {"queue": job.queue, "id": job.id, "attempt": job.attempt.to_s}
+  case job.group
+    some(group) -> fields.put("group", group)
+    none -> fields
   end
 end
 

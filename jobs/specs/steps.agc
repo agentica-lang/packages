@@ -40,6 +40,9 @@ def main() -> Void
     BDD.step("I fetch a job of {string} as {string}, leased for {int} ms") do |ctx, args|
       ask(ctx, Request(op: "fetch", queue: args[0], name: args[1], number: args[2].to_i!))
     end,
+    BDD.step("I fetch a job of {string} as {string}, at most {int} per group") do |ctx, args|
+      ask(ctx, Request(op: "fetch", queue: args[0], name: args[1], number: LEASE_MS, limit: args[2].to_i!))
+    end,
     BDD.step("I fetch {int} jobs of {string} as {string}") do |ctx, args|
       ask(ctx, Request(op: "fetch", queue: args[1], name: args[2], number: LEASE_MS, max: args[0].to_i!))
     end,
@@ -64,6 +67,9 @@ def main() -> Void
     BDD.step("a fetch of {string} starts to wait as {string} for {int} ms") do |ctx, args|
       ask(ctx, Request(op: "wait", queue: args[0], name: args[1], number: args[2].to_i!))
     end,
+    BDD.step("a fetch of {string} starts to wait as {string}, at most {int} per group") do |ctx, args|
+      ask(ctx, Request(op: "wait", queue: args[0], name: args[1], limit: args[2].to_i!))
+    end,
     BDD.step("the fetch {string} ends") do |ctx, args| ask(ctx, Request(op: "wait_end", name: args[0])) end,
     BDD.step("the clock moves {int} ms at a time until the fetch {string} ends") do |ctx, args|
       ask(ctx, Request(op: "wait_end", name: args[1], number: args[0].to_i!))
@@ -78,6 +84,12 @@ def main() -> Void
     BDD.step("I drain {string}, with the jobs that wait for a time") do |ctx, args|
       ask(ctx, Request(op: "drain", queue: args[0], kind: "all"))
     end,
+    BDD.step("{int} consumers work off {int} jobs in {int} groups with at most {int} per group") do |ctx, args|
+      ask(ctx, stress_in_groups(args, 0))
+    end,
+    BDD.step(
+      "{int} consumers that wait {int} ms work off {int} jobs in {int} groups with at most {int} per group",
+    ) do |ctx, args| ask(ctx, stress_in_groups([args[0], args[2], args[3], args[4]], args[1].to_i!)) end,
     BDD.step("the drain logged") do |ctx, _args| ask(ctx, Request(op: "logs")) end,
     BDD.step("{int} consumers work off {int} jobs of one queue while producers add them") do |ctx, args|
       ask(ctx, Request(op: "stress", number: args[0].to_i!, wait: args[1].to_i!))
@@ -98,6 +110,9 @@ def main() -> Void
     BDD.step("the suite runs on a memory backend that ignores the wait of a fetch") do |ctx, _args|
       run_suite(ctx, &ignores_wait)
     end,
+    BDD.step("the suite runs on a memory backend that ignores max_per_group") do |ctx, _args|
+      run_suite(ctx, &ignores_groups)
+    end,
     BDD.step("the suite runs on a memory backend whose nack and extend work after close") do |ctx, _args|
       run_suite(ctx, &open_after_close)
     end,
@@ -109,6 +124,18 @@ def main() -> Void
     BDD.step("the case {string} passed") do |ctx, args| expect_status(ctx, args[0], "passed") end,
     BDD.step("the case {string} failed") do |ctx, args| expect_status(ctx, args[0], "failed") end,
   ])
+end
+
+# The consumers, the jobs, the groups and the limit of a stress in groups.
+def stress_in_groups(args: List[String], wait_ms: Int) -> Request
+  Request(
+    op: "stress",
+    number: args[0].to_i!,
+    wait: args[1].to_i!,
+    groups: args[2].to_i!,
+    limit: args[3].to_i!,
+    wait_ms: wait_ms,
+  )
 end
 
 def start(ctx: BDD.Context) -> BDD.Context
@@ -140,6 +167,12 @@ end
 def ignores_wait(clock: Fn[Int]) -> Result[Jobs.Backend]
   backend = try memory(clock)
   ok(backend.with(fetch: ->(fetch) { backend.fetch.call(fetch.with(wait_ms: 0)) }))
+end
+
+# A fetch with no limit per group, as a backend that ignores `max_per_group` does.
+def ignores_groups(clock: Fn[Int]) -> Result[Jobs.Backend]
+  backend = try memory(clock)
+  ok(backend.with(fetch: ->(fetch) { backend.fetch.call(fetch.with(max_per_group: 0)) }))
 end
 
 # A backend that keeps nack and extend working after close, the two calls that a check of close may forget.

@@ -144,11 +144,13 @@ Feature: The memory backend
     When a fetch of "q" starts to wait as "w"
     And the fetch "w" ends
     Then the reply is "error jobs.timeout"
-    When I enqueue "x" into "q"
+    When I enqueue "x" into "q" with:
+      | setting | value |
+      | group   | g     |
     And I ask for the counts of "q"
     Then the reply is "ready 1 scheduled 0 leased 0 dead 0"
-    When I fetch a job of "q" as "a"
-    Then the reply is "ok x attempt 1"
+    When I fetch a job of "q" as "a", at most 1 per group
+    Then the reply is "ok x attempt 1 group g"
 
   Scenario: A fetch that waits after a caller that gave up gets the job that comes
     Given a memory backend on a manual clock with:
@@ -161,6 +163,69 @@ Feature: The memory backend
     And I enqueue "x" into "q"
     And the fetch "live" ends
     Then the reply is "ok x attempt 1"
+
+  Scenario: A fetch with a limit per group skips the jobs of a full group and takes the next one
+    Given a memory backend on a manual clock
+    When I enqueue "a1" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And I enqueue "a2" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And I enqueue "plain" into "q"
+    And I fetch a job of "q" as "x", at most 1 per group
+    Then the reply is "ok a1 attempt 1 group g"
+    When I fetch a job of "q" as "y", at most 1 per group
+    Then the reply is "ok plain attempt 1"
+    When I ack "x"
+    And I fetch a job of "q" as "z", at most 1 per group
+    Then the reply is "ok a2 attempt 1 group g"
+
+  Scenario: A fetch that waits with no limit is served when the one in front of it is held back by its limit
+    Given a memory backend on a manual clock
+    When I enqueue "g1" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And I fetch a job of "q" as "a"
+    And a fetch of "q" starts to wait as "limited", at most 1 per group
+    And a fetch of "q" starts to wait as "free"
+    And I enqueue "g2" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And the fetch "free" ends
+    Then the reply is "ok g2 attempt 1 group g"
+
+  Scenario: A fetch that a full group holds back gets a job that comes due later
+    Given a memory backend on a manual clock
+    When I enqueue "g1" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And I enqueue "g2" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And I enqueue "later" into "q" with:
+      | setting   | value |
+      | run_in_ms | 1000 |
+    And I fetch a job of "q" as "a"
+    And a fetch of "q" starts to wait as "limited", at most 1 per group
+    And the clock moves 1000 ms at a time until the fetch "limited" ends
+    Then the reply is "ok later attempt 1"
+
+  Scenario: A fetch that a full group holds back gets a job of another group that comes
+    Given a memory backend on a manual clock
+    When I enqueue "g1" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And I enqueue "g2" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And I fetch a job of "q" as "a"
+    And a fetch of "q" starts to wait as "limited", at most 1 per group
+    And I enqueue "h1" into "q" with:
+      | setting | value |
+      | group   | h     |
+    And the fetch "limited" ends
+    Then the reply is "ok h1 attempt 1 group h"
 
   Scenario: A retry gives its error to the next delivery
     Given a memory backend on a manual clock

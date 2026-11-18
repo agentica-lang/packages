@@ -53,6 +53,8 @@ MAX_JOBS = 8
 QUEUES = ["q1", "q2"]
 NAMES = ["a", "b", "c", "d"]
 KEYS = ["", "", "k1", "k2", "k3"]
+GROUPS = ["", "", "g1", "g2", "g3"]
+LIMITS = [0, 0, 1, 2]
 LEASES = [1_000, 5_000, 30_000]
 STEPS = [1, 500, 1_000, 1_001, 5_000, 60_000]
 AMOUNTS = [1, 500, 1_000, 5_000, 60_000]
@@ -78,6 +80,7 @@ struct Item
   token: Int
   expires: Int
   last_error: String
+  group: String
 end
 
 # The delivery that a name holds.
@@ -155,6 +158,7 @@ def fetch_request(gen: ATS[String, Int]) -> Request
     name: pick(gen, NAMES),
     number: pick(gen, LEASES),
     max: pick(gen, MAXES),
+    limit: pick(gen, LIMITS),
   )
 end
 
@@ -174,6 +178,11 @@ def enqueue_with(gen: ATS[String, Int], serial: Int, queue: String, key: String)
 
   if key != ""
     rows = rows.push(["unique_key", key])
+  end
+
+  group = pick(gen, GROUPS)
+  if group != ""
+    rows = rows.push(["group", group])
   end
 
   Request(op: "enqueue", queue: queue, text: "p#{serial}", table: settings(rows))
@@ -287,25 +296,35 @@ def new_item(world: World, id: Int, req: Request, payload: String, key: String) 
     token: 0,
     expires: 0,
     last_error: "",
+    group: text(req, "group"),
   )
 end
 
 def forgotten(world: World) -> World = world.with(again: Again(queue: "", key: ""))
 
-# The jobs that come first, up to `max`: the earliest time, then the first added.
+# The jobs that come first, up to `max`: the earliest time, then the first added. A job whose group already has `limit`
+# live leases in its queue is passed over, when there is a limit; the leases of this call count.
 def fetch(world: World, req: Request) -> Step
   ready = world.jobs.filter(->(item) { item.queue == req.queue and item.token == 0 and item.run_at <= world.now })
-  first = ready.sort_by(->(item) { item.run_at * 1_000_000 + item.id }).take(req.max)
-  return Step(world: world, reply: "ok none") if first.empty?
-
   state = world
   texts: List[String] = []
-  for position in 0...first.size
-    state = lend(state, first[position], lease_name(req.name, position), req.number)
-    texts = texts.push(delivery_text(first[position]))
+  for item in ready.sort_by(->(one) { one.run_at * 1_000_000 + one.id })
+    if texts.size < req.max and not full?(state, item, req.limit)
+      state = lend(state, item, lease_name(req.name, texts.size), req.number)
+      texts = texts.push(delivery_text(item))
+    end
   end
 
+  return Step(world: world, reply: "ok none") if texts.empty?
+
   Step(world: state, reply: "ok #{texts.join(", ")}")
+end
+
+def full?(world: World, item: Item, limit: Int) -> Bool
+  return false if limit == 0 or item.group == ""
+
+  held = world.jobs.filter(->(one) { one.queue == item.queue and one.group == item.group and one.token != 0 })
+  held.size >= limit
 end
 
 def lease_name(name: String, position: Int) -> String
@@ -315,9 +334,15 @@ def lease_name(name: String, position: Int) -> String
 end
 
 def delivery_text(item: Item) -> String
-  return "#{item.payload} attempt #{item.attempt + 1}" if item.last_error == ""
+  base = "#{item.payload} attempt #{item.attempt + 1}"
+  with_error = case item.last_error
+    "" -> base
+    _ -> "#{base} last_error #{item.last_error}"
+  end
 
-  "#{item.payload} attempt #{item.attempt + 1} last_error #{item.last_error}"
+  return with_error if item.group == ""
+
+  "#{with_error} group #{item.group}"
 end
 
 def lend(world: World, item: Item, name: String, lease_ms: Int) -> World

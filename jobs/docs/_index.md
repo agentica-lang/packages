@@ -44,6 +44,42 @@ send a mail to ana@example.com
 
 `Jobs.memory` starts an actor that is a child of the task that calls it, so make the backend in `main`. Its jobs die with the process: use it for tests and for work that may be lost.
 
+## Limit the jobs of a group
+
+Some work must not run all at once for one customer, bot or host: ten posts to one webhook at the same time will be refused. Give the jobs a `group`, and fetch with `max_per_group`: a fetch skips a ready job whose group already has that many live leases, and takes the next ready job, so a busy group does not hold back the others. A lease that ends (an ack, a nack of any kind, or its expiry) frees a place, and a fetch that waits is woken by it.
+
+```agentica
+import Jobs from "pkg/jobs/jobs"
+
+def post(bot: String, text: String) -> Jobs.NewJob
+  Jobs.NewJob(queue: "posts", payload: text.bytes, group: some(bot))
+end
+
+def names(leases: List[Jobs.Lease]) -> List[String]
+  leases.map(->(lease) { String.from_bytes(lease.job.payload).unwrap_or("?") })
+end
+
+def main() -> Void
+  backend = Jobs.memory().unwrap!
+  _ = Jobs.enqueue_all(backend, [post("ana", "ana 1"), post("ana", "ana 2"), post("bo", "bo 1")]).unwrap!
+  fetch = Jobs.Fetch(queue: "posts", max: 10, max_per_group: 1)
+  first = Jobs.fetch(backend, fetch).unwrap!
+  puts(names(first))
+  puts(names(Jobs.fetch(backend, fetch).unwrap!))
+  _ = Jobs.ack(backend, first[0])
+  puts(names(Jobs.fetch(backend, fetch).unwrap!))
+  Jobs.close(backend, 1000)
+end
+```
+
+```output
+["ana 1", "bo 1"]
+[]
+["ana 2"]
+```
+
+The limit is a field of the fetch, not a setting of the queue: it is the consumer that knows how much its work can take, a backend has no setting to store, and a database backend counts the live leases of a group with a query. The consumers of one queue should pass the same limit. If they pass different ones, each fetch counts the same live leases against its own limit, so a fetch with a higher limit takes jobs that one with a lower limit skipped. The limit of a bot and the limit of the whole queue are two limits: `max_per_group` is the first, and the number of consumers (their `max` and tasks) is the second.
+
 ## API
 
 ```signature
@@ -63,8 +99,8 @@ Jobs.drain(backend: Backend, options: Drain, handle: Fn[Job, Result[Void]]) -> R
 Jobs.manual_clock() -> Clock
 ```
 
-- `NewJob` has the `queue`, the `payload`, `max_attempts` (5), `run_at_ms` (0 is now; a later Unix time schedules the job), a `unique_key` and a `meta` map. To schedule a job there is no second function: set `run_at_ms`.
-- `Fetch` has the `queue`, `max` jobs (1), `lease_ms` (30 s) and `wait_ms` (0: do not wait). No job in time gives `ok([])`.
+- `NewJob` has the `queue`, the `payload`, `max_attempts` (5), `run_at_ms` (0 is now; a later Unix time schedules the job), a `unique_key`, a `group` and a `meta` map. To schedule a job there is no second function: set `run_at_ms`.
+- `Fetch` has the `queue`, `max` jobs (1), `lease_ms` (30 s) and `wait_ms` (0: do not wait) and `max_per_group` (0: no limit). No job in time gives `ok([])`.
 - `Nack` says how a job goes back. `Retry(Later(at_ms: ..., error: ...))` runs it again at `at_ms`, and the next delivery shows the `error` as the `last_error` of its job. `Release` gives it back now, without counting the attempt. `Dead(error)` keeps it as dead and never runs it again.
 - `Counts` has the `ready`, `scheduled`, `leased` and `dead` jobs of a queue.
 
