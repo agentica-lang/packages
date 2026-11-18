@@ -20,8 +20,39 @@ def main() -> Void
     end,
     BDD.step("I attach {string} to {string} and it fails") do |ctx, args| attach(ctx, args, "fail", 0) end,
     BDD.step("I attach {string} to {string} and it crashes") do |ctx, args| attach(ctx, args, "crash", 0) end,
+    BDD.step("I attach {string} to {string} and it is slow") do |ctx, args| attach(ctx, args, "slow", 0) end,
+    BDD.step("I attach {string} to {string} and it tells its task") do |ctx, args| attach(ctx, args, "who", 0) end,
+    BDD.step("the hub is told that an older handler {string} failed") do |ctx, args|
+      ask(ctx, Request(op: "forge_failure", id: args[0]))
+    end,
+    BDD.step("the hub is told that the task of {string} returned") do |ctx, args|
+      ask(ctx, Request(op: "forge_end", id: args[0]))
+    end,
+    BDD.step("I attach {string} to {string} and it flushes") do |ctx, args| attach(ctx, args, "flush", 0) end,
     BDD.step("I attach {string} to {string} and it blocks, with a queue of {int}") do |ctx, args|
       attach(ctx, args, "block", args[2].to_i!)
+    end,
+    BDD.step("the hub is started by a task of its own") do |ctx, _args| ask(ctx, Request(op: "start_in_task")) end,
+    BDD.step("that task is cancelled") do |ctx, _args| ask(ctx, Request(op: "cancel_starter")) end,
+    BDD.step("{int} tasks start the hub at once") do |ctx, args|
+      ask(ctx, Request(op: "starts", number: args[0].to_i!))
+    end,
+    BDD.step(
+      "I attach {string} to {string} {int} times, cancel it at once each time, and attach it again",
+    ) do |ctx, args|
+      ask(
+        ctx,
+        Request(op: "churn", id: args[0], patterns: args[1].split(","), name: "churn.start", number: args[2].to_i!),
+      )
+    end,
+    BDD.step("{int} handlers fail one after the other, each on its first event") do |ctx, args|
+      ask(ctx, Request(op: "failures_gone", number: args[0].to_i!))
+    end,
+    BDD.step("{int} handlers are attached and detached one after the other") do |ctx, args|
+      ask(ctx, Request(op: "detaches_at_once", number: args[0].to_i!))
+    end,
+    BDD.step("I measure the steps of emitting {string}") do |ctx, args|
+      ask(ctx, Request(op: "steps", name: args[0]))
     end,
     BDD.step("I detach {string}") do |ctx, args| ask(ctx, Request(op: "detach", id: args[0])) end,
     BDD.step("I release {string}") do |ctx, args| ask(ctx, Request(op: "release", id: args[0])) end,
@@ -40,6 +71,8 @@ def main() -> Void
       "{int} tasks attach, emit {int} events each and detach, while one handler hears everything",
     ) do |ctx, args| ask(ctx, Request(op: "stress", number: args[0].to_i!, wait: args[1].to_i!)) end,
     BDD.step("the reply is {string}") do |ctx, args| expect_reply(ctx, args[0]) end,
+    BDD.step("the reply is a number up to {int}") do |ctx, args| expect_up_to(ctx, args[0].to_i!) end,
+    BDD.step("the Logger got nothing") do |ctx, _args| expect_warnings(ctx, "") end,
     BDD.step("the handler {string} got the events {string}") do |ctx, args| expect_names(ctx, args[0], args[1]) end,
     BDD.step("the handler {string} got:") do |ctx, args| expect_log(ctx, args[0], BDD.doc_string(ctx)) end,
     BDD.step("the handler {string} got between {int} and {int} events") do |ctx, args|
@@ -78,6 +111,11 @@ def reply(ctx: BDD.Context) -> String = JSON.string(BDD.get(ctx, REPLY).unwrap!)
 def expect_reply(ctx: BDD.Context, want: String) -> BDD.Context
   got = reply(ctx)
   BDD.assert(ctx, got == want, "the reply is #{got}, and should be #{want}")
+end
+
+def expect_up_to(ctx: BDD.Context, limit: Int) -> BDD.Context
+  steps = count(ctx)
+  BDD.assert(ctx, steps <= limit, "#{steps} is more than #{limit}")
 end
 
 # What the reply `ok A | B` of a read holds: the items A and B.

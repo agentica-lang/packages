@@ -64,7 +64,7 @@ There are two maps of measurements because the type tells a handler what it can 
 
 `attach(id, events, handler)` takes a list of patterns. A pattern is an event name, or the start of one at a dot: `"jobs"` hears `jobs`, `jobs.job` and `jobs.job.stop`, and not `jobs_extra.stop` or `job`. `"*"` hears every event. A handler with several patterns that match one event hears it once. A pattern is one to four words of `a` to `z`, digits and `_` joined by dots, or `*`; anything else is an `argument` error.
 
-`execute` never fails, never waits and never checks its name. An event whose name is not valid is heard only by `"*"`.
+`execute` never fails, never waits and never checks its name. An event whose name is not valid is heard by the handlers whose patterns it happens to match, like any other (`"*"`, or a pattern that is its first words), so a library must use good names: the [conventions](conventions.md) say which.
 
 ```agentica
 import Telemetry from "pkg/telemetry/telemetry"
@@ -96,7 +96,7 @@ false
 
 ## Slow and broken handlers
 
-Each handler runs in an actor of its own, with a queue of `Options.capacity` events (1024 by default). `execute` puts the event in the queue of each handler that hears it and goes on, so a slow handler delays only itself. When a queue is full the newest event is dropped, and `Telemetry.dropped(id)` counts it. Events of one emitter reach a handler in order; events of different tasks have no order between them.
+Each handler runs in an actor of its own, with a queue of `Options.capacity` events (1024 by default). `execute` puts the event in the queue of each handler that hears it and goes on, so a slow handler delays only itself. When a queue is full the newest event is dropped, and `Telemetry.dropped(id)` counts it (the count stays after the handler is detached, until its id is attached again). Events of one emitter reach a handler in order; events of different tasks have no order between them.
 
 ```agentica
 import Telemetry from "pkg/telemetry/telemetry"
@@ -165,5 +165,6 @@ Telemetry.flush(timeout_ms: Int = 5000) -> Result[Void]
 
 - `start` starts the hub, an actor that is the only task that changes the handlers; it is a child of the task that calls it, so call it in `main`. Emitters read the routes without asking the hub. Before `start`, `execute` does nothing and `attach` fails.
 - `stop` drains the handlers (as `flush`), detaches them all and ends the hub. A test that shares a process with others calls `stop` at its end and `start` at its beginning.
-- `detach` removes a handler at once: the events in its queue are not delivered.
-- Errors have a kind: `telemetry.not_started`, `telemetry.started`, `telemetry.duplicate` (the id is in use), `telemetry.unknown` (`detach` of an id that is not attached), `telemetry.timeout` (`flush` or `stop` ran out of time), and `argument` for a bad id, pattern or capacity.
+- `detach` removes a handler at once: the events in its queue are not delivered, and none is routed to it once `detach` has returned.
+- `flush` and `stop` wait for the handlers, so a handler that calls them would wait for itself: they give `telemetry.in_handler`. A hub that ended with the task that started it is replaced by the next `start`; until then `flush` gives `ok`, and `stop`, `attach` and `detach` give `telemetry.not_started`.
+- Errors have a kind: `telemetry.not_started`, `telemetry.started`, `telemetry.duplicate` (the id is in use), `telemetry.unknown` (`detach` of an id that is not attached), `telemetry.timeout` (`flush` or `stop` ran out of time, or the hub did not answer an `attach` or `detach` in 5 seconds: the call may still take effect later), `telemetry.in_handler`, and `argument` for a bad id, pattern or capacity (1 to 1_048_576).

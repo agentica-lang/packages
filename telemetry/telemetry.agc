@@ -8,7 +8,9 @@
 ## detached at once, with one `Logger.warning` that names its id and the kind.
 ##
 ## Errors have a kind: `telemetry.not_started`, `telemetry.started`, `telemetry.duplicate`, `telemetry.unknown`,
-## `telemetry.timeout`, and the builtin `argument` for a bad id, pattern or capacity.
+## `telemetry.timeout`, `telemetry.in_handler` (`flush` or `stop` called by a handler, which would wait for itself),
+## and the builtin `argument` for a bad id, pattern or capacity (1 to 1_048_576). A call that gives `telemetry.timeout`
+## may still take effect later: the hub did not answer in time, not refuse.
 ##
 ## `Telemetry.start` starts the hub as a child of the task that calls it: call it in `main`.
 
@@ -22,13 +24,15 @@ import Types from "src/types"
 export Types.Event
 export Types.Options
 
-## Starts the hub. Fails with `telemetry.started` when one runs.
+## Starts the hub. Fails with `telemetry.started` when one runs, or another start is running. A hub that ended with
+## the task that started it is replaced.
 def start() -> Result[Void] = Hub.start()
 
 ## Waits at most `timeout_ms` for the handlers to catch up (`flush`), then detaches them all and ends the hub.
 ## Fails with `telemetry.not_started` when no hub runs, and with `telemetry.timeout` when the drain ran out of time
 ## (the hub ends anyway).
 def stop(timeout_ms: Int = 5_000) -> Result[Void]
+  try Flush.outside_handler("stop")
   return error("telemetry error: not started", kind: "telemetry.not_started") if Routes.hub().none?
 
   drained = Flush.barrier(timeout_ms)
@@ -85,7 +89,8 @@ def detach(id: String) -> Result[Void] = Hub.detach(id)
 ## The ids of the attached handlers, sorted.
 def handlers() -> List[String] = Routes.handler_ids()
 
-## How many events the handler `id` dropped because its queue was full; 0 for an id that is not attached.
+## How many events the handler `id` dropped because its queue was full. The count stays after the handler is detached,
+## until the id is attached again; it is 0 for an id that was never attached.
 def dropped(id: String) -> Int = Routes.DROPPED.get(id).unwrap_or(0)
 
 ## Waits at most `timeout_ms` until every handler has handled the events that were queued before the call. It is for
@@ -96,7 +101,7 @@ private
 
 def deliver(route: Types.Route, event: Types.Event) -> Void
   case Actor.cast(route.address, Types.Msg.Deliver(event), 0)
-    error(e) if e.is_a?("channel.timeout") -> Routes.DROPPED.add(route.id, 1)
+    error(e) if e.is_a?("channel.timeout") -> Routes.count_drop(route.id)
     _ -> nil
   end
 end

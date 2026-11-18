@@ -7,10 +7,13 @@ import Types from "types"
 ## The pattern that matches every event.
 ALL = "*"
 MAX_SEGMENTS = 4
+# What `Actor.start` takes as a queue.
+MAX_CAPACITY = 1_048_576
 
-## The patterns that match an event: its name, each of its prefixes at a dot, and `"*"`.
+## The patterns that match an event: its name, each of its prefixes at a dot, and `"*"`. A pattern has at most
+## `MAX_SEGMENTS` words, so the words after them match nothing, and a long name costs no more than a short one.
 def matching_patterns(name: String) -> List[String]
-  parts = name.split(".")
+  parts = name.split(".").take(MAX_SEGMENTS)
   prefixes = (1..parts.size).to_a.map(->(count) { parts.take(count).join(".") })
   prefixes.push(ALL)
 end
@@ -24,8 +27,11 @@ def check_attach(id: String, patterns: List[String], options: Types.Options) -> 
     try check_pattern(pattern)
   end
 
-  if options.capacity < 1
-    return error("telemetry error: capacity must be at least 1, got #{options.capacity}", kind: "argument")
+  if options.capacity < 1 or options.capacity > MAX_CAPACITY
+    return error(
+      "telemetry error: capacity must be from 1 to #{MAX_CAPACITY}, got #{options.capacity}",
+      kind: "argument",
+    )
   end
 
   ok()

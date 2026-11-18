@@ -12,3 +12,7 @@ Feature: Many tasks at once
     Given the hub is started
     When 1 tasks attach, emit 50 events each and detach, while one handler hears everything
     Then the reply is "ok"
+
+  Scenario: 8 tasks start the hub at once and one of them wins
+    When 8 tasks start the hub at once
+    Then the reply is "ok"

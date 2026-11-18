@@ -24,13 +24,17 @@ end
 
 private
 
-# The hub has room for a message of a handler: it only gets attaches, detaches and failures.
+# How long a handler waits for room in the inbox of the hub, which only gets attaches, detaches and failures.
 HUB_MS = 5_000
 
+# `failed` is set once the hub was told: the actor then ignores events and answers barriers until the hub cancels
+# it, so
+# the hub hears of the failure from the message and not from the end of the task.
 struct State
   id: String
   call: Fn[Types.Event, Result[Void]]
   hub: Address[Types.HubMsg]
+  failed: Bool = false
 end
 
 def handle(state: State, message: Types.Msg) -> Actor.Step[State]
@@ -43,11 +47,19 @@ def handle(state: State, message: Types.Msg) -> Actor.Step[State]
 end
 
 def deliver(state: State, event: Types.Event) -> Actor.Step[State]
+  return Actor.continue(state) if state.failed
+
   case state.call.call(event)
     ok(_) -> Actor.continue(state)
-    error(e) ->
-      failure = Types.Failure(id: state.id, task: Task.current().id, kind: e.kind)
-      _ = Actor.cast(state.hub, Types.HubMsg.Failed(failure), HUB_MS)
-      Actor.done(state)
+    error(e) -> failed(state, e.kind)
+  end
+end
+
+# When the hub cannot be told the actor ends, and the hub sees the end of its task.
+def failed(state: State, kind: String) -> Actor.Step[State]
+  failure = Types.Failure(id: state.id, task: Task.current().id, kind: kind)
+  case Actor.cast(state.hub, Types.HubMsg.Failed(failure), HUB_MS)
+    ok(_) -> Actor.continue(state.with(failed: true))
+    error(_) -> Actor.done(state)
   end
 end

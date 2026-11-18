@@ -5,12 +5,12 @@ import Telemetry from "../telemetry"
 
 private
 
-# Measured: 19 steps with no handler, 85 for an event that no handler hears, 95 + 36 for each handler that hears it.
+# Measured: 19 steps with no handler, 96 for an event that no handler hears, 106 + 36 for each handler that hears it.
 # The limits leave room for a small change, and fail for a cost that grows with the handlers that do not match, or
 # faster than one cast for each that does.
 NO_HANDLER_STEPS = 25
-UNHEARD_STEPS = 100
-BASE_STEPS = 110
+UNHEARD_STEPS = 110
+BASE_STEPS = 120
 PER_HANDLER_STEPS = 40
 ENDED_MS = 2_000
 

@@ -2,12 +2,27 @@
 ## before it, so when it is answered those events were handled.
 
 import Actor from "std/actor"
+import Hub from "hub"
 import Routes from "routes"
 import Types from "types"
 
-## Waits at most `timeout_ms` until each handler has handled what was queued when the barrier reached it. A handler
-## that is detached in the meantime has nothing to wait for.
+## An error when the caller is a handler: a wait for the handlers would be a wait for itself.
+def outside_handler(call: String) -> Result[Void]
+  if Routes.in_handler?()
+    return error("telemetry error: #{call} from a handler would wait for itself", kind: "telemetry.in_handler")
+  end
+
+  ok()
+end
+
+## Waits at most `timeout_ms` until each handler has handled what was queued when the barrier reached it, and the hub
+## has handled what they told it (a handler that failed is then detached). A handler that is detached in the meantime
+## has nothing to wait for, and neither has a hub that ended: its tables are cleared and this gives `ok`.
 def barrier(timeout_ms: Int) -> Result[Void]
+  try outside_handler("flush")
+  return ok() if Routes.HANDLERS.size == 0
+  return ok() if Hub.gone?()
+
   deadline = Time.monotonic_ms + timeout_ms
   waiting: List[Pending] = []
   for id in Routes.handler_ids()
@@ -21,6 +36,7 @@ def barrier(timeout_ms: Int) -> Result[Void]
     try answered(pending, deadline)
   end
 
+  Hub.sync(deadline - Time.monotonic_ms)
   ok()
 end
 

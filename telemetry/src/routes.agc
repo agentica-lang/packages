@@ -9,11 +9,15 @@ import Types from "types"
 ROUTES: ATS[String, List[Types.Route]] = ATS.new()
 # The address of each handler, by id.
 HANDLERS: ATS[String, Address[Types.Msg]] = ATS.new()
-# The events a handler's full queue refused, by id.
+# The ids of the tasks of the handlers, to refuse a `flush` from inside one.
+TASKS: ATS[Int, Int] = ATS.new()
+# The events a handler's full queue refused, by id. The count stays after a detach, until the id is attached again.
 DROPPED: ATS[String, Int] = ATS.new()
 # The address of the hub, under one key.
 HUB: ATS[String, Address[Types.HubMsg]] = ATS.new()
 HUB_KEY = "hub"
+# Held by the task that is starting a hub, so two starts never run at once.
+STARTING: ATS[String, Int] = ATS.new()
 
 ## True while no handler is attached: the whole cost of an event nobody hears.
 def idle?() -> Bool = ROUTES.size == 0
@@ -44,6 +48,16 @@ end
 ## The ids of the handlers, sorted.
 def handler_ids() -> List[String] = HANDLERS.keys().sort()
 
+## True in the task of a handler: a call that waits for the handlers would wait for itself.
+def in_handler?() -> Bool = TASKS.has_key?(Task.current().id)
+
+## Counts an event that the full queue of the handler `id` refused. An id that was detached is not counted again.
+def count_drop(id: String) -> Void
+  if DROPPED.has_key?(id)
+    _ = DROPPED.add(id, 1)
+  end
+end
+
 ## The address of the hub, if there is one.
 def hub() -> Optional[Address[Types.HubMsg]]
   case HUB.get(HUB_KEY)
@@ -53,17 +67,18 @@ def hub() -> Optional[Address[Types.HubMsg]]
 end
 
 ## The hub adds a handler to the route of each pattern.
-def add(id: String, patterns: List[String], address: Address[Types.Msg]) -> Void
+def add(id: String, patterns: List[String], address: Address[Types.Msg], task: Int) -> Void
   for pattern in patterns
     ROUTES.put(pattern, routes_of(pattern).push(Types.Route(id: id, address: address)))
   end
 
   HANDLERS.put(id, address)
+  TASKS.put(task, 1)
   DROPPED.put(id, 0)
 end
 
 ## The hub takes a handler off its routes; a pattern with no route left is deleted, so `idle?` is true again.
-def remove(id: String, patterns: List[String]) -> Void
+def remove(id: String, patterns: List[String], task: Int) -> Void
   for pattern in patterns
     kept = routes_of(pattern).select(->(route) { route.id != id })
     if kept.empty?
@@ -74,20 +89,25 @@ def remove(id: String, patterns: List[String]) -> Void
   end
 
   HANDLERS.delete(id)
-  DROPPED.delete(id)
+  TASKS.delete(task)
 end
 
 ## The hub forgets every handler.
 def clear() -> Void
   ROUTES.clear()
   HANDLERS.clear()
+  TASKS.clear()
   DROPPED.clear()
 end
 
-## Forgets the handlers and the hub, for a start that finds a hub that is gone.
-def reset() -> Void
-  clear()
-  HUB.clear()
+## Forgets the handlers and the hub at `address`, which has ended. A hub that started since is not touched.
+def forget_hub(address: Address[Types.HubMsg]) -> Void
+  case hub()
+    some(current) if current == address ->
+      clear()
+      HUB.delete(HUB_KEY)
+    _ -> nil
+  end
 end
 
 private

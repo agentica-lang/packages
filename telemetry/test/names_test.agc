@@ -22,6 +22,14 @@ def main() -> Void
 
       Test.eq(bad.map(->(pattern) { Names.check_attach("id", [pattern], options).ok? }), bad.map(->(_p) { false }))
     end,
+    Test.test("only the first four words of a long name can match a pattern") do
+      Test.eq(Names.matching_patterns("a.b.c.d.e.f"), ["a", "a.b", "a.b.c", "a.b.c.d", "*"])
+    end,
+    Test.test("a queue is from 1 to the most that an actor takes") do
+      try Test.assert(Names.check_attach("id", ["a"], Types.Options(capacity: Names.MAX_CAPACITY)).ok?, "the most")
+      try Test.assert(not Names.check_attach("id", ["a"], Types.Options(capacity: Names.MAX_CAPACITY + 1)).ok?, "over")
+      Test.assert(Names.check_attach("id", ["a"], Types.Options(capacity: 1)).ok?, "one")
+    end,
     Test.test("an attach needs an id, a pattern and a queue of one or more") do
       options = Types.Options()
       try Test.assert(not Names.check_attach("", ["a"], options).ok?, "an empty id")

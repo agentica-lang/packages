@@ -45,6 +45,11 @@ Feature: Attaching and detaching handlers
     And I flush
     Then the handler "h" got the events "jobs.a, jobs.c"
 
+  Scenario: Once detach has returned no route to the handler is left
+    Given the hub is started
+    When 50 handlers are attached and detached one after the other
+    Then the reply is "ok"
+
   Scenario: Detaching an unknown id fails
     Given the hub is started
     When I detach "nobody"
@@ -82,3 +87,118 @@ Feature: Attaching and detaching handlers
     When the hub is started
     And I attach "h" to "jobs"
     Then the reply is "ok"
+
+  Scenario: A queue above the limit is refused, and the hub goes on
+    Given the hub is started
+    When I attach "h" to "jobs" with a queue of 1048577
+    Then the reply is "error argument"
+    When I attach "h" to "jobs" with a queue of 1000
+    Then the reply is "ok"
+    When I emit "jobs.a"
+    And I flush
+    Then the handler "h" got the events "jobs.a"
+
+  Scenario: Stopping waits for a slow handler to handle everything that was queued
+    Given the hub is started
+    When I attach "h" to "tick" and it is slow
+    And I emit 10 events "tick.n"
+    And I stop the hub
+    Then the reply is "ok"
+    And the handler "h" got between 10 and 10 events
+
+  Scenario: What a handler that was cancelled tells the hub late does not touch the handler that replaced it
+    Given the hub is started
+    When I attach "h" to "churn" 100 times, cancel it at once each time, and attach it again
+    And I emit "churn.go"
+    And I flush
+    Then the handler "h" got the events "churn.go"
+    And the Logger got nothing
+
+  Scenario: The count of dropped events stays after the handler is detached, until the id is attached again
+    Given the hub is started
+    When I attach "slow" to "tick" and it blocks, with a queue of 2
+    And I emit 10 events "tick.n"
+    And I detach "slow"
+    Then the handler "slow" dropped between 7 and 8 events
+    When I attach "slow" to "tick"
+    Then the handler "slow" dropped between 0 and 0 events
+
+  Scenario: A handler that calls flush is told that it would wait for itself
+    Given the hub is started
+    When I attach "h" to "jobs" and it flushes
+    And I emit "jobs.a"
+    And I flush
+    Then the handler "h" got:
+      """
+      error telemetry.in_handler
+      """
+
+  Scenario: A hub that ended with the task that started it leaves no routes behind
+    Given the hub is started by a task of its own
+    When I attach "h" to "jobs"
+    And that task is cancelled
+    And I wait for the tasks of the hub to end
+    And I flush
+    Then the reply is "ok"
+    When I ask for the handlers
+    Then the reply is "ok"
+    When I ask whether "jobs.a" is enabled
+    Then the reply is "ok false"
+    When I measure the steps of emitting "jobs.a"
+    Then the reply is a number up to 25
+
+  Scenario: Attach, detach and stop on a hub that ended give not_started and clear its routes
+    Given the hub is started by a task of its own
+    When I attach "h" to "jobs"
+    And that task is cancelled
+    And I wait for the tasks of the hub to end
+    And I attach "other" to "pool"
+    Then the reply is "error telemetry.not_started"
+    When I ask for the handlers
+    Then the reply is "ok"
+
+  Scenario: Stop on a hub that ended gives not_started and clears its routes
+    Given the hub is started by a task of its own
+    When I attach "h" to "jobs"
+    And that task is cancelled
+    And I wait for the tasks of the hub to end
+    And I stop the hub
+    Then the reply is "error telemetry.not_started"
+    When I ask for the handlers
+    Then the reply is "ok"
+
+  Scenario: A hub that ended with its starter is replaced by the next start
+    Given the hub is started by a task of its own
+    When I attach "h" to "jobs"
+    And that task is cancelled
+    And I wait for the tasks of the hub to end
+    And the hub is started
+    Then the reply is "ok"
+    When I attach "h" to "jobs"
+    And I emit "jobs.a"
+    And I flush
+    Then the handler "h" got the events "jobs.a"
+
+  Scenario: A failure that an older handler of the same id reported does not detach the handler that replaced it
+    Given the hub is started
+    When I attach "h" to "jobs"
+    And the hub is told that an older handler "h" failed
+    And I flush
+    And I emit "jobs.a"
+    And I flush
+    Then the handler "h" got the events "jobs.a"
+    And the Logger got nothing
+
+  Scenario: A handler whose task returned without telling the hub is detached, with the kind ended
+    Given the hub is started
+    When I attach "h" to "jobs" and it tells its task
+    And I emit "jobs.a"
+    And I flush
+    And the hub is told that the task of "h" returned
+    And I flush
+    And I ask for the handlers
+    Then the reply is "ok"
+    And the Logger got:
+      """
+      telemetry handler detached {"id": "h", "kind": "ended"}
+      """

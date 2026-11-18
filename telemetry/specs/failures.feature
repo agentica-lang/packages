@@ -84,3 +84,8 @@ Feature: Handlers that fail
   Scenario: The count of dropped events is zero for an id that is not attached
     Given the hub is started
     Then the handler "nobody" dropped between 0 and 0 events
+
+  Scenario: A handler that failed on an earlier event is detached by the time flush returns
+    Given the hub is started
+    When 50 handlers fail one after the other, each on its first event
+    Then the reply is "ok"
