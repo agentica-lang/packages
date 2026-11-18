@@ -7,7 +7,7 @@
 import Names from "src/names"
 import Types from "src/types"
 
-## Checks one event, and gives the first problem as an error.
+## Checks one event, and gives a problem as an error.
 ## - The name is one to four dotted words of `a-z`, digits and `_`.
 ## - A measurement key says its unit: `count` or `size`, a name that ends in `_ns`, `_bytes` or `_total` (a total of a
 ##   snapshot) for `ints`, `ratio` or a name that ends in `_ratio` for `floats`; a key is in one map only.
@@ -23,7 +23,7 @@ end
 private
 
 MAX_WORDS = 4
-INT_UNITS = ["_ns", "_bytes", "_total"]
+INT_UNITS = ["_count", "_size", "_ns", "_bytes", "_total"]
 INT_WORDS = ["count", "size"]
 ENDS = ["stop", "error"]
 
@@ -47,7 +47,7 @@ def check_ints(event: Types.Event) -> Result[Void]
   for key in event.ints.keys()
     return problem("measurement", event, "#{key} is not a word of a-z, 0-9 and _") if not Names.word?(key)
     if not int_unit?(key)
-      return problem("measurement", event, "#{key} says no unit: count, size, _ns, _bytes or _total")
+      return problem("measurement", event, "#{key} says no unit: count, size, _count, _size, _ns, _bytes or _total")
     end
 
     if key == "duration_ns" and not ends?(event)
@@ -65,13 +65,15 @@ def ends?(event: Types.Event) -> Bool = ENDS.include?(event.name.split(".").last
 def check_floats(event: Types.Event) -> Result[Void]
   for key in event.floats.keys()
     return problem("measurement", event, "#{key} is not a word of a-z, 0-9 and _") if not Names.word?(key)
-    return problem("measurement", event, "#{key} must be ratio or end in _ratio, as a float") if not ratio?(key)
+    if not ratio?(key)
+      return problem("measurement", event, "#{key} must be ratio or end in _ratio or _per_second, as a float")
+    end
   end
 
   ok()
 end
 
-def ratio?(key: String) -> Bool = key == "ratio" or key.end_with?("_ratio")
+def ratio?(key: String) -> Bool = key == "ratio" or key.end_with?("_ratio") or key.end_with?("_per_second")
 
 def check_metadata(event: Types.Event) -> Result[Void]
   for key in event.metadata.keys()

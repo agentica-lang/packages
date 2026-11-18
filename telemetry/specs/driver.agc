@@ -95,6 +95,7 @@ def act(driver: Driver, req: Request) -> Handled
     "flush_budget" -> same(driver, flush_budget())
     "second_hub" -> same(driver, second_hub())
     "span" -> same(driver, span(req))
+    "span_stress" -> same(driver, Stress.run_spans(req.number, req.wait))
     "steps" -> same(driver, "ok #{steps_of(req.name)}")
     _ -> same(driver, "unknown op #{req.op}")
   end

@@ -88,6 +88,7 @@ def main() -> Void
     BDD.step("the handler {string} got {int} span_ids") do |ctx, args|
       expect_span_ids(ctx, args[0], args[1].to_i!)
     end,
+    BDD.step("the last event of {string} has a duration") do |ctx, args| expect_duration(ctx, args[0], 0, true) end,
     BDD.step("the last event of {string} has a duration of at least {int} ms") do |ctx, args|
       expect_duration(ctx, args[0], args[1].to_i!, true)
     end,
@@ -100,6 +101,9 @@ def main() -> Void
     end,
     BDD.step("I check the event {string}") do |ctx, args| check_event(ctx, args[0], []) end,
     BDD.step("I check the event {string} with:") do |ctx, args| check_event(ctx, args[0], BDD.table(ctx)) end,
+    BDD.step("{int} tasks run {int} spans each at once") do |ctx, args|
+      ask(ctx, Request(op: "span_stress", number: args[0].to_i!, wait: args[1].to_i!))
+    end,
     BDD.step("I measure the steps of emitting {string}") do |ctx, args|
       ask(ctx, Request(op: "steps", name: args[0]))
     end,

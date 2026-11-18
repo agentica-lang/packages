@@ -134,7 +134,7 @@ mail.send.error span_id=2 duration=true
 error("no address", kind: "mail.address")
 ```
 
-With no handler attached a span only calls the block: it reads no clock and makes no id, and costs a few steps more than the call. A block that crashes (a runtime error, not an `error` result) ends its task, so its span emits `NAME.start` and no `NAME.stop` or `NAME.error`: do not rely on the end event to close a span. Use `Telemetry.enabled?(name)` before building metadata that costs something.
+When no handler hears any of the three events, a span only calls the block: it reads no clock and makes no id, and costs a few steps more than the call. A handler that is attached while a span runs may get only its end event. A block that crashes (a runtime error, not an `error` result) ends its task, so its span emits `NAME.start` and no `NAME.stop` or `NAME.error`: do not rely on the end event to close a span. Use `Telemetry.enabled?(name)` before building metadata that costs something.
 
 ## Slow and broken handlers
 

@@ -20,6 +20,30 @@ Feature: The conventions
       | http_client.request | size_bytes  |
       | vm.gc               | pauses_total |
 
+  Scenario: The planned events of the other packages are accepted
+    When I check the event "pool.size" with:
+      | kind | key          | value |
+      | int  | size         | 4     |
+      | int  | idle_count   | 3     |
+      | int  | in_use_count | 1     |
+      | meta | pool         | main  |
+    Then the reply is "ok"
+    When I check the event "vm.tasks" with:
+      | kind | key           | value |
+      | int  | running_count | 7     |
+    Then the reply is "ok"
+    When I check the event "vm.scheduler" with:
+      | kind  | key               | value |
+      | int   | run_queue_size    | 2     |
+      | float | utilization_ratio | 0.75  |
+      | float | tasks_per_second  | 1.5   |
+    Then the reply is "ok"
+    When I check the event "jobs.job.stop" with:
+      | kind | key           | value |
+      | int  | attempt_count | 2     |
+      | int  | duration_ns   | 500   |
+    Then the reply is "ok"
+
   Scenario: An event with no measurements and no metadata is accepted
     When I check the event "jobs.fetch"
     Then the reply is "ok"
@@ -54,6 +78,10 @@ Feature: The conventions
       | float | duration_ns |
       | float | fraction    |
       | float | size_bytes  |
+      | int   | Duration_ns |
+      | int   | a b_ns      |
+      | float | Load_ratio  |
+      | int   | count_of    |
 
   Scenario: A key in both maps is refused
     When I check the event "jobs.job.stop" with:

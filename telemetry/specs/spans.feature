@@ -31,7 +31,7 @@ Feature: Spans
       "error_kind": "span.bad"
       """
     And the handler "h" got events with one span_id
-    And the last event of "h" has a duration of at least 0 ms
+    And the last event of "h" has a duration
 
   Scenario: The metadata of the call is on every event, with the span_id
     Given the hub is started
@@ -73,6 +73,14 @@ Feature: Spans
     And I run a span "mail.send"
     And I flush
     Then the handler "h" got the events "mail.send.stop"
+
+  Scenario: A handler that hears none of the span events gets nothing, and the body runs
+    Given the hub is started
+    When I attach "h" to "pool"
+    And I run a span "mail.send"
+    Then the reply is "ok 42"
+    When I flush
+    Then the handler "h" got the events ""
 
   Scenario: With no handler attached the body runs and nothing is emitted
     Given the hub is started

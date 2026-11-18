@@ -72,11 +72,12 @@ def enabled?(name: String) -> Bool = Routes.heard?(name)
 
 ## Runs `body` and says how it went: `NAME.start` before, then `NAME.stop` with `duration_ns` in `ints` when it gave
 ## `ok`, or `NAME.error` with `duration_ns` and the metadata `error_kind` when it gave an error. The three events have
-## the metadata of the call and the same `span_id`. It gives the result of `body` as it is. With no handler attached it
-## only calls `body`: no clock is read and no id is made. A body that crashes (a runtime error, not an `error` result)
-## ends its task, so it emits `NAME.start` and nothing after it.
+## the metadata of the call and the same `span_id`. It gives the result of `body` as it is. When no handler hears any
+## of the three events it only calls `body`: no clock is read and no id is made. A body that crashes (a runtime error,
+## not an `error` result) ends its task, so it emits `NAME.start` and nothing after it. A handler attached while the
+## body runs may get only the end event.
 def span[T](name: String, metadata: Map[String, String], body: Fn[Result[T]]) -> Result[T]
-  return body.call() if Routes.idle?()
+  return body.call() if not Routes.heard_span?(name)
 
   tagged = metadata.put("span_id", "#{Routes.SPAN_IDS.add("last", 1)}")
   execute("#{name}.start", metadata: tagged)

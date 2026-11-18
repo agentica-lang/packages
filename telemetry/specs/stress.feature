@@ -16,3 +16,8 @@ Feature: Many tasks at once
   Scenario: 8 tasks start the hub at once and one of them wins
     When 8 tasks start the hub at once
     Then the reply is "ok"
+
+  Scenario: 16 tasks run 50 spans each at once and every span has an id of its own
+    Given the hub is started
+    When 16 tasks run 50 spans each at once
+    Then the reply is "ok"
