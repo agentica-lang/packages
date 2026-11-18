@@ -8,14 +8,14 @@ description: Produce and consume jobs with a swappable backend. A contract with 
 Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
-agentica add jobs https://github.com/agentica-lang/packages --tag jobs-0.2.0 --subdir jobs
+agentica add jobs https://github.com/agentica-lang/packages --tag jobs-0.3.0 --subdir jobs
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-jobs = { git = "https://github.com/agentica-lang/packages", tag = "jobs-0.2.0", subdir = "jobs" }
+jobs = { git = "https://github.com/agentica-lang/packages", tag = "jobs-0.3.0", subdir = "jobs" }
 ```
 
 `jobs` depends on [telemetry](https://www.agentica-lang.com/packages/telemetry/) (`telemetry-0.1.0`), and says what happens to the jobs as events: an app that attaches a handler gets them, and one that does not pays a table read for each call. Add `telemetry` at the same tag when you attach handlers.
