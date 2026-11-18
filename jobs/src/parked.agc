@@ -36,6 +36,7 @@ struct Parked
   queues: Map[String, Heap.Heap[Int]]
   deadlines: Heap.Heap[Mark]
   real_deadlines: Heap.Heap[Mark]
+  looks: Heap.Heap[Mark]
   next_seq: Int
 end
 
@@ -63,6 +64,7 @@ def empty() -> Parked
     queues: {},
     deadlines: Heap.new(&marks_first),
     real_deadlines: Heap.new(&marks_first),
+    looks: Heap.new(&marks_first),
     next_seq: 1,
   )
 end
@@ -72,7 +74,7 @@ def park(parked: Parked, fetch: Types.Fetch, until: Until, reply: Channel[Result
   seq = parked.next_seq
   waiter = Waiter(seq: seq, fetch: fetch, until_ms: until.ms, real_until_ms: until.real_ms, reply: reply, looked: none)
   line = parked.queues.get(fetch.queue, Heap.new(&ints_first))
-  Parked(
+  parked.with(
     waiters: parked.waiters.put(seq, waiter),
     queues: parked.queues.put(fetch.queue, Heap.push(line, seq)),
     deadlines: Heap.push(parked.deadlines, Mark(at_ms: until.ms, seq: seq)),
@@ -109,7 +111,21 @@ end
 
 ## What the waiter saw when a limit held every job back.
 def look(parked: Parked, waiter: Waiter, looked: Looked) -> Parked
-  parked.with(waiters: parked.waiters.put(waiter.seq, waiter.with(looked: some(looked))))
+  state = parked.with(waiters: parked.waiters.put(waiter.seq, waiter.with(looked: some(looked))))
+  case looked.until_ms
+    some(at) if not same_time?(waiter, at) ->
+      state.with(looks: Heap.push(state.looks, Mark(at_ms: at, seq: waiter.seq)))
+    _ -> state
+  end
+end
+
+## When the first job that a waiter saw as not due comes due: the backend wakes then, and not at its cap. A waiter that
+## is gone leaves its time until it passes, which is one wake for nothing.
+def next_look(parked: Parked) -> Optional[Int]
+  case Heap.peek(parked.looks)
+    ok(mark) -> some(mark.at_ms)
+    error(_) -> none
+  end
 end
 
 ## Whether the waiter saw this store (its count of changes) and no job has come due since.
@@ -132,7 +148,7 @@ def remove(parked: Parked, seq: Int) -> Parked = parked.with(waiters: parked.wai
 def expired(parked: Parked, now: Int, real_now: Int) -> Expired
   by_clock = draw(parked.deadlines, now)
   by_real = draw(parked.real_deadlines, real_now)
-  state = parked.with(deadlines: by_clock.heap, real_deadlines: by_real.heap)
+  state = parked.with(deadlines: by_clock.heap, real_deadlines: by_real.heap, looks: draw(parked.looks, now).heap)
   out: List[Waiter] = []
   for seq in by_clock.seqs + by_real.seqs
     case state.waiters.get(seq)
@@ -171,6 +187,14 @@ private
 struct Drawn
   heap: Heap.Heap[Mark]
   seqs: List[Int]
+end
+
+# Whether the waiter already has a mark for that time.
+def same_time?(waiter: Waiter, at: Int) -> Bool
+  case waiter.looked
+    some(looked) -> looked.until_ms == some(at)
+    none -> false
+  end
 end
 
 def marks_first(a: Mark, b: Mark) -> Bool = a.at_ms < b.at_ms

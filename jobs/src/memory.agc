@@ -6,7 +6,7 @@
 ## serves the waiters of a queue, oldest first, after each call and each wake, and ends one at its deadline: the first
 ## of `wait_ms` on the clock of the backend and `wait_ms` of real time, so a manual clock that nobody moves does not
 ## keep a fetch past its time. While some are parked it also wakes at the next time a job or a lease is due, and at
-## least every WAKE_CAP_MS, so a clock that is set by hand, or that jumps, is seen. A caller that gave up while it
+## least every `Wake.CAP_MS`, so a clock that is set by hand, or that jumps, is seen. A caller that gave up while it
 ## waited makes `Actor.reply` give `false`, and the jobs go back to their queue.
 ##
 ## The actor is a child of the task that calls `start`: make the backend in `main`.
@@ -15,6 +15,7 @@ import Actor from "std/actor"
 import Parked from "parked"
 import Store from "store"
 import Types from "types"
+import Wake from "wake"
 
 ## A memory backend, or the error of a bad option.
 def start(options: Types.MemoryOptions) -> Result[Types.Backend]
@@ -39,7 +40,6 @@ INBOX = 4_096
 # How long a caller waits for the actor to answer, besides the `wait_ms` of a fetch.
 CALL_MS = 10_000
 MAX_WAIT_MS = 86_400_000
-WAKE_CAP_MS = 100
 # A fetch parks no longer than its caller waits, and a little more, so that a fetch whose caller gave up does not wait
 # for its whole `wait_ms` in the actor.
 GRACE_MS = 1_000
@@ -274,9 +274,8 @@ end
 # 0 is no limit, so it is higher than any.
 def higher?(limit: Int, than: Int) -> Bool = limit == 0 or limit > than
 
-# The waiter leaves when it gets jobs or an error; one that finds no job stays, and so do the ones behind it. One
-# that a
-# limit held back is not asked again until a job has come or a lease has ended since, or a job has come due.
+# The waiter leaves when it gets jobs or an error; one that finds no job stays, and so do the ones behind it. One that
+# a limit held back is not asked again until a job has come or a lease has ended since, or a job has come due.
 def serve_waiter(state: State, now: Int, waiter: Parked.Waiter) -> Served
   return Served(state: state, served: false, held_back: false) if Parked.looked_at?(waiter, state.store.changes, now)
 
@@ -314,34 +313,8 @@ def wake(state: State) -> Actor.Step[State]
   Actor.continue(wake_parked(ticked, now))
 end
 
-# How long until something may change for a parked fetch: a job due, a lease to expire, or a deadline. A job that is
-# due already and still waits is held by a limit per group: only the end of a lease frees it, and that is a time here.
 def wake_in(state: State) -> Optional[Int]
-  return none if Parked.empty?(state.parked)
-
-  now = state.clock.call()
-  times: List[Int] = []
-  for queue in Parked.queues(state.parked)
-    case Store.next_job_at(state.store, queue, now)
-      some(at) -> times = times.push(at)
-      none -> nil
-    end
-  end
-
-  case Store.next_expiry(state.store)
-    some(at) -> times = times.push(at)
-    none -> nil
-  end
-
-  case Parked.next_wait(state.parked, now, Time.monotonic_ms())
-    some(ms) -> times = times.push(now + ms)
-    none -> nil
-  end
-
-  case times.min
-    some(at) -> some((at - now).clamp(1, WAKE_CAP_MS))
-    none -> none
-  end
+  Wake.in_ms(state.store, state.parked, state.clock.call(), Time.monotonic_ms())
 end
 
 # The actor ends with `close`: the fetches that wait are told.

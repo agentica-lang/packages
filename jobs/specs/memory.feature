@@ -211,6 +211,22 @@ Feature: The memory backend
     And the clock moves 1000 ms at a time until the fetch "limited" ends
     Then the reply is "ok later attempt 1"
 
+  Scenario: A fetch that a full group holds back gets a job of another group that comes
+    Given a memory backend on a manual clock
+    When I enqueue "g1" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And I enqueue "g2" into "q" with:
+      | setting | value |
+      | group   | g     |
+    And I fetch a job of "q" as "a"
+    And a fetch of "q" starts to wait as "limited", at most 1 per group
+    And I enqueue "h1" into "q" with:
+      | setting | value |
+      | group   | h     |
+    And the fetch "limited" ends
+    Then the reply is "ok h1 attempt 1 group h"
+
   Scenario: A retry gives its error to the next delivery
     Given a memory backend on a manual clock
     When I enqueue "a" into "q"

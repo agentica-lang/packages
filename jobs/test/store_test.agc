@@ -186,6 +186,39 @@ def main() -> Void
       try Test.eq(again.leases, [])
       return Test.eq(again.visits <= 5, true)
     end,
+    Test.test("a job that comes back ahead of its group again and again does not make a held fetch visit more") do
+      added = try Store.enqueue(
+        Store.empty(100, 10),
+        NOW,
+        [in_group("g", "s1"), in_group("g", "s2"), in_group("g", "s3")],
+      )
+
+      store = added.store
+      for _ in 1..300
+        taken = try fetch_limited(store, NOW, 1, 0)
+        store = try Store.nack(taken.store, taken.leases[0], Jobs.Nack.Release)
+      end
+
+      first = try fetch_limited(store, NOW, 1, 1)
+      try Test.eq(texts(first), ["s1"])
+      held = try fetch_limited(first.store, NOW, 1, 1)
+      try Test.eq(held.leases, [])
+      try Test.eq(held.visits <= 12, true)
+      freed = try Store.ack(held.store, first.leases[0])
+      return Test.eq(texts(try fetch_limited(freed, NOW, 1, 1)), ["s2"])
+    end,
+    Test.test("jobs of a group that come each ahead of the one before do not make a held fetch visit more") do
+      jobs = (1..300).map(
+        ->(n) { Jobs.NewJob(queue: "q", payload: "j#{n}".bytes, group: some("g"), run_at_ms: NOW - n) },
+      )
+
+      added = try Store.enqueue(Store.empty(1000, 10), NOW, jobs)
+      first = try fetch_limited(added.store, NOW, 1, 1)
+      try Test.eq(texts(first), ["j300"])
+      held = try fetch_limited(first.store, NOW, 1, 1)
+      try Test.eq(held.leases, [])
+      return Test.eq(held.visits <= 12, true)
+    end,
     Test.test(
       "the next job time is a job that is not due: a held job has none, and the end of a lease is its own time",
     ) do

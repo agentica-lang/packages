@@ -13,6 +13,9 @@
 import Heap from "std/heap"
 import Types from "types"
 
+# The stale heads that the heap of heads may hold beyond twice the groups before it is rebuilt.
+HEADS_SLACK = 8
+
 ## A lease that `ack`, `nack` or `extend` found to be live; the entry of a job that is not live gives none.
 struct Held
   token: String
@@ -67,18 +70,23 @@ struct Slot
   id: String
 end
 
-## The first slot of a group, and the group. A head is current while it is the first slot of its group; one that is not
-## is dropped when it comes to the front.
+## The first slot of a group, and the group. A head is current while its `version` is the one that `Ready.versions` has
+## for its group; a head that is not is dropped when it comes to the front.
 struct Head
   slot: Slot
   group: String
+  version: Int
 end
 
-## The waiting jobs of a queue.
+## The waiting jobs of a queue. A group has one current head: a new first slot (a job that waits ahead of it, or the
+## next one after a take) makes a new head with a new version from `head_seq`, and the old head is stale. The heap of
+## heads is rebuilt when stale heads are more than the groups, so it stays in proportion to them.
 struct Ready
   plain: Heap.Heap[Slot]
   groups: Map[String, Heap.Heap[Slot]]
   heads: Heap.Heap[Head]
+  versions: Map[String, Int]
+  head_seq: Int
 end
 
 ## The slot that a fetch takes, and its group when it came from a group.
@@ -380,7 +388,10 @@ def insert(store: Store, now: Int, new: Types.NewJob) -> Added
 end
 
 def ready_of(store: Store, queue: String) -> Ready
-  store.waiting.get(queue, Ready(plain: Heap.new(&starts_first), groups: {}, heads: Heap.new(&heads_first)))
+  store.waiting.get(
+    queue,
+    Ready(plain: Heap.new(&starts_first), groups: {}, heads: Heap.new(&heads_first), versions: {}, head_seq: 0),
+  )
 end
 
 # A job that waits, or a lease that ended, is what can give a fetch that found nothing its job: `changes` counts both.
@@ -391,21 +402,42 @@ def push_slot(store: Store, entry: Entry) -> Store
   case entry.job.group
     some(group) -> changed.with(waiting: store.waiting.put(entry.job.queue, push_grouped(ready, slot, group)))
     none ->
-      plain = Ready(plain: Heap.push(ready.plain, slot), groups: ready.groups, heads: ready.heads)
+      plain = ready.with(plain: Heap.push(ready.plain, slot))
       changed.with(waiting: store.waiting.put(entry.job.queue, plain))
   end
 end
 
-# The slot goes in the heap of its group, and it is a head when it comes before the one that is there.
+# The slot goes in the heap of its group, and it is the head when it comes before the one that is there.
 def push_grouped(ready: Ready, slot: Slot, group: String) -> Ready
   line = ready.groups.get(group, Heap.new(&starts_first))
-  first_slot = Heap.peek(line)
-  heads = case first_slot
-    ok(first) if starts_first(first, slot) -> ready.heads
-    _ -> Heap.push(ready.heads, Head(slot: slot, group: group))
+  pushed = ready.with(groups: ready.groups.put(group, Heap.push(line, slot)))
+  case Heap.peek(line)
+    ok(first) if starts_first(first, slot) -> pushed
+    _ -> compact(with_head(pushed, group, slot))
+  end
+end
+
+# The slot is the current head of the group; the head that it replaces is stale.
+def with_head(ready: Ready, group: String, slot: Slot) -> Ready
+  version = ready.head_seq + 1
+  ready.with(
+    heads: Heap.push(ready.heads, Head(slot: slot, group: group, version: version)),
+    versions: ready.versions.put(group, version),
+    head_seq: version,
+  )
+end
+
+# The heads of the groups again, one each, when the stale ones are more than the groups.
+def compact(ready: Ready) -> Ready
+  return ready if Heap.size(ready.heads) <= ready.versions.size * 2 + HEADS_SLACK
+
+  fresh = ready.with(heads: Heap.new(&heads_first), versions: {})
+  for group in ready.groups.keys
+    # A group in the map has a slot.
+    fresh = with_head(fresh, group, Heap.peek(ready.groups[group]).unwrap!)
   end
 
-  Ready(plain: ready.plain, groups: ready.groups.put(group, Heap.push(line, slot)), heads: heads)
+  fresh
 end
 
 # The first waiting job that is due and that a limit does not hold back. The head of a full group is taken out of
@@ -451,25 +483,13 @@ def head_first?(head: Head, plain: Result[Slot]) -> Bool
   end
 end
 
-def current?(ready: Ready, head: Head) -> Bool
-  case ready.groups.get(head.group)
-    some(line) ->
-      case Heap.peek(line)
-        ok(first) -> first == head.slot
-        error(_) -> false
-      end
-
-    none -> false
-  end
-end
+def current?(ready: Ready, head: Head) -> Bool = ready.versions.get(head.group) == some(head.version)
 
 def drop_head(store: Store, queue: String) -> Store
   ready = ready_of(store, queue)
   # The caller saw a head in this heap, so it is not empty.
   popped = Heap.pop(ready.heads).unwrap!
-  store.with(
-    waiting: store.waiting.put(queue, Ready(plain: ready.plain, groups: ready.groups, heads: popped.remaining)),
-  )
+  store.with(waiting: store.waiting.put(queue, ready.with(heads: popped.remaining)))
 end
 
 # The slot leaves the heap that it was found in. A group has its next slot as the head, and no heap when it is empty.
@@ -482,7 +502,7 @@ def take_slot(store: Store, queue: String, found: Found) -> Store
     none ->
       # The caller saw a slot in this heap, so it is not empty.
       popped = Heap.pop(ready.plain).unwrap!
-      store_of(store, queue, Ready(plain: popped.remaining, groups: ready.groups, heads: ready.heads))
+      store_of(store, queue, ready.with(plain: popped.remaining))
   end
 end
 
@@ -492,16 +512,12 @@ def without_first(ready: Ready, group: String) -> Ready
   # The group had a slot, and it is the one that was found.
   popped = Heap.pop(ready.groups[group]).unwrap!
   if Heap.empty?(popped.remaining)
-    return Ready(plain: ready.plain, groups: ready.groups.delete(group), heads: ready.heads)
+    return ready.with(groups: ready.groups.delete(group), versions: ready.versions.delete(group))
   end
 
-  # The group goes on with its next slot, which is a head now.
+  # The group goes on with its next slot, which is the head now.
   next_slot = Heap.peek(popped.remaining).unwrap!
-  Ready(
-    plain: ready.plain,
-    groups: ready.groups.put(group, popped.remaining),
-    heads: Heap.push(ready.heads, Head(slot: next_slot, group: group)),
-  )
+  with_head(ready.with(groups: ready.groups.put(group, popped.remaining)), group, next_slot)
 end
 
 # Whether the group already has `limit` live leases; no limit is never full.
@@ -513,7 +529,7 @@ end
 def put_back(store: Store, queue: String, heads: List[Head]) -> Store
   ready = ready_of(store, queue)
   pushed = heads.reduce(ready.heads, ->(all, head) { Heap.push(all, head) })
-  cleaned = Ready(plain: ready.plain, groups: ready.groups, heads: pushed)
+  cleaned = ready.with(heads: pushed)
   store_of(store, queue, drop_stale(cleaned))
 end
 
@@ -526,7 +542,7 @@ def drop_stale(ready: Ready) -> Ready
     end
   end
 
-  Ready(plain: ready.plain, groups: ready.groups, heads: heads)
+  ready.with(heads: heads)
 end
 
 # The group of a job has one more live lease, or one less.
