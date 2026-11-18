@@ -8,6 +8,7 @@ import Actor from "std/actor"
 import Logger from "std/logger"
 import Hub from "../src/hub"
 import Routes from "../src/routes"
+import Testing from "../testing"
 import Starts from "starts"
 import Stress from "stress"
 import Telemetry from "../telemetry"
@@ -29,6 +30,7 @@ FLUSH_MS = 500
 
 struct Driver
   gates: Map[String, Channel[Bool]]
+  captures: Map[String, Testing.Capture] = {}
   starter: Optional[Task[Void]] = none
 end
 
@@ -96,6 +98,12 @@ def act(driver: Driver, req: Request) -> Handled
     "second_hub" -> same(driver, second_hub())
     "span" -> same(driver, span(req))
     "span_stress" -> same(driver, Stress.run_spans(req.number, req.wait))
+    "capture" -> start_capture(driver, req)
+    "captured" -> same(driver, captured(driver, req.id))
+    "capture_stop" -> capture_stop(driver, req.id)
+    "capture_race" -> same(driver, Stress.run_captures(req.number))
+    "capture_stress" -> same(driver, Stress.run_capture(req.number, req.wait))
+    "session" -> same(driver, session(req))
     "steps" -> same(driver, "ok #{steps_of(req.name)}")
     _ -> same(driver, "unknown op #{req.op}")
   end
@@ -498,4 +506,52 @@ def crashing_span(name: String) -> Result[Int] = Telemetry.span(name, {}, -> { c
 def crashing_body() -> Result[Int]
   empty: List[Int] = []
   ok(empty[1])
+end
+
+# A capture of the testing helper, kept under the name `id` of the request.
+def start_capture(driver: Driver, req: Request) -> Handled
+  room = Testing.ROOM
+  if req.number != 0
+    room = req.number
+  end
+
+  case Testing.capture(req.patterns, room)
+    ok(made) -> Handled(driver: driver.with(captures: driver.captures.put(req.id, made)), reply: "ok")
+    error(e) -> same(driver, "error #{e.kind}")
+  end
+end
+
+def captured(driver: Driver, id: String) -> String
+  case driver.captures.get(id)
+    some(made) -> names(Testing.events(made))
+    none -> "no capture #{id}"
+  end
+end
+
+def names(result: Result[List[Telemetry.Event]]) -> String
+  case result
+    ok(found) -> read(found.map(->(event) { event.name }).join(", "))
+    error(e) -> "error #{e.kind}"
+  end
+end
+
+def capture_stop(driver: Driver, id: String) -> Handled
+  case driver.captures.get(id)
+    some(made) -> same(driver, answer(Testing.stop(made)))
+    none -> same(driver, "no capture #{id}")
+  end
+end
+
+# A session in the driver, whose hub runs: the session uses it and leaves it running, with no handler of its own.
+def session(req: Request) -> String
+  result = Testing.session(req.patterns, ->(made) { emit_and_read(made, req.name) })
+  left = Telemetry.handlers()
+  return "the session left the handlers #{left}" if not left.empty?
+
+  names(result)
+end
+
+def emit_and_read(made: Testing.Capture, name: String) -> Result[List[Telemetry.Event]]
+  Telemetry.execute(name)
+  Testing.events(made)
 end

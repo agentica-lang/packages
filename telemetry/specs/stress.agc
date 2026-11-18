@@ -8,6 +8,7 @@
 ## - the hub is alive at the end and `handlers` lists what is left.
 
 import Telemetry from "../telemetry"
+import Testing from "../testing"
 
 ## Runs the stress with `workers` tasks that emit `events` events each, and gives `ok` or what went wrong.
 def run(workers: Int, events: Int) -> String
@@ -48,6 +49,47 @@ def run_spans(workers: Int, count: Int) -> String
   once = ids.to_map().values().select(->(seen) { seen != 2 }).size
   return "#{distinct} span ids, not #{workers * count}" if distinct != workers * count
   return "#{once} spans did not get exactly a start and a stop" if once > 0
+
+  "ok"
+end
+
+## Runs `workers` tasks that emit `count` events each at once, with a capture of the testing helper: `events` must give
+## all of them, those of each task in order, and `stop` must detach the capture.
+def run_capture(workers: Int, count: Int) -> String
+  made = Testing.capture(["stress.cap"])
+  return "the capture was not made" if not made.ok?
+
+  taken = made.unwrap!
+  tasks = (1..workers).to_a
+  Task.map(tasks, workers, TASK_MS, ->(worker) { emit_all(worker, count) })
+  found = Testing.events(taken)
+  _ = Testing.stop(taken)
+  return "events gave an error" if not found.ok?
+  return "the capture is still attached" if not Telemetry.handlers().empty?
+
+  in_order(found.unwrap!, workers * count)
+end
+
+## Runs `workers` tasks that call `Testing.capture` at once: all must succeed, with distinct ids, and stop detaches them.
+def run_captures(workers: Int) -> String
+  tasks = (1..workers).to_a
+  made = Task.map(tasks, workers, TASK_MS, ->(_worker) { Testing.capture(["stress.cap"]) })
+  captures: List[Testing.Capture] = []
+  for result in made
+    case result
+      ok(taken) -> captures = captures.push(taken)
+      error(_) -> nil
+    end
+  end
+
+  ids = captures.map(->(taken) { taken.id })
+  for taken in captures
+    _ = Testing.stop(taken)
+  end
+
+  return "#{captures.size} captures were made, not #{workers}" if captures.size != workers
+  return "the ids are not distinct: #{ids}" if ids.uniq.size != workers
+  return "the captures are still attached" if not Telemetry.handlers().empty?
 
   "ok"
 end
@@ -150,4 +192,28 @@ def spans(worker: Int, count: Int) -> Result[Void]
   end
 
   ok()
+end
+
+def emit_all(worker: Int, count: Int) -> Result[Void]
+  for i in 1..count
+    Telemetry.execute("stress.cap", {"worker": worker, "seq": i})
+  end
+
+  ok()
+end
+
+# The events must be all there, and each task's events in the order it emitted them.
+def in_order(found: List[Telemetry.Event], total: Int) -> String
+  return "#{found.size} events, not #{total}" if found.size != total
+
+  last: Map[Int, Int] = {}
+  for event in found
+    worker = event.ints.get("worker", 0)
+    seq = event.ints.get("seq", 0)
+    return "the events of worker #{worker} are out of order at #{seq}" if seq != last.get(worker, 0) + 1
+
+    last = last.put(worker, seq)
+  end
+
+  "ok"
 end

@@ -46,7 +46,7 @@ end
 jobs.job.stop {"duration_ns": 1200000} {"queue": "mail"}
 ```
 
-The handler heard `jobs.job.stop` and not `pool.checkout.stop`. `flush` waits until the handlers have handled what was emitted before it: delivery is async, so a program or a test calls it before it reads what a handler did, or before it ends.
+The handler heard `jobs.job.stop` and not `pool.checkout.stop`. `flush` waits until the handlers have handled what was emitted before it: delivery is async, so a program or a test calls it before it reads what a handler did, or before it ends. The [testing page](testing.md) shows how to assert on events in a test.
 
 ## An event
 
