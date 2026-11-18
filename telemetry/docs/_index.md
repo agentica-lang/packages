@@ -94,6 +94,48 @@ false
 
 `enabled?` says whether an `execute` of a name reaches a handler. With no handler attached, `execute` costs one table read, so a library can emit everywhere; guard with `enabled?` only an event whose arguments cost something to build.
 
+## Spans
+
+`Telemetry.span(name, metadata) do ... end` runs a block and says how it went. It emits `NAME.start` before the block, and then `NAME.stop` with `duration_ns` in `ints` when the block gave `ok`, or `NAME.error` with `duration_ns` and the metadata `error_kind` when it gave an error. The three events have your metadata and the same `span_id`, so a reporter can match them. The span gives back the result of the block, whatever it was.
+
+```agentica
+import Telemetry from "pkg/telemetry/telemetry"
+
+def show(event: Telemetry.Event) -> Result[Void]
+  puts("#{event.name} span_id=#{event.metadata.get("span_id", "")} duration=#{event.ints.has_key?("duration_ns")}")
+  ok()
+end
+
+def send(to: String) -> Result[Int]
+  return error("no address", kind: "mail.address") if to == ""
+
+  ok(to.size)
+end
+
+def main() -> Void
+  Telemetry.start().unwrap!
+  Telemetry.attach("show", ["mail"], &show).unwrap!
+  sent = Telemetry.span("mail.send", {"queue": "welcome"}) do send("ana@example.com") end
+  Telemetry.flush().unwrap!
+  puts(sent)
+  refused = Telemetry.span("mail.send", {"queue": "welcome"}) do send("") end
+  Telemetry.flush().unwrap!
+  puts(refused)
+  Telemetry.stop().unwrap!
+end
+```
+
+```output
+mail.send.start span_id=1 duration=false
+mail.send.stop span_id=1 duration=true
+ok(15)
+mail.send.start span_id=2 duration=false
+mail.send.error span_id=2 duration=true
+error("no address", kind: "mail.address")
+```
+
+When no handler hears any of the three events, a span only calls the block: it reads no clock and makes no id, and costs a few steps more than the call. A handler that is attached while a span runs may get only its end event. A block that crashes (a runtime error, not an `error` result) ends its task, so its span emits `NAME.start` and no `NAME.stop` or `NAME.error`: do not rely on the end event to close a span. Use `Telemetry.enabled?(name)` before building metadata that costs something.
+
 ## Slow and broken handlers
 
 Each handler runs in an actor of its own, with a queue of `Options.capacity` events (1024 by default). `execute` puts the event in the queue of each handler that hears it and goes on, so a slow handler delays only itself. When a queue is full the newest event is dropped, and `Telemetry.dropped(id)` counts it (the count stays after the handler is detached, until its id is attached again). Events of one emitter reach a handler in order; events of different tasks have no order between them.
@@ -154,6 +196,7 @@ Telemetry.start() -> Result[Void]
 Telemetry.stop(timeout_ms: Int = 5000) -> Result[Void]
 Telemetry.execute(name: String, ints: Map[String, Int] = {}, floats: Map[String, Float] = {},
   metadata: Map[String, String] = {}) -> Void
+Telemetry.span(name: String, metadata: Map[String, String], body: Fn[Result[T]]) -> Result[T]
 Telemetry.enabled?(name: String) -> Bool
 Telemetry.attach(id: String, events: List[String], handler: Fn[Telemetry.Event, Result[Void]],
   options: Telemetry.Options = Telemetry.Options()) -> Result[Void]

@@ -70,6 +70,28 @@ end
 ## True when `execute` of this name reaches a handler: a guard for arguments that cost something to build.
 def enabled?(name: String) -> Bool = Routes.heard?(name)
 
+## Runs `body` and says how it went: `NAME.start` before, then `NAME.stop` with `duration_ns` in `ints` when it gave
+## `ok`, or `NAME.error` with `duration_ns` and the metadata `error_kind` when it gave an error. The three events have
+## the metadata of the call and the same `span_id`. It gives the result of `body` as it is. When no handler hears any
+## of the three events it only calls `body`: no clock is read and no id is made. A body that crashes (a runtime error,
+## not an `error` result) ends its task, so it emits `NAME.start` and nothing after it. A handler attached while the
+## body runs may get only the end event.
+def span[T](name: String, metadata: Map[String, String], body: Fn[Result[T]]) -> Result[T]
+  return body.call() if not Routes.heard_span?(name)
+
+  tagged = metadata.put("span_id", "#{Routes.SPAN_IDS.add("last", 1)}")
+  execute("#{name}.start", metadata: tagged)
+  started = Time.monotonic_ns
+  result = body.call()
+  duration = {"duration_ns": Time.monotonic_ns - started}
+  case result
+    ok(_) -> execute("#{name}.stop", ints: duration, metadata: tagged)
+    error(e) -> execute("#{name}.error", ints: duration, metadata: tagged.put("error_kind", e.kind))
+  end
+
+  result
+end
+
 ## Attaches a handler under `id` to the events that match any of `events` (see the top of this page). A handler
 ## returns an error to say it failed, and is detached. Fails with `argument` for a bad id or pattern, with
 ## `telemetry.duplicate` when the id is in use and with `telemetry.not_started` before `start`.

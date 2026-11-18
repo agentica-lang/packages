@@ -18,6 +18,9 @@ def matching_patterns(name: String) -> List[String]
   prefixes.push(ALL)
 end
 
+## True when `text` is a word of a name or a key: lowercase letters, digits and `_`, starting with a letter.
+def word?(text: String) -> Bool = Regex.match?(text, SEGMENT)
+
 ## The reason a handler cannot be attached with this id, patterns and options, if any.
 def check_attach(id: String, patterns: List[String], options: Types.Options) -> Result[Void]
   return error("telemetry error: the id of a handler cannot be empty", kind: "argument") if id == ""
@@ -45,7 +48,7 @@ def check_pattern(pattern: String) -> Result[Void]
   return ok() if pattern == ALL
 
   parts = pattern.split(".")
-  if parts.size > MAX_SEGMENTS or not parts.all?(->(part) { Regex.match?(part, SEGMENT) })
+  if parts.size > MAX_SEGMENTS or not parts.all?(->(part) { word?(part) })
     return error(
       "telemetry error: #{pattern} is not a name: 1 to #{MAX_SEGMENTS} words of a-z, 0-9 and _ joined by dots, or *",
       kind: "argument",

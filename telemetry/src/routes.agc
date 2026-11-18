@@ -16,6 +16,9 @@ DROPPED: ATS[String, Int] = ATS.new()
 # The address of the hub, under one key.
 HUB: ATS[String, Address[Types.HubMsg]] = ATS.new()
 HUB_KEY = "hub"
+SPAN_ENDS = ["start", "stop", "error"]
+# The last id that a span took.
+SPAN_IDS: ATS[String, Int] = ATS.new()
 # The claim on starting or clearing a hub: the time (`Time.monotonic_ms`) at which it runs out, so that a task that was
 # cancelled while it held it does not hold it for ever.
 STARTING: ATS[String, Int] = ATS.new()
@@ -46,6 +49,14 @@ def heard?(name: String) -> Bool
   return false if idle?()
 
   Names.matching_patterns(name).any?(->(pattern) { ROUTES.has_key?(pattern) })
+end
+
+## True when a span of this name has an event that a handler hears: the name, a prefix of it or `*`, or one of its
+## three events (`NAME.start`, `NAME.stop` or `NAME.error`) as a pattern.
+def heard_span?(name: String) -> Bool
+  return false if idle?()
+
+  heard?(name) or SPAN_ENDS.any?(->(end_name) { ROUTES.has_key?("#{name}.#{end_name}") })
 end
 
 ## The ids of the handlers, sorted.

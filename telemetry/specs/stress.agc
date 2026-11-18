@@ -31,6 +31,27 @@ def run(workers: Int, events: Int) -> String
   verdict(plan, Counted(workers: workers, winners: winners, failed: failed, flushed: flushed.ok?))
 end
 
+## Runs `workers` tasks that run `count` spans each at once, and gives `ok` when the handler got a start and a stop for
+## each of the `workers * count` spans, and no two spans had the same `span_id`.
+def run_spans(workers: Int, count: Int) -> String
+  ids: ATS[String, Int] = ATS.new()
+  note = ->(event: Telemetry.Event) { count_span(ids, event) }
+  attached = Telemetry.attach("spans", ["stress.span"], note, Telemetry.Options(capacity: ROOM))
+  return "the handler was not attached" if not attached.ok?
+
+  tasks = (1..workers).to_a
+  Task.map(tasks, workers, TASK_MS, ->(worker) { spans(worker, count) })
+  flushed = Telemetry.flush(TASK_MS)
+  return "flush ran out of time" if not flushed.ok?
+
+  distinct = ids.keys().size
+  once = ids.to_map().values().select(->(seen) { seen != 2 }).size
+  return "#{distinct} span ids, not #{workers * count}" if distinct != workers * count
+  return "#{once} spans did not get exactly a start and a stop" if once > 0
+
+  "ok"
+end
+
 private
 
 TASK_MS = 60_000
@@ -116,4 +137,17 @@ def verdict(plan: Plan, counted: Counted) -> String
   return "the hub does not route" if not Telemetry.enabled?(TICK)
 
   "ok"
+end
+
+def count_span(ids: ATS[String, Int], event: Telemetry.Event) -> Result[Void]
+  _ = ids.add(event.metadata.get("span_id", ""), 1)
+  ok()
+end
+
+def spans(worker: Int, count: Int) -> Result[Void]
+  for i in 1..count
+    _ = Telemetry.span("stress.span", {"worker": "#{worker}"}, -> { ok(i) })
+  end
+
+  ok()
 end

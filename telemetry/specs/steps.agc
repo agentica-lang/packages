@@ -2,6 +2,9 @@
 ## `protocol.agc`): a step cannot keep the tasks of the package running between steps.
 
 import BDD from "std/bdd"
+import Regex from "std/regex"
+import Conformance from "../conformance"
+import Types from "../src/types"
 import {Request} from "protocol"
 
 private
@@ -9,6 +12,8 @@ private
 REPLY_MS = 60_000
 REPLY = "reply"
 STOP_MS = 5_000
+SPAN_ID = /"span_id": "([0-9]+)"/
+DURATION = /"duration_ns": ([0-9]+)/
 
 def main() -> Void
   BDD.run([
@@ -69,6 +74,35 @@ def main() -> Void
     end,
     BDD.step("two hubs are begun, as two tasks that both hold the claim would") do |ctx, _args|
       ask(ctx, Request(op: "second_hub"))
+    end,
+    BDD.step("I run a span {string}") do |ctx, args| run_span(ctx, args[0], "ok", 0, []) end,
+    BDD.step("I run a span {string} that sleeps {int} ms") do |ctx, args|
+      run_span(ctx, args[0], "ok", args[1].to_i!, [])
+    end,
+    BDD.step("I run a span {string} whose body returns an error") do |ctx, args|
+      run_span(ctx, args[0], "error", 0, [])
+    end,
+    BDD.step("I run a span {string} whose body crashes") do |ctx, args| run_span(ctx, args[0], "crash", 0, []) end,
+    BDD.step("I run a span {string} with:") do |ctx, args| run_span(ctx, args[0], "ok", 0, BDD.table(ctx)) end,
+    BDD.step("the handler {string} got events with one span_id") do |ctx, args| expect_one_span(ctx, args[0]) end,
+    BDD.step("the handler {string} got {int} span_ids") do |ctx, args|
+      expect_span_ids(ctx, args[0], args[1].to_i!)
+    end,
+    BDD.step("the last event of {string} has a duration") do |ctx, args| expect_duration(ctx, args[0], 0, true) end,
+    BDD.step("the last event of {string} has a duration of at least {int} ms") do |ctx, args|
+      expect_duration(ctx, args[0], args[1].to_i!, true)
+    end,
+    BDD.step("the first event of {string} has no duration") do |ctx, args| expect_duration(ctx, args[0], 0, false) end,
+    BDD.step("the last event of {string} includes:") do |ctx, args|
+      expect_includes(ctx, args[0], BDD.doc_string(ctx), true)
+    end,
+    BDD.step("the first event of {string} includes:") do |ctx, args|
+      expect_includes(ctx, args[0], BDD.doc_string(ctx), false)
+    end,
+    BDD.step("I check the event {string}") do |ctx, args| check_event(ctx, args[0], []) end,
+    BDD.step("I check the event {string} with:") do |ctx, args| check_event(ctx, args[0], BDD.table(ctx)) end,
+    BDD.step("{int} tasks run {int} spans each at once") do |ctx, args|
+      ask(ctx, Request(op: "span_stress", number: args[0].to_i!, wait: args[1].to_i!))
     end,
     BDD.step("I measure the steps of emitting {string}") do |ctx, args|
       ask(ctx, Request(op: "steps", name: args[0]))
@@ -196,4 +230,84 @@ def expect_clean(ctx: BDD.Context, text: String) -> BDD.Context
   asked = ask(ctx, Request(op: "warnings"))
   found = items(reply(asked)).select(->(line) { line.include?(text) })
   BDD.assert(asked, found.empty?, "a warning includes #{text}: #{found}")
+end
+
+def run_span(ctx: BDD.Context, name: String, mode: String, sleep_ms: Int, table: List[List[String]]) -> BDD.Context
+  ask(ctx, Request(op: "span", name: name, mode: mode, number: sleep_ms, table: table))
+end
+
+# The events of the handler as the driver wrote them, one text each.
+def logged(ctx: BDD.Context, id: String) -> BDD.Context = read_log(ctx, id)
+
+# The first group of the regex in the line, or "" when it does not match.
+def group(line: String, regex: Regex.Regex) -> String
+  case Regex.match(line, regex)
+    ok(found) -> found.groups[1].text
+    error(_) -> ""
+  end
+end
+
+def span_ids(lines: List[String]) -> List[String] = lines.map(->(line) { group(line, SPAN_ID) })
+
+def expect_one_span(ctx: BDD.Context, id: String) -> BDD.Context
+  asked = read_log(ctx, id)
+  ids = span_ids(items(reply(asked)))
+  distinct = ids.uniq
+  BDD.assert(asked, ids.size > 0 and distinct.size == 1 and distinct[0] != "", "the span ids are #{ids}")
+end
+
+def expect_span_ids(ctx: BDD.Context, id: String, want: Int) -> BDD.Context
+  asked = read_log(ctx, id)
+  distinct = span_ids(items(reply(asked))).uniq
+  BDD.assert(asked, distinct.size == want, "the span ids are #{distinct}, and should be #{want}")
+end
+
+def expect_duration(ctx: BDD.Context, id: String, least_ms: Int, wanted: Bool) -> BDD.Context
+  asked = read_log(ctx, id)
+  lines = items(reply(asked))
+  line = lines.last
+  if not wanted
+    line = lines.first
+  end
+
+  found = group(line, DURATION)
+  return BDD.assert(asked, found == "", "the event has a duration: #{line}") if not wanted
+
+  ns = found.to_i.unwrap_or(-1)
+  BDD.assert(asked, ns >= least_ms * 1_000_000, "the duration is #{ns} ns, and should be #{least_ms} ms or more")
+end
+
+def expect_includes(ctx: BDD.Context, id: String, text: String, last: Bool) -> BDD.Context
+  asked = read_log(ctx, id)
+  lines = items(reply(asked))
+  line = lines.first
+  if last
+    line = lines.last
+  end
+
+  BDD.assert(asked, line.include?(text.strip), "the event is #{line}, and should include #{text.strip}")
+end
+
+# Checks an event of the rows (`int`, `float` or `meta`, a key and a value) with the conformance helper, in the step
+# itself: it is a pure function.
+def check_event(ctx: BDD.Context, name: String, rows: List[List[String]]) -> BDD.Context
+  ints: Map[String, Int] = {}
+  floats: Map[String, Float] = {}
+  metadata: Map[String, String] = {}
+  for row in rows.drop(1)
+    case row[0]
+      "int" -> ints = ints.put(row[1], row[2].to_i!)
+      "float" -> floats = floats.put(row[1], row[2].to_f!)
+      _ -> metadata = metadata.put(row[1], row[2])
+    end
+  end
+
+  checked = Conformance.check(Types.Event(name: name, ints: ints, floats: floats, metadata: metadata))
+  text = "ok"
+  case checked
+    ok(_) -> nil
+    error(e) -> text = "error #{e.kind}"
+  end
+
+  BDD.set(ctx, REPLY, JSON.from(text))
 end
