@@ -11,7 +11,8 @@
 ## `release`, `kill` and `extend` (number: ms) of the lease `name`, `counts` (queue), `advance` (number: ms), `drain`
 ## (queue, kind: `ready`, `all` or `all without clock`, number: `max_runs` if there is one), `wait` (queue, name: a
 ## fetch that waits is parked; `wait_end` ends it; number: its `wait_ms` if there is one, limit: `max_per_group`),
-## `logs` (what the drains logged, one line each), `close` (number: the drain in ms), and `stress` (number: the
+## `logs` (what the drains logged, one line each), `watch` (starts the hub of `telemetry` and captures the events of
+## `jobs`), `events` (the events since the last read, one line each, after a check of each against the conventions), `close` (number: the drain in ms), and `stress` (number: the
 ## consumers, wait: the jobs, wait_ms: how long a consumer waits for a job, if it does, groups: how many groups the
 ## jobs are in, limit: the `max_per_group` of the consumers).
 struct Request

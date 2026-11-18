@@ -90,6 +90,9 @@ def main() -> Void
     BDD.step(
       "{int} consumers that wait {int} ms work off {int} jobs in {int} groups with at most {int} per group",
     ) do |ctx, args| ask(ctx, stress_in_groups([args[0], args[2], args[3], args[4]], args[1].to_i!)) end,
+    BDD.step("I watch the events") do |ctx, _args| ask(ctx, Request(op: "watch")) end,
+    BDD.step("I read the events") do |ctx, _args| ask(ctx, Request(op: "events")) end,
+    BDD.step("the events are:") do |ctx, _args| expect_events(ctx, BDD.table(ctx)) end,
     BDD.step("the drain logged") do |ctx, _args| ask(ctx, Request(op: "logs")) end,
     BDD.step("{int} consumers work off {int} jobs of one queue while producers add them") do |ctx, args|
       ask(ctx, Request(op: "stress", number: args[0].to_i!, wait: args[1].to_i!))
@@ -154,6 +157,15 @@ end
 def expect_reply(ctx: BDD.Context, want: String) -> BDD.Context
   reply = JSON.string(BDD.get(ctx, REPLY).unwrap!).unwrap_or("")
   BDD.assert(ctx, reply == want, "the reply is #{reply}, and should be #{want}")
+end
+
+# The events since the last read, one per row of the table (the header first), as the driver says them.
+def expect_events(ctx: BDD.Context, table: List[List[String]]) -> BDD.Context
+  read = ask(ctx, Request(op: "events"))
+  rows = table.drop(1).map(->(row) { row[0] })
+  return expect_reply(read, "ok") if rows.empty?
+
+  expect_reply(read, "ok #{rows.join("; ")}")
 end
 
 def memory(clock: Fn[Int]) -> Result[Jobs.Backend] = Jobs.memory(Jobs.MemoryOptions(clock: some(clock)))

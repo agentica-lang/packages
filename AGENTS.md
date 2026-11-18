@@ -57,15 +57,18 @@ jobs/                jobs to produce and consume, with the backend swappable: jo
                      leases of each group), src/memory.agc the actor that owns a store (the calls, the fetches that
                      wait, the close), src/parked.agc the fetches that wait (by queue and by deadline), src/settle.agc
                      what happens to a job after its handler (shared by `Jobs.drain` and the later pipeline),
-                     src/inline.agc `Jobs.drain`; specs/ has the features (drain also checks what it logs; conformance:
-                     the suite on the memory backend, on broken ones and on the real clock; memory, drain, stress: many
+                     src/inline.agc `Jobs.drain`, src/events.agc the telemetry events of the facade and the drain (one table read
+                     with no handler attached); specs/ has the features (drain also checks what it logs; conformance:
+                     the suite on the memory backend, on broken ones and on the real clock; events reads the
+                     telemetry events that the driver captures and checks them with `Conformance.check`; stress also
+                     matches the events with what its consumers did; memory, drain, stress: many
                      consumers and producers), whose program under test is specs/driver.agc (a memory backend and a
                      manual clock that a step program drives by JSON lines, specs/protocol.agc, specs/steps.agc),
                      specs/stress.agc the consumers and producers, and specs/model.agc an independent model of the
                      contract (plain lists, written from docs/contract.md, nothing of src/) that the memory feature
                      compares the backend with on random calls; test/jobs_test.agc, test/store_test.agc (the guarantees
-                     of the store: leases, expiry, unique keys, batches, the last error) and test/model_test.agc have
-                     the unit tests
+                     of the store: leases, expiry, unique keys, batches, the last error), test/model_test.agc and
+                     test/events_test.agc (the steps of the events with no handler) have the unit tests
 native-gen/          the C header of an `extern module` block: cli.agc is the command, native_gen.agc the API
                      (`header`), src/header.agc the text of the header, src/codecs.agc the C values of the structs and
                      enums, src/collections.agc the Lists, Maps, Optionals and Results, src/types.agc the type

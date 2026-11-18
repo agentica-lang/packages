@@ -4,6 +4,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Needs Agentica 0.34.1.
+
+### Added
+
+- Telemetry events (the `telemetry` package, pinned at `telemetry-0.1.0`): `jobs.enqueue`, `jobs.fetch`, `jobs.ack` and `jobs.nack` for the calls of every backend, and `Jobs.drain` runs each handler in the span `jobs.job` (`start`, `stop` or `error`, with `error_kind: "jobs.discard"` for a discard) and says its verdict in `jobs.job.settle`. The log lines of a drain stay. With no handler attached a call costs a table read. The names, measurements and metadata are in the new events page of the docs.
+
+### Changed
+
+- **Breaking:** `jobs` needs Agentica 0.34.1 (it was 0.34.0), and depends on `telemetry` at `telemetry-0.1.0`: an app that uses `jobs` and `telemetry` must pin the same tag.
+
 ## [0.2.0] - 2026-11-18
 
 Needs Agentica 0.34.0.

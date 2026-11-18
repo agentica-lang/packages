@@ -1,6 +1,9 @@
 name = "jobs"
-agentica = "0.34.0"
+agentica = "0.34.1"
 
 # Every bare `end` is followed by an empty line (AGENTS.md).
 [style]
 blank_line_after_end = true
+
+[dependencies]
+telemetry = { git = "https://github.com/agentica-lang/packages", tag = "telemetry-0.1.0", subdir = "telemetry" }

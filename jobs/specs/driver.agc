@@ -9,14 +9,19 @@
 ## The payload of a job says what a drain does with it: `ok` acks it, `fail` returns an error, `discard` discards it,
 ## and `fail once` fails the first attempt only.
 
+import Conformance from "pkg/telemetry/conformance"
 import Jobs from "../jobs"
 import Logger from "std/logger"
 import Stress from "stress"
+import Telemetry from "pkg/telemetry/telemetry"
+import Testing from "pkg/telemetry/testing"
 import {Request} from "protocol"
 
 private
 
 POLL_MS = 20
+EVENT_NUMBERS = ["count", "duplicate_count"]
+EVENT_WORDS = ["attempt", "how", "verdict", "error_kind"]
 PARK_MS = 100
 WAIT_FETCH_MS = 3_600_000
 DRAIN_RUNS = 1_000
@@ -27,6 +32,7 @@ struct Driver
   held: Map[String, Jobs.Lease]
   waiting: Map[String, Task[Result[List[Jobs.Lease]]]]
   logs: ATS[String, Int]
+  events: Optional[Testing.Capture]
 end
 
 struct Handled
@@ -35,7 +41,7 @@ struct Handled
 end
 
 def main() -> Void
-  driver = Driver(backend: none, clock: Jobs.manual_clock(), held: {}, waiting: {}, logs: ATS.new())
+  driver = Driver(backend: none, clock: Jobs.manual_clock(), held: {}, waiting: {}, logs: ATS.new(), events: none)
   line = IO.gets
   while line.ok?
     handled = handle(driver, line.unwrap_or(""))
@@ -69,6 +75,8 @@ def act(driver: Driver, req: Request) -> Handled
     "counts" -> with_backend(driver, req, &counts)
     "drain" -> with_backend(driver, req, &drain)
     "logs" -> logs(driver)
+    "watch" -> watch(driver)
+    "events" -> Handled(driver: driver, reply: events(driver))
     "wait" -> with_backend(driver, req, &wait)
     "wait_end" -> with_backend(driver, req, &wait_end)
     "stress" -> with_backend(driver, req, &stress)
@@ -109,7 +117,14 @@ def start(driver: Driver, req: Request) -> Handled
   case Jobs.memory(options)
     ok(backend) ->
       Handled(
-        driver: Driver(backend: some(backend), clock: clock, held: {}, waiting: {}, logs: driver.logs),
+        driver: Driver(
+          backend: some(backend),
+          clock: clock,
+          held: {},
+          waiting: {},
+          logs: driver.logs,
+          events: driver.events,
+        ),
         reply: "ok",
       )
     error(e) -> Handled(driver: driver, reply: failure(e))
@@ -405,5 +420,49 @@ def plan_of(req: Request) -> Stress.Plan
 end
 
 def stress(driver: Driver, backend: Jobs.Backend, req: Request) -> Handled
-  Handled(driver: driver, reply: Stress.run(backend, driver.clock, plan_of(req)))
+  Handled(driver: driver, reply: Stress.run(backend, driver.clock, plan_of(req), driver.events))
+end
+
+# The hub of `telemetry`, and a capture of the events of `jobs`: it runs in the main task, like the backend's actor.
+def watch(driver: Driver) -> Handled
+  _ = Telemetry.start()
+  case Testing.capture(["jobs"])
+    ok(made) -> Handled(driver: driver.with(events: some(made)), reply: "ok")
+    error(e) -> Handled(driver: driver, reply: failure(e))
+  end
+end
+
+# The events since the last read, one line each: the name, the queue, and the numbers and words that the steps check.
+# An event that breaks the conventions of `telemetry` is the reply instead.
+def events(driver: Driver) -> String
+  case driver.events
+    some(made) -> read_events(made)
+    none -> "no watch: say so first"
+  end
+end
+
+def read_events(made: Testing.Capture) -> String
+  case Testing.events(made)
+    error(e) -> failure(e)
+    ok(found) -> lines_of(found)
+  end
+end
+
+def lines_of(found: List[Telemetry.Event]) -> String
+  for event in found
+    case Conformance.check(event)
+      error(e) -> return "#{event.name} breaks the conventions: #{e.kind}"
+      ok(_) -> nil
+    end
+  end
+
+  return "ok" if found.empty?
+
+  "ok #{found.map(->(event) { event_line(event) }).join("; ")}"
+end
+
+def event_line(event: Telemetry.Event) -> String
+  words = EVENT_WORDS.filter(->(key) { event.metadata.has_key?(key) }).map(->(key) { "#{key}=#{event.metadata[key]}" })
+  numbers = EVENT_NUMBERS.filter(->(key) { event.ints.has_key?(key) }).map(->(key) { "#{key}=#{event.ints[key]}" })
+  ([event.name, event.metadata.get("queue", "")] + numbers + words).join(" ")
 end

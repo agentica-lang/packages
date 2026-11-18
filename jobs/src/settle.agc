@@ -1,6 +1,7 @@
 ## What happens to a job after its handler ran: one function decides, so `Jobs.drain` and the pipeline treat a job
 ## the same way.
 
+import Events from "events"
 import Types from "types"
 
 ## `Ack` removes the job; `Back` gives it back to the backend as the `Nack` says.
@@ -21,12 +22,19 @@ def settle(now: Int, job: Types.Job, result: Result[Void], backoff: Fn[Int, Int]
   end
 end
 
-## Sends the verdict to the backend.
+## Sends the verdict to the backend, and says it with the event `jobs.job.settle` once the backend took it.
 def apply(backend: Types.Backend, lease: Types.Lease, verdict: Verdict) -> Result[Void]
   case verdict
-    Verdict.Ack -> backend.ack.call(lease)
-    Verdict.Back(how) -> backend.nack.call(lease, how)
+    Verdict.Ack ->
+      try Events.ack(backend, lease)
+      Events.settled(backend, lease.job, "ack")
+
+    Verdict.Back(how) ->
+      try Events.nack(backend, lease, how)
+      Events.settled(backend, lease.job, settled_as(how))
   end
+
+  ok()
 end
 
 ## 1 s doubled for each attempt, up to 1 h, plus up to 20% of jitter, so that jobs that failed together do not come
@@ -42,3 +50,10 @@ private
 MAX_BACKOFF_MS = 3_600_000
 # 1 s doubled 12 times is above MAX_BACKOFF_MS, and a larger exponent would only grow the number.
 MAX_DOUBLINGS = 12
+
+def settled_as(how: Types.Nack) -> String
+  case how
+    Types.Nack.Dead(_) -> "dead"
+    _ -> "retry"
+  end
+end

@@ -1,0 +1,9 @@
+version = 1
+
+[[package]]
+name = "telemetry"
+git = "https://github.com/agentica-lang/packages"
+subdir = "telemetry"
+tag = "telemetry-0.1.0"
+commit = "a0a5b405dfc23e6fcd4ad7007cbe0533daaecfec"
+hash = "sha256:80f33799ca78615fa5cec1b658207de8024f0a01b38bf62e1eecbbe28a191e68"
