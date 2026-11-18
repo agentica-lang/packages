@@ -18,6 +18,8 @@ That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 jobs = { git = "https://github.com/agentica-lang/packages", tag = "jobs-0.2.0", subdir = "jobs" }
 ```
 
+`jobs` depends on [telemetry](https://www.agentica-lang.com/packages/telemetry/) (`telemetry-0.1.0`), and says what happens to the jobs as events: an app that attaches a handler gets them, and one that does not pays a table read for each call. Add `telemetry` at the same tag when you attach handlers.
+
 A job is a payload (bytes) in a named queue. `Jobs.json` makes one from a value, and `Jobs.decode` reads it back with a codec. A consumer calls `fetch`, which leases the jobs: nobody else gets them until the lease runs out. `ack` says the job is done and removes it. If the consumer crashes or hangs, the lease runs out and the job comes back, so a job that was enqueued runs until it is acked or dead. That is at-least-once delivery: a handler can run twice for one job, so it must be idempotent.
 
 ```agentica
@@ -104,7 +106,7 @@ Jobs.manual_clock() -> Clock
 - `Nack` says how a job goes back. `Retry(Later(at_ms: ..., error: ...))` runs it again at `at_ms`, and the next delivery shows the `error` as the `last_error` of its job. `Release` gives it back now, without counting the attempt. `Dead(error)` keeps it as dead and never runs it again.
 - `Counts` has the `ready`, `scheduled`, `leased` and `dead` jobs of a queue.
 
-The pages: [the contract](contract.md) says what every backend guarantees and how to write one, and [testing](testing.md) is for the tests of an app.
+The pages: [the contract](contract.md) says what every backend guarantees and how to write one, [testing](testing.md) is for the tests of an app, and [events](events.md) says what `jobs` tells the `telemetry` package.
 
 ## Errors
 

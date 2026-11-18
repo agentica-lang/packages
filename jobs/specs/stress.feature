@@ -28,3 +28,15 @@ Feature: Many consumers on one queue
     Given a memory backend on a manual clock
     When 1 consumers work off 400 jobs of one queue while producers add them
     Then the reply is "ok"
+
+  Scenario: The events match what 16 consumers did: every job enqueued, fetched and acked once, and none is lost
+    Given a memory backend on a manual clock
+    And I watch the events
+    When 16 consumers work off 400 jobs of one queue while producers add them
+    Then the reply is "ok"
+
+  Scenario: The events match what 16 consumers that wait did, in 8 groups
+    Given a memory backend on a manual clock
+    And I watch the events
+    When 16 consumers that wait 200 ms work off 400 jobs in 8 groups with at most 2 per group
+    Then the reply is "ok"

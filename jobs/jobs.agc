@@ -8,6 +8,7 @@
 ##
 ## `Jobs.memory` starts an actor that is a child of the task that calls it: make it in `main`.
 
+import Events from "src/events"
 import Inline from "src/inline"
 import Memory from "src/memory"
 import Types from "src/types"
@@ -30,14 +31,14 @@ export Types.NewJob
 
 ## Adds a job.
 def enqueue(backend: Types.Backend, job: Types.NewJob) -> Result[Types.Enqueued]
-  added = try backend.enqueue.call([job])
+  added = try Events.enqueue(backend, [job])
   ok(added[0])
 end
 
 ## Adds the jobs, all or none, and gives one `Enqueued` for each, in order. The jobs of a batch can wait for a time or
 ## carry a unique key like any other.
 def enqueue_all(backend: Types.Backend, jobs: List[Types.NewJob]) -> Result[List[Types.Enqueued]]
-  backend.enqueue.call(jobs)
+  Events.enqueue(backend, jobs)
 end
 
 ## A job whose payload is the JSON of the value. Set `run_at_ms`, `max_attempts` and the rest with `.with(...)`.
@@ -51,14 +52,16 @@ end
 
 ## Leases up to `options.max` jobs of a queue, waiting up to `options.wait_ms` for the first. No job in time gives
 ## `ok([])`.
-def fetch(backend: Types.Backend, fetch: Types.Fetch) -> Result[List[Types.Lease]] = backend.fetch.call(fetch)
+def fetch(backend: Types.Backend, fetch: Types.Fetch) -> Result[List[Types.Lease]] = Events.fetch(backend, fetch)
 
 ## Says the job is done: it is removed. A lease that ran out or was replaced fails with `jobs.lease_lost`.
-def ack(backend: Types.Backend, lease: Types.Lease) -> Result[Void] = backend.ack.call(lease)
+def ack(backend: Types.Backend, lease: Types.Lease) -> Result[Void] = Events.ack(backend, lease)
 
 ## Gives a job back: run again at a time, now without counting the attempt, or never again. Fails with
 ## `jobs.lease_lost` like `ack`.
-def nack(backend: Types.Backend, lease: Types.Lease, how: Types.Nack) -> Result[Void] = backend.nack.call(lease, how)
+def nack(backend: Types.Backend, lease: Types.Lease, how: Types.Nack) -> Result[Void]
+  Events.nack(backend, lease, how)
+end
 
 ## Moves the end of a lease to `ms` from now, and gives the lease with its new time. Fails with `jobs.lease_lost` like
 ## `ack`.

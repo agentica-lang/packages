@@ -1,7 +1,9 @@
 ## `Jobs.drain`: the jobs of a queue run one at a time in the caller, for an app's tests.
 
+import Events from "events"
 import Logger from "std/logger"
 import Settle from "settle"
+import Telemetry from "pkg/telemetry/telemetry"
 import Types from "types"
 
 ## Runs the jobs of the queue until none is due (`Due.Ready`) or none is left (`Due.All`), or `max_runs` ran.
@@ -14,7 +16,7 @@ def drain(backend: Types.Backend, options: Types.Drain, handle: Fn[Types.Job, Re
   runs = 0
   steps = 0
   while runs < options.max_runs
-    leases = try backend.fetch.call(fetch)
+    leases = try Events.fetch(backend, fetch)
     if leases.empty?
       break if steps >= MAX_STEPS or not try waiting?(backend, options)
 
@@ -23,7 +25,7 @@ def drain(backend: Types.Backend, options: Types.Drain, handle: Fn[Types.Job, Re
     end
 
     held = leases[0]
-    result = handle.call(held.job)
+    result = Telemetry.span(Events.JOB, Events.job_meta(backend.name, held.job), -> { handle.call(held.job) })
     verdict = Settle.settle(now.call(), held.job, result, backoff)
     try Settle.apply(backend, held, verdict)
     log_verdict(held.job, result, verdict)
