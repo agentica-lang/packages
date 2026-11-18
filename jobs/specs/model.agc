@@ -8,7 +8,7 @@
 ## scans, so nothing here can share a mistake with the code under test. A random number comes from a generator of its
 ## own, so that a seed gives the same script on every run.
 
-import {Request} from "protocol"
+import {Add, Backoff, Batch, Extension, Request, Settings, Take} from "protocol"
 
 ## One call of the script: the request, and the reply that the contract gives to it.
 struct Call
@@ -20,7 +20,7 @@ end
 def script(seed: Int, count: Int) -> List[Call]
   gen: ATS[String, Int] = ATS.new()
   gen.put(STATE, seed % MODULUS + SALT)
-  start = Request(op: "start", table: settings([["max_jobs", "8"], ["max_dead", "1000"]]))
+  start = Request.Start(Settings(max_jobs: 8, max_dead: 1000))
   stepped = apply(empty(MAX_JOBS), start)
   world = stepped.world
   calls = [Call(req: start, reply: stepped.reply)]
@@ -135,12 +135,25 @@ def next_request(gen: ATS[String, Int], world: World, serial: Int) -> Request
 
   if roll < 72 and not world.held.empty?
     kind = pick(gen, KINDS)
-    return Request(op: kind, name: pick(gen, world.held.keys), number: pick(gen, AMOUNTS), text: pick(gen, WHYS))
+    name = pick(gen, world.held.keys)
+    amount = pick(gen, AMOUNTS)
+    return lease_request(kind, name, amount, pick(gen, WHYS))
   end
 
-  return Request(op: "advance", number: pick(gen, STEPS)) if roll < 86
+  return Request.Advance(pick(gen, STEPS)) if roll < 86
 
-  Request(op: "counts", queue: pick(gen, QUEUES))
+  Request.Counts(pick(gen, QUEUES))
+end
+
+# A call on the lease that a name holds: `amount` is the ms of a retry or an extend, and `why` the error of a retry.
+def lease_request(kind: String, name: String, amount: Int, why: String) -> Request
+  case kind
+    "ack" -> Request.Ack(name)
+    "kill" -> Request.Kill(name)
+    "release" -> Request.Release(name)
+    "extend" -> Request.Extend(Extension(name: name, ms: amount))
+    _ -> Request.Retry(Backoff(name: name, ms: amount, why: why))
+  end
 end
 
 def enqueue_request(gen: ATS[String, Int], serial: Int) -> Request
@@ -152,20 +165,21 @@ def again_request(gen: ATS[String, Int], world: World, serial: Int) -> Request
 end
 
 def fetch_request(gen: ATS[String, Int]) -> Request
-  Request(
-    op: "fetch",
-    queue: pick(gen, QUEUES),
-    name: pick(gen, NAMES),
-    number: pick(gen, LEASES),
-    max: pick(gen, MAXES),
-    limit: pick(gen, LIMITS),
+  Request.Fetch(
+    Take(
+      queue: pick(gen, QUEUES),
+      name: pick(gen, NAMES),
+      lease_ms: pick(gen, LEASES),
+      max: pick(gen, MAXES),
+      limit: pick(gen, LIMITS),
+    ),
   )
 end
 
 # Two or three jobs in one batch.
 def enqueue_all_request(gen: ATS[String, Int], serial: Int) -> Request
   payloads = (0...(2 + draw(gen, 2))).map(->(n) { "p#{serial}x#{n}" })
-  Request(op: "enqueue_all", queue: pick(gen, QUEUES), text: payloads.join(","))
+  Request.EnqueueAll(Batch(queue: pick(gen, QUEUES), text: payloads.join(",")))
 end
 
 def enqueue_with(gen: ATS[String, Int], serial: Int, queue: String, key: String) -> Request
@@ -185,32 +199,45 @@ def enqueue_with(gen: ATS[String, Int], serial: Int, queue: String, key: String)
     rows = rows.push(["group", group])
   end
 
-  Request(op: "enqueue", queue: queue, text: "p#{serial}", table: settings(rows))
+  Request.Enqueue(Add(queue: queue, text: "p#{serial}", table: settings(rows)))
 end
 
 # The world after a call, and the reply of the contract to it. A lease that ran out is over before any call.
 def apply(before: World, req: Request) -> Step
   world = tick(before)
-  case req.op
-    "start" -> Step(world: empty(number(req, "max_jobs", MAX_JOBS)), reply: "ok")
-    "enqueue" -> enqueue(world, req)
-    "enqueue_all" -> enqueue_all(world, req)
-    "fetch" -> fetch(world, req)
-    "advance" -> Step(world: world.with(now: world.now + req.number), reply: "ok")
-    "counts" -> Step(world: world, reply: counts(world, req.queue))
-    _ -> on_lease(world, req)
+  case req
+    Request.Start(settings) -> Step(world: empty(settings.max_jobs), reply: "ok")
+    Request.Enqueue(add) -> enqueue(world, add)
+    Request.EnqueueAll(batch) -> enqueue_all(world, batch)
+    Request.Fetch(take) -> fetch(world, take)
+    Request.Advance(ms) -> Step(world: world.with(now: world.now + ms), reply: "ok")
+    Request.Counts(queue) -> Step(world: world, reply: counts(world, queue))
+    Request.Ack(name) -> on_lease(world, name, ->(item) { remove(world, item) })
+    Request.Kill(name) -> on_lease(world, name, ->(item) { bury(world, item) })
+    Request.Release(name) ->
+      on_lease(
+        world,
+        name,
+        ->(item) { back_again(replace(world, item.with(attempt: item.attempt - 1, token: 0)), item) },
+      )
+    Request.Extend(extension) ->
+      on_lease(world, extension.name, ->(item) { replace(world, item.with(expires: world.now + extension.ms)) })
+    Request.Retry(backoff) -> on_lease(world, backoff.name, ->(item) { retry(world, item, backoff) })
+    # The calls of the contract are modeled. Not modeled: Close, Drain, Logs, Wait, WaitEnd, Stress, Watch, Events and
+    # EventNames, which are not calls of the backend or read what the driver saw.
+    _ -> Step(world: world, reply: "the model does not know this call")
   end
 end
 
-def number(req: Request, name: String, default: Int) -> Int
-  rows = req.table.filter(->(row) { row[0] == name })
+def number(table: List[List[String]], name: String, default: Int) -> Int
+  rows = table.filter(->(row) { row[0] == name })
   return default if rows.empty?
 
   rows[0][1].to_i.unwrap_or(default)
 end
 
-def text(req: Request, name: String) -> String
-  rows = req.table.filter(->(row) { row[0] == name })
+def text(table: List[List[String]], name: String) -> String
+  rows = table.filter(->(row) { row[0] == name })
   return "" if rows.empty?
 
   rows[0][1]
@@ -259,9 +286,9 @@ def bury(world: World, item: Item) -> World
   gone.with(dead: gone.dead.push(item.queue))
 end
 
-def enqueue(world: World, req: Request) -> Step
-  key = text(req, "unique_key")
-  twin = world.jobs.find(->(item) { key != "" and item.queue == req.queue and item.key == key })
+def enqueue(world: World, add: Add) -> Step
+  key = text(add.table, "unique_key")
+  twin = world.jobs.find(->(item) { key != "" and item.queue == add.queue and item.key == key })
   case twin
     ok(item) -> return Step(world: forgotten(world), reply: "ok #{item.id} duplicate")
     error(_) -> nil
@@ -269,34 +296,37 @@ def enqueue(world: World, req: Request) -> Step
 
   return Step(world: forgotten(world), reply: "error jobs.full") if world.jobs.size >= world.max_jobs
 
-  item = new_item(world, world.next_id, req, req.text, key)
+  item = new_item(world, world.next_id, add, key)
   added = world.with(jobs: world.jobs.push(item), next_id: world.next_id + 1)
   Step(world: forgotten(added), reply: "ok #{item.id}")
 end
 
 # The batch adds all its jobs, or none when they do not fit.
-def enqueue_all(world: World, req: Request) -> Step
-  payloads = req.text.split(",")
+def enqueue_all(world: World, batch: Batch) -> Step
+  payloads = batch.text.split(",")
   return Step(world: forgotten(world), reply: "error jobs.full") if world.jobs.size + payloads.size > world.max_jobs
 
-  items = (0...payloads.size).map(->(n) { new_item(world, world.next_id + n, req, payloads[n], "") })
+  items = (0...payloads.size).map(
+    ->(n) { new_item(world, world.next_id + n, Add(queue: batch.queue, text: payloads[n]), "") },
+  )
+
   added = world.with(jobs: world.jobs + items, next_id: world.next_id + payloads.size)
   Step(world: forgotten(added), reply: "ok #{items.map(->(item) { "#{item.id}" }).join(",")}")
 end
 
-def new_item(world: World, id: Int, req: Request, payload: String, key: String) -> Item
+def new_item(world: World, id: Int, add: Add, key: String) -> Item
   Item(
     id: id,
-    queue: req.queue,
-    payload: payload,
-    max_attempts: number(req, "max_attempts", 5),
-    run_at: world.now + number(req, "run_in_ms", 0),
+    queue: add.queue,
+    payload: add.text,
+    max_attempts: number(add.table, "max_attempts", 5),
+    run_at: world.now + number(add.table, "run_in_ms", 0),
     key: key,
     attempt: 0,
     token: 0,
     expires: 0,
     last_error: "",
-    group: text(req, "group"),
+    group: text(add.table, "group"),
   )
 end
 
@@ -304,13 +334,13 @@ def forgotten(world: World) -> World = world.with(again: Again(queue: "", key: "
 
 # The jobs that come first, up to `max`: the earliest time, then the first added. A job whose group already has `limit`
 # live leases in its queue is passed over, when there is a limit; the leases of this call count.
-def fetch(world: World, req: Request) -> Step
-  ready = world.jobs.filter(->(item) { item.queue == req.queue and item.token == 0 and item.run_at <= world.now })
+def fetch(world: World, take: Take) -> Step
+  ready = world.jobs.filter(->(item) { item.queue == take.queue and item.token == 0 and item.run_at <= world.now })
   state = world
   texts: List[String] = []
   for item in ready.sort_by(->(one) { one.run_at * 1_000_000 + one.id })
-    if texts.size < req.max and not full?(state, item, req.limit)
-      state = lend(state, item, lease_name(req.name, texts.size), req.number)
+    if texts.size < take.max and not full?(state, item, take.limit)
+      state = lend(state, item, lease_name(take.name, texts.size), take.lease_ms)
       texts = texts.push(delivery_text(item))
     end
   end
@@ -352,12 +382,11 @@ def lend(world: World, item: Item, name: String, lease_ms: Int) -> World
   state.with(held: held, next_token: world.next_token + 1)
 end
 
-# ack, retry (`amount` ms from now, with `why` as its error), release, kill or extend (`amount` ms from now) of the
-# delivery that a name holds.
-def on_lease(world: World, req: Request) -> Step
-  case live(world, req.name)
+# The call on the delivery that a name holds, which gives the world after it, or a lease that was lost.
+def on_lease(world: World, name: String, finish: Fn[Item, World]) -> Step
+  case live(world, name)
     none -> Step(world: world, reply: "error jobs.lease_lost")
-    some(item) -> Step(world: finish(world, item, req), reply: "ok")
+    some(item) -> Step(world: finish.call(item), reply: "ok")
   end
 end
 
@@ -372,26 +401,16 @@ def live(world: World, name: String) -> Optional[Item]
   end
 end
 
-def finish(world: World, item: Item, req: Request) -> World
-  case req.op
-    "ack" -> remove(world, item)
-    "kill" -> bury(world, item)
-    "release" -> back_again(replace(world, item.with(attempt: item.attempt - 1, token: 0)), item)
-    "extend" -> replace(world, item.with(expires: world.now + req.number))
-    _ -> retry(world, item, req)
-  end
-end
-
 # A retry on the last attempt is the end of the job. One that says nothing keeps the last error.
-def retry(world: World, item: Item, req: Request) -> World
+def retry(world: World, item: Item, backoff: Backoff) -> World
   return bury(world, item) if item.attempt >= item.max_attempts
 
-  last_error = case req.text
+  last_error = case backoff.why
     "" -> item.last_error
-    _ -> req.text
+    _ -> backoff.why
   end
 
-  back_again(replace(world, item.with(run_at: world.now + req.number, token: 0, last_error: last_error)), item)
+  back_again(replace(world, item.with(run_at: world.now + backoff.ms, token: 0, last_error: last_error)), item)
 end
 
 def back_again(world: World, item: Item) -> World = world.with(again: Again(queue: item.queue, key: item.key))

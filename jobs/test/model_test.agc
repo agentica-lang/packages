@@ -1,15 +1,15 @@
 import Model from "../specs/model"
-import {Request} from "../specs/protocol"
+import {Add, Backoff, Batch, Extension, Request, Settings, Take} from "../specs/protocol"
 
 private
 
-def start(max_jobs: Int) -> Request = Request(op: "start", table: [["setting", "value"], ["max_jobs", "#{max_jobs}"]])
+def start(max_jobs: Int) -> Request = Request.Start(Settings(max_jobs: max_jobs))
 
 def enqueue(queue: String, text: String, rows: List[List[String]]) -> Request
-  Request(op: "enqueue", queue: queue, text: text, table: [["setting", "value"]] + rows)
+  Request.Enqueue(Add(queue: queue, text: text, table: [["setting", "value"]] + rows))
 end
 
-def fetch(name: String, ms: Int) -> Request = Request(op: "fetch", queue: "q", name: name, number: ms)
+def fetch(name: String, ms: Int) -> Request = Request.Fetch(Take(queue: "q", name: name, lease_ms: ms))
 
 def main() -> Void
   Test.run([
@@ -19,14 +19,14 @@ def main() -> Void
         enqueue("q", "a", [["max_attempts", "2"], ["unique_key", "k"]]),
         enqueue("q", "b", [["unique_key", "k"]]),
         fetch("w", 1_000),
-        Request(op: "counts", queue: "q"),
-        Request(op: "advance", number: 1_000),
-        Request(op: "ack", name: "w"),
+        Request.Counts("q"),
+        Request.Advance(1_000),
+        Request.Ack("w"),
         fetch("w", 1_000),
-        Request(op: "advance", number: 1_000),
-        Request(op: "counts", queue: "q"),
-        Request(op: "advance", number: 1),
-        Request(op: "counts", queue: "q"),
+        Request.Advance(1_000),
+        Request.Counts("q"),
+        Request.Advance(1),
+        Request.Counts("q"),
       ]
 
       return Test.eq(
@@ -53,11 +53,11 @@ def main() -> Void
         enqueue("q", "a", []),
         enqueue("q", "b", []),
         fetch("w", 5_000),
-        Request(op: "retry", name: "w", number: 2_000),
+        Request.Retry(Backoff(name: "w", ms: 2_000)),
         fetch("w", 5_000),
-        Request(op: "advance", number: 2_000),
+        Request.Advance(2_000),
         fetch("w", 5_000),
-        Request(op: "release", name: "w"),
+        Request.Release("w"),
         fetch("w", 5_000),
       ]
 
@@ -82,14 +82,14 @@ def main() -> Void
     ) do
       calls = [
         start(4),
-        Request(op: "enqueue_all", queue: "q", text: "a,b,c"),
-        Request(op: "enqueue_all", queue: "q", text: "d,e"),
-        Request(op: "fetch", queue: "q", name: "w", number: 5_000, max: 2),
-        Request(op: "retry", name: "w/2", number: 0, text: "boom"),
-        Request(op: "fetch", queue: "q", name: "x", number: 5_000, max: 3),
-        Request(op: "ack", name: "x/2"),
-        Request(op: "retry", name: "x", number: 0),
-        Request(op: "fetch", queue: "q", name: "y", number: 5_000),
+        Request.EnqueueAll(Batch(queue: "q", text: "a,b,c")),
+        Request.EnqueueAll(Batch(queue: "q", text: "d,e")),
+        Request.Fetch(Take(queue: "q", name: "w", lease_ms: 5_000, max: 2)),
+        Request.Retry(Backoff(name: "w/2", ms: 0, why: "boom")),
+        Request.Fetch(Take(queue: "q", name: "x", lease_ms: 5_000, max: 3)),
+        Request.Ack("x/2"),
+        Request.Retry(Backoff(name: "x", ms: 0)),
+        Request.Fetch(Take(queue: "q", name: "y", lease_ms: 5_000)),
       ]
 
       return Test.eq(
@@ -113,12 +113,12 @@ def main() -> Void
         enqueue("q", "a", [["group", "g"]]),
         enqueue("q", "b", [["group", "g"]]),
         enqueue("q", "c", []),
-        Request(op: "fetch", queue: "q", name: "w", number: 5_000, max: 3, limit: 1),
-        Request(op: "fetch", queue: "q", name: "x", number: 5_000, max: 3, limit: 1),
-        Request(op: "ack", name: "w"),
-        Request(op: "fetch", queue: "q", name: "y", number: 5_000, max: 3, limit: 1),
-        Request(op: "enqueue", queue: "r", text: "d", table: [["setting", "value"], ["group", "g"]]),
-        Request(op: "fetch", queue: "r", name: "z", number: 5_000, limit: 1),
+        Request.Fetch(Take(queue: "q", name: "w", lease_ms: 5_000, max: 3, limit: 1)),
+        Request.Fetch(Take(queue: "q", name: "x", lease_ms: 5_000, max: 3, limit: 1)),
+        Request.Ack("w"),
+        Request.Fetch(Take(queue: "q", name: "y", lease_ms: 5_000, max: 3, limit: 1)),
+        Request.Enqueue(Add(queue: "r", text: "d", table: [["setting", "value"], ["group", "g"]])),
+        Request.Fetch(Take(queue: "r", name: "z", lease_ms: 5_000, limit: 1)),
       ]
 
       return Test.eq(

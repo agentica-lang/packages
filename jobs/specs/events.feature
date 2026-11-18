@@ -32,6 +32,33 @@ Feature: The events of jobs
       | jobs.enqueue mail count=0 duplicate_count=1   |
       | jobs.enqueue push count=3 duplicate_count=0   |
 
+  Scenario: A batch that starts with a duplicate is one event for its queue, with the totals of the batch
+    Given a memory backend on a manual clock
+    And I watch the events
+    When I enqueue "a" into "mail" with:
+      | setting    | value |
+      | unique_key | k     |
+    And I read the events
+    And I enqueue the jobs "b,c" into "mail" in one batch, with the unique keys "k,"
+    Then the events are:
+      | event                                       |
+      | jobs.enqueue mail count=1 duplicate_count=1 |
+
+  Scenario: A batch of duplicates is one event for its queue
+    Given a memory backend on a manual clock
+    And I watch the events
+    When I enqueue "a" into "mail" with:
+      | setting    | value |
+      | unique_key | k1    |
+    And I enqueue "b" into "mail" with:
+      | setting    | value |
+      | unique_key | k2    |
+    And I read the events
+    And I enqueue the jobs "c,d" into "mail" in one batch, with the unique keys "k1,k2"
+    Then the events are:
+      | event                                       |
+      | jobs.enqueue mail count=0 duplicate_count=2 |
+
   Scenario: A fetch that leased some jobs counts them, and an empty fetch says nothing
     Given a memory backend on a manual clock
     And I watch the events

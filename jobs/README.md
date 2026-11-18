@@ -7,7 +7,7 @@ A job that was enqueued runs until it is acked or dead (at least once, so handle
 Add it in a project with an `agentica.toml`:
 
 ```sh
-agentica add jobs https://github.com/agentica-lang/packages --tag jobs-0.3.0 --subdir jobs
+agentica add jobs https://github.com/agentica-lang/packages --tag jobs-0.3.1 --subdir jobs
 ```
 
 The docs, with the example and the contract: <https://www.agentica-lang.com/packages/jobs/>.
