@@ -4,6 +4,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+CI runs it on Agentica 0.35.0; the minimum stays 0.32.0.
+
+### Changed
+
+- The specs compare parsed `JSON.Value`s with `==` (which ignores the order of keys in 0.35), and still check that `1` and `1.0` differ. The package code is unchanged.
+
 ## [0.1.0] - 2026-11-18
 
 Needs Agentica 0.32.0.

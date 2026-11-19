@@ -191,15 +191,30 @@ def value_is(ctx: BDD.Context, _args: List[String]) -> BDD.Context = same_value(
 
 def documents_are(ctx: BDD.Context, _args: List[String]) -> BDD.Context = same_value(ctx, BDD.doc_string(ctx))
 
-# The value and the expected JSON compare as canonical text (sorted keys), so `1` is not `1.0`.
+# `==` on JSON values ignores the order of keys and reads `1` as `1.0`, so equal values must also have the same kinds.
 def same_value(ctx: BDD.Context, expected: String) -> BDD.Context
   got = outcome(ctx)
   checked = BDD.assert(ctx, got.parsed, "the parse failed: #{got.message}")
+  wanted = JSON.parse(expected).unwrap!
+  actual = JSON.parse(got.value).unwrap_or(JSON.null())
   BDD.assert(
     checked,
-    got.value == JSON.encode(JSON.parse(expected).unwrap!),
-    "expected #{JSON.encode(JSON.parse(expected).unwrap!)}, got #{got.value}",
+    actual == wanted and same_kinds?(actual, wanted),
+    "expected #{JSON.encode(wanted)}, got #{got.value}",
   )
+end
+
+# For two equal values: the same kind at every place.
+def same_kinds?(actual: JSON.Value, expected: JSON.Value) -> Bool
+  return false if JSON.kind(actual) != JSON.kind(expected)
+
+  case JSON.node(actual)
+    JSON.Node.Array(items) ->
+      others = JSON.list(expected).unwrap!
+      (0...items.size).all?(->(i) { same_kinds?(items[i], others[i]) })
+    JSON.Node.Object(fields) -> fields.keys.all?(->(key) { same_kinds?(fields[key], JSON.get(expected, key).unwrap!) })
+    _ -> true
+  end
 end
 
 def value_has_entries(ctx: BDD.Context, args: List[String]) -> BDD.Context

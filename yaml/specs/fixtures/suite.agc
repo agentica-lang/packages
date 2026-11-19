@@ -136,7 +136,7 @@ def same?(actual: JSON.Value, expected: JSON.Value) -> Bool
     JSON.Node.Int(_), JSON.Node.Float(_) -> JSON.float(actual).unwrap! == JSON.float(expected).unwrap!
     JSON.Node.Array(items) -> same_items?(items, JSON.list(expected).unwrap!)
     JSON.Node.Object(fields) -> same_fields?(fields, expected)
-    _ -> JSON.encode(actual) == JSON.encode(expected)
+    _ -> actual == expected
   end
 end
 
