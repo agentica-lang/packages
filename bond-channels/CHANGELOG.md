@@ -4,6 +4,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+CI runs it on Agentica 0.35.0; the minimum stays 0.31.0.
+
+### Changed
+
+- The object payload of `Channels.broadcast_json` and a notice keeps the key order of the caller (Agentica 0.35.0 no longer sorts the keys of a parsed object); on Agentica 0.34 and older a parsed object still comes out sorted.
+
 ## [0.6.2] - 2026-11-16
 
 Needs Agentica 0.31.0 and Bond 0.14.0; CI runs it on Agentica 0.33.0.

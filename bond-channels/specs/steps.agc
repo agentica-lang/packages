@@ -94,18 +94,19 @@ end
 
 def read_frame(ctx: BDD.Context, frame: String) -> BDD.Context
   case Protocol.decode_command(frame)
-    ok(command) -> BDD.set(ctx, READ, JSON.from(canonical(described(command))))
+    ok(command) -> BDD.set(ctx, READ, JSON.from(JSON.encode(described(command))))
     error(e) -> BDD.set(ctx, IGNORED, JSON.from(e.message))
   end
 end
 
-# Both sides go through `JSON.parse`, which writes the keys in one order, so the order of the Doc String is free.
-def canonical(value: JSON.Value) -> String = JSON.encode(JSON.parse(JSON.encode(value)).unwrap!)
-
 def server_reads(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   expected = JSON.parse(BDD.doc_string(ctx)).unwrap!
   actual = remembered(ctx, READ)
-  BDD.assert(ctx, actual == canonical(expected), "the server read #{actual}, expected #{canonical(expected)}")
+  BDD.assert(
+    ctx,
+    JSON.parse(actual).unwrap! == expected,
+    "the server read #{actual}, expected #{JSON.encode(expected)}",
+  )
 end
 
 def server_ignores(ctx: BDD.Context, args: List[String]) -> BDD.Context
