@@ -307,8 +307,8 @@ end
 
 # Copies the file `from` to `to`, unless `to` has its bytes already; true when it copied. A new `to` is written beside
 # it and renamed into place. An existing one is replaced in one step with `File.replace`, so a program that loads it
-# meanwhile sees the old library or the new one; a library over the 16 MiB of `File.replace` is removed and renamed
-# into place instead, which leaves a moment with no file.
+# meanwhile sees the old library or the new one; a library over the 16 MiB of `File.replace` is renamed over it with
+# `Path.replace`, which keeps that too.
 def copy(from: String, to: String) -> Result[Bool]
   hash = try io(from, File.sha256(from))
   kept = File.sha256(to)
@@ -328,12 +328,8 @@ def copy(from: String, to: String) -> Result[Bool]
 
   part = "#{folder}.#{last_part(to)}.#{System.pid()}.part"
   written = copied(from, part)
-  if written.ok? and File.stat(to).ok?
-    written = io(to, Path.remove(to))
-  end
-
   if written.ok?
-    written = io(to, Path.rename(part, to))
+    written = io(to, Path.replace(part, to))
   end
 
   if !written.ok?

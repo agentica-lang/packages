@@ -470,7 +470,7 @@ def fresh_folder(ctx: BDD.Context) -> Result[Made]
     base = "/tmp"
   end
 
-  folder = try Path.join([base, "native-gen-#{System.pid()}-#{Random.int(0, 1_000_000_000)}"])
+  folder = try Path.join([base, "native-gen-#{System.pid()}-#{Time.now.to_us}"])
   made = Dir.mkdir_private(folder)
   return error("cannot make #{folder}: #{made.message}") if !made.ok?
 
