@@ -3,7 +3,7 @@ Feature: Action Cable frames
   compact JSON, and the identifiers and the commands are the ones that `loadgen cable` of
   basecamp/once-campfire-verification sends (the Rails client sends the same). The keys of the frames that are structs
   are in the order of Rails, which the loadgen and `@rails/actioncable` do not need; the object payload of a message
-  has its keys sorted.
+  keeps the key order of the caller.
 
   Scenario: The server says welcome and pings with the Unix time
     Then the welcome frame is:
@@ -70,7 +70,7 @@ Feature: Action Cable frames
       """
     Then the message is:
       """
-      {"identifier":"{\"channel\":\"UnreadRoomsChannel\"}","message":{"at":1.5,"roomId":1}}
+      {"identifier":"{\"channel\":\"UnreadRoomsChannel\"}","message":{"roomId":1,"at":1.5}}
       """
 
   Scenario: A client subscribes with the identifiers of the loadgen

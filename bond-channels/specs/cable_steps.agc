@@ -273,21 +273,17 @@ def waits(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.assert(ctx, true, "")
 end
 
-def canonical(text: String) -> String = JSON.encode(JSON.parse(text).unwrap!)
-
 # The counters are written by other tasks a moment after the frames that cause them, so it polls.
 def stats_become(ctx: BDD.Context, _args: List[String]) -> BDD.Context
-  expected = canonical(BDD.doc_string(ctx))
+  expected = JSON.parse(BDD.doc_string(ctx)).unwrap!
   actual = ""
   for _try in 1..STATS_TRIES
-    actual = canonical(
-      HTTP.get_response("http://127.0.0.1:#{port_of(ctx)}/stats").unwrap!.body.decode("utf-8").unwrap!,
-    )
+    actual = HTTP.get_response("http://127.0.0.1:#{port_of(ctx)}/stats").unwrap!.body.decode("utf-8").unwrap!
 
-    return BDD.assert(ctx, true, "") if actual == expected
+    return BDD.assert(ctx, true, "") if JSON.parse(actual).unwrap! == expected
 
     Task.sleep(STATS_WAIT_MS)
   end
 
-  BDD.assert(ctx, false, "the stats are #{actual}, expected #{expected}")
+  BDD.assert(ctx, false, "the stats are #{actual}, expected #{JSON.encode(expected)}")
 end

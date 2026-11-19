@@ -61,8 +61,8 @@ end
 ## The JSON text of a payload that is a string (a Turbo Stream), to give to `message` once per broadcast.
 def text_payload(text: String) -> String = JSON.encode(text)
 
-## The JSON text of a payload that is an object (a notice), to give to `message` once per broadcast. A parsed object
-## comes out with its keys sorted, and one made by `JSON.object` or `JSON.from` in no fixed order.
+## The JSON text of a payload that is an object (a notice), to give to `message` once per broadcast. The keys come out
+## in the order of the object.
 def json_payload(value: JSON.Value) -> String = JSON.encode(value)
 
 ## `{"identifier":ID,"message":PAYLOAD}`, where `payload` is the text that `text_payload` or `json_payload` made. The
