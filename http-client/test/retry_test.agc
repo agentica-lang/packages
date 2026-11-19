@@ -1,13 +1,10 @@
 import Exchange from "../src/exchange"
 import HTTP from "std/http"
 import Retry from "../src/retry"
-import UTC from "std/utc"
 
 private
 
 POLICY = Retry.Policy(max_retries: 3, delay_ms: 100, max_delay_ms: 1_000)
-DAYS = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"]
-MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 def answer(status: Int, headers: List[HTTP.Header] = []) -> Result[Exchange.Response]
   ok(Exchange.Response(status: status, headers: headers, body: "".bytes, url: "http://h:80/"))
@@ -19,14 +16,8 @@ def wait(method: String, result: Result[Exchange.Response], tries: Int) -> Optio
   Retry.wait_ms(POLICY, method, result, tries, 0, &whole)
 end
 
-def two(n: Int) -> String = "#{n + 100}".slice(1, 2)
-
-# The IMF-fixdate of a Unix ms, written with std/utc.
-def http_date(ms: Int) -> String
-  p = UTC.parts(ms)
-  day = DAYS[(ms / 86_400_000) % 7]
-  "#{day}, #{two(p.day)} #{MONTHS[p.month - 1]} #{p.year} #{two(p.hour)}:#{two(p.minute)}:#{two(p.second)} GMT"
-end
+# The IMF-fixdate of a Unix ms.
+def http_date(ms: Int) -> String = Time.at_us(ms * 1_000).unwrap!.strftime("%a, %d %b %Y %H:%M:%S GMT")
 
 def test_only_an_idempotent_request_after_a_transient_failure_goes_again() -> Result[Void]
   try Test.eq(wait("GET", answer(503), 0), some(100))
@@ -58,6 +49,7 @@ def test_an_http_date_reads_back_as_the_time_it_was_written_from() -> Result[Voi
     try Test.eq("#{http_date(ms)} #{Retry.http_date_ms(http_date(ms))}", "#{http_date(ms)} #{some(ms)}")
   end
 
+  try Test.eq(http_date(784_111_777_000), "Sun, 06 Nov 1994 08:49:37 GMT")
   try Test.eq(Retry.http_date_ms("Sun, 06 Nov 1994 08:49:37 GMT"), some(784_111_777_000))
   try Test.eq(Retry.http_date_ms("Sunday, 06-Nov-94 08:49:37 GMT"), none)
   try Test.eq(Retry.http_date_ms("Sun, 06 Nov 99999999999999 08:49:37 GMT"), none)
