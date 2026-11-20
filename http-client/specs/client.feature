@@ -288,6 +288,19 @@ Feature: Requests and the pool of connections
     Then "r" fails with the kind "http_client.timeout.read"
     And "r" ended within 1000 ms
 
+  Scenario: A body with no idle limit may stall past read_timeout_ms and still come
+    Given the raw peer "a" listens with the script:
+      """
+      stall 1200 firstlater
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | read_timeout_ms | 200   |
+      | body_idle_ms    | 0     |
+      | timeout_ms      | 5000  |
+    When "r" sends "GET" to "/stall"
+    Then "r" has the body "firstlater"
+
   Scenario: timeout_ms bounds the whole request
     Given the raw peer "a" listens with the script:
       """

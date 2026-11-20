@@ -312,7 +312,7 @@ def get_events(
   streamed = try stream(client, "GET", url, params: params, headers: merge([EVENT_STREAM], headers))
   type = HTTP.header_values(streamed.headers, "content-type").join(",")
   if streamed.status < 200 or streamed.status > 299 or not type.downcase.strip.start_with?("text/event-stream")
-    streamed.body.close
+    cancel(streamed)
     return Exchange.failure("the response is #{streamed.status} #{type.inspect}, not an event stream", "events")
   end
 
@@ -581,10 +581,11 @@ def responded(result: Result[Got]) -> Result[Exchange.Response]
   end
 end
 
-# A stream that is not given to the caller is closed, which ends its request.
+# A stream that is not given to the caller is cancelled, which ends its request and gives its connection up rather than
+# leaving it to the next read: the response is thrown away anyway.
 def dropped(result: Result[Got]) -> Void
   case result
-    ok(got) if got.stream.some? -> got.stream.unwrap!.body.close
+    ok(got) if got.stream.some? -> cancel(got.stream.unwrap!)
     _ -> nil
   end
 end

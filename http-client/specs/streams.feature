@@ -150,6 +150,22 @@ Feature: Streamed bodies and server-sent events
     Then "n" fails with the kind "http_client.events"
     And "t" fails with the kind "http_client.events"
 
+  Scenario: get_events refuses a response not of the event type, and gives its connection up at once
+    Given the raw peer "a" listens with the script:
+      """
+      stall 5000 firstlater
+      ok after
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | pool_size       | 1     |
+      | pool_timeout_ms | 3000  |
+    When "n" reads the events of "/events"
+    And "r" sends "GET" to "/r"
+    Then "n" fails with the kind "http_client.events"
+    And "r" has the body "after"
+    And "r" came on connection 2
+
   Scenario: A redirect is followed before the stream
     Given the server "a" listens
     And a client of "a" with:
@@ -187,6 +203,18 @@ Feature: Streamed bodies and server-sent events
     Then "s" fails with the kind "http_client.timeout.read"
     And "r" has the body "after"
     And "r" came on connection 2
+
+  Scenario: A stream with no body idle limit waits past read_timeout_ms for its pieces
+    Given the raw peer "a" listens with the script:
+      """
+      chunks 1000 one,two
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | read_timeout_ms | 200   |
+      | body_idle_ms    | 0     |
+    When "s" streams "GET" from "/s"
+    Then "s" has the body "onetwo"
 
   Scenario: A head of a stream that comes past body_idle_ms still comes, since the head has its own budget
     Given the raw peer "a" listens with the script:
