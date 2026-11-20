@@ -6,6 +6,8 @@
 ## connection; the copy shares the socket and the state. The call that sends the request also reads the response head,
 ## so the client's `read_timeout_ms` covers the send too, and its `body_idle_ms` goes in the copy of each body read.
 
+import H2 from "http2/connection"
+import {Protocol} from "protocol"
 import HTTP from "std/http"
 import Link from "link"
 import {Held} from "link"
@@ -70,6 +72,7 @@ end
 ## connection is closed before it writes a byte, the request goes once more on a new connection. A request that was
 ## never written leaves the connection in the link; any other failure ends it.
 def run(link: Link.Link, call: Call) -> Result[Response]
+  return run_h2(link, call) if link.protocol == Protocol.Http2
   case Link.take(link)
     some(held) ->
       tried = attempt(link, held, call)
@@ -130,6 +133,22 @@ end
 struct Wait
   ms: Int
   kind: String
+end
+
+def run_h2(link: Link.Link, call: Call) -> Result[Response]
+  request = H2.Request(
+    method: call.method,
+    target: call.target,
+    headers: call.headers,
+    body: call.body,
+    read_timeout_ms: call.read_timeout_ms,
+    body_idle_ms: call.body_idle_ms,
+    deadline: call.deadline,
+    max_body_bytes: call.max_body_bytes,
+  )
+
+  response = try Link.submit(link, request, call.connect_timeout_ms)
+  ok(Response(status: response.status, headers: response.headers, body: response.body, url: Url.to_s(call.target)))
 end
 
 def fresh(link: Link.Link, call: Call) -> Result[Response]

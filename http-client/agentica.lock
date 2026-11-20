@@ -1,6 +1,14 @@
 version = 1
 
 [[package]]
+name = "hpack"
+git = "https://github.com/agentica-lang/packages"
+subdir = "hpack"
+tag = "hpack-0.1.0"
+commit = "eb28472b4578a0554428e1e925492cc35f615dd0"
+hash = "sha256:af0102fa1d841dfd14718875a734f2519fc213debeb9ce168ec74279b6bdb653"
+
+[[package]]
 name = "pool"
 git = "https://github.com/agentica-lang/packages"
 subdir = "pool"

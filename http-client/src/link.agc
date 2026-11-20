@@ -8,6 +8,8 @@
 ## that gets an empty slot asks its link task to connect.
 
 import Dial from "dial"
+import H2 from "http2/connection"
+import {Protocol} from "protocol"
 import HTTP from "std/http"
 import Pool from "pkg/pool/pool"
 
@@ -16,6 +18,7 @@ struct Origin
   url: String
   options: HTTP.ClientOptions
   dialer: Dial.Dialer
+  protocol: Protocol = Protocol.Http1
 end
 
 ## A connection that a request borrows, and when it expires (monotonic ms, 0 for never), from the
@@ -30,6 +33,7 @@ end
 struct Link
   inbox: Channel[Order]
   task: Task[Result[Void]]
+  protocol: Protocol = Protocol.Http1
 end
 
 ## An order for the task of a link, from the request that has the link leased or from the pool's keeper.
@@ -39,6 +43,8 @@ enum Order
   Park(Held)
   Release
   Check
+  Submit(H2.Submission)
+  Readable
 end
 
 ## A connect to the link's origin, answered on `reply`. `wait_ms` bounds the connect.
@@ -108,6 +114,19 @@ def guard(inbox: Channel[Order], body: Fn[Result[Void]]) -> Result[Void]
   ran
 end
 
+def submit(link: Link, request: H2.Request, connect_timeout_ms: Int) -> Result[H2.Response]
+  reply: Channel[Result[H2.Response]] = Channel.new(1)
+  left = request.deadline - Time.monotonic_ms()
+  return error("http_client: the request timed out", kind: "http_client.timeout") if left < 1
+  submission = H2.Submission(request: request, connect_timeout_ms: connect_timeout_ms, reply: reply)
+  try link.inbox.send(Order.Submit(submission), left)
+  wait = [request.deadline - Time.monotonic_ms(), 0].max.unwrap!
+  case reply.recv(wait)
+    ok(result) -> result
+    error(_) -> error("http_client: the request timed out", kind: "http_client.timeout")
+  end
+end
+
 private
 
 ORDER_MS = 5_000
@@ -135,7 +154,7 @@ end
 def make(origin: Origin) -> Result[Link]
   inbox: Channel[Order] = Channel.new(8)
   task = Task.spawn do guard(inbox, -> { run(origin, inbox) }) end
-  ok(Link(inbox: inbox, task: task))
+  ok(Link(inbox: inbox, task: task, protocol: origin.protocol))
 end
 
 # A request that timed out or crashed may have left the connection anywhere, and a link whose task ended serves
@@ -178,6 +197,7 @@ def stop(link: Link) -> Void
 end
 
 def run(origin: Origin, inbox: Channel[Order]) -> Result[Void]
+  return run_h2(origin, inbox) if origin.protocol == Protocol.Http2
   slot = Slot(idle: none, busy: none)
   open = true
   while open
@@ -213,6 +233,7 @@ def obey(origin: Origin, slot: Slot, order: Order) -> Slot
       drop_all(slot)
       Slot(idle: none, busy: none)
     Order.Check -> slot.with(idle: checked(slot.idle))
+    Order.Submit(_), Order.Readable -> slot
   end
 end
 
@@ -286,4 +307,137 @@ def drop_all(slot: Slot) -> Void
     some(held) -> HTTP.finish(held.conn)
     none -> nil
   end
+end
+
+def run_h2(origin: Origin, inbox: Channel[Order]) -> Result[Void]
+  session: Optional[H2.Session] = none
+  while not inbox.closed?
+    case inbox.recv(NAP_MS)
+      ok(Order.Submit(submission)) -> session = execute_h2(origin, ready_h2(session), submission, inbox)
+      ok(_) -> session = ready_h2(session)
+      error(e) if e.is_a?("channel.closed") -> break
+      error(_) -> nil
+    end
+  end
+
+  case session
+    some(held) -> close_h2(held)
+    none -> nil
+  end
+
+  ok()
+end
+
+def ready_h2(session: Optional[H2.Session]) -> Optional[H2.Session]
+  case session
+    none -> none
+    some(held) ->
+      case H2.idle(held)
+        ok(updated) if H2.reusable?(updated) -> some(updated)
+        _ ->
+          close_h2(held)
+          none
+      end
+  end
+end
+
+def close_h2(session: H2.Session) -> Void
+  session.incoming.close
+  TCP.close(session.socket)
+end
+
+def read_h2(socket: TCP.Socket, incoming: Channel[Bytes], inbox: Channel[Order]) -> Void
+  while not incoming.closed?
+    case TCP.recv_bytes(socket, 16_384)
+      ok(bytes) if not bytes.empty? ->
+        break if not incoming.send(bytes, NAP_MS).ok?
+        _ = inbox.send(Order.Readable, 0)
+      _ -> break
+    end
+  end
+
+  incoming.close
+  _ = inbox.send(Order.Readable, 0)
+end
+
+def execute_h2(
+  origin: Origin,
+  session: Optional[H2.Session],
+  submission: H2.Submission,
+  inbox: Channel[Order],
+) -> Optional[H2.Session]
+  if submission.request.body.size > origin.options.max_body_bytes
+    _ = submission.reply.send(
+      error("http_client: HTTP/2 request body exceeds its limit", kind: "http_client.argument"),
+      0,
+    )
+
+    return session
+  end
+
+  connected = case session
+    some(held) -> ok(held)
+    none -> open_h2(origin, submission, inbox)
+  end
+
+  case connected
+    error(e) ->
+      _ = submission.reply.send(error(e), 0)
+      none
+    ok(held) ->
+      case H2.request(held, submission.request)
+        ok(answer) ->
+          _ = submission.reply.send(ok(answer.response), 0)
+          return some(answer.session) if H2.reusable?(answer.session)
+          close_h2(held)
+          none
+        error(e) ->
+          _ = submission.reply.send(h2_failure(e), 0)
+          close_h2(held)
+          none
+      end
+  end
+end
+
+def open_h2(origin: Origin, submission: H2.Submission, inbox: Channel[Order]) -> Result[H2.Session]
+  wait = [submission.connect_timeout_ms, submission.request.deadline - Time.monotonic_ms()].min.unwrap!
+  return error("http_client: the request timed out", kind: "http_client.timeout") if wait < 1
+  deadline = Time.monotonic_ms() + wait
+  case Dial.open_h2(origin.dialer, origin.url, origin.options, wait)
+    ok(socket) ->
+      incoming: Channel[Bytes] = Channel.new(2)
+      _ = Task.spawn do read_h2(socket, incoming, inbox) end
+      opened = H2.start(socket, incoming, deadline)
+      case opened
+        ok(_) -> opened
+        error(e) ->
+          incoming.close
+          TCP.close(socket)
+          h2_connect_failure(e)
+      end
+
+    error(e) -> h2_connect_failure(e)
+  end
+end
+
+def h2_connect_failure(e: Error) -> Result[H2.Session]
+  return error(e) if e.is_a?("http_client")
+  if e.is_a?("net.timeout")
+    return error("http_client: HTTP/2 connect timed out", kind: "http_client.timeout.connect", cause: e)
+  end
+
+  error("http_client: HTTP/2 connect failed: #{e.message}", kind: "http_client.network", cause: e)
+end
+
+def h2_failure(e: Error) -> Result[H2.Response]
+  return error(e) if e.is_a?("http_client")
+  if e.is_a?("net.timeout")
+    return error("http_client: HTTP/2 read timed out", kind: "http_client.timeout.read", cause: e)
+  end
+
+  if e.is_a?("hpack")
+    return error("http_client: HTTP/2 header decoding failed", kind: "http_client.http2.compression", cause: e)
+  end
+
+  error("http_client: HTTP/2 exchange failed: #{e.message}", kind: "http_client.network", cause: e)
 end

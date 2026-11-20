@@ -16,6 +16,7 @@ import Exchange from "src/exchange"
 import HTTP from "std/http"
 import Pool from "pkg/pool/pool"
 import Pools from "src/pools"
+import ProtocolTypes from "src/protocol"
 import Redirect from "src/redirect"
 import {Hop} from "src/redirect"
 import Retry from "src/retry"
@@ -24,6 +25,7 @@ import URI from "std/uri"
 import Url from "src/url"
 
 export Exchange.Response
+export ProtocolTypes.Protocol
 export Sse.Event
 
 ## A request as the request steps see it: the method, the whole URL with its query, the headers and the body.
@@ -79,6 +81,7 @@ struct Client
 
   pools: Pools.Pools
   proxied: Bool
+  protocol: ProtocolTypes.Protocol
 end
 
 ## Makes a client. `base_url` is joined to the URL of a request that is a path (`/todos`); the pool settings are
@@ -123,6 +126,7 @@ def new(
   public_only: Bool = false,
   proxy: String = "",
   tls: Optional[TLS.Context] = none,
+  protocol: ProtocolTypes.Protocol = ProtocolTypes.Protocol.Http1,
 ) -> Result[Client]
   if pool_timeout_ms < 1 or idle_ms < 1 or pool_timeout_ms > MAX_MS or idle_ms > MAX_MS
     return argument("pool_timeout_ms and idle_ms must be 1 to #{MAX_MS}")
@@ -133,6 +137,8 @@ def new(
   if not proxy.empty? and (resolver.some? or public_only)
     return argument("a proxy resolves the host itself: give no resolver and no public_only with it")
   end
+
+  return argument("HTTP/2 proxy is not supported") if protocol == ProtocolTypes.Protocol.Http2 and not proxy.empty?
 
   cache: ATS[String, Dial.Resolved] = ATS.new()
   dialer = Dial.Dialer(
@@ -150,6 +156,7 @@ def new(
     health_ms: [idle_ms, HEALTH_MS].min.unwrap!,
     options: HTTP.ClientOptions(max_body_bytes: MAX_REQUEST_BODY, proxy: proxy, tls: tls),
     dialer: dialer,
+    protocol: protocol,
   )
 
   client = Client(
@@ -170,6 +177,7 @@ def new(
     response_steps: response_steps,
     pools: Pools.start(settings),
     proxied: not proxy.empty?,
+    protocol: protocol,
   )
 
   case valid(client)
@@ -226,6 +234,7 @@ def stream(
   params: List[URI.Pair] = [],
   headers: List[HTTP.Header] = [],
 ) -> Result[Stream]
+  return argument("HTTP/2 streaming is not supported") if client.protocol == ProtocolTypes.Protocol.Http2
   first = try prepared(client, method, url, body, json, params, headers, false)
   got = try sent(client, first, true)
   case got.stream

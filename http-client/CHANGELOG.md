@@ -4,6 +4,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Add opt-in HTTP/2 for buffered requests, with HPACK, TLS ALPN, connection reuse and flow control. Needs Agentica 0.35.0.
+
 ## [0.2.0] - 2026-11-20
 
 Needs Agentica 0.34.0; CI runs it on Agentica 0.35.0.
