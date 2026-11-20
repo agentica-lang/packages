@@ -10,14 +10,14 @@ description: An HTTP client with a pool of keep-alive connections per origin, an
 Needs Agentica 0.34.0, which has the per-call timeouts and `connect_to` of std/http. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
-agentica add http-client https://github.com/agentica-lang/packages --tag http-client-0.1.0 --subdir http-client
+agentica add http-client agentica-lang/packages --tag http-client-0.2.0 --subdir http-client
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock` (with the `pool` package that it needs):
 
 ```toml
 [dependencies]
-http-client = { git = "https://github.com/agentica-lang/packages", tag = "http-client-0.1.0", subdir = "http-client" }
+http-client = { git = "https://github.com/agentica-lang/packages", tag = "http-client-0.2.0", subdir = "http-client" }
 ```
 
 ## Example
