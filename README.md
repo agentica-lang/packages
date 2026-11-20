@@ -3,7 +3,7 @@
 Small Agentica packages, one folder each. A folder is a package with its own `agentica.toml`; add one with its prefixed tag and its folder as `--subdir`, in a project with an `agentica.toml`:
 
 ```sh
-agentica add prop https://github.com/agentica-lang/packages --tag prop-0.4.2 --subdir prop
+agentica add prop agentica-lang/packages --tag prop-0.4.2 --subdir prop
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
