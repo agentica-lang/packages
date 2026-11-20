@@ -1,6 +1,7 @@
 import BDD from "std/bdd"
 import H2Peer from "fixtures/h2_peer"
 import HttpClient from "../http_client"
+import HTTP from "std/http"
 
 def flow(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, flow_check())
 
@@ -15,6 +16,8 @@ end
 def startup(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, startup_check())
 
 def alternate(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, alternate_check())
+
+def early(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, early_check())
 
 private
 
@@ -54,6 +57,12 @@ def sequence(client: HttpClient.Client, pinged: Channel[Bool]) -> Result[Void]
   end
 
   _ = try pinged.recv(5_000)
+  invalid = HttpClient.get(client, "/invalid", headers: [HTTP.Header(name: "x-test", value: " untrimmed")])
+  case invalid
+    error(e) if e.is_a?("argument") -> nil
+    _ -> return error("expected argument error before sending the request")
+  end
+
   second = try HttpClient.post(client, "/second", body: some(("u" * 70_000).bytes))
   if (
     second.status != 200 or
@@ -168,4 +177,26 @@ def alternate_check() -> Result[Void]
   result = tls_request(port, ["h2", "http/1.1"], true, ["127.0.0.2", "127.0.0.1"])
   first_result = await_peer(alternate, first_peer, result)
   await_peer(listener, second_peer, first_result)
+end
+
+def early_check() -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  peer = Task.spawn do H2Peer.early_post(listener) end
+  result = early_request(TCP.local_port(listener))
+  await_peer(listener, peer, result)
+end
+
+def early_request(port: Int) -> Result[Void]
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{port}",
+    protocol: HttpClient.Protocol.Http2,
+    max_retries: 0,
+  )
+
+  result = HttpClient.post(client, "/early", body: some("upload".bytes))
+  HttpClient.close(client, 0)
+  response = try result
+  return error("incomplete early response") if response.status != 413 or response.body != ("r" * 32_768).bytes
+
+  ok()
 end

@@ -13,6 +13,7 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
+    BDD.step("an unsent HTTP/2 POST reconnects and returns the early response", &H2Steps.early),
     BDD.step("HTTP/2 startup rejects invalid settings and respects an adjacent GOAWAY", &H2Steps.startup),
     BDD.step("the HTTP/2 client finds h2 on the second resolved address", &H2Steps.alternate),
     BDD.step("an HTTP/2 client reuses the socket and obeys flow control", &H2Steps.flow),

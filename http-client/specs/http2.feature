@@ -11,3 +11,6 @@ Feature: HTTP/2 requests
 
   Scenario: Resolver addresses are tried after an ALPN mismatch
     Then the HTTP/2 client finds h2 on the second resolved address
+
+  Scenario: An unsent POST uses a fresh connection and returns an early final response
+    Then an unsent HTTP/2 POST reconnects and returns the early response

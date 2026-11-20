@@ -34,6 +34,7 @@ struct Session
   stream_limit: Int = 1
   last_stream: Int = 0x7fffffff
   draining: Bool = false
+  control_pending: Bool = false
 end
 
 struct Answer
@@ -60,36 +61,29 @@ end
 
 def reusable?(session: Session) -> Bool = not session.draining and session.next_stream <= Frame.MAX_WINDOW
 
-def idle(session: Session) -> Result[Session]
+def idle(session: Session, deadline: Int, frame_budget: Int = 32) -> Result[Session]
   active = session
-  while reusable?(active)
+  processed = 0
+  while reusable?(active) and processed < frame_budget
+    _ = try remaining(deadline)
     case try Frame.parse(active.buffer)
       some(parsed) ->
-        active = try idle_control(active.with(buffer: parsed.rest), parsed.frame, Time.monotonic_ms() + 1_000)
+        active = try idle_control(active.with(buffer: parsed.rest), parsed.frame, deadline)
+        processed = processed + 1
       none ->
         case active.incoming.recv(0)
           ok(bytes) -> active = active.with(buffer: active.buffer + bytes)
           error(e) if e.is_a?("channel.closed") -> return closed()
-          error(_) -> return ok(active)
+          error(_) -> return ok(active.with(control_pending: false))
         end
     end
   end
 
-  ok(active)
+  ok(active.with(control_pending: reusable?(active)))
 end
 
-def request(session: Session, req: Request) -> Result[Answer]
-  return closed() if not reusable?(session)
-  head_deadline = [req.deadline, Time.monotonic_ms() + req.read_timeout_ms].min.unwrap!
-  active = try idle(session)
-  return closed() if not reusable?(active)
-  while active.stream_limit == 0
-    read = try read_frame(active, head_deadline)
-    active = try idle_control(read.session, read.frame, head_deadline)
-    return closed() if not reusable?(active)
-  end
-
-  block = try Headers.encode(req.method, req.target, req.headers, req.body.size)
+def request(session: Session, req: Request, block: Bytes, head_deadline: Int) -> Result[Answer]
+  active = try ready_to_send(session, head_deadline)
   id = active.next_stream
   try send_headers(active, id, block, req.body.empty?, head_deadline)
   stream = Stream(id: id, send_credit: active.initial_window)
@@ -129,6 +123,34 @@ struct Progress
   stream: Stream
 end
 
+def ready_to_send(session: Session, deadline: Int) -> Result[Session]
+  active = session
+  while true
+    case idle(active, deadline)
+      ok(next_session) -> active = next_session
+      error(e) if e.is_a?("net.closed") -> return unsent()
+      error(e) -> return error(e)
+    end
+
+    return unsent() if not reusable?(active)
+    next if active.control_pending
+    return ok(active) if active.stream_limit > 0
+    waiting = read_control(active, deadline)
+    case waiting
+      ok(updated) -> active = updated
+      error(e) if e.is_a?("net.closed") -> return unsent()
+      error(e) -> return error(e)
+    end
+  end
+
+  unsent()
+end
+
+def read_control(session: Session, deadline: Int) -> Result[Session]
+  read = try read_frame(session, deadline)
+  idle_control(read.session, read.frame, deadline)
+end
+
 def exchange(session: Session, stream: Stream, req: Request, head_deadline: Int) -> Result[Answer]
   state = Progress(session: session, stream: stream)
   body_deadline = req.deadline
@@ -159,12 +181,16 @@ def exchange(session: Session, stream: Stream, req: Request, head_deadline: Int)
   end
 
   finished = state.stream
-  if finished.sent < req.body.size
-    try send(state.session, 3, 0, finished.id, Frame.word(8), req.deadline)
+  session_after_response = state.session
+  if finished.sent < req.body.size and reusable?(session_after_response)
+    reset = send(session_after_response, 3, 0, finished.id, Frame.word(8), cleanup_deadline(req.deadline))
+    if not reset.ok?
+      session_after_response = session_after_response.with(draining: true)
+    end
   end
 
   response = Response(status: finished.status, headers: finished.fields, body: Bytes.concat(finished.parts))
-  ok(Answer(response: response, session: state.session))
+  ok(Answer(response: response, session: session_after_response))
 end
 
 def read_available(session: Session, deadline: Int) -> Result[Session]
@@ -327,7 +353,10 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
   end
 
   try check_length(next_stream, req.method)
-  if connection_credit <= REFILL
+  if connection_credit <= REFILL and ended
+    c = refill_after_response(c, connection_credit, deadline)
+    connection_credit = c.receive_credit
+  elsif connection_credit <= REFILL
     try send(c, 8, 0, 0, Frame.word(WINDOW - connection_credit), deadline)
     connection_credit = WINDOW
   end
@@ -344,6 +373,17 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
     ),
   )
 end
+
+def refill_after_response(session: Session, credit: Int, deadline: Int) -> Session
+  if reusable?(session)
+    sent = send(session, 8, 0, 0, Frame.word(WINDOW - credit), cleanup_deadline(deadline))
+    return session.with(receive_credit: WINDOW) if sent.ok?
+  end
+
+  session.with(receive_credit: credit, draining: true)
+end
+
+def cleanup_deadline(deadline: Int) -> Int = [deadline, Time.monotonic_ms() + 10].min.unwrap!
 
 def header_fragment(state: Progress, frame: Frame.Frame, method: String) -> Result[Progress]
   s = state.stream
@@ -473,3 +513,5 @@ end
 def flag?(frame: Frame.Frame, flag: Int) -> Bool = frame.flags.bit_and(flag) != 0
 
 def closed[T]() -> Result[T] = error("http_client: the HTTP/2 session is closed", kind: "net.closed")
+
+def unsent[T]() -> Result[T] = error("HTTP/2 session closed before request headers", kind: "http2.unsent")

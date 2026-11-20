@@ -132,4 +132,4 @@ def decimal(value: String) -> Result[Int]
   end
 end
 
-def argument[T](message: String) -> Result[T] = error("http_client: #{message}", kind: "http_client.argument")
+def argument[T](message: String) -> Result[T] = error("http_client: #{message}", kind: "argument")

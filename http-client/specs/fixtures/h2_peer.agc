@@ -45,6 +45,30 @@ def serve_tls(listener: TCP.Listener, h2: Bool) -> Result[Void]
 end
 
 def refuse_start(listener: TCP.Listener, settings: Bytes, after_settings: Bytes) -> Result[Void]
+  try refuse_socket(listener, settings, after_settings)
+  return ok() if after_settings.empty?
+  refuse_socket(listener, settings, after_settings)
+end
+
+def early_post(listener: TCP.Listener) -> Result[Void]
+  goaway = Frame.encode(7, 0, 0, Frame.word(0) + Frame.word(0))
+  try refuse_socket(listener, hex("000300000000"), goaway)
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, hex("000400000000"))
+  headers = try read_headers(socket, 1)
+  try expect_request(headers, "POST", "/early")
+  body = ("r" * 16_384).bytes
+  wire = Frame.encode(1, 4, 1, hex("0803343133")) + Frame.encode(0, 0, 1, body) + Frame.encode(0, 1, 1, body)
+  try TCP.send_bytes(socket, wire, WAIT)
+  TCP.close(socket)
+  ok()
+end
+
+private
+
+WAIT = 5_000
+
+def refuse_socket(listener: TCP.Listener, settings: Bytes, after_settings: Bytes) -> Result[Void]
   socket = try TCP.accept(listener, WAIT)
   _ = try exact(socket, 24)
   _ = try read(socket)
@@ -61,10 +85,6 @@ def refuse_start(listener: TCP.Listener, settings: Bytes, after_settings: Bytes)
     ok(_) -> error("client opened a stream after startup refusal")
   end
 end
-
-private
-
-WAIT = 5_000
 
 def handshake(socket: TCP.Socket, settings: Bytes) -> Result[Void]
   preface = try exact(socket, 24)

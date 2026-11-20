@@ -9,6 +9,7 @@
 
 import Dial from "dial"
 import H2 from "http2/connection"
+import H2Headers from "http2/headers"
 import {Protocol} from "protocol"
 import HTTP from "std/http"
 import Pool from "pkg/pool/pool"
@@ -313,8 +314,8 @@ def run_h2(origin: Origin, inbox: Channel[Order]) -> Result[Void]
   session: Optional[H2.Session] = none
   while not inbox.closed?
     case inbox.recv(NAP_MS)
-      ok(Order.Submit(submission)) -> session = execute_h2(origin, ready_h2(session), submission, inbox)
-      ok(_) -> session = ready_h2(session)
+      ok(Order.Submit(submission)) -> session = execute_h2(origin, session, submission, inbox)
+      ok(_) -> session = ready_h2(session, inbox)
       error(e) if e.is_a?("channel.closed") -> break
       error(_) -> nil
     end
@@ -328,12 +329,17 @@ def run_h2(origin: Origin, inbox: Channel[Order]) -> Result[Void]
   ok()
 end
 
-def ready_h2(session: Optional[H2.Session]) -> Optional[H2.Session]
+def ready_h2(session: Optional[H2.Session], inbox: Channel[Order]) -> Optional[H2.Session]
   case session
     none -> none
     some(held) ->
-      case H2.idle(held)
-        ok(updated) if H2.reusable?(updated) -> some(updated)
+      case H2.idle(held, Time.monotonic_ms() + 1_000)
+        ok(updated) if H2.reusable?(updated) ->
+          if updated.control_pending
+            _ = inbox.send(Order.Readable, 0)
+          end
+
+          some(updated)
         _ ->
           close_h2(held)
           none
@@ -367,40 +373,68 @@ def execute_h2(
   inbox: Channel[Order],
 ) -> Optional[H2.Session]
   if submission.request.body.size > origin.options.max_body_bytes
-    _ = submission.reply.send(
-      error("http_client: HTTP/2 request body exceeds its limit", kind: "http_client.argument"),
-      0,
-    )
+    _ = submission.reply.send(error("http_client: HTTP/2 request body exceeds its limit", kind: "argument"), 0)
 
     return session
   end
 
-  connected = case session
-    some(held) -> ok(held)
-    none -> open_h2(origin, submission, inbox)
-  end
-
-  case connected
+  request = submission.request
+  case H2Headers.encode(request.method, request.target, request.headers, request.body.size)
+    ok(block) -> exchange_h2(origin, session, submission, inbox, block)
     error(e) ->
       _ = submission.reply.send(error(e), 0)
-      none
-    ok(held) ->
-      case H2.request(held, submission.request)
-        ok(answer) ->
-          _ = submission.reply.send(ok(answer.response), 0)
-          return some(answer.session) if H2.reusable?(answer.session)
-          close_h2(held)
-          none
-        error(e) ->
-          _ = submission.reply.send(h2_failure(e), 0)
-          close_h2(held)
-          none
-      end
+      session
   end
 end
 
-def open_h2(origin: Origin, submission: H2.Submission, inbox: Channel[Order]) -> Result[H2.Session]
-  wait = [submission.connect_timeout_ms, submission.request.deadline - Time.monotonic_ms()].min.unwrap!
+def exchange_h2(
+  origin: Origin,
+  session: Optional[H2.Session],
+  submission: H2.Submission,
+  inbox: Channel[Order],
+  block: Bytes,
+) -> Optional[H2.Session]
+  request = submission.request
+  head_deadline = request.deadline
+  held = session
+  for attempt in 0..1
+    connected = case held
+      some(existing) -> ok(existing)
+      none -> open_h2(origin, submission, inbox, head_deadline)
+    end
+
+    case connected
+      error(e) ->
+        _ = submission.reply.send(error(e), 0)
+        return none
+      ok(active) ->
+        if attempt == 0
+          head_deadline = [request.deadline, Time.monotonic_ms() + request.read_timeout_ms].min.unwrap!
+        end
+
+        case H2.request(active, request, block, head_deadline)
+          ok(answer) ->
+            _ = submission.reply.send(ok(answer.response), 0)
+            return some(answer.session) if H2.reusable?(answer.session)
+            close_h2(active)
+            return none
+          error(e) ->
+            close_h2(active)
+            if attempt == 1 or not e.is_a?("http2.unsent")
+              _ = submission.reply.send(h2_failure(e), 0)
+              return none
+            end
+
+            held = none
+        end
+    end
+  end
+
+  none
+end
+
+def open_h2(origin: Origin, submission: H2.Submission, inbox: Channel[Order], deadline_ms: Int) -> Result[H2.Session]
+  wait = [submission.connect_timeout_ms, deadline_ms - Time.monotonic_ms()].min.unwrap!
   return error("http_client: the request timed out", kind: "http_client.timeout") if wait < 1
   deadline = Time.monotonic_ms() + wait
   case Dial.open_h2(origin.dialer, origin.url, origin.options, wait)
