@@ -1,6 +1,6 @@
 ---
 title: http-client
-description: An HTTP client with a pool of keep-alive connections per origin, and timeouts for the connect, each read, the whole request and the wait for a connection.
+description: An HTTP client with a pool of keep-alive connections per origin, and timeouts for the connect, the response head, the idle body, the whole request and the wait for a connection.
 ---
 
 `http-client` sends HTTP/1.1 requests from an Agentica program, in the spirit of Elixir's Req. You make a `Client` once, and each request goes through a pool of keep-alive connections for its origin (scheme, host and port), made with the [pool](https://www.agentica-lang.com/packages/pool/) package. It is built on the `HTTP.start`, `send_request` and `read_body` calls of `std/http`.
@@ -55,7 +55,7 @@ end
 ## API
 
 ```signature
-HttpClient.new(base_url: String = "", headers: List[HTTP.Header] = [], params: List[URI.Pair] = [], connect_timeout_ms: Int = 10000, read_timeout_ms: Int = 30000, timeout_ms: Int = 60000, max_body_bytes: Int = 16777216, max_retries: Int = 3, retry_delay_ms: Int = 500, max_retry_delay_ms: Int = 30000, max_redirects: Int = 10, decompress: Bool = true, request_steps: List[Fn[Request, Result[Request]]] = [], response_steps: List[Fn[Response, Result[Response]]] = [], pool_size: Int = 10, pool_timeout_ms: Int = 5000, idle_ms: Int = 30000, resolver: Optional[Fn[String, Result[List[String]]]] = none, dns_cache_ms: Int = 10000, public_only: Bool = false, proxy: String = "", tls: Optional[TLS.Context] = none) -> Result[Client]
+HttpClient.new(base_url: String = "", headers: List[HTTP.Header] = [], params: List[URI.Pair] = [], connect_timeout_ms: Int = 10000, read_timeout_ms: Int = 30000, body_idle_ms: Optional[Int] = none, timeout_ms: Int = 60000, max_body_bytes: Int = 16777216, max_retries: Int = 3, retry_delay_ms: Int = 500, max_retry_delay_ms: Int = 30000, max_redirects: Int = 10, decompress: Bool = true, request_steps: List[Fn[Request, Result[Request]]] = [], response_steps: List[Fn[Response, Result[Response]]] = [], pool_size: Int = 10, pool_timeout_ms: Int = 5000, idle_ms: Int = 30000, resolver: Optional[Fn[String, Result[List[String]]]] = none, dns_cache_ms: Int = 10000, public_only: Bool = false, proxy: String = "", tls: Optional[TLS.Context] = none) -> Result[Client]
 HttpClient.request(client: Client, method: String, url: String, body: Optional[Bytes] = none, json: Optional[JSON.Value] = none, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
 HttpClient.get(client: Client, url: String, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
 HttpClient.head(client: Client, url: String, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
@@ -67,6 +67,7 @@ HttpClient.decode(response: Response, codec: Codec[T]) -> Result[T]
 HttpClient.basic_auth(user: String, password: String) -> Result[HTTP.Header]
 HttpClient.bearer_auth(token: String) -> HTTP.Header
 HttpClient.stream(client: Client, method: String, url: String, body: Optional[Bytes] = none, json: Optional[JSON.Value] = none, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Stream]
+HttpClient.cancel(stream: Stream) -> Void
 HttpClient.events(stream: Stream, max_event_bytes: Int = 1048576) -> Channel[Result[Event]]
 HttpClient.get_events(client: Client, url: String, params: List[URI.Pair] = [], headers: List[HTTP.Header] = [], max_event_bytes: Int = 1048576) -> Result[Channel[Result[Event]]]
 HttpClient.close(client: Client, drain_ms: Int = 5000) -> Void
@@ -136,8 +137,9 @@ With `decompress` (the default) a request asks for `accept-encoding: gzip, defla
 
 `stream` sends a request as `request` does, and gives a `Stream` once the head of the response has come: `status`, `headers`, `url`, and `body`, a channel that gives `ok(piece)` for each piece of the body as the server sends it, then one `error` if the body fails or is cut short, and closes at its end. A body that closes without an error came whole.
 
-- Read `body` to its end, or close it: the connection goes back to the pool after the end, and closes when the reader closes `body` first.
-- `timeout_ms` bounds the call up to the head. After it, each piece has `read_timeout_ms` to come, and the reader as long to take it: `body` holds one piece at a time, and the time starts again at each take. A reader that takes nothing for `read_timeout_ms` gets an `http_client.timeout.read` error after the piece that waited, and the connection closes.
+- Read `body` to its end, or `cancel` it: the connection goes back to the pool after the end. A body cancelled before its end closes its connection at once, so the next request does not wait for the pool; closing `body` alone leaves the pump task to notice at its next read, which may be `body_idle_ms` away, and its connection closes then.
+- `timeout_ms` bounds the call up to the head. After it, each piece has `body_idle_ms` to come and the reader has `read_timeout_ms` to take it: `body` holds one piece at a time, and the time starts again at each take. A body that sends nothing for `body_idle_ms`, or a reader that takes nothing for `read_timeout_ms`, gets an `http_client.timeout.read` error after the piece that waited, and the connection closes.
+- `cancel(stream)` is safe at any time: a body that ended by itself, with its last piece or with an error, is left as it was; a client that is closed has already ended its streams; and a second `cancel` does nothing. A reader that is waiting gets an `http_client.cancelled` error, or the end of a body that closed first.
 - The pool of the origin stays while a stream is open, however long it lasts.
 - `close` ends the streams of the client: their readers get an `http_client.closed` error, and `close` returns once their tasks have ended.
 - A stream asks for no compression and decodes none (a server that compresses all the same gives its coded bytes as they came, with `content-encoding` in `headers`), `max_body_bytes` does not apply to it, and `response_steps` do not run. Request steps, retries and redirects work as for `request`: a response that is retried or redirected is read whole and dropped, and so is one that could be retried but has no time left, which then comes as one piece.
@@ -177,9 +179,10 @@ message "two\nlines" "2"
 ## Timeouts
 
 - `connect_timeout_ms`: to open a connection (and its TLS handshake).
-- `read_timeout_ms`: sending the request and the wait for the head of the response, then each wait for a piece of the body.
+- `read_timeout_ms`: sending the request and the wait for the head of the response; then, for a stream, the time its reader has to take each piece.
+- `body_idle_ms`: each wait between two pieces of a body, for a buffered response and for a stream. `none`, the default, takes the value of `read_timeout_ms`, which is what a client had before the two were separate; 0 is no limit, and a buffered body is then bounded by `timeout_ms` alone, a stream by its reader, `cancel` or `close`. A slow head does not relax this budget, and a generous one does not have to be shared with the body.
 - `timeout_ms`: the whole call, from the call to the end of the last body: its tries, the waits between them and its redirects. Each wait is cut to what is left of it.
-- `pool_timeout_ms`: the wait for a free connection of the origin, when all `pool_size` of them are in use.
+- `pool_timeout_ms`: the wait for a free connection of the origin, when all `pool_size` of them are in use. A request that waits for one spends none of its other budgets while it waits: the connect, the head and the body start when it has a connection, each cut to what is left of `timeout_ms`, which covers the wait too.
 
 ## Retries
 
@@ -221,7 +224,7 @@ Each error has a kind, so a caller tests `e.is_a?("http_client.timeout")` or a k
 | --- | --- |
 | `http_client.timeout.pool` | no connection was free within `pool_timeout_ms` |
 | `http_client.timeout.connect` | the connect took longer than `connect_timeout_ms` |
-| `http_client.timeout.read` | the server sent nothing for `read_timeout_ms` |
+| `http_client.timeout.read` | the server sent nothing for `body_idle_ms`, or the reader of a stream took no piece for `read_timeout_ms` |
 | `http_client.timeout.request` | the request took longer than `timeout_ms` |
 | `http_client.pool_full` | 1000 requests wait for a connection of the origin already |
 | `http_client.network` | the connect failed, or the connection broke |
@@ -233,6 +236,7 @@ Each error has a kind, so a caller tests `e.is_a?("http_client.timeout")` or a k
 | `http_client.redirect.too_many` | more than `max_redirects` redirects |
 | `http_client.redirect.location` | a redirect whose `Location` cannot be followed |
 | `http_client.closed` | the client is closed, before the request or during its stream |
+| `http_client.cancelled` | `HttpClient.cancel` ended the body of a stream before its end |
 | `http_client.crashed` | the task of the request crashed: a bug, which a retry does not fix |
 | `argument` | a bad URL, setting, method or header, or both `body` and `json`; nothing was sent, and the connection stays |
 

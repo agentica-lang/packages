@@ -25,8 +25,9 @@ struct Setup
 end
 
 ## What a call does with the response: `Plain` sends a request and keeps the response; `Stream` streams it and reads its
-## pieces to the end, `StreamFirst` closes it after the first piece, and `StreamReleased` asks the raw peer `release`
-## to go on, with a request to `/release`, once the first piece came; `Events` reads the server-sent events of a `GET`,
+## pieces to the end, `StreamFirst` closes it after the first piece, `StreamCancel` cancels it after the last piece,
+## `StreamCancelFirst` after the first one, and `StreamReleased` asks the raw peer `release` to go on, with a request
+## to `/release`, once the first piece came; `Events` reads the server-sent events of a `GET`,
 ## `EventsClosed` closes them after `wait_ms`, `EventsAbandoned` reads them in a task that is cancelled after `wait_ms`
 ## (or, with `crash`, crashes after the first event), and `EventsTwice` reads them with a second `events` call on the
 ## stream, after a first one. The outcome is a response whose body is the pieces, or `event:data` of each event (a
@@ -35,6 +36,8 @@ enum How
   Plain
   Stream
   StreamFirst
+  StreamCancel
+  StreamCancelFirst
   StreamReleased
   Events
   EventsClosed

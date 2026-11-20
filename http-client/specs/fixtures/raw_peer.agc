@@ -15,6 +15,7 @@
 ##   keep-alive SECONDS BODY  a 200 with `Keep-Alive: timeout=SECONDS`
 ##   slow-head MS BODY      waits MS before it writes the head of a 200
 ##   stall MS BODY          writes the head of a 200 and half of BODY, waits MS, then writes the rest
+##   stall-gzip MS BODY     as `stall`, with BODY gzipped: half of the coded bytes, then the rest
 ##   chunks MS P1,P2,...    a 200 of `text/event-stream`, chunked, with each piece as a chunk and MS between them;
 ##                          in a piece `_` is a space and `\n` a line end
 ##   repeat MS COUNT PIECE  as `chunks`, with COUNT times the one PIECE
@@ -183,6 +184,21 @@ def chunk(piece: String) -> String
   "#{format("%x", text.bytesize)}#{CRLF}#{text}#{CRLF}"
 end
 
+# A 200 with BODY gzipped: the head and half of the coded bytes in one write, then, MS later, the rest. The client's
+# first read gets the half at once and waits for the rest, which is how a coded body that idles past its deadline
+# looks from the outside.
+def gzip_stall(socket: TCP.Socket, number: Int, body: String, wait_ms: Int) -> Bool
+  coded = Zlib.gzip(body.bytes).unwrap_or("".bytes)
+  half = coded.size / 2
+  lines = ["HTTP/1.1 200 Peer", "x-connection: #{number}", "content-encoding: gzip", "content-length: #{coded.size}"]
+
+  head = "#{lines.join(CRLF)}#{CRLF}#{CRLF}"
+  return false if not TCP.send_bytes(socket, head.bytes + coded.take(half), STEP_MS).ok?
+
+  Task.sleep(wait_ms)
+  TCP.send_bytes(socket, coded.drop(half), STEP_MS).ok?
+end
+
 # Writes the answer and says whether the connection stays open.
 def write_answer(
   socket: TCP.Socket,
@@ -211,6 +227,7 @@ def write_answer(
     "keep-alive" -> extra = "keep-alive: timeout=#{answer[1]}"
     "slow-head" -> wait_ms = answer[1].to_i!
     "stall" -> wait_ms = answer[1].to_i!
+    "stall-gzip" -> wait_ms = answer[1].to_i!
     "stray" -> wait_ms = answer[1].to_i!
     "after" ->
       status = answer[1].to_i!
@@ -227,6 +244,7 @@ def write_answer(
   return chunked(socket, number, answer[1].to_i!, answer[2].split(",")) if op == "chunks"
   return chunked(socket, number, answer[1].to_i!, (1..answer[2].to_i!).map { |_| answer[3] }) if op == "repeat"
   return held(socket, number, answer[1].split(","), released) if op == "hold"
+  return gzip_stall(socket, number, body, wait_ms) if op == "stall-gzip"
 
   return false if op == "drop"
 

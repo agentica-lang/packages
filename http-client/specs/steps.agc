@@ -40,6 +40,15 @@ def main() -> Void
     BDD.step("{string} streams {string} from {string} and closes it after the first piece") do |ctx, args|
       send(ctx, Request.Send(call(args, How.StreamFirst)))
     end,
+    BDD.step("{string} streams {string} from {string} and cancels it after the first piece") do |ctx, args|
+      send(ctx, Request.Send(call(args, How.StreamCancelFirst)))
+    end,
+    BDD.step("{string} streams {string} from {string} and cancels it after reading it") do |ctx, args|
+      send(ctx, Request.Send(call(args, How.StreamCancel)))
+    end,
+    BDD.step(
+      "{string} starts a stream of {string} from {string} and cancels it after the first piece in {int} ms",
+    ) do |ctx, args| send(ctx, Request.Start(call(args, How.StreamCancelFirst).with(pace_ms: args[3].to_i!))) end,
     BDD.step(
       "{string} streams {string} from {string} and releases the raw peer {string} after the first piece",
     ) do |ctx, args| send(ctx, Request.Send(call(args, How.StreamReleased).with(release: args[3]))) end,
