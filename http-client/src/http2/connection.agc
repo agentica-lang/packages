@@ -81,7 +81,8 @@ end
 def request(session: Session, req: Request) -> Result[Answer]
   return closed() if not reusable?(session)
   head_deadline = [req.deadline, Time.monotonic_ms() + req.read_timeout_ms].min.unwrap!
-  active = session
+  active = try idle(session)
+  return closed() if not reusable?(active)
   while active.stream_limit == 0
     read = try read_frame(active, head_deadline)
     active = try idle_control(read.session, read.frame, head_deadline)
@@ -263,7 +264,7 @@ def settings(session: Session, bytes: Bytes) -> Result[Session]
     id = bytes[offset] * 256 + bytes[offset + 1]
     value = Frame.u32(bytes, offset + 2)
     case id
-      2 -> return Frame.invalid("server sent enable_push")
+      2 -> return Frame.invalid("invalid server enable_push") if value != 0
       3 -> changed = changed.with(stream_limit: value)
       4 ->
         return Frame.invalid("invalid initial window") if value > Frame.MAX_WINDOW

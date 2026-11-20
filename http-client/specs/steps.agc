@@ -13,6 +13,8 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
+    BDD.step("HTTP/2 startup rejects invalid settings and respects an adjacent GOAWAY", &H2Steps.startup),
+    BDD.step("the HTTP/2 client finds h2 on the second resolved address", &H2Steps.alternate),
     BDD.step("an HTTP/2 client reuses the socket and obeys flow control", &H2Steps.flow),
     BDD.step("the HTTP/2 client checks ALPN against a TLS peer", &H2Steps.tls),
     BDD.step("the server {string} listens") do |ctx, args| send(ctx, Request.Server(args[0])) end,

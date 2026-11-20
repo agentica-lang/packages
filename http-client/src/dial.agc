@@ -82,18 +82,27 @@ end
 
 def connect_addresses[T](addresses: List[String], deadline: Int, open: Fn[String, Int, Result[T]]) -> Result[T]
   last: Result[T] = timed_out()
+  alpn_error: Optional[Error] = none
   for at in 0...addresses.size
     left = deadline - Time.monotonic_ms()
-    return timed_out() if left < 1
+    if left < 1
+      last = timed_out()
+      break
+    end
+
     share = [left / (addresses.size - at), 1].max.unwrap!
     last = open.call(addresses[at], share)
     case last
       ok(_) -> return last
-      error(e) -> return last if e.is_a?("http_client.http2.alpn")
+      error(e) if e.is_a?("http_client.http2.alpn") -> alpn_error = some(e)
+      error(_) -> nil
     end
   end
 
-  last
+  case alpn_error
+    some(e) -> error(e)
+    none -> last
+  end
 end
 
 def timed_out[T]() -> Result[T] = error("network: operation timed out", kind: "net.timeout")

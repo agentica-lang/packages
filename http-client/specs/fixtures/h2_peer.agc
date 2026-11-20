@@ -3,7 +3,7 @@ import Hpack from "pkg/hpack/hpack"
 
 def serve(listener: TCP.Listener, pinged: Channel[Bool]) -> Result[Void]
   socket = try TCP.accept(listener, WAIT)
-  try handshake(socket, Bytes.from_list([0, 4, 0, 0, 0, 8]).unwrap!)
+  try handshake(socket, hex("000200000000000400000008"))
   first = try read_headers(socket, 1)
   try expect_request(first, "GET", "/first")
   try send(socket, 1, 5, 1, hex("884006782d74657374036f6e65"))
@@ -42,6 +42,24 @@ def serve_tls(listener: TCP.Listener, h2: Bool) -> Result[Void]
 
   TCP.close(socket)
   ok()
+end
+
+def refuse_start(listener: TCP.Listener, settings: Bytes, after_settings: Bytes) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  _ = try exact(socket, 24)
+  _ = try read(socket)
+  wire = Frame.encode(4, 0, 0, settings) + after_settings
+  try TCP.send_bytes(socket, wire, WAIT)
+  case read(socket)
+    ok(frame) if frame.kind == 4 and frame.flags == 1 ->
+      case read(socket)
+        error(_) -> ok()
+        ok(_) -> error("client opened a stream after startup goaway")
+      end
+
+    error(_) -> ok()
+    ok(_) -> error("client opened a stream after startup refusal")
+  end
 end
 
 private

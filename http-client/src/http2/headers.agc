@@ -25,7 +25,7 @@ def decode(fields: List[Hpack.Header], trailers: Bool) -> Result[Head]
       return Frame.invalid("invalid response status") if status < 100 or status > 599
       head = head.with(status: status)
     else
-      if not token?(field.name) or not field_value?(field.value) or CONNECTION_FIELDS.include?(name)
+      if not token?(field.name) or not field_value?(field.value) or CONNECTION_FIELDS.include?(name) or name == "te"
         return Frame.invalid("invalid response header")
       end
 
@@ -109,12 +109,16 @@ def token?(bytes: Bytes) -> Bool
 end
 
 def field_value?(bytes: Bytes) -> Bool
+  return true if bytes.empty?
+  return false if whitespace?(bytes[0]) or whitespace?(bytes[bytes.size - 1])
   for byte in bytes
     return false if byte == 0 or byte == 10 or byte == 13
   end
 
   true
 end
+
+def whitespace?(byte: Int) -> Bool = byte == 9 or byte == 32
 
 def decimal(value: String) -> Result[Int]
   return Frame.invalid("empty decimal field") if value.empty?

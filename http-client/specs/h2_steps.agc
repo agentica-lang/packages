@@ -12,6 +12,10 @@ def tls(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   end
 end
 
+def startup(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, startup_check())
+
+def alternate(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, alternate_check())
+
 private
 
 def checked(ctx: BDD.Context, result: Result[Void]) -> BDD.Context
@@ -71,27 +75,30 @@ def tls_check(h2: Bool) -> Result[Void]
     alpn = "http/1.1"
   end
 
-  server = try TLS.server_context(
+  server = try server_context(alpn)
+  listener = try TLS.listen("127.0.0.1", 0, server)
+  peer = Task.spawn do H2Peer.serve_tls(listener, h2) end
+  result = tls_request(TCP.local_port(listener), [alpn], h2, ["127.0.0.1"])
+  await_peer(listener, peer, result)
+end
+
+def server_context(alpn: String) -> Result[TLS.Context]
+  TLS.server_context(
     TLS.ServerOptions(
       cert_file: "specs/fixtures/tls/server.pem",
       key_file: "specs/fixtures/tls/server.key",
       alpn: [alpn],
     ),
   )
-
-  listener = try TLS.listen("127.0.0.1", 0, server)
-  peer = Task.spawn do H2Peer.serve_tls(listener, h2) end
-  result = tls_request(TCP.local_port(listener), alpn, h2)
-  await_peer(listener, peer, result)
 end
 
-def tls_request(port: Int, alpn: String, h2: Bool) -> Result[Void]
-  context = try TLS.client_context(TLS.ClientOptions(ca_file: "specs/fixtures/tls/ca.pem", alpn: [alpn]))
+def tls_request(port: Int, alpn: List[String], h2: Bool, addresses: List[String]) -> Result[Void]
+  context = try TLS.client_context(TLS.ClientOptions(ca_file: "specs/fixtures/tls/ca.pem", alpn: alpn))
   client = try HttpClient.new(
     base_url: "https://api.test:#{port}",
     protocol: HttpClient.Protocol.Http2,
     tls: some(context),
-    resolver: some(->(_host) { ok(["127.0.0.1"]) }),
+    resolver: some(->(_host) { ok(addresses) }),
     max_retries: 0,
     timeout_ms: 6_000,
   )
@@ -118,4 +125,47 @@ def await_peer(listener: TCP.Listener, peer: Task[Result[Void]], result: Result[
       try result
       error("HTTP/2 peer did not finish")
   end
+end
+
+def startup_check() -> Result[Void]
+  invalid = OpenSSL.Digest.hexdecode("000200000001").unwrap!
+  goaway = OpenSSL.Digest.hexdecode("0000080700000000007fffffff00000000").unwrap!
+  try refused(invalid, "".bytes, "http_client.http2.protocol")
+  refused("".bytes, goaway, "http_client.network")
+end
+
+def refused(settings: Bytes, following: Bytes, kind: String) -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  peer = Task.spawn do H2Peer.refuse_start(listener, settings, following) end
+  result = refused_request(TCP.local_port(listener), kind)
+  await_peer(listener, peer, result)
+end
+
+def refused_request(port: Int, kind: String) -> Result[Void]
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{port}",
+    protocol: HttpClient.Protocol.Http2,
+    max_retries: 0,
+  )
+
+  result = HttpClient.get(client, "/")
+  HttpClient.close(client, 0)
+  case result
+    error(e) if e.is_a?(kind) -> ok()
+    error(e) -> error(e)
+    ok(_) -> error("startup should refuse the request")
+  end
+end
+
+def alternate_check() -> Result[Void]
+  h2 = try server_context("h2")
+  h1 = try server_context("http/1.1")
+  listener = try TLS.listen("127.0.0.1", 0, h2)
+  port = TCP.local_port(listener)
+  alternate = try TLS.listen("127.0.0.2", port, h1)
+  first_peer = Task.spawn do H2Peer.serve_tls(alternate, false) end
+  second_peer = Task.spawn do H2Peer.serve_tls(listener, true) end
+  result = tls_request(port, ["h2", "http/1.1"], true, ["127.0.0.2", "127.0.0.1"])
+  first_result = await_peer(alternate, first_peer, result)
+  await_peer(listener, second_peer, first_result)
 end
