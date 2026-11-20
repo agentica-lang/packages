@@ -244,6 +244,50 @@ Feature: Requests and the pool of connections
     Then "r1" fails with the kind "http_client.timeout.read"
     And "r2" came on connection 2
 
+  Scenario: A head that comes past body_idle_ms still comes, since the head has its own budget
+    Given the raw peer "a" listens with the script:
+      """
+      slow-head 500 late
+      ok after
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | read_timeout_ms | 1500  |
+      | body_idle_ms    | 100   |
+    When "r1" sends "GET" to "/slow"
+    And "r2" sends "GET" to "/after"
+    Then "r1" has the body "late"
+    And "r2" came on connection 1
+
+  Scenario: A body that stalls past body_idle_ms is a read timeout although the head came at once
+    Given the raw peer "a" listens with the script:
+      """
+      stall 1200 firstlater
+      ok two
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | read_timeout_ms | 4000  |
+      | body_idle_ms    | 200   |
+    When "r1" sends "GET" to "/stall"
+    And "r2" sends "GET" to "/two"
+    Then "r1" fails with the kind "http_client.timeout.read"
+    And "r1" ended within 1000 ms
+    And "r2" came on connection 2
+
+  Scenario: A gzipped body that stalls past body_idle_ms is a read timeout as any other body is
+    Given the raw peer "a" listens with the script:
+      """
+      stall-gzip 1200 aaaa
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | read_timeout_ms | 4000  |
+      | body_idle_ms    | 200   |
+    When "r" sends "GET" to "/gzip"
+    Then "r" fails with the kind "http_client.timeout.read"
+    And "r" ended within 1000 ms
+
   Scenario: timeout_ms bounds the whole request
     Given the raw peer "a" listens with the script:
       """

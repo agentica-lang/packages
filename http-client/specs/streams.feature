@@ -1,7 +1,8 @@
 Feature: Streamed bodies and server-sent events
   `HttpClient.stream` gives the response once its head has come, and its body in pieces through a channel, as the
-  server sends them. `HttpClient.get_events` reads such a body as server-sent events. The raw peer's `chunks` answer
-  sends each piece as a chunk, a while apart.
+  server sends them. `HttpClient.get_events` reads such a body as server-sent events. `HttpClient.cancel` ends a body
+  that its socket is still reading, and gives its connection back. The raw peer's `chunks` answer sends each piece as a
+  chunk, a while apart.
 
   Scenario: The first piece of a body comes before the server sends the rest, and the connection is kept after the end
     Given the raw peer "a" listens with the script:
@@ -171,16 +172,66 @@ Feature: Streamed bodies and server-sent events
     And "s" has the body "onetwo"
     And "s" came on connection 1
 
-  Scenario: A piece that does not come within read_timeout_ms ends the stream with an error
+  Scenario: A piece that does not come within body_idle_ms ends the stream with an error, and its connection goes
     Given the raw peer "a" listens with the script:
       """
       chunks 1000 one,two
+      ok after
       """
     And a client of "a" with:
       | setting         | value |
-      | read_timeout_ms | 300   |
-    When "s" streams "GET" from "/s"
+      | read_timeout_ms | 4000  |
+      | body_idle_ms    | 300   |
+    When "s" streams "GET" from "/s" and cancels it after reading it
+    And "r" sends "GET" to "/r"
     Then "s" fails with the kind "http_client.timeout.read"
+    And "r" has the body "after"
+    And "r" came on connection 2
+
+  Scenario: A head of a stream that comes past body_idle_ms still comes, since the head has its own budget
+    Given the raw peer "a" listens with the script:
+      """
+      slow-head 500 late
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | read_timeout_ms | 1500  |
+      | body_idle_ms    | 100   |
+    When "s" streams "GET" from "/s"
+    Then "s" has the body "late"
+
+  Scenario: A stream cancelled while its peer is silent gives its connection up at once, and the next request opens one
+    Given the raw peer "a" listens with the script:
+      """
+      stall 5000 firstlater
+      ok after
+      """
+    And a client of "a" with:
+      | setting         | value |
+      | pool_size       | 1     |
+      | pool_timeout_ms | 3000  |
+    When "s" starts a stream of "GET" from "/s" and cancels it after the first piece in 500 ms
+    And the peer "a" has read request 1
+    And "r" starts "GET" to "/r"
+    And I wait for "s"
+    And I wait for "r"
+    Then "s" fails with the kind "http_client.cancelled"
+    And "r" has the body "after"
+    And "r" came on connection 2
+
+  Scenario: A stream read to its end keeps its connection for the next request when it is cancelled
+    Given the raw peer "a" listens with the script:
+      """
+      chunks 10 one,two
+      ok after
+      """
+    And a client of "a" with:
+      | setting | value |
+    When "s" streams "GET" from "/s" and cancels it after reading it
+    And "r" sends "GET" to "/r"
+    Then "s" has the body "onetwo"
+    And "r" has the body "after"
+    And "r" came on connection 1
 
   Scenario: Server-sent events are read across pieces, with their type and data
     Given the raw peer "a" listens with the script:

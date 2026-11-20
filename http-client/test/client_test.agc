@@ -13,6 +13,7 @@ def test_a_client_changed_with_with_is_checked_as_new_checks_it() -> Result[Void
   client = try HttpClient.new()
   try Test.eq(kind(HttpClient.get(client.with(timeout_ms: 0), "http://127.0.0.1:9/")), "argument")
   try Test.eq(kind(HttpClient.get(client.with(read_timeout_ms: -1), "http://127.0.0.1:9/")), "argument")
+  try Test.eq(kind(HttpClient.get(client.with(body_idle_ms: some(-1)), "http://127.0.0.1:9/")), "argument")
   try Test.eq(kind(HttpClient.get(client.with(base_url: "ftp://example.com"), "/x")), "argument")
   try Test.eq(HttpClient.basic_auth("a:b", "c").ok?, false)
   try Test.eq(
@@ -40,6 +41,7 @@ def test_a_proxy_is_refused_with_a_resolver_or_public_only_and_the_dns_cache_is_
   try Test.eq(made(HttpClient.new(timeout_ms: 9_000_000_000_000_000_000)), "argument")
   try Test.eq(made(HttpClient.new(idle_ms: 9_000_000_000_000_000_000)), "argument")
   try Test.eq(made(HttpClient.new(pool_timeout_ms: 9_000_000_000_000_000_000)), "argument")
+  try Test.eq(made(HttpClient.new(body_idle_ms: some(9_000_000_000_000_000_000))), "argument")
   Test.eq(made(HttpClient.new(proxy: "http://127.0.0.1:9")), "ok")
 end
 

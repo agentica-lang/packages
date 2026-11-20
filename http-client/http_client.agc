@@ -3,11 +3,12 @@
 ##
 ## Each origin (scheme, host and port) has a pool of `pool_size` connections, made when a request first needs one. A
 ## request waits at most `pool_timeout_ms` for a free connection, at most `connect_timeout_ms` to connect, at most
-## `read_timeout_ms` for each read, and at most `timeout_ms` for the whole call. A connection is kept for the next
-## request only when its response was read to its end and the server did not close it. An idempotent request goes
-## again after a transient error or status (`src/retry.agc`), a redirect is followed (`src/redirect.agc`), and a gzip
-## or deflate body is decoded (`src/encoding.agc`). The request steps of the client change each request before it
-## goes, and its response steps change each response it gives (`Request`).
+## `read_timeout_ms` for the send and the head and at most `body_idle_ms` for each wait for the body, and at most
+## `timeout_ms` for the whole call. A connection is kept for the next request only when its response was read to its
+## end and the server did not close it. An idempotent request goes again after a transient error or status
+## (`src/retry.agc`), a redirect is followed (`src/redirect.agc`), and a gzip or deflate body is decoded
+## (`src/encoding.agc`). The request steps of the client change each request before it goes, and its response steps
+## change each response it gives (`Request`).
 
 import Dial from "src/dial"
 import Encoding from "src/encoding"
@@ -34,8 +35,9 @@ struct Request
 end
 
 ## A response whose body comes in pieces (`stream`): `body` gives `ok(piece)` for each piece as the server sends it,
-## then one `error` if the body fails or is cut short (a reader that took nothing for `read_timeout_ms`, or the client
-## closed), and closes at its end. A body that closes without an error came whole.
+## then one `error` if the body fails or is cut short (no piece for `body_idle_ms`, a reader that took nothing for
+## `read_timeout_ms`, the client closed, or `cancel`), and closes at its end. A body that closes without an error came
+## whole.
 struct Stream
   status: Int
   headers: List[HTTP.Header]
@@ -45,9 +47,12 @@ struct Stream
   private
 
   read_timeout_ms: Int
+  body_idle_ms: Int
   pools: Pools.Pools
   relayed: Channel[Bool]
   relay_down: Channel[Bool]
+  ended: Channel[Bool]
+  worker: Optional[Task[Result[Exchange.Response]]]
 end
 
 ## A client. The public fields apply to each request, and `client.with(...)` gives a client with other values that
@@ -59,6 +64,7 @@ struct Client
   params: List[URI.Pair]
   connect_timeout_ms: Int
   read_timeout_ms: Int
+  body_idle_ms: Optional[Int]
   timeout_ms: Int
   max_body_bytes: Int
   max_retries: Int
@@ -79,7 +85,10 @@ end
 ## `pool_size` connections per origin, `pool_timeout_ms` of wait for one, and `idle_ms` after which an unused one is
 ## closed. An idempotent request is tried again at most `max_retries` times in all, after `retry_delay_ms` doubled on
 ## each try (at most `max_retry_delay_ms`); at most `max_redirects` redirects are followed (0 gives the redirect back).
-## `timeout_ms` bounds the whole call, its tries, waits and redirects included. With a `resolver` (one such as
+## `timeout_ms` bounds the whole call, its tries, waits and redirects included. `read_timeout_ms` is the time of the
+## send and of the wait for the response head, and `body_idle_ms` the longest a body may stay silent: `none` takes the
+## value of `read_timeout_ms`, which is what a client had before the two were separate, and 0 is no idle limit (the
+## whole request still bounds a buffered body). With a `resolver` (one such as
 ## `DNS.lookuper` of the dns package) or `public_only`, the client resolves a host itself (with the system's
 ## `DNS.lookup` when no resolver is given) and keeps the answers `dns_cache_ms` (0 for none); `public_only` refuses
 ## every address that is not public (loopback, private, link-local and the other special ranges), checked on the
@@ -96,6 +105,7 @@ def new(
   params: List[URI.Pair] = [],
   connect_timeout_ms: Int = 10_000,
   read_timeout_ms: Int = 30_000,
+  body_idle_ms: Optional[Int] = none,
   timeout_ms: Int = 60_000,
   max_body_bytes: Int = 16_777_216,
   max_retries: Int = 3,
@@ -148,6 +158,7 @@ def new(
     params: params,
     connect_timeout_ms: connect_timeout_ms,
     read_timeout_ms: read_timeout_ms,
+    body_idle_ms: body_idle_ms,
     timeout_ms: timeout_ms,
     max_body_bytes: max_body_bytes,
     max_retries: max_retries,
@@ -201,10 +212,11 @@ end
 ## `body` (`Stream`), as the server sends them, for a reader that is a task of the caller's. The client asks for no
 ## compression and decodes none, and runs no response steps. A response that is retried or redirected is read whole and
 ## dropped, as for `request`; so is one that cannot go again for lack of time, which then comes as one piece.
-## `timeout_ms` bounds the call up to the head; after it, each piece has `read_timeout_ms` to come, and the reader as
-## long to take it (`body` holds one), else the body ends with an `http_client.timeout.read` error. Read `body` to its
-## end, or close it, so that its connection goes back to the pool. A server that compresses all the same gives its coded
-## bytes as they came, with its `content-encoding` in `headers`.
+## `timeout_ms` bounds the call up to the head; after it, each piece has `body_idle_ms` to come and the reader has
+## `read_timeout_ms` to take it (`body` holds one), else the body ends with an `http_client.timeout.read` error. Read
+## `body` to its end, or `cancel` it, so that its slot in the pool comes free: a body read to its end leaves its
+## connection for the next request, and a cancelled one closes it. A server that compresses all the same gives its
+## coded bytes as they came, with its `content-encoding` in `headers`.
 def stream(
   client: Client,
   method: String,
@@ -226,6 +238,8 @@ def stream(
 
       pieces.close
       response = got.response
+      ended: Channel[Bool] = Channel.new(1)
+      ended.close
       ok(
         Stream(
           status: response.status,
@@ -233,21 +247,42 @@ def stream(
           url: response.url,
           body: pieces,
           read_timeout_ms: client.read_timeout_ms,
+          body_idle_ms: idle_limit(client),
           pools: client.pools,
           relayed: Channel.new(1),
           relay_down: Channel.new(1),
+          ended: ended,
+          worker: none,
         ),
       )
   end
 end
 
+## Interrupts the body of a stream that its socket is still reading, so that the pool has its slot back now instead of
+## when `body_idle_ms` runs out: a connection with a response still to read is closed, never kept, and the next request
+## opens a new one. `body` ends at once with an `http_client.cancelled` error. A body that ended by itself, a response
+## read to its end included, is left as it was and keeps its connection; cancelling twice, or after `close`, does
+## nothing.
+def cancel(stream: Stream) -> Void
+  if not stream.ended.closed?
+    case stream.worker
+      some(worker) -> Task.cancel(worker)
+      none -> nil
+    end
+
+    _ = stream.body.send(Exchange.failure("the stream was cancelled", "cancelled"), 0)
+  end
+
+  stream.body.close
+end
+
 ## The server-sent events of `stream`, read by a task of their own: `ok(event)` for each, then one `error` if the body
 ## fails or is cut short, an event is over `max_event_bytes` (`http_client.too_large`), or the reader took no event
 ## for `read_timeout_ms` (`http_client.timeout.read`); the channel closes at the end of the body. Closing it early
-## closes the body, and so does the end of the task that called `events` (its relay ends with it). It reads the body
-## whatever the status and type of the response; `get_events` checks them. A stream has one reader of events: a second
-## call gives a channel with an `argument` error. The client does not reconnect: a reader that wants to goes again
-## with the `last-event-id` header, from the `id` of the last event.
+## closes the body, and so do the end of the task that called `events` (its relay ends with it) and `cancel` of the
+## stream. It reads the body whatever the status and type of the response; `get_events` checks them. A stream has one
+## reader of events: a second call gives a channel with an `argument` error. The client does not reconnect: a reader
+## that wants to goes again with the `last-event-id` header, from the `id` of the last event.
 def events(stream: Stream, max_event_bytes: Int = 1_048_576) -> Channel[Result[Sse.Event]]
   out: Channel[Result[Sse.Event]] = Channel.new(EVENT_PLACES)
   if stream.relayed.closed?
@@ -432,7 +467,7 @@ HEALTH_MS = 5_000
 CANCEL_MS = 1_000
 EVENT_STREAM = HTTP.Header(name: "accept", value: "text/event-stream")
 # The events read and not yet given that the relay holds before it stops reading the body; the channel of the events
-# holds one, and a place for the error that ends it. A piece of the body comes within `read_timeout_ms`, or the body
+# holds one, and a place for the error that ends it. A piece of the body comes within `body_idle_ms`, or the body
 # ends: the relay waits that long, and a little more. It looks at its channels every `RELAY_POLL_MS` while it holds
 # events, and every `RELAY_IDLE_MS` while it waits for the body alone, which is when a reader's close is seen.
 EVENTS = 16
@@ -509,7 +544,16 @@ def valid(client: Client) -> Result[Void]
     return argument("connect_timeout_ms, read_timeout_ms and timeout_ms must be at least 1")
   end
 
-  longest = [client.connect_timeout_ms, client.read_timeout_ms, client.timeout_ms, client.max_retry_delay_ms].max
+  return argument("body_idle_ms must be 0 (no limit) or more") if idle_limit(client) < 0
+
+  longest = [
+    client.connect_timeout_ms,
+    client.read_timeout_ms,
+    idle_limit(client),
+    client.timeout_ms,
+    client.max_retry_delay_ms,
+  ].max
+
   return argument("a time setting is over #{MAX_MS} ms") if longest.unwrap! > MAX_MS
 
   return argument("max_body_bytes must be at least 1") if client.max_body_bytes < 1
@@ -525,6 +569,10 @@ end
 
 # Between half the backoff and all of it, so that clients that failed together do not come back together.
 def jitter(backoff_ms: Int) -> Int = Random.int(backoff_ms / 2, backoff_ms)
+
+# The longest a body may stay silent: its own budget, or the read timeout when the client names none, which is what
+# every client had before the head and the body were separate.
+def idle_limit(client: Client) -> Int = client.body_idle_ms.unwrap_or(client.read_timeout_ms)
 
 def responded(result: Result[Got]) -> Result[Exchange.Response]
   case result
@@ -610,10 +658,18 @@ def relay_step(stream: Stream, out: Channel[Result[Sse.Event]], state: Relaying,
       fed = try Sse.feed(state.parser, try item, max_bytes)
       ok(state.with(parser: fed.parser, pending: state.pending + fed.events, heard_at: now))
     error(_) if stream.body.closed? and stream.body.empty? -> ok(state.with(ended: true))
-    error(_) if now - state.heard_at >= stream.read_timeout_ms + RELAY_SLACK_MS ->
-      Exchange.failure("no piece of the body came within #{stream.read_timeout_ms} ms", "timeout.read")
+    error(_) if body_stalled?(stream, now, state) ->
+      Exchange.failure("no piece of the body came within #{stream.body_idle_ms} ms", "timeout.read")
     error(_) -> ok(state)
   end
+end
+
+# A body with no idle limit may stay silent for ever: the end of the client, the reader of the events or `cancel` ends
+# it.
+def body_stalled?(stream: Stream, now: Int, state: Relaying) -> Bool
+  return false if stream.body_idle_ms == 0
+
+  now - state.heard_at >= stream.body_idle_ms + RELAY_SLACK_MS
 end
 
 # One try of the hop, within what is left of the call.
@@ -631,6 +687,7 @@ def once(client: Client, hop: Hop, deadline: Int, streamed: Bool, tries: Int) ->
     body: hop.body,
     connect_timeout_ms: client.connect_timeout_ms,
     read_timeout_ms: client.read_timeout_ms,
+    body_idle_ms: idle_limit(client),
     deadline: deadline,
     max_body_bytes: client.max_body_bytes,
     streaming: none,
@@ -676,9 +733,12 @@ def arrived(client: Client, running: Task[Result[Exchange.Response]], arrival: E
         url: head.url,
         body: head.body,
         read_timeout_ms: client.read_timeout_ms,
+        body_idle_ms: idle_limit(client),
         pools: client.pools,
         relayed: head.relayed,
         relay_down: head.relay_down,
+        ended: head.ended,
+        worker: some(running),
       )
 
       ok(Got(response: response, stream: some(streamed)))

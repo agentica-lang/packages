@@ -4,7 +4,7 @@
 ## A `HTTP.Connection` takes its timeouts from its options: `timeout_ms` for each `send_request` (the write and the
 ## head) and `read_timeout_ms` for each `read_body`. `sending` and `reading` give each call its own on a copy of the
 ## connection; the copy shares the socket and the state. The call that sends the request also reads the response head,
-## so the client's `read_timeout_ms` covers the send too.
+## so the client's `read_timeout_ms` covers the send too, and its `body_idle_ms` goes in the copy of each body read.
 
 import HTTP from "std/http"
 import Link from "link"
@@ -22,7 +22,9 @@ end
 ## The head of a streamed response, and the channel of its body: `ok(piece)` for each piece as it comes, then one
 ## `error` if the body fails or is cut short, and the close at its end. The body holds one piece at a time, which the
 ## reader has `read_timeout_ms` to take, unless `relayed` is closed: the reader is then the relay of the events, which
-## holds its own reader to that time. `relay_down` gets a value when that relay task ends, however it ends.
+## holds its own reader to that time. `relay_down` gets a value when that relay task ends, however it ends. `ended`
+## closes once the task of the body gave its last piece or its error, so a cancel that finds it open has a read to
+## interrupt.
 struct Head
   status: Int
   headers: List[HTTP.Header]
@@ -30,6 +32,7 @@ struct Head
   body: Channel[Result[Bytes]]
   relayed: Channel[Bool]
   relay_down: Channel[Bool]
+  ended: Channel[Bool]
 end
 
 ## What reaches the caller of a try: the head of a streamed response, and the end of the task of the try.
@@ -46,8 +49,10 @@ struct Streaming
   stopping: Channel[Bool]
 end
 
-## What one request needs: where it goes, what it sends, and its limits. `deadline` is the monotonic time at which
-## `timeout_ms` of the whole request runs out; it does not bound the body of a streamed response.
+## What one request needs: where it goes, what it sends, and its limits. `read_timeout_ms` is the time of the send
+## and of the head, and `body_idle_ms` the longest the body may stay silent (0 for none), cut to what is left of the
+## deadline for a buffered one. `deadline` is the monotonic time at which `timeout_ms` of the whole request runs out;
+## it does not bound the body of a streamed response.
 struct Call
   method: String
   target: Url.Target
@@ -55,6 +60,7 @@ struct Call
   body: Bytes
   connect_timeout_ms: Int
   read_timeout_ms: Int
+  body_idle_ms: Int
   deadline: Int
   max_body_bytes: Int
   streaming: Optional[Streaming]
@@ -94,6 +100,8 @@ end
 private
 
 READ_BYTES = 65_536
+# A year, past any deadline: a body with no idle limit is bounded by the whole request alone.
+LONGEST_WAIT_MS = 31_536_000_000
 # A streamed body holds one piece, and a place for the error that ends it; how often the pump looks whether the reader
 # took the piece. (A close with a reason, agentica#1790, will make the place for the error needless.)
 BODY_PLACES = 2
@@ -214,6 +222,7 @@ def streamed(held: Held, call: Call, response: Response, streaming: Streaming) -
   body: Channel[Result[Bytes]] = Channel.new(BODY_PLACES)
   relayed: Channel[Bool] = Channel.new(1)
   relay_down: Channel[Bool] = Channel.new(1)
+  ended: Channel[Bool] = Channel.new(1)
   head = Head(
     status: response.status,
     headers: response.headers,
@@ -221,14 +230,19 @@ def streamed(held: Held, call: Call, response: Response, streaming: Streaming) -
     body: body,
     relayed: relayed,
     relay_down: relay_down,
+    ended: ended,
   )
 
   _ = streaming.arrivals.send(Arrival.Head(head), 0)
+  # `ended` closes before the body, and before anything that waits, so that a cancel that sees it open cancels a task
+  # that is still reading, and never one that is only putting the connection back in the pool.
   case pump(held, call, head, streaming.stopping)
     ok(_) ->
+      ended.close
       body.close
       ok()
     error(e) ->
+      ended.close
       cut(body, e)
       error(e)
   end
@@ -268,9 +282,10 @@ def hand(head: Head, piece: Bytes, given_at: Int, wait_ms: Int, stopping: Channe
   end
 end
 
-# The next piece of a streamed body, empty at its end. A read that fails once the client closed is that close.
+# The next piece of a streamed body, empty at its end. A read that fails once the client closed is that close. The
+# whole request does not bound it, and its idle limit of 0 is no limit at all (std/http reads a 0 timeout as none).
 def next_piece(held: Held, call: Call, stopping: Channel[Bool]) -> Result[Bytes]
-  wait = Wait(ms: call.read_timeout_ms, kind: "timeout.read")
+  wait = Wait(ms: call.body_idle_ms, kind: "timeout.read")
   case HTTP.read_body(reading(held, wait), READ_BYTES)
     ok(piece) -> ok(piece)
     error(e) if stopping.closed? -> failure("the client is closed", "closed", some(e))
@@ -295,7 +310,7 @@ def read_all(held: Held, call: Call) -> Result[Bytes]
   pieces: List[Bytes] = []
   total = 0
   while true
-    wait = try next_wait(call, call.read_timeout_ms, "timeout.read")
+    wait = try body_wait(call)
     piece = NO_BYTES
     case HTTP.read_body(reading(held, wait), READ_BYTES)
       ok(read) -> piece = read
@@ -330,6 +345,13 @@ def next_wait(call: Call, limit_ms: Int, kind: String) -> Result[Wait]
   return ok(Wait(ms: left, kind: "timeout.request")) if left < limit_ms
 
   ok(Wait(ms: limit_ms, kind: kind))
+end
+
+# The wait of the next read of a buffered body: its idle limit, or the rest of the whole request when it has none.
+def body_wait(call: Call) -> Result[Wait]
+  return next_wait(call, call.body_idle_ms, "timeout.read") if call.body_idle_ms > 0
+
+  next_wait(call, LONGEST_WAIT_MS, "timeout.read")
 end
 
 def read_failure[T](e: Error, wait: Wait, text: String) -> Result[T]

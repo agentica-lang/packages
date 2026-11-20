@@ -57,6 +57,15 @@ struct Person
   age: Int
 end
 
+# How a stream is read: to its end, only its first piece, or with `HttpClient.cancel` after the last piece or after the
+# first one.
+enum Reading
+  Whole
+  First
+  Cancelled
+  CancelledFirst
+end
+
 def main() -> Void
   stop: Channel[Bool] = Channel.new(1)
   asked: ATS[String, Int] = ATS.new()
@@ -207,6 +216,7 @@ def make_client(driver: Driver, setup: Setup) -> Handled
     params: params,
     connect_timeout_ms: settings.get("connect_timeout_ms").unwrap_or(10_000),
     read_timeout_ms: settings.get("read_timeout_ms").unwrap_or(30_000),
+    body_idle_ms: settings.get("body_idle_ms"),
     timeout_ms: settings.get("timeout_ms").unwrap_or(60_000),
     max_body_bytes: settings.get("max_body_bytes").unwrap_or(16_777_216),
     max_retries: settings.get("max_retries").unwrap_or(0),
@@ -348,12 +358,19 @@ def start_request(driver: Driver, call: Call) -> Result[Running]
       How.Stream ->
         streamed = HttpClient.stream(client, call.method, url, headers: headers)
         pause(call.wait_ms)
-        done = read_stream(streamed, began, false, call.pace_ms, "")
+        done = read_stream(streamed, began, Reading.Whole, call.pace_ms, "")
       How.StreamFirst ->
-        done = read_stream(HttpClient.stream(client, call.method, url, headers: headers), began, true, 0, "")
+        done = read_stream(HttpClient.stream(client, call.method, url, headers: headers), began, Reading.First, 0, "")
+      How.StreamCancel ->
+        streamed = HttpClient.stream(client, call.method, url, headers: headers)
+        pause(call.wait_ms)
+        done = read_stream(streamed, began, Reading.Cancelled, 0, "")
+      How.StreamCancelFirst ->
+        streamed = HttpClient.stream(client, call.method, url, headers: headers)
+        done = read_stream(streamed, began, Reading.CancelledFirst, 0, "")
       How.StreamReleased ->
         released = HttpClient.stream(client, call.method, url, headers: headers)
-        done = read_stream(released, began, false, 0, addressed(driver, "{#{call.release}}/release"))
+        done = read_stream(released, began, Reading.Whole, 0, addressed(driver, "{#{call.release}}/release"))
       How.Events ->
         events = HttpClient.get_events(client, url, headers: headers)
         pause(call.wait_ms)
@@ -407,11 +424,12 @@ def start_request(driver: Driver, call: Call) -> Result[Running]
   ok(Running(task: task, outcome: outcome))
 end
 
-# Reads the pieces of the stream to its end, or only its first one before it closes the body.
+# Reads the pieces of the stream as `how` says: to its end, or only its first one before it closes the body, or with
+# `HttpClient.cancel` after the last piece or after the first one.
 def read_stream(
   streamed: Result[HttpClient.Stream],
   began: Int,
-  first_only: Bool,
+  how: Reading,
   pace_ms: Int,
   release_url: String,
 ) -> Outcome
@@ -435,12 +453,20 @@ def read_stream(
 
         pause(pace_ms)
 
-        if first_only
+        if how == Reading.First
           stream.body.close
           break
         end
 
+        if how == Reading.CancelledFirst and pieces.size == 1
+          HttpClient.cancel(stream)
+        end
+
         next_piece = stream.body.recv(WAIT_MS)
+      end
+
+      if how == Reading.Cancelled
+        HttpClient.cancel(stream)
       end
 
       response = HttpClient.Response(

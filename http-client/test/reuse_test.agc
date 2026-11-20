@@ -86,6 +86,28 @@ def test_close_ends_the_tasks_of_a_stream_whose_reader_is_gone() -> Result[Void]
   Test.eq(left, before)
 end
 
+# A stream holds a pump task that may be waiting in a read of its socket. `close` ends it, and a `cancel` after that
+# finds nothing to interrupt: it returns at once, a second one does the same, and nothing of the client is left.
+def test_cancel_after_close_does_nothing() -> Result[Void]
+  before = Task.pending_count()
+  agentica = System.env("HTTP_CLIENT_AGENTICA").unwrap_or("agentica")
+  peer = try Process.spawn(agentica, ["specs/fixtures/raw_peer.agc", "repeat 20 500 data:_x\\n\\n"])
+  port = (try Process.read_line(peer, PEER_START_MS)).split(" ").last
+  client = try HttpClient.new(base_url: "http://127.0.0.1:#{port}", read_timeout_ms: 60_000, max_retries: 0)
+  stream = try HttpClient.stream(client, "GET", "/events")
+  first = stream.body.recv(PEER_START_MS)
+  HttpClient.close(client, 0)
+  began = Time.monotonic_ms()
+  HttpClient.cancel(stream)
+  HttpClient.cancel(stream)
+  cancelling_ms = Time.monotonic_ms() - began
+  left = Task.pending_count()
+  Process.close(peer)
+  try Test.eq(first.ok?, true)
+  try Test.eq(cancelling_ms < 1_000, true)
+  Test.eq(left, before)
+end
+
 def failed_kind(item: Result[HttpClient.Event]) -> String
   case item
     ok(_) -> "ok"
