@@ -54,11 +54,17 @@ def early_post(listener: TCP.Listener) -> Result[Void]
   goaway = Frame.encode(7, 0, 0, Frame.word(0) + Frame.word(0))
   try refuse_socket(listener, hex("000300000000"), goaway)
   socket = try TCP.accept(listener, WAIT)
-  try handshake(socket, hex("000400000000"))
+  try handshake(socket, hex("000400010000"))
   headers = try read_headers(socket, 1)
   try expect_request(headers, "POST", "/early")
   body = ("r" * 16_384).bytes
-  wire = Frame.encode(1, 4, 1, hex("0803343133")) + Frame.encode(0, 0, 1, body) + Frame.encode(0, 1, 1, body)
+  wire = (
+    Frame.encode(1, 4, 1, hex("0803343133")) +
+    Frame.encode(0, 0, 1, body) +
+    Frame.encode(0, 0, 1, body) +
+    Frame.encode(0, 1, 1, "tail".bytes)
+  )
+
   try TCP.send_bytes(socket, wire, WAIT)
   TCP.close(socket)
   ok()

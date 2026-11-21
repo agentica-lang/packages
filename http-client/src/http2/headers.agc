@@ -49,7 +49,7 @@ end
 def encode(method: String, target: Url.Target, fields: List[HTTP.Header], body_size: Int) -> Result[Bytes]
   return argument("invalid HTTP/2 method") if not token?(method.downcase.bytes) or method.upcase == "CONNECT"
 
-  return argument("invalid HTTP/2 request target") if not field_value?(target.target.bytes)
+  return argument("invalid HTTP/2 request target") if not target?(target.target.bytes)
 
   authority = target.origin.bytes.drop(target.scheme.size + 3)
   headers = [
@@ -103,6 +103,15 @@ def token?(bytes: Bytes) -> Bool
     digit = byte >= 48 and byte <= 57
     lowercase = byte >= 97 and byte <= 122
     return false if not digit and not lowercase and not TOKEN_MARKS.include?(byte)
+  end
+
+  true
+end
+
+def target?(bytes: Bytes) -> Bool
+  return false if bytes.empty? or bytes[0] != 47
+  for byte in bytes
+    return false if byte <= 32 or byte >= 127
   end
 
   true

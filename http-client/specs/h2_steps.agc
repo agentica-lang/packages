@@ -63,6 +63,12 @@ def sequence(client: HttpClient.Client, pinged: Channel[Bool]) -> Result[Void]
     _ -> return error("expected argument error before sending the request")
   end
 
+  malformed = HttpClient.get(client, "/invalid path")
+  case malformed
+    error(e) if e.is_a?("argument") -> nil
+    _ -> return error("expected argument error for malformed path")
+  end
+
   second = try HttpClient.post(client, "/second", body: some(("u" * 70_000).bytes))
   if (
     second.status != 200 or
@@ -193,10 +199,10 @@ def early_request(port: Int) -> Result[Void]
     max_retries: 0,
   )
 
-  result = HttpClient.post(client, "/early", body: some("upload".bytes))
+  result = HttpClient.post(client, "/early", body: some(("u" * 80_000).bytes))
   HttpClient.close(client, 0)
   response = try result
-  return error("incomplete early response") if response.status != 413 or response.body != ("r" * 32_768).bytes
+  return error("incomplete early response") if response.status != 413 or response.body != ("r" * 32_768 + "tail").bytes
 
   ok()
 end

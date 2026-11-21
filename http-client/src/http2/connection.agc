@@ -35,6 +35,7 @@ struct Session
   last_stream: Int = 0x7fffffff
   draining: Bool = false
   control_pending: Bool = false
+  write_error: Optional[Error] = none
 end
 
 struct Answer
@@ -59,7 +60,9 @@ def start(socket: TCP.Socket, incoming: Channel[Bytes], deadline: Int) -> Result
   control(read.session, first, deadline)
 end
 
-def reusable?(session: Session) -> Bool = not session.draining and session.next_stream <= Frame.MAX_WINDOW
+def reusable?(session: Session) -> Bool
+  session.write_error.none? and not session.draining and session.next_stream <= Frame.MAX_WINDOW
+end
 
 def idle(session: Session, deadline: Int, frame_budget: Int = 32) -> Result[Session]
   active = session
@@ -161,17 +164,19 @@ def exchange(session: Session, stream: Stream, req: Request, head_deadline: Int)
       wait_until = body_deadline
     end
 
-    if current.sent < req.body.size and current.send_credit > 0 and state.session.send_credit > 0
-      state = try send_data(state, req.body, wait_until)
-      next if state.stream.sent == req.body.size
-      if state.stream.send_credit > 0 and state.session.send_credit > 0
-        ready = try read_available(state.session, wait_until)
-        state = state.with(session: ready)
-        next if (try Frame.parse(ready.buffer)).none?
+    ready = try read_available(state.session, wait_until)
+    state = state.with(session: ready)
+    buffered = try Frame.parse(ready.buffer)
+    if buffered.none? and can_upload?(state, req.body.size)
+      case send_data(state, req.body, wait_until)
+        ok(sent) -> state = sent
+        error(e) -> state = state.with(session: ready.with(write_error: some(e)))
       end
+
+      next
     end
 
-    read = try read_frame(state.session, wait_until)
+    read = try read_response_frame(state.session, wait_until)
     state = try receive(Progress(session: read.session, stream: state.stream), read.frame, req, wait_until)
     if req.body_idle_ms > 0 and state.stream.status > 0
       if current.status == 0 or state.stream.received > current.received
@@ -193,13 +198,33 @@ def exchange(session: Session, stream: Stream, req: Request, head_deadline: Int)
   ok(Answer(response: response, session: session_after_response))
 end
 
+def can_upload?(state: Progress, size: Int) -> Bool
+  (
+    state.session.write_error.none? and
+    state.stream.sent < size and
+    state.stream.send_credit > 0 and
+    state.session.send_credit > 0
+  )
+end
+
 def read_available(session: Session, deadline: Int) -> Result[Session]
-  return ok(session) if (try Frame.parse(session.buffer)).some?
-  _ = try remaining(deadline)
-  case session.incoming.recv(0)
-    ok(bytes) -> ok(session.with(buffer: session.buffer + bytes))
-    error(e) if e.is_a?("channel.closed") -> closed()
-    error(_) -> ok(session)
+  ready = session
+  while (try Frame.parse(ready.buffer)).none?
+    _ = try remaining(deadline)
+    case ready.incoming.recv(0)
+      ok(bytes) -> ready = ready.with(buffer: ready.buffer + bytes)
+      error(_) -> return ok(ready)
+    end
+  end
+
+  ok(ready)
+end
+
+def read_response_frame(session: Session, deadline: Int) -> Result[Read]
+  case read_frame(session, deadline)
+    ok(read) -> ok(read)
+    error(e) if e.is_a?("net") -> error(session.write_error.unwrap_or(e))
+    error(e) -> error(e)
   end
 end
 
@@ -257,11 +282,14 @@ def control(session: Session, frame: Frame.Frame, deadline: Int) -> Result[Sessi
       end
 
       changed = try settings(session, frame.payload)
-      try send(session, 4, 1, 0, EMPTY, deadline)
+      if session.write_error.none?
+        try send(session, 4, 1, 0, EMPTY, deadline)
+      end
+
       ok(changed)
     6 ->
       return Frame.invalid("invalid ping") if frame.stream != 0 or frame.payload.size != 8
-      if not flag?(frame, 1)
+      if not flag?(frame, 1) and session.write_error.none?
         try send(session, 6, 1, 0, frame.payload, deadline)
       end
 
@@ -353,17 +381,23 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
   end
 
   try check_length(next_stream, req.method)
-  if connection_credit <= REFILL and ended
-    c = refill_after_response(c, connection_credit, deadline)
-    connection_credit = c.receive_credit
-  elsif connection_credit <= REFILL
-    try send(c, 8, 0, 0, Frame.word(WINDOW - connection_credit), deadline)
-    connection_credit = WINDOW
+  if connection_credit <= REFILL and c.write_error.none? and (not ended or reusable?(c))
+    wait = deadline
+    if ended
+      wait = cleanup_deadline(deadline)
+    end
+
+    case send(c, 8, 0, 0, Frame.word(WINDOW - connection_credit), wait)
+      ok(_) -> connection_credit = WINDOW
+      error(e) -> c = c.with(write_error: some(e))
+    end
   end
 
-  if not ended and stream_credit <= REFILL
-    try send(c, 8, 0, s.id, Frame.word(WINDOW - stream_credit), deadline)
-    stream_credit = WINDOW
+  if not ended and stream_credit <= REFILL and c.write_error.none?
+    case send(c, 8, 0, s.id, Frame.word(WINDOW - stream_credit), deadline)
+      ok(_) -> stream_credit = WINDOW
+      error(e) -> c = c.with(write_error: some(e))
+    end
   end
 
   ok(
@@ -372,15 +406,6 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
       stream: next_stream.with(receive_credit: stream_credit),
     ),
   )
-end
-
-def refill_after_response(session: Session, credit: Int, deadline: Int) -> Session
-  if reusable?(session)
-    sent = send(session, 8, 0, 0, Frame.word(WINDOW - credit), cleanup_deadline(deadline))
-    return session.with(receive_credit: WINDOW) if sent.ok?
-  end
-
-  session.with(receive_credit: credit, draining: true)
 end
 
 def cleanup_deadline(deadline: Int) -> Int = [deadline, Time.monotonic_ms() + 10].min.unwrap!
