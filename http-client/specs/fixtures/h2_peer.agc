@@ -25,8 +25,9 @@ def serve(listener: TCP.Listener, pinged: Channel[Bool]) -> Result[Void]
   replacement = try TCP.accept(listener, WAIT)
   try handshake(replacement, "".bytes)
   third = try read_headers(replacement, 1)
-  try expect_request(third, "GET", "/third")
-  try send(replacement, 1, 5, 1, hex("89"))
+  try expect_request(third, "head", "/third")
+  try send(replacement, 1, 4, 1, hex("88"))
+  try send(replacement, 0, 1, 1, "extension".bytes)
   TCP.close(replacement)
   ok()
 end
@@ -59,6 +60,9 @@ def early_post(listener: TCP.Listener) -> Result[Void]
   try expect_request(headers, "POST", "/early")
   body = ("r" * 16_384).bytes
   wire = (
+    Frame.encode(6, 0, 0, "ping-one".bytes) +
+    Frame.encode(4, 0, 0, "".bytes) +
+    Frame.encode(6, 0, 0, "ping-two".bytes) +
     Frame.encode(1, 4, 1, hex("0803343133")) +
     Frame.encode(0, 0, 1, body) +
     Frame.encode(0, 0, 1, body) +
@@ -68,6 +72,23 @@ def early_post(listener: TCP.Listener) -> Result[Void]
   try TCP.send_bytes(socket, wire, WAIT)
   TCP.close(socket)
   ok()
+end
+
+def stalled(listener: TCP.Listener, wait_for_settings: Bool) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  if wait_for_settings
+    _ = try exact(socket, 24)
+    _ = try read(socket)
+  else
+    try handshake(socket, "".bytes)
+    _ = try read_headers(socket, 1)
+  end
+
+  case TCP.recv_bytes(socket, 1, WAIT)
+    ok(bytes) if bytes.empty? -> ok()
+    error(e) if e.is_a?("net.closed") -> ok()
+    _ -> error("client did not close the stalled session")
+  end
 end
 
 private

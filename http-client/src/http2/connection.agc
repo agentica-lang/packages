@@ -57,7 +57,11 @@ def start(socket: TCP.Socket, incoming: Channel[Bytes], deadline: Int) -> Result
   read = try read_frame(session, deadline)
   first = read.frame
   return Frame.invalid("expected initial settings") if first.kind != 4 or flag?(first, 1)
-  control(read.session, first, deadline)
+  started = try control(read.session, first, deadline)
+  case started.write_error
+    some(e) -> error(e)
+    none -> ok(started)
+  end
 end
 
 def reusable?(session: Session) -> Bool
@@ -86,12 +90,20 @@ def idle(session: Session, deadline: Int, frame_budget: Int = 32) -> Result[Sess
 end
 
 def request(session: Session, req: Request, block: Bytes, head_deadline: Int) -> Result[Answer]
-  active = try ready_to_send(session, head_deadline)
+  active = try classify_timeout(ready_to_send(session, head_deadline), head_deadline, req.deadline)
   id = active.next_stream
-  try send_headers(active, id, block, req.body.empty?, head_deadline)
+  try classify_timeout(send_headers(active, id, block, req.body.empty?, head_deadline), head_deadline, req.deadline)
   stream = Stream(id: id, send_credit: active.initial_window)
   next_session = active.with(next_stream: id + 2)
   exchange(next_session, stream, req, head_deadline)
+end
+
+def classify_timeout[T](result: Result[T], deadline: Int, request_deadline: Int) -> Result[T]
+  case result
+    error(e) if e.is_a?("net.timeout") and deadline == request_deadline ->
+      error("http_client: the request timed out", kind: "http_client.timeout.request", cause: e)
+    _ -> result
+  end
 end
 
 private
@@ -135,6 +147,11 @@ def ready_to_send(session: Session, deadline: Int) -> Result[Session]
       error(e) -> return error(e)
     end
 
+    case active.write_error
+      some(e) if not e.is_a?("net.closed") -> return error(e)
+      _ -> nil
+    end
+
     return unsent() if not reusable?(active)
     next if active.control_pending
     return ok(active) if active.stream_limit > 0
@@ -164,7 +181,7 @@ def exchange(session: Session, stream: Stream, req: Request, head_deadline: Int)
       wait_until = body_deadline
     end
 
-    ready = try read_available(state.session, wait_until)
+    ready = try classify_timeout(read_available(state.session, wait_until), wait_until, req.deadline)
     state = state.with(session: ready)
     buffered = try Frame.parse(ready.buffer)
     if buffered.none? and can_upload?(state, req.body.size)
@@ -176,7 +193,7 @@ def exchange(session: Session, stream: Stream, req: Request, head_deadline: Int)
       next
     end
 
-    read = try read_response_frame(state.session, wait_until)
+    read = try classify_timeout(read_response_frame(state.session, wait_until), wait_until, req.deadline)
     state = try receive(Progress(session: read.session, stream: state.stream), read.frame, req, wait_until)
     if req.body_idle_ms > 0 and state.stream.status > 0
       if current.status == 0 or state.stream.received > current.received
@@ -223,7 +240,7 @@ end
 def read_response_frame(session: Session, deadline: Int) -> Result[Read]
   case read_frame(session, deadline)
     ok(read) -> ok(read)
-    error(e) if e.is_a?("net") -> error(session.write_error.unwrap_or(e))
+    error(e) if e.is_a?("net.closed") -> error(session.write_error.unwrap_or(e))
     error(e) -> error(e)
   end
 end
@@ -234,7 +251,7 @@ def receive(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) ->
     return Frame.invalid("interrupted header block")
   end
 
-  if frame.stream != stream.id or frame.kind == 4 or frame.kind == 6 or frame.kind == 7
+  if frame.stream != stream.id or frame.kind == 2 or frame.kind == 4 or frame.kind == 6 or frame.kind == 7
     next_session = try idle_control(state.session, frame, deadline)
     return closed() if next_session.last_stream < stream.id
 
@@ -282,18 +299,11 @@ def control(session: Session, frame: Frame.Frame, deadline: Int) -> Result[Sessi
       end
 
       changed = try settings(session, frame.payload)
-      if session.write_error.none?
-        try send(session, 4, 1, 0, EMPTY, deadline)
-      end
-
-      ok(changed)
+      ok(acknowledge(changed, frame.with(payload: EMPTY), deadline))
     6 ->
       return Frame.invalid("invalid ping") if frame.stream != 0 or frame.payload.size != 8
-      if not flag?(frame, 1) and session.write_error.none?
-        try send(session, 6, 1, 0, frame.payload, deadline)
-      end
-
-      ok(session)
+      return ok(session) if flag?(frame, 1)
+      ok(acknowledge(session, frame, deadline))
     7 ->
       return Frame.invalid("invalid goaway") if frame.stream != 0 or frame.payload.size < 8
       last = Frame.u32(frame.payload, 0).bit_and(Frame.MAX_WINDOW)
@@ -307,6 +317,14 @@ def control(session: Session, frame: Frame.Frame, deadline: Int) -> Result[Sessi
       ok(session)
     3 -> Frame.invalid("invalid rst_stream")
     _ -> ok(session)
+  end
+end
+
+def acknowledge(session: Session, frame: Frame.Frame, deadline: Int) -> Session
+  return session if session.write_error.some?
+  case send(session, frame.kind, 1, 0, frame.payload, deadline)
+    ok(_) -> session
+    error(e) -> session.with(write_error: some(e))
   end
 end
 
@@ -464,7 +482,7 @@ def check_length(stream: Stream, method: String) -> Result[Void]
   ok()
 end
 
-def bodyless?(method: String, status: Int) -> Bool = method.upcase == "HEAD" or status == 204 or status == 304
+def bodyless?(method: String, status: Int) -> Bool = method == "HEAD" or status == 204 or status == 304
 
 def send_headers(session: Session, id: Int, block: Bytes, empty: Bool, deadline: Int) -> Result[Void]
   offset = 0

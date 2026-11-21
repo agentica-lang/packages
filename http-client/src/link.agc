@@ -118,13 +118,18 @@ end
 def submit(link: Link, request: H2.Request, connect_timeout_ms: Int) -> Result[H2.Response]
   reply: Channel[Result[H2.Response]] = Channel.new(1)
   left = request.deadline - Time.monotonic_ms()
-  return error("http_client: the request timed out", kind: "http_client.timeout") if left < 1
+  return error("http_client: the request timed out", kind: "http_client.timeout.request") if left < 1
   submission = H2.Submission(request: request, connect_timeout_ms: connect_timeout_ms, reply: reply)
-  try link.inbox.send(Order.Submit(submission), left)
+  case link.inbox.send(Order.Submit(submission), left)
+    ok(_) -> nil
+    error(e) if e.is_a?("channel.closed") -> return error("http_client: link closed", kind: "http_client.network")
+    error(e) -> return error("http_client: the request timed out", kind: "http_client.timeout.request", cause: e)
+  end
+
   wait = [request.deadline - Time.monotonic_ms(), 0].max.unwrap!
   case reply.recv(wait)
     ok(result) -> result
-    error(_) -> error("http_client: the request timed out", kind: "http_client.timeout")
+    error(_) -> error("http_client: the request timed out", kind: "http_client.timeout.request")
   end
 end
 
@@ -419,12 +424,13 @@ def exchange_h2(
             close_h2(active)
             return none
           error(e) ->
-            close_h2(active)
             if attempt == 1 or not e.is_a?("http2.unsent")
               _ = submission.reply.send(h2_failure(e), 0)
+              close_h2(active)
               return none
             end
 
+            close_h2(active)
             held = none
         end
     end
@@ -434,9 +440,17 @@ def exchange_h2(
 end
 
 def open_h2(origin: Origin, submission: H2.Submission, inbox: Channel[Order], deadline_ms: Int) -> Result[H2.Session]
-  wait = [submission.connect_timeout_ms, deadline_ms - Time.monotonic_ms()].min.unwrap!
-  return error("http_client: the request timed out", kind: "http_client.timeout") if wait < 1
-  deadline = Time.monotonic_ms() + wait
+  now = Time.monotonic_ms()
+  deadline = [deadline_ms, now + submission.connect_timeout_ms].min.unwrap!
+  wait = deadline - now
+  kind = "http_client.timeout.connect"
+  if deadline == submission.request.deadline
+    kind = "http_client.timeout.request"
+  elsif deadline == deadline_ms
+    kind = "http_client.timeout.read"
+  end
+
+  return error("http_client: HTTP/2 connect timed out", kind: kind) if wait < 1
   case Dial.open_h2(origin.dialer, origin.url, origin.options, wait)
     ok(socket) ->
       incoming: Channel[Bytes] = Channel.new(2)
@@ -447,18 +461,16 @@ def open_h2(origin: Origin, submission: H2.Submission, inbox: Channel[Order], de
         error(e) ->
           incoming.close
           TCP.close(socket)
-          h2_connect_failure(e)
+          h2_connect_failure(e, kind)
       end
 
-    error(e) -> h2_connect_failure(e)
+    error(e) -> h2_connect_failure(e, kind)
   end
 end
 
-def h2_connect_failure(e: Error) -> Result[H2.Session]
+def h2_connect_failure(e: Error, kind: String) -> Result[H2.Session]
   return error(e) if e.is_a?("http_client")
-  if e.is_a?("net.timeout")
-    return error("http_client: HTTP/2 connect timed out", kind: "http_client.timeout.connect", cause: e)
-  end
+  return error("http_client: HTTP/2 connect timed out", kind: kind, cause: e) if e.is_a?("net.timeout")
 
   error("http_client: HTTP/2 connect failed: #{e.message}", kind: "http_client.network", cause: e)
 end

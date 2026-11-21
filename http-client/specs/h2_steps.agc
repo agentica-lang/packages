@@ -19,6 +19,8 @@ def alternate(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ct
 
 def early(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, early_check())
 
+def deadlines(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, check_deadlines())
+
 private
 
 def checked(ctx: BDD.Context, result: Result[Void]) -> BDD.Context
@@ -79,8 +81,8 @@ def sequence(client: HttpClient.Client, pinged: Channel[Bool]) -> Result[Void]
     return error("unexpected second response")
   end
 
-  third = try HttpClient.get(client, "/third")
-  return error("unexpected third response") if third.status != 204
+  third = try HttpClient.request(client, "head", "/third")
+  return error("unexpected third response") if third.status != 200 or third.body != "extension".bytes
   ok()
 end
 
@@ -205,4 +207,37 @@ def early_request(port: Int) -> Result[Void]
   return error("incomplete early response") if response.status != 413 or response.body != ("r" * 32_768 + "tail").bytes
 
   ok()
+end
+
+def check_deadlines() -> Result[Void]
+  try deadline_check(true, 200, "http_client.timeout.connect")
+  try deadline_check(false, 200, "http_client.timeout.read")
+  try deadline_check(true, 2_000, "http_client.timeout.request")
+  deadline_check(false, 2_000, "http_client.timeout.request")
+end
+
+def deadline_check(settings: Bool, phase_ms: Int, kind: String) -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  peer = Task.spawn do H2Peer.stalled(listener, settings) end
+  result = timeout_request(TCP.local_port(listener), phase_ms, kind)
+  await_peer(listener, peer, result)
+end
+
+def timeout_request(port: Int, phase_ms: Int, kind: String) -> Result[Void]
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{port}",
+    protocol: HttpClient.Protocol.Http2,
+    connect_timeout_ms: phase_ms,
+    read_timeout_ms: phase_ms,
+    timeout_ms: 750,
+    max_retries: 0,
+  )
+
+  result = HttpClient.get(client, "/")
+  HttpClient.close(client, 0)
+  case result
+    error(e) if e.is_a?(kind) -> ok()
+    error(e) -> error("expected #{kind}, got #{e.kind}: #{e.message}")
+    ok(_) -> error("expected a timeout")
+  end
 end

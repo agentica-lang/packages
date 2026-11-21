@@ -14,3 +14,6 @@ Feature: HTTP/2 requests
 
   Scenario: An unsent POST uses a fresh connection and returns an early final response
     Then an unsent HTTP/2 POST reconnects and returns the early response
+
+  Scenario: Connect and read budgets keep distinct errors from the request deadline
+    Then HTTP/2 reports the limiting deadline
