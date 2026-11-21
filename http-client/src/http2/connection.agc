@@ -34,9 +34,14 @@ struct Piece
   credit: Int
 end
 
+enum HeadArrival
+  Head(StreamHead)
+  Over
+end
+
 struct Streaming
   whole: Fn[Response, Bool]
-  head: Channel[Result[StreamHead]]
+  head: Channel[HeadArrival]
   body: Channel[Bytes]
 end
 
@@ -600,10 +605,9 @@ def apply_head(state: Progress, head: Headers.Head, ended: Bool) -> Progress
   case stream.streaming
     some(streaming) if not stream.head_sent ->
       whole = streaming.whole.call(response(updated))
-      # The head channel holds one final head: 1xx never sends, trailers never resend, so a 0 wait
-      # cannot block the session and a dropped send would only mean the caller timed out its head.
+      # Informational headers and trailers never send a head. The second slot is for task completion.
       _ = streaming.head.send(
-        ok(StreamHead(id: stream.id, status: head.status, headers: head.fields, whole: whole)),
+        HeadArrival.Head(StreamHead(id: stream.id, status: head.status, headers: head.fields, whole: whole)),
         0,
       )
 

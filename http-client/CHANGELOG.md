@@ -2,6 +2,10 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+- Return HTTP/2 streaming errors instead of crashing on a zero-duration task wait.
+
 ## [0.4.0] - 2026-11-21
 
 - Stream HTTP/2 response bodies incrementally with per-stream flow control.
