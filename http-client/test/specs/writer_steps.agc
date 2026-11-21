@@ -17,7 +17,21 @@ def expired(ctx: BDD.Context, _args: List[String]) -> BDD.Context
 end
 
 def skipped_end(ctx: BDD.Context, _args: List[String]) -> BDD.Context
-  case exercise_end()
+  case exercise_end(false, false)
+    ok(_) -> BDD.assert(ctx, true, "")
+    error(e) -> BDD.assert(ctx, false, e.message)
+  end
+end
+
+def reset_by_peer(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  case exercise_end(true, false)
+    ok(_) -> BDD.assert(ctx, true, "")
+    error(e) -> BDD.assert(ctx, false, e.message)
+  end
+end
+
+def eof(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  case exercise_end(false, true)
     ok(_) -> BDD.assert(ctx, true, "")
     error(e) -> BDD.assert(ctx, false, e.message)
   end
@@ -87,11 +101,12 @@ def skipped(inbox: Channel[Session.Msg], credit: Int) -> Result[Void]
   error("the expired write was not reported")
 end
 
-def exercise_end() -> Result[Void]
+def exercise_end(peer_resets: Bool, eof: Bool) -> Result[Void]
   listener = try TCP.listen("127.0.0.1", 0)
   gate = Gate(blocked: Channel.new(1), release: Channel.new(1), cleared: Channel.new(1))
-  peer = Task.spawn do Peer.skipped_end(listener, gate.blocked, gate.cleared) end
-  result = exchange(TCP.local_port(listener), gate)
+  peer = Task.spawn do peer_exchange(listener, gate, peer_resets, eof) end
+
+  result = exchange(TCP.local_port(listener), gate, eof)
   TCP.close_listener(listener)
   case Task.await(peer, 1_000)
     Await.Done(outcome) ->
@@ -105,7 +120,12 @@ def exercise_end() -> Result[Void]
   end
 end
 
-def exchange(port: Int, gate: Gate) -> Result[Void]
+def peer_exchange(listener: TCP.Listener, gate: Gate, peer_resets: Bool, eof: Bool) -> Result[Void]
+  return Peer.eof_during_upload(listener, gate.blocked) if eof
+  Peer.skipped_end(listener, gate.blocked, gate.cleared, peer_resets)
+end
+
+def exchange(port: Int, gate: Gate, eof: Bool) -> Result[Void]
   owner: Channel[Messages.Origin] = Channel.new(16)
   base = "http://127.0.0.1:#{port}"
   cache: ATS[String, Dial.Resolved] = ATS.new()
@@ -129,7 +149,7 @@ def exchange(port: Int, gate: Gate) -> Result[Void]
   )
 
   session = Session.start(config)
-  result = requests(session, owner, base, gate)
+  result = requests(session, owner, base, gate, eof)
   _ = Actor.cast(session.address, Session.Msg.Stop, 100)
   _ = Actor.stop(session, 1_000)
   result
@@ -140,6 +160,7 @@ def requests(
   owner: Channel[Messages.Origin],
   base: String,
   gate: Gate,
+  eof: Bool,
 ) -> Result[Void]
   try Actor.cast(session.address, Session.Msg.Boot, 100)
   case try owner.recv(2_000)
@@ -149,11 +170,17 @@ def requests(
 
   deadline = Time.monotonic_ms() + 500
   try send_request(session.address, base, "POST", "/early", ("x" * 20_000).bytes, deadline)
+  if eof
+    read = try response(owner)
+    return error("the buffered response did not drain at EOF") if read.status != 413 or read.body != "complete".bytes
+    return ok()
+  end
+
   try completed(owner, 413)
+  try send_request(session.address, base, "GET", "/after", "".bytes, Time.monotonic_ms() + 2_000)
   Task.sleep([deadline - Time.monotonic_ms() + 10, 1].max.unwrap!)
   try gate.release.send(true, 100)
   _ = try gate.cleared.recv(2_000)
-  try send_request(session.address, base, "GET", "/after", "".bytes, Time.monotonic_ms() + 1_000)
   completed(owner, 200)
 end
 
@@ -191,10 +218,20 @@ def send_request(
 end
 
 def completed(owner: Channel[Messages.Origin], status: Int) -> Result[Void]
-  case try owner.recv(2_000)
-    Messages.Origin.Complete(_, _, ok(response)) if response.status == status -> ok()
-    _ -> error("expected response status #{status}")
+  received = try response(owner)
+  return error("expected response status #{status}") if received.status != status
+  ok()
+end
+
+def response(owner: Channel[Messages.Origin]) -> Result[Connection.Response]
+  for _ in 1..4
+    case try owner.recv(2_000)
+      Messages.Origin.Complete(_, _, result) -> return result
+      _ -> nil
+    end
   end
+
+  error("expected a response completion")
 end
 
 def gated_send(socket: TCP.Socket, bytes: Bytes, gate: Gate) -> Result[Void]

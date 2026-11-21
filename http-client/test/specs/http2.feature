@@ -44,3 +44,9 @@ Feature: HTTP/2 requests
 
   Scenario: An early response completes before its final queued upload expires
     Then a skipped final upload releases the peer stream slot
+
+  Scenario: A peer reset closes an upload after an early response
+    Then a peer reset suppresses the expired upload and local reset
+
+  Scenario: A blocked writer does not delay buffered response DATA at EOF
+    Then a complete buffered response drains at EOF while the writer is blocked

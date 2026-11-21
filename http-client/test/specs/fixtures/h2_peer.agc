@@ -252,7 +252,10 @@ def malformed(listener: TCP.Listener, started: Channel[Bool], mode: Int) -> Resu
     _ -> try send(socket, 1, 4, 1, hex("894006782d74657374036f6e65"))
   end
 
-  if mode != 1
+  if mode == 2
+    padded = Bytes.from_list([1]).unwrap! + ("m" * 16_382).bytes + Frame.word(0).take(1)
+    try send(socket, 0, 9, 1, padded)
+  elsif mode != 1
     try send(socket, 0, 1, 1, "x".bytes)
   end
 
@@ -261,30 +264,50 @@ def malformed(listener: TCP.Listener, started: Channel[Bool], mode: Int) -> Resu
     return error("expected a stream protocol error")
   end
 
-  block = hex("88be")
   if mode == 2
-    block = hex("88")
+    try send(socket, 1, 4, 3, hex("88"))
+    try send(socket, 0, 0, 3, ("d" * 16_384).bytes)
+    credit = try read(socket)
+    if credit.kind != 8 or credit.stream != 0 or credit.payload != Frame.word(32_768)
+      return error("malformed padded DATA was not charged against the connection window")
+    end
+
+    try send(socket, 0, 1, 3, "".bytes)
+  else
+    try send(socket, 1, 5, 3, hex("88be"))
   end
 
-  try send(socket, 1, 5, 3, block)
   expect_closed(socket)
 end
 
-def skipped_end(listener: TCP.Listener, blocked: Channel[Bool], cleared: Channel[Bool]) -> Result[Void]
+def skipped_end(
+  listener: TCP.Listener,
+  blocked: Channel[Bool],
+  cleared: Channel[Bool],
+  peer_resets: Bool,
+) -> Result[Void]
   socket = try TCP.accept(listener, WAIT)
   try handshake(socket, hex("000300000001"))
   _ = try read_headers(socket, 1)
   _ = try blocked.recv(WAIT)
   Task.sleep(30)
-  try send(socket, 1, 5, 1, hex("0803343133"))
+  if peer_resets
+    wire = Frame.encode(1, 5, 1, hex("0803343133")) + Frame.encode(3, 0, 1, Frame.word(0))
+    try TCP.send_bytes(socket, wire, WAIT)
+  else
+    try send(socket, 1, 5, 1, hex("0803343133"))
+  end
+
   first = try read(socket)
   if first.kind != 0 or first.stream != 1 or first.flags != 0
     return error("expected the first DATA without end_stream")
   end
 
-  reset = try read(socket)
-  if reset.kind != 3 or reset.stream != 1 or reset.payload != Frame.word(8)
-    return error("the expired final DATA did not release its stream slot")
+  if not peer_resets
+    reset = try read(socket)
+    if reset.kind != 3 or reset.stream != 1 or reset.payload != Frame.word(8)
+      return error("the expired final DATA did not release its stream slot")
+    end
   end
 
   try cleared.send(true, WAIT)
@@ -292,6 +315,18 @@ def skipped_end(listener: TCP.Listener, blocked: Channel[Bool], cleared: Channel
   try expect_request(later, "GET", "/after")
   try send(socket, 1, 5, 3, hex("88"))
   expect_closed(socket)
+end
+
+def eof_during_upload(listener: TCP.Listener, blocked: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, hex("000300000001"))
+  _ = try read_headers(socket, 1)
+  _ = try blocked.recv(WAIT)
+  Task.sleep(30)
+  wire = Frame.encode(1, 4, 1, hex("0803343133")) + Frame.encode(0, 1, 1, "complete".bytes)
+  try TCP.send_bytes(socket, wire, WAIT)
+  TCP.close(socket)
+  ok()
 end
 
 private

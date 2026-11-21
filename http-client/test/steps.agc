@@ -14,6 +14,8 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
+    BDD.step("a peer reset suppresses the expired upload and local reset", &WriterSteps.reset_by_peer),
+    BDD.step("a complete buffered response drains at EOF while the writer is blocked", &WriterSteps.eof),
     BDD.step("a skipped final upload releases the peer stream slot", &WriterSteps.skipped_end),
     BDD.step("a blocked writer skips expired stream writes", &WriterSteps.expired),
     BDD.step("a mismatched content length resets only its stream", &H2Steps.malformed),
