@@ -122,13 +122,19 @@ def submit(link: Link, request: H2.Request, connect_timeout_ms: Int) -> Result[H
   submission = H2.Submission(request: request, connect_timeout_ms: connect_timeout_ms, reply: reply)
   case link.inbox.send(Order.Submit(submission), left)
     ok(_) -> nil
-    error(e) if e.is_a?("channel.closed") -> return error("http_client: link closed", kind: "http_client.network")
+    error(e) if e.is_a?("channel.closed") -> return error("http_client: link closed", kind: "http_client.closed")
     error(e) -> return error("http_client: the request timed out", kind: "http_client.timeout.request", cause: e)
   end
 
+  watcher = Task.spawn do close_reply_on_exit(link, reply) end
   wait = [request.deadline - Time.monotonic_ms(), 0].max.unwrap!
-  case reply.recv(wait)
+  received = reply.recv(wait)
+  reply.close
+  Task.cancel(watcher)
+  _ = Task.await(watcher)
+  case received
     ok(result) -> result
+    error(e) if e.is_a?("channel.closed") -> error("http_client: the client is closed", kind: "http_client.closed")
     error(_) -> error("http_client: the request timed out", kind: "http_client.timeout.request")
   end
 end
@@ -352,12 +358,24 @@ def ready_h2(session: Optional[H2.Session], inbox: Channel[Order]) -> Optional[H
   end
 end
 
-def close_h2(session: H2.Session) -> Void
-  session.incoming.close
-  TCP.close(session.socket)
+def close_reply_on_exit(link: Link, reply: Channel[Result[H2.Response]]) -> Result[Void]
+  _ = Task.await(link.task)
+  reply.close
+  ok()
 end
 
-def read_h2(socket: TCP.Socket, incoming: Channel[Bytes], inbox: Channel[Order]) -> Void
+def close_h2(session: H2.Session) -> Void
+  stop_reader(session.socket, session.incoming, session.reader)
+end
+
+def stop_reader(socket: TCP.Socket, incoming: Channel[Bytes], reader: Task[Result[Void]]) -> Void
+  incoming.close
+  TCP.close(socket)
+  Task.cancel(reader)
+  _ = Task.await(reader)
+end
+
+def read_h2(socket: TCP.Socket, incoming: Channel[Bytes], inbox: Channel[Order]) -> Result[Void]
   while not incoming.closed?
     case TCP.recv_bytes(socket, 16_384)
       ok(bytes) if not bytes.empty? ->
@@ -369,6 +387,7 @@ def read_h2(socket: TCP.Socket, incoming: Channel[Bytes], inbox: Channel[Order])
 
   incoming.close
   _ = inbox.send(Order.Readable, 0)
+  ok()
 end
 
 def execute_h2(
@@ -451,21 +470,29 @@ def open_h2(origin: Origin, submission: H2.Submission, inbox: Channel[Order], de
   end
 
   return error("http_client: HTTP/2 connect timed out", kind: kind) if wait < 1
-  case Dial.open_h2(origin.dialer, origin.url, origin.options, wait)
-    ok(socket) ->
-      incoming: Channel[Bytes] = Channel.new(2)
-      _ = Task.spawn do read_h2(socket, incoming, inbox) end
-      opened = H2.start(socket, incoming, deadline)
-      case opened
-        ok(_) -> opened
-        error(e) ->
-          incoming.close
-          TCP.close(socket)
-          h2_connect_failure(e, kind)
-      end
+  opened = Dial.open_h2(
+    origin.dialer,
+    origin.url,
+    origin.options,
+    deadline,
+    ->(socket, end_at) { start_h2(socket, inbox, end_at) },
+  )
 
+  case opened
+    ok(_) -> opened
     error(e) -> h2_connect_failure(e, kind)
   end
+end
+
+def start_h2(socket: TCP.Socket, inbox: Channel[Order], deadline: Int) -> Result[H2.Session]
+  incoming: Channel[Bytes] = Channel.new(2)
+  reader = Task.spawn do read_h2(socket, incoming, inbox) end
+  opened = H2.start(socket, incoming, reader, deadline)
+  if not opened.ok?
+    stop_reader(socket, incoming, reader)
+  end
+
+  opened
 end
 
 def h2_connect_failure(e: Error, kind: String) -> Result[H2.Session]

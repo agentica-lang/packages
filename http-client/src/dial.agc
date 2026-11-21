@@ -48,11 +48,16 @@ def connect(dialer: Dialer, url: String, options: HTTP.ClientOptions, wait_ms: I
   connect_addresses(addresses, deadline, ->(address, share) { reach(url, address, limited(options, share)) })
 end
 
-def open_h2(dialer: Dialer, url: String, options: HTTP.ClientOptions, wait_ms: Int) -> Result[TCP.Socket]
+def open_h2[T](
+  dialer: Dialer,
+  url: String,
+  options: HTTP.ClientOptions,
+  deadline: Int,
+  start: Fn[TCP.Socket, Int, Result[T]],
+) -> Result[T]
   target = try Url.resolve("", url)
   host = Address.unbracketed(target.host)
-  deadline = Time.monotonic_ms() + wait_ms
-  return reach_h2(target, host, options, deadline) if not dialer.own
+  return start.call(try reach_h2(target, host, options, deadline), deadline) if not dialer.own
 
   addresses = [host]
   if not Address.literal?(target.host)
@@ -63,7 +68,7 @@ def open_h2(dialer: Dialer, url: String, options: HTTP.ClientOptions, wait_ms: I
   connect_addresses(
     choices,
     deadline,
-    ->(address, share) { reach_h2(target, address, options, Time.monotonic_ms() + share) },
+    ->(address, share) { attempt_h2(target, address, options, Time.monotonic_ms() + share, start) },
   )
 end
 
@@ -166,6 +171,17 @@ end
 # URL and `Host` names it.
 def reach(url: String, address: String, options: HTTP.ClientOptions) -> Result[HTTP.Connection]
   HTTP.start(url, options.with(connect_to: address))
+end
+
+def attempt_h2[T](
+  target: Url.Target,
+  address: String,
+  options: HTTP.ClientOptions,
+  deadline: Int,
+  start: Fn[TCP.Socket, Int, Result[T]],
+) -> Result[T]
+  socket = try reach_h2(target, address, options, deadline)
+  start.call(socket, deadline)
 end
 
 def reach_h2(target: Url.Target, address: String, options: HTTP.ClientOptions, deadline: Int) -> Result[TCP.Socket]

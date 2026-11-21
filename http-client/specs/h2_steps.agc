@@ -21,6 +21,8 @@ def early(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, e
 
 def deadlines(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, check_deadlines())
 
+def closing(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, close_checks())
+
 private
 
 def checked(ctx: BDD.Context, result: Result[Void]) -> BDD.Context
@@ -81,8 +83,9 @@ def sequence(client: HttpClient.Client, pinged: Channel[Bool]) -> Result[Void]
     return error("unexpected second response")
   end
 
-  third = try HttpClient.request(client, "head", "/third")
+  third = try HttpClient.request(client, "head", "/third", headers: [HTTP.Header(name: "X-Parity", value: "café")])
   return error("unexpected third response") if third.status != 200 or third.body != "extension".bytes
+  return error("expected Latin-1 response header") if third.headers.size != 1 or third.headers[0].value != "café"
   ok()
 end
 
@@ -120,7 +123,7 @@ def tls_request(port: Int, alpn: List[String], h2: Bool, addresses: List[String]
     timeout_ms: 6_000,
   )
 
-  result = HttpClient.get(client, "/tls")
+  result = HttpClient.post(client, "/tls")
   HttpClient.close(client, 0)
   case result
     ok(response) if h2 and response.status == 200 -> ok()
@@ -175,16 +178,26 @@ def refused_request(port: Int, kind: String) -> Result[Void]
 end
 
 def alternate_check() -> Result[Void]
-  h2 = try server_context("h2")
-  h1 = try server_context("http/1.1")
-  listener = try TLS.listen("127.0.0.1", 0, h2)
-  port = TCP.local_port(listener)
-  alternate = try TLS.listen("127.0.0.2", port, h1)
-  first_peer = Task.spawn do H2Peer.serve_tls(alternate, false) end
-  second_peer = Task.spawn do H2Peer.serve_tls(listener, true) end
-  result = tls_request(port, ["h2", "http/1.1"], true, ["127.0.0.2", "127.0.0.1"])
-  first_result = await_peer(alternate, first_peer, result)
-  await_peer(listener, second_peer, first_result)
+  listener = try TCP.listen("127.0.0.1", 0)
+  peer = Task.spawn do H2Peer.failover(listener) end
+  result = alternate_request(TCP.local_port(listener))
+  await_peer(listener, peer, result)
+end
+
+def alternate_request(port: Int) -> Result[Void]
+  client = try HttpClient.new(
+    base_url: "http://api.test:#{port}",
+    protocol: HttpClient.Protocol.Http2,
+    connect_timeout_ms: 1_000,
+    max_retries: 0,
+    resolver: some(->(_host) { ok(["127.0.0.1", "127.0.0.1"]) }),
+  )
+
+  result = HttpClient.get(client, "/")
+  HttpClient.close(client, 0)
+  response = try result
+  return error("expected the second connection to succeed") if response.status != 200
+  ok()
 end
 
 def early_check() -> Result[Void]
@@ -240,4 +253,60 @@ def timeout_request(port: Int, phase_ms: Int, kind: String) -> Result[Void]
     error(e) -> error("expected #{kind}, got #{e.kind}: #{e.message}")
     ok(_) -> error("expected a timeout")
   end
+end
+
+def closing_check() -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  started: Channel[Bool] = Channel.new(1)
+  peer = Task.spawn do H2Peer.wait_for_close(listener, started) end
+  result = close_active(TCP.local_port(listener), started)
+  await_peer(listener, peer, result)
+end
+
+def close_active(port: Int, started: Channel[Bool]) -> Result[Void]
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{port}",
+    protocol: HttpClient.Protocol.Http2,
+    timeout_ms: 30_000,
+    max_retries: 0,
+  )
+
+  request = Task.spawn do HttpClient.get(client, "/") end
+  began = started.recv(2_000)
+  HttpClient.close(client, 0)
+  try began
+  case Task.await(request, 500)
+    Await.Done(error(e)) if e.is_a?("http_client.closed") -> ok()
+    Await.Done(error(e)) -> error(e)
+    Await.Done(ok(_)) -> error("expected closed request")
+    Await.TimedOut ->
+      Task.cancel(request)
+      _ = Task.await(request)
+      error("request did not finish after close")
+  end
+end
+
+def close_checks() -> Result[Void]
+  try closing_check()
+  listener = try TCP.listen("127.0.0.1", 0)
+  release: Channel[Bool] = Channel.new(1)
+  peer = Task.spawn do H2Peer.idle_until_close(listener, release) end
+  result = close_idle(TCP.local_port(listener))
+  _ = release.send(true, 0)
+  await_peer(listener, peer, result)
+end
+
+def close_idle(port: Int) -> Result[Void]
+  before = Task.pending_count()
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{port}",
+    protocol: HttpClient.Protocol.Http2,
+    max_retries: 0,
+  )
+
+  result = HttpClient.get(client, "/")
+  HttpClient.close(client, 0)
+  _ = try result
+  return error("HTTP/2 close left tasks running") if Task.pending_count() != before
+  ok()
 end

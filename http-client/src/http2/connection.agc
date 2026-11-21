@@ -24,6 +24,7 @@ end
 struct Session
   socket: TCP.Socket
   incoming: Channel[Bytes]
+  reader: Task[Result[Void]]
   decoder: Hpack.DecoderState
   buffer: Bytes = "".bytes
   next_stream: Int = 1
@@ -49,8 +50,8 @@ struct Submission
   reply: Channel[Result[Response]]
 end
 
-def start(socket: TCP.Socket, incoming: Channel[Bytes], deadline: Int) -> Result[Session]
-  session = Session(socket: socket, incoming: incoming, decoder: Hpack.decoder())
+def start(socket: TCP.Socket, incoming: Channel[Bytes], reader: Task[Result[Void]], deadline: Int) -> Result[Session]
+  session = Session(socket: socket, incoming: incoming, reader: reader, decoder: Hpack.decoder())
   preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".bytes
   settings = Frame.encode(4, 0, 0, Bytes.from_list([0, 2, 0, 0, 0, 0]).unwrap!)
   try TCP.send_bytes(socket, preface + settings, try remaining(deadline))

@@ -26,7 +26,11 @@ def serve(listener: TCP.Listener, pinged: Channel[Bool]) -> Result[Void]
   try handshake(replacement, "".bytes)
   third = try read_headers(replacement, 1)
   try expect_request(third, "head", "/third")
-  try send(replacement, 1, 4, 1, hex("88"))
+  if (not third.any? { |field| field.name == "x-parity".bytes and field.value == hex("636166e9") })
+    return error("expected Latin-1 request header")
+  end
+
+  try send(replacement, 1, 4, 1, hex("880008782d70617269747904636166e9"))
   try send(replacement, 0, 1, 1, "extension".bytes)
   TCP.close(replacement)
   ok()
@@ -37,7 +41,11 @@ def serve_tls(listener: TCP.Listener, h2: Bool) -> Result[Void]
   if h2
     try handshake(socket, "".bytes)
     fields = try read_headers(socket, 1)
-    try expect_request(fields, "GET", "/tls")
+    try expect_request(fields, "POST", "/tls")
+    if (not fields.any? { |field| field.name == "content-length".bytes and field.value == "0".bytes })
+      return error("expected zero content length")
+    end
+
     try send(socket, 1, 5, 1, hex("88"))
   end
 
@@ -84,11 +92,42 @@ def stalled(listener: TCP.Listener, wait_for_settings: Bool) -> Result[Void]
     _ = try read_headers(socket, 1)
   end
 
+  expect_closed(socket)
+end
+
+def expect_closed(socket: TCP.Socket) -> Result[Void]
   case TCP.recv_bytes(socket, 1, WAIT)
     ok(bytes) if bytes.empty? -> ok()
     error(e) if e.is_a?("net.closed") -> ok()
     _ -> error("client did not close the stalled session")
   end
+end
+
+def failover(listener: TCP.Listener) -> Result[Void]
+  try stalled(listener, true)
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, "".bytes)
+  fields = try read_headers(socket, 1)
+  try expect_request(fields, "GET", "/")
+  send(socket, 1, 5, 1, hex("88"))
+end
+
+def wait_for_close(listener: TCP.Listener, started: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, "".bytes)
+  _ = try read_headers(socket, 1)
+  try started.send(true, WAIT)
+  expect_closed(socket)
+end
+
+def idle_until_close(listener: TCP.Listener, release: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, "".bytes)
+  _ = try read_headers(socket, 1)
+  try send(socket, 1, 5, 1, hex("88"))
+  try expect_closed(socket)
+  _ = try release.recv(WAIT)
+  ok()
 end
 
 private
