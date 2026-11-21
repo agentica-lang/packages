@@ -321,8 +321,13 @@ def eof_during_upload(listener: TCP.Listener, blocked: Channel[Bool]) -> Result[
   try handshake(socket, hex("000300000001"))
   _ = try read_headers(socket, 1)
   _ = try blocked.recv(WAIT)
-  wire = Frame.encode(1, 4, 1, hex("0803343133")) + Frame.encode(0, 1, 1, "complete".bytes)
-  try TCP.send_bytes(socket, wire, WAIT)
+  try send(socket, 1, 4, 1, hex("0803343133"))
+  Task.sleep(10)
+  wire = Frame.encode(0, 1, 1, "complete".bytes)
+  split = wire.size - 4
+  try TCP.send_bytes(socket, wire.slice(0, split), WAIT)
+  Task.sleep(10)
+  try TCP.send_bytes(socket, wire.drop(split), WAIT)
   TCP.close(socket)
   ok()
 end

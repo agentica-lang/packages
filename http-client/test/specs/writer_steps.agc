@@ -1,11 +1,11 @@
+import Dial from "../../src/dial"
+import Connection from "../../src/http2/connection"
 import Origin from "../../src/http2/origin"
+import Session from "../../src/http2/session"
 import Url from "../../src/url"
 import Peer from "fixtures/h2_peer"
-import HTTP from "std/http"
-import Dial from "../../src/dial"
 import BDD from "std/bdd"
-import Connection from "../../src/http2/connection"
-import Session from "../../src/http2/session"
+import HTTP from "std/http"
 
 def expired(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   case exercise()

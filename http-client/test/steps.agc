@@ -3,10 +3,10 @@
 ## writes the answers of a script by hand and says which TCP connection served each one (`fixtures/raw_peer.agc`).
 
 import BDD from "std/bdd"
-import WriterSteps from "specs/writer_steps"
 import H2Steps from "specs/h2_steps"
 import Protocol from "specs/protocol"
 import {Call, Check, Expectation, How, Reads, Request, Script, Setup} from "specs/protocol"
+import WriterSteps from "specs/writer_steps"
 
 private
 
