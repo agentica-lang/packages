@@ -13,6 +13,8 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
+    BDD.step("a mismatched content length resets only its stream", &H2Steps.malformed),
+    BDD.step("a spare HTTP/2 session closes while its origin has an active request", &H2Steps.surplus),
     BDD.step("two uploads share one connection window", &H2Steps.shared),
     BDD.step("the origin replaces a failed session after settling all requests", &H2Steps.broken),
     BDD.step("HTTP/2 pauses admission and preserves HPACK across a cancelled stream", &H2Steps.cancelled),

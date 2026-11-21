@@ -35,6 +35,12 @@ def broken(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   checked(ctx, peer_check(&H2Peer.broken, &broken_calls))
 end
 
+def surplus(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, surplus_check())
+
+def malformed(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  checked(ctx, peer_check(&H2Peer.malformed, &malformed_calls))
+end
+
 private
 
 def checked(ctx: BDD.Context, result: Result[Void]) -> BDD.Context
@@ -456,4 +462,47 @@ def lost(result: Result[HttpClient.Response]) -> Result[Void]
     error(e) if e.is_a?("http_client.network") -> ok()
     _ -> error("expected the failed session to settle the request")
   end
+end
+
+def surplus_check() -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  started: Channel[Bool] = Channel.new(1)
+  peer = Task.spawn do H2Peer.surplus(listener, started) end
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{TCP.local_port(listener)}",
+    pool_size: 2,
+    protocol: HttpClient.Protocol.Http2,
+    max_retries: 0,
+    timeout_ms: 3_000,
+    idle_ms: 100,
+  )
+
+  result = surplus_calls(client, started)
+  HttpClient.close(client, 0)
+  await_peer(listener, peer, result)
+end
+
+def surplus_calls(client: HttpClient.Client, started: Channel[Bool]) -> Result[Void]
+  busy = Task.spawn do HttpClient.get(client, "/busy") end
+  _ = try started.recv(2_000)
+  spare = try HttpClient.get(client, "/spare")
+  first = try Task.await(busy)
+  return error("idle retirement affected the busy session") if spare.status != 200 or first.status != 200
+  ok()
+end
+
+def malformed_calls(client: HttpClient.Client, started: Channel[Bool]) -> Result[Void]
+  first = Task.spawn do HttpClient.get(client, "/bad-length") end
+  _ = try started.recv(2_000)
+  good = try HttpClient.get(client, "/good")
+  case Task.await(first)
+    error(e) if e.is_a?("http_client.http2.protocol") -> nil
+    _ -> return error("expected a content-length error")
+  end
+
+  if good.status != 200 or good.headers.size != 1 or good.headers[0].value != "one"
+    return error("the malformed response affected another stream or lost HPACK state")
+  end
+
+  ok()
 end

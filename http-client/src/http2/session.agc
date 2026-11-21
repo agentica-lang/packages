@@ -46,10 +46,15 @@ struct State
   order: List[Int] = []
   pending: List[OpenCall] = []
   receiving: Int = 0
-  resets: List[Int] = []
+  resets: List[Reset] = []
   discarded: Optional[Connection.Stream] = none
   advertised: Int = -1
   phase: Phase = Phase.AwaitingSettings
+end
+
+struct Reset
+  stream: Int
+  code: Int = 8
 end
 
 struct OpenCall
@@ -69,6 +74,8 @@ def start(config: Config) -> Actor.Ref[State, Msg]
 end
 
 private
+
+WRITE_TIMEOUT_MS = 30_000
 
 def handle(state: State, message: Msg) -> Actor.Step[State]
   current = state
@@ -184,7 +191,8 @@ def step(state: State) -> Result[State]
   return error("the HTTP/2 connection closed", kind: "http_client.network") if ready.incoming.closed?
 
   if not current.resets.empty? and ready.writer.unwrap!.empty?
-    try Connection.reset(ready, current.resets.first, 8, Time.monotonic_ms() + 1_000)
+    reset = current.resets.first
+    try Connection.reset(ready, reset.stream, reset.code, Time.monotonic_ms() + 1_000)
     return ok(current.with(resets: current.resets.drop(1)))
   end
 
@@ -328,9 +336,14 @@ def received_stream(state: State, flight: Flight, frame: Frame.Frame) -> Result[
   changed = outcome.unwrap!
   stream = changed.stream
   current = state.with(conn: some(changed.session), receiving: continued(stream))
+  if not Connection.length_valid?(stream, flight.call.request.method)
+    failed: Result[Connection.Response] = Frame.invalid("content-length does not match response body")
+    return ok(abort_stream(current, flight.with(stream: stream), failed, code: 1))
+  end
+
   if stream.ended
     if stream.phase == Connection.StreamPhase.HalfClosedRemote and changed.session.write_error.none?
-      current = current.with(resets: current.resets.push(stream.id))
+      current = current.with(resets: current.resets.push(Reset(stream: stream.id)))
     end
 
     return ok(finish(current, stream.id, ok(Connection.response(stream))))
@@ -407,9 +420,9 @@ def expire(state: State) -> State
   current
 end
 
-def abort_stream(state: State, flight: Flight, reason: Result[Connection.Response]) -> State
+def abort_stream(state: State, flight: Flight, reason: Result[Connection.Response], code: Int = 8) -> State
   s = flight.stream
-  current = state.with(resets: state.resets.push(s.id))
+  current = state.with(resets: state.resets.push(Reset(stream: s.id, code: code)))
   if s.continuing
     current = current.with(discarded: some(s.with(parts: [], phase: Connection.StreamPhase.Closed)))
   end
@@ -433,7 +446,7 @@ def publish(state: State) -> State
   state.with(advertised: capacity)
 end
 
-def fail_all(state: State, reason: Result[Connection.Response]) -> State
+def fail_all(state: State, reason: Result[Connection.Response], code: Int = 8) -> State
   for flight in state.active.values
     complete(state, flight.call.caller.id, reason)
   end
@@ -481,16 +494,14 @@ end
 
 def write_loop(socket: TCP.Socket, out: Channel[Connection.Write], inbox: Channel[Msg]) -> Result[Void]
   while not out.closed?
-    item = try out.recv(3_600_000)
-    wait = item.deadline - Time.monotonic_ms()
-    if wait < 1
-      try inbox.send(Msg.Written(error("HTTP/2 write timed out", kind: "net.timeout")), 1_000)
-      return ok()
+    case out.recv(3_600_000)
+      ok(item) ->
+        sent = TCP.send_bytes(socket, item.bytes, WRITE_TIMEOUT_MS)
+        try inbox.send(Msg.Written(sent), 1_000)
+        break if not sent.ok?
+      error(e) if e.is_a?("channel.closed") -> break
+      error(_) -> nil
     end
-
-    sent = TCP.send_bytes(socket, item.bytes, wait)
-    try inbox.send(Msg.Written(sent), 1_000)
-    break if not sent.ok?
   end
 
   ok()

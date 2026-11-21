@@ -27,6 +27,7 @@ struct Peer
   starting: Int
   seats: Int = 0
   used: Int = 0
+  idle_since: Int = 0
   draining: Bool = false
 end
 
@@ -38,7 +39,6 @@ struct State
   next_id: Int = 1
   next_sequence: Int = 0
   closing: Optional[Int] = none
-  idle_since: Int
 end
 
 struct Origin
@@ -48,7 +48,7 @@ end
 
 def start(config: Config) -> Origin
   behaviour = Actor.Behaviour(
-    init: -> { State(config: config, idle_since: Time.monotonic_ms()) },
+    init: -> { State(config: config) },
     handle: &handle,
     terminate: some(&terminate),
     timeout: some(Actor.Timeout(after_ms: &next_wait, handle: &advance)),
@@ -120,7 +120,18 @@ def handle(state: State, msg: Messages.Origin) -> Actor.Step[State]
     Messages.Origin.Capacity(id, seats, draining) ->
       case state.peers.get(id)
         some(peer) ->
-          updated = state.with(peers: state.peers.put(id, peer.with(starting: 0, seats: seats, draining: draining)))
+          idle_since = peer.idle_since
+          if peer.starting != 0
+            idle_since = Time.monotonic_ms()
+          end
+
+          updated = state.with(
+            peers: state.peers.put(
+              id,
+              peer.with(starting: 0, seats: seats, draining: draining, idle_since: idle_since),
+            ),
+          )
+
           current = updated
           if peer.starting != 0 and draining
             current = startup_drained(updated, peer.starting)
@@ -146,22 +157,37 @@ def advance(state: State) -> Actor.Step[State]
     return Actor.continue(current)
   end
 
-  if current.calls.empty?
-    return Actor.done(force_close(current)) if Time.monotonic_ms() >= current.idle_since + current.config.idle_ms
+  Actor.continue(retire_idle(schedule(current)))
+end
 
-    return Actor.continue(current)
+def retire_idle(state: State) -> State
+  now = Time.monotonic_ms()
+  peers = state.peers
+  for id in peers.keys
+    peer = peers.get(id).unwrap!
+    if idle?(peer) and now - peer.idle_since >= state.config.idle_ms
+      if Actor.cast(peer.ref.address, Session.Msg.Drain, 0).ok?
+        peers = peers.put(id, peer.with(draining: true))
+      end
+    end
   end
 
-  Actor.continue(schedule(current.with(idle_since: Time.monotonic_ms())))
+  state.with(peers: peers)
 end
+
+def idle?(peer: Peer) -> Bool = peer.starting == 0 and peer.used == 0 and not peer.draining
 
 def next_wait(state: State) -> Optional[Int]
   now = Time.monotonic_ms()
   return some([state.closing.unwrap! - now, 0].max.unwrap!) if state.closing.some?
 
-  return some([state.idle_since + state.config.idle_ms - now, 0].max.unwrap!) if state.calls.empty?
-
   wait = 3_600_000
+  for peer in state.peers.values
+    if idle?(peer)
+      wait = [wait, peer.idle_since + state.config.idle_ms - now].min.unwrap!
+    end
+  end
+
   for key in state.queue
     next if connecting?(state, key)
     pending = state.calls.get(key).unwrap!
@@ -292,15 +318,18 @@ def completed(state: State, id: Int, key: Int, result: Result[Connection.Respons
         none -> state
         some(pending) ->
           return state if pending.session != id
-          next_state = state.with(peers: state.peers.put(id, peer.with(used: peer.used - 1)))
+          next_state = state.with(
+            peers: state.peers.put(id, peer.with(used: peer.used - 1, idle_since: Time.monotonic_ms())),
+          )
+
           case result
             error(e) if e.is_a?("http2.capacity") and state.closing.none? ->
-              next_state.with(calls: state.calls.put(key, pending.with(session: 0)), queue: [key] + state.queue)
+              requeue(next_state, key, pending.with(session: 0))
             error(e) if (e.is_a?("http2.unsent") or e.is_a?("http2.capacity")) and state.closing.some? ->
               reply(next_state, key, closed_error())
             error(e) if e.is_a?("http2.unsent") and not pending.call.retried and state.closing.none? ->
               retried = pending.with(session: 0, call: pending.call.with(retried: true))
-              next_state.with(calls: state.calls.put(key, retried), queue: [key] + state.queue)
+              requeue(next_state, key, retried)
             error(e) if e.is_a?("http2.unsent") ->
               reply(next_state, key, error("HTTP/2 session closed", kind: "http_client.network"))
             _ -> reply(next_state, key, result)
@@ -378,9 +407,7 @@ def connecting?(state: State, key: Int) -> Bool = state.peers.values.any? { |pee
 def reply(state: State, key: Int, result: Result[Connection.Response]) -> State
   pending = state.calls.get(key).unwrap!
   _ = Actor.reply(pending.call.reply, result)
-  next_state = state.with(calls: state.calls.delete(key), queue: state.queue.select { |queued| queued != key })
-  return next_state.with(idle_since: Time.monotonic_ms()) if next_state.calls.empty?
-  next_state
+  state.with(calls: state.calls.delete(key), queue: state.queue.select { |queued| queued != key })
 end
 
 def begin_close(state: State, deadline: Int) -> State

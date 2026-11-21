@@ -32,3 +32,9 @@ Feature: HTTP/2 requests
 
   Scenario: A failed socket settles its streams and is replaced on demand
     Then the origin replaces a failed session after settling all requests
+
+  Scenario: An idle socket expires independently of a busy socket
+    Then a spare HTTP/2 session closes while its origin has an active request
+
+  Scenario: A malformed response preserves the shared HPACK decoder
+    Then a mismatched content length resets only its stream

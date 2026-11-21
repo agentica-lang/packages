@@ -223,6 +223,37 @@ def broken(listener: TCP.Listener, started: Channel[Bool]) -> Result[Void]
   expect_closed(replacement)
 end
 
+def surplus(listener: TCP.Listener, started: Channel[Bool]) -> Result[Void]
+  busy = try TCP.accept(listener, WAIT)
+  try handshake(busy, hex("000300000001"))
+  _ = try read_headers(busy, 1)
+  try started.send(true, WAIT)
+  spare = try TCP.accept(listener, WAIT)
+  try handshake(spare, "".bytes)
+  _ = try read_headers(spare, 1)
+  try send(spare, 1, 5, 1, hex("88"))
+  try expect_closed(spare)
+  try send(busy, 1, 5, 1, hex("88"))
+  expect_closed(busy)
+end
+
+def malformed(listener: TCP.Listener, started: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, "".bytes)
+  _ = try read_headers(socket, 1)
+  try started.send(true, WAIT)
+  _ = try read_headers(socket, 3)
+  try send(socket, 1, 4, 1, hex("880f0d01324006782d74657374036f6e65"))
+  try send(socket, 0, 1, 1, "x".bytes)
+  reset = try read(socket)
+  if reset.kind != 3 or reset.stream != 1 or reset.payload != Frame.word(1)
+    return error("expected a stream protocol error")
+  end
+
+  try send(socket, 1, 5, 3, hex("88be"))
+  expect_closed(socket)
+end
+
 private
 
 WAIT = 5_000

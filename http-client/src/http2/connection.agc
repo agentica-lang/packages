@@ -23,7 +23,6 @@ end
 
 struct Write
   bytes: Bytes
-  deadline: Int
 end
 
 struct Session
@@ -166,6 +165,14 @@ def dispatch_closed(session: Session, frame: Frame.Frame, stream: Stream, deadli
   ok(Progress(session: changed, stream: stream))
 end
 
+def length_valid?(stream: Stream, method: String) -> Bool
+  return true if bodyless?(method, stream.status)
+  case stream.expected_size
+    some(size) -> stream.received <= size and (not stream.ended or stream.received == size)
+    none -> true
+  end
+end
+
 private
 
 EMPTY = "".bytes
@@ -212,7 +219,7 @@ def receive(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) ->
 
   case frame.kind
     0 -> data(state, frame, req, deadline)
-    1, 9 -> header_fragment(state, frame, req.method)
+    1, 9 -> header_fragment(state, frame)
     3 ->
       return Frame.invalid("invalid rst_stream") if frame.payload.size != 4
       error("http_client: the peer reset stream #{stream.id}", kind: "http_client.network")
@@ -347,7 +354,6 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
     next_stream = next_stream.with(parts: s.parts.push(payload), received: s.received + payload.size)
   end
 
-  try check_length(next_stream, req.method)
   if connection_credit <= REFILL and c.write_error.none?
     wait = deadline
     if ended
@@ -402,7 +408,7 @@ def header_bytes(stream: Stream, frame: Frame.Frame) -> Result[Bytes]
   ok(frame.payload)
 end
 
-def header_fragment(state: Progress, frame: Frame.Frame, method: String) -> Result[Progress]
+def header_fragment(state: Progress, frame: Frame.Frame) -> Result[Progress]
   s = state.stream
   fragment = try header_bytes(s, frame)
   ended = s.end_on_headers
@@ -429,23 +435,7 @@ def header_fragment(state: Progress, frame: Frame.Frame, method: String) -> Resu
     next_stream = next_stream.with(status: head.status, fields: head.fields, expected_size: head.length, ended: ended)
   end
 
-  try check_length(next_stream, method)
   ok(Progress(session: state.session.with(decoder: decoded.state), stream: next_stream))
-end
-
-def check_length(stream: Stream, method: String) -> Result[Void]
-  if not bodyless?(method, stream.status)
-    case stream.expected_size
-      some(size) ->
-        if stream.received > size or (stream.ended and stream.received != size)
-          return Frame.invalid("content-length does not match response body")
-        end
-
-      none -> nil
-    end
-  end
-
-  ok()
 end
 
 def bodyless?(method: String, status: Int) -> Bool = method == "HEAD" or status == 204 or status == 304
@@ -516,7 +506,7 @@ end
 
 def write(session: Session, bytes: Bytes, deadline: Int) -> Result[Void]
   case session.writer
-    some(writer) -> writer.send(Write(bytes: bytes, deadline: deadline), 0)
+    some(writer) -> writer.send(Write(bytes: bytes), 0)
     none -> TCP.send_bytes(session.socket, bytes, try remaining(deadline))
   end
 end
