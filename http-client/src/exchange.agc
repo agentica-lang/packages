@@ -213,7 +213,15 @@ def h2_streamed(
     ended: ended,
   )
 
-  _ = streaming.arrivals.send(Arrival.Head(head), 0)
+  # `arrivals` holds the head plus the close: a 0 wait never blocks the session, and a full channel
+  # means the caller went away, so failing fast beats hanging in `pump_h2`.
+  if not streaming.arrivals.send(Arrival.Head(head), 0).ok?
+    Task.cancel(running)
+    _ = Task.await(running, 1_000)
+    ended.close
+    return failure("the caller went away before the streamed head", "closed")
+  end
+
   result = pump_h2(call, source, head, streaming.stopping)
   case result
     error(e) ->
@@ -229,6 +237,8 @@ def h2_streamed(
           body.close
           ok(response)
         error(e) ->
+          Task.cancel(running)
+          _ = Task.await(running, 1_000)
           cut(body, e)
           error(e)
       end

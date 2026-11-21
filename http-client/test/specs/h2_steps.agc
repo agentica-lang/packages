@@ -7,6 +7,12 @@ def flow(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, fl
 
 def streaming(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, streaming_check())
 
+def streaming_cancel(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, streaming_cancel_check())
+
+def streaming_idle(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, streaming_idle_check())
+
+def streaming_flow(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, streaming_flow_check())
+
 def tls(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   result = tls_check(true)
   case result
@@ -88,6 +94,102 @@ def streamed_chunks(client: HttpClient.Client, resumed: Channel[Bool]) -> Result
     error(e) if e.is_a?("channel.closed") -> ok()
     error(e) -> error(e)
     ok(_) -> error("HTTP/2 stream had an unexpected extra chunk")
+  end
+end
+
+def streaming_cancel_check() -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  peer = Task.spawn do H2Peer.streaming_cancel(listener) end
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{TCP.local_port(listener)}",
+    protocol: HttpClient.Protocol.Http2,
+    timeout_ms: 3_000,
+    max_retries: 0,
+  )
+
+  outcome = cancelled_stream(client)
+  HttpClient.close(client, 0)
+  await_peer(listener, peer, outcome)
+end
+
+def cancelled_stream(client: HttpClient.Client) -> Result[Void]
+  stream = try HttpClient.stream(client, "GET", "/cancel")
+  return error("unexpected HTTP/2 cancel head") if stream.status != 200
+  first = try stream.body.recv(1_000)
+  return error("cancelled stream missed its first chunk") if try first != "first".bytes
+  HttpClient.cancel(stream)
+  inner = try stream.body.recv(1_000)
+  case inner
+    error(e) if e.is_a?("http_client.cancelled") -> nil
+    error(e) -> return error("expected cancelled error, got #{e.kind}: #{e.message}")
+    ok(_) -> return error("expected cancelled error after cancel")
+  end
+
+  after = try HttpClient.get(client, "/after")
+  return error("cancelled stream did not free its slot") if after.status != 200 or after.body != "after".bytes
+  ok()
+end
+
+def streaming_idle_check() -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  peer = Task.spawn do H2Peer.streaming_idle(listener) end
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{TCP.local_port(listener)}",
+    protocol: HttpClient.Protocol.Http2,
+    timeout_ms: 10_000,
+    read_timeout_ms: 5_000,
+    body_idle_ms: some(500),
+    max_retries: 0,
+  )
+
+  outcome = idle_stream(client)
+  HttpClient.close(client, 0)
+  await_peer(listener, peer, outcome)
+end
+
+def idle_stream(client: HttpClient.Client) -> Result[Void]
+  stream = try HttpClient.stream(client, "GET", "/idle")
+  return error("unexpected HTTP/2 idle head") if stream.status != 200
+  first = try stream.body.recv(1_000)
+  return error("idle stream missed its first chunk") if try first != "first".bytes
+  inner = try stream.body.recv(5_000)
+  case inner
+    error(e) if e.is_a?("http_client.timeout.read") -> ok()
+    error(e) -> error("expected idle timeout, got #{e.kind}: #{e.message}")
+    ok(_) -> error("expected idle timeout for stalled stream")
+  end
+end
+
+def streaming_flow_check() -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  peer = Task.spawn do H2Peer.streaming_flow(listener) end
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{TCP.local_port(listener)}",
+    protocol: HttpClient.Protocol.Http2,
+    timeout_ms: 5_000,
+    max_retries: 0,
+  )
+
+  outcome = flow_stream(client)
+  HttpClient.close(client, 0)
+  await_peer(listener, peer, outcome)
+end
+
+def flow_stream(client: HttpClient.Client) -> Result[Void]
+  stream = try HttpClient.stream(client, "GET", "/flow")
+  return error("unexpected HTTP/2 flow head") if stream.status != 200
+  first = try stream.body.recv(2_000)
+  return error("wrong first flow piece") if (try first).size != 16_384
+  second = try stream.body.recv(2_000)
+  return error("wrong second flow piece") if (try second).size != 16_384
+  third = try stream.body.recv(2_000)
+  return error("wrong third flow piece") if (try third).size != 7_232
+  tail = try stream.body.recv(2_000)
+  return error("missing flow tail") if try tail != "tail".bytes
+  case stream.body.recv(1_000)
+    error(e) if e.is_a?("channel.closed") -> ok()
+    error(e) -> error(e)
+    ok(_) -> error("flow stream had an unexpected extra chunk")
   end
 end
 

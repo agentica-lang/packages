@@ -434,11 +434,9 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
     return ok(discarded.with(malformed: some(message)))
   end
 
-  stream_body = false
-  case s.streaming
-    some(streaming) -> stream_body = s.head_sent and not streaming.whole.call(response(s))
-    none -> nil
-  end
+  # `head_sent` caches the streaming decision from `apply_head`: a streamed call kept whole stays
+  # buffered, so the body never splits between `pending` and `parts`.
+  stream_body = s.head_sent
 
   if not stream_body and payload.size > req.max_body_bytes - s.received
     return error("http_client: response body exceeds its limit", kind: "http_client.too_large")
@@ -602,6 +600,8 @@ def apply_head(state: Progress, head: Headers.Head, ended: Bool) -> Progress
   case stream.streaming
     some(streaming) if not stream.head_sent ->
       whole = streaming.whole.call(response(updated))
+      # The head channel holds one final head: 1xx never sends, trailers never resend, so a 0 wait
+      # cannot block the session and a dropped send would only mean the caller timed out its head.
       _ = streaming.head.send(
         ok(StreamHead(id: stream.id, status: head.status, headers: head.fields, whole: whole)),
         0,
