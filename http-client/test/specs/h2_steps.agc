@@ -255,10 +255,10 @@ def sequence(client: HttpClient.Client, pinged: Channel[Bool]) -> Result[Void]
     _ -> return error("expected argument error before sending the request")
   end
 
-  malformed = HttpClient.get(client, "/invalid path")
+  malformed = HttpClient.stream(client, "GET", "/invalid path")
   case malformed
     error(e) if e.is_a?("argument") -> nil
-    _ -> return error("expected argument error for malformed path")
+    _ -> return error("expected argument error before an HTTP/2 stream head")
   end
 
   second = try HttpClient.post(client, "/second", body: some(("u" * 70_000).bytes))

@@ -444,17 +444,95 @@ def skipped_end(
   expect_closed(socket)
 end
 
+# A malformed response keeps the peer slot reserved while its reset waits on a
+# blocked writer. The next call must expire at the pool admission deadline, and
+# the slot is released when the writer settles the reset.
+def malformed_retiring(listener: TCP.Listener, blocked: Channel[Bool], cleared: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, hex("000300000001"))
+  _ = try read_headers(socket, 1)
+  _ = try blocked.recv(WAIT)
+  try TCP.send_bytes(socket, Frame.encode(0, 1, 1, "x".bytes), WAIT)
+  first = try read(socket)
+  if first.kind != 0 or first.stream != 1 or first.flags != 0
+    return error("expected the first DATA without end_stream")
+  end
+
+  reset = try read(socket)
+  if reset.kind != 3 or reset.stream != 1 or reset.payload != Frame.word(1)
+    return error("the malformed response did not keep its stream slot")
+  end
+
+  try cleared.send(true, WAIT)
+  later = try read_headers(socket, 3)
+  try expect_request(later, "GET", "/after")
+  try send(socket, 1, 5, 3, hex("88"))
+  expect_closed(socket)
+end
+
+# A peer reset releases a malformed stream and suppresses the queued local
+# reset, so no local RST reaches the wire. The peer sees the first DATA and
+# then the next HEADERS directly, which proves the suppress consistency.
+def malformed_peer_reset(listener: TCP.Listener, blocked: Channel[Bool], cleared: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, hex("000300000001"))
+  _ = try read_headers(socket, 1)
+  _ = try blocked.recv(WAIT)
+  try TCP.send_bytes(socket, Frame.encode(0, 1, 1, "x".bytes), WAIT)
+  try TCP.send_bytes(socket, Frame.encode(3, 0, 1, Frame.word(0)), WAIT)
+  first = try read(socket)
+  if first.kind != 0 or first.stream != 1 or first.flags != 0
+    return error("expected the first DATA without end_stream")
+  end
+
+  try cleared.send(true, WAIT)
+  later = try read_headers(socket, 3)
+  try expect_request(later, "GET", "/after")
+  try send(socket, 1, 5, 3, hex("88"))
+  expect_closed(socket)
+end
+
+# A retiring completion and its capacity arrive together, so a queued call that
+# still fits reuses its session instead of opening another socket. The second
+# HEADERS arrives on the same socket after the retired upload settles, which
+# proves no second socket was opened for it.
+def reuse_after_retire(listener: TCP.Listener, blocked: Channel[Bool], cleared: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, hex("000300000002"))
+  _ = try read_headers(socket, 1)
+  _ = try blocked.recv(WAIT)
+  wire = Frame.encode(1, 4, 1, hex("0803343133")) + Frame.encode(0, 1, 1, "complete".bytes)
+  try TCP.send_bytes(socket, wire, WAIT)
+  first = try read(socket)
+  if first.kind != 0 or first.stream != 1 or first.flags != 0
+    return error("expected the first DATA without end_stream")
+  end
+
+  reset = try read(socket)
+  if reset.kind != 3 or reset.stream != 1 or reset.payload != Frame.word(8)
+    return error("the retired upload did not release its stream slot")
+  end
+
+  try cleared.send(true, WAIT)
+  later = try read_headers(socket, 3)
+  try expect_request(later, "GET", "/after")
+  try send(socket, 1, 5, 3, hex("88"))
+  expect_closed(socket)
+end
+
+# The final DATA arrives split across two TCP sends that close at once, so the
+# last bytes stay queued in the reader channel when it closes. Draining those
+# queued chunks is what keeps the buffered response, and removing the drain
+# guard must fail it.
 def eof_during_upload(listener: TCP.Listener, blocked: Channel[Bool]) -> Result[Void]
   socket = try TCP.accept(listener, WAIT)
   try handshake(socket, hex("000300000001"))
   _ = try read_headers(socket, 1)
   _ = try blocked.recv(WAIT)
   try send(socket, 1, 4, 1, hex("0803343133"))
-  Task.sleep(10)
   wire = Frame.encode(0, 1, 1, "complete".bytes)
   split = wire.size - 4
   try TCP.send_bytes(socket, wire.slice(0, split), WAIT)
-  Task.sleep(10)
   try TCP.send_bytes(socket, wire.drop(split), WAIT)
   TCP.close(socket)
   ok()

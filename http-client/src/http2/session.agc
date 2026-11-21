@@ -74,6 +74,12 @@ struct OpenCall
   block: Bytes
 end
 
+struct Capacity
+  seats: Int
+  retiring: Int
+  draining: Bool
+end
+
 def start(config: Config) -> Actor.Ref[State, Msg]
   behaviour = Actor.Behaviour(
     init: -> { State(config: config) },
@@ -137,6 +143,49 @@ def write_loop(
   ok()
 end
 
+# One step after `Connection.pull`: parses a complete frame, or waits when the
+# reader is closed with bytes still queued. Production calls it from `step`;
+# the EOF regression drives it directly with a closed incoming channel that
+# already holds the final suffix.
+def resume(state: State) -> Result[State]
+  conn = state.conn.unwrap!
+  if conn.incoming.closed?
+    conn = conn.with(read_only: true)
+  end
+
+  current = state.with(conn: some(conn))
+  return flush_streams(current) if Frame.pending?(conn.buffer) and defer?(current, conn)
+  case try Frame.parse(conn.buffer)
+    some(parsed) ->
+      return flush_streams(try received(current.with(conn: some(conn.with(buffer: parsed.rest))), parsed.frame))
+    none -> nil
+  end
+
+  if conn.read_only
+    return ok(current) if not conn.incoming.empty?
+    return error(conn.write_error.unwrap!) if conn.write_error.some?
+    return error("the HTTP/2 connection closed", kind: "http_client.network")
+  end
+
+  return ok(current) if conn.incoming.closed? or conn.write_error.some?
+
+  if not current.resets.empty? and conn.writer.unwrap!.empty?
+    reset = current.resets.first
+    suppress: Optional[Channel[Bool]] = none
+    case current.retiring.get(reset.stream)
+      some(retiring) -> suppress = some(retiring.suppress)
+      none -> nil
+    end
+
+    try Connection.reset(conn, reset.stream, reset.code, Time.monotonic_ms() + 1_000, suppress)
+    return flush_streams(current.with(resets: current.resets.drop(1)))
+  end
+
+  return flush_streams(try admit(current)) if not current.pending.empty?
+
+  flush_streams(try upload(current))
+end
+
 private
 
 WRITE_TIMEOUT_MS = 30_000
@@ -175,7 +224,7 @@ def handle(state: State, message: Msg) -> Actor.Step[State]
           current = state.with(conn: some(conn.with(writer: some(out))), writer: some(writer), phase: Phase.Ready)
         error(e) ->
           failure = connect_error(state.config, e)
-          notify(state.config, Messages.Origin.Complete(state.config.id, 0, failure))
+          notify(state.config, Messages.Origin.Complete(state.config.id, 0, failure, 0, 0, true))
           return Actor.done(state)
       end
 
@@ -300,41 +349,7 @@ def step(state: State) -> Result[State]
     ok(session) -> conn = session
   end
 
-  if conn.incoming.closed?
-    conn = conn.with(read_only: true)
-  end
-
-  current = state.with(conn: some(conn))
-  return flush_streams(current) if Frame.pending?(conn.buffer) and defer?(current, conn)
-  case try Frame.parse(conn.buffer)
-    some(parsed) ->
-      return flush_streams(try received(current.with(conn: some(conn.with(buffer: parsed.rest))), parsed.frame))
-    none -> nil
-  end
-
-  if conn.read_only
-    return ok(current) if not conn.incoming.empty?
-    return error(conn.write_error.unwrap!) if conn.write_error.some?
-    return error("the HTTP/2 connection closed", kind: "http_client.network")
-  end
-
-  return ok(current) if conn.incoming.closed? or conn.write_error.some?
-
-  if not current.resets.empty? and conn.writer.unwrap!.empty?
-    reset = current.resets.first
-    suppress: Optional[Channel[Bool]] = none
-    case current.retiring.get(reset.stream)
-      some(retiring) -> suppress = some(retiring.suppress)
-      none -> nil
-    end
-
-    try Connection.reset(conn, reset.stream, reset.code, Time.monotonic_ms() + 1_000, suppress)
-    return flush_streams(current.with(resets: current.resets.drop(1)))
-  end
-
-  return flush_streams(try admit(current)) if not current.pending.empty?
-
-  flush_streams(try upload(current))
+  resume(state.with(conn: some(conn)))
 end
 
 def flush_streams(state: State) -> Result[State]
@@ -356,7 +371,7 @@ def flush_streams(state: State) -> Result[State]
         end
       end
 
-      current = finish(publish(current), id, ok(Connection.response(stream)))
+      current = finish(current, id, ok(Connection.response(stream)))
     end
   end
 
@@ -376,24 +391,26 @@ def admit(state: State) -> Result[State]
   conn = state.conn.unwrap!
   entry = state.pending.first
   if state.phase == Phase.Draining or not Connection.reusable?(conn)
-    complete(state, entry.call.caller.id, unsent())
-    return ok(state.with(pending: state.pending.drop(1)))
+    advertised = advertised_for_completion(state)
+    complete(advertised, entry.call.caller.id, unsent())
+    return ok(advertised.with(pending: advertised.pending.drop(1)))
   end
 
   if state.active.size >= seats(state, conn)
-    updated = publish(state)
-    complete(updated, entry.call.caller.id, error("HTTP/2 session has no stream capacity", kind: "http2.capacity"))
-    return ok(updated.with(pending: updated.pending.drop(1)))
+    advertised = advertised_for_completion(state)
+    complete(advertised, entry.call.caller.id, error("HTTP/2 session has no stream capacity", kind: "http2.capacity"))
+    return ok(advertised.with(pending: advertised.pending.drop(1)))
   end
 
   if entry.call.request.deadline <= Time.monotonic_ms()
+    advertised = advertised_for_completion(state)
     complete(
-      state,
+      advertised,
       entry.call.caller.id,
       error("http_client: the request timed out", kind: "http_client.timeout.request"),
     )
 
-    return ok(state.with(pending: state.pending.drop(1)))
+    return ok(advertised.with(pending: advertised.pending.drop(1)))
   end
 
   return ok(state) if not conn.writer.unwrap!.empty?
@@ -525,7 +542,7 @@ def received_stream(state: State, flight: Flight, frame: Frame.Frame) -> Result[
       end
     end
 
-    return ok(finish(publish(current), stream.id, ok(Connection.response(stream))))
+    return ok(finish(current, stream.id, ok(Connection.response(stream))))
   end
 
   deadline = flight.deadline
@@ -584,8 +601,9 @@ end
 def finish(state: State, id: Int, result: Result[Connection.Response]) -> State
   flight = state.active.get(id).unwrap!
   close_body(flight.stream)
-  complete(state, flight.call.caller.id, result)
-  state.with(active: state.active.delete(id), order: state.order.select { |key| key != id })
+  advertised = advertised_for_completion(state)
+  complete(advertised, flight.call.caller.id, result)
+  advertised.with(active: advertised.active.delete(id), order: advertised.order.select { |key| key != id })
 end
 
 def cancel(state: State, key: Int) -> State
@@ -614,10 +632,18 @@ def expire(state: State) -> State
   current
 end
 
+# A local abort keeps the peer slot reserved until its reset settles on the
+# writer or the peer resets the stream, so a blocked writer still counts
+# against the origin pool deadline.
 def abort_stream(state: State, flight: Flight, reason: Result[Connection.Response], code: Int = 8) -> State
   s = flight.stream
   cancel_writes(s)
-  current = state.with(resets: state.resets.push(Reset(stream: s.id, code: code)))
+  retiring = Retiring(cancelled: s.cancelled, suppress: Channel.new(1))
+  current = state.with(
+    retiring: state.retiring.put(s.id, retiring),
+    resets: state.resets.push(Reset(stream: s.id, code: code)),
+  )
+
   if s.continuing
     current = current.with(discarded: some(s.with(parts: [], phase: Connection.StreamPhase.Closed)))
   end
@@ -640,7 +666,7 @@ def seats(state: State, conn: Connection.Session) -> Int
   [[conn.stream_limit, 100].min.unwrap! - state.retiring.size, 0].max.unwrap!
 end
 
-def publish(state: State) -> State
+def capacity_of(state: State) -> Capacity
   conn = state.conn.unwrap!
   draining = state.phase == Phase.Draining or not Connection.reusable?(conn)
   capacity = seats(state, conn)
@@ -648,17 +674,30 @@ def publish(state: State) -> State
     capacity = 0
   end
 
-  retiring = state.retiring.size
+  Capacity(seats: capacity, retiring: state.retiring.size, draining: draining)
+end
+
+def publish(state: State) -> State
+  cap = capacity_of(state)
   if (
-    state.advertised != capacity or
-    state.advertised_retiring != retiring or
-    draining != (state.phase == Phase.Draining)
+    state.advertised != cap.seats or
+    state.advertised_retiring != cap.retiring or
+    cap.draining != (state.phase == Phase.Draining)
   )
-    notify(state.config, Messages.Origin.Capacity(state.config.id, capacity, retiring, draining))
+    notify(state.config, Messages.Origin.Capacity(state.config.id, cap.seats, cap.retiring, cap.draining))
   end
 
-  updated = state.with(advertised: capacity, advertised_retiring: retiring)
-  return updated.with(phase: Phase.Draining) if draining
+  updated = state.with(advertised: cap.seats, advertised_retiring: cap.retiring)
+  return updated.with(phase: Phase.Draining) if cap.draining
+  updated
+end
+
+# Records the capacity that a completion carries so the origin applies the
+# retiring change together with the freed slot before it runs its scheduler.
+def advertised_for_completion(state: State) -> State
+  cap = capacity_of(state)
+  updated = state.with(advertised: cap.seats, advertised_retiring: cap.retiring)
+  return updated.with(phase: Phase.Draining) if cap.draining
   updated
 end
 
@@ -676,7 +715,13 @@ def fail_all(state: State, reason: Result[Connection.Response], code: Int = 8) -
 end
 
 def complete(state: State, key: Int, result: Result[Connection.Response]) -> Void
-  notify(state.config, Messages.Origin.Complete(state.config.id, key, result))
+  if state.conn.some?
+    cap = capacity_of(state)
+    notify(state.config, Messages.Origin.Complete(state.config.id, key, result, cap.seats, cap.retiring, cap.draining))
+    return
+  end
+
+  notify(state.config, Messages.Origin.Complete(state.config.id, key, result, 0, 0, true))
 end
 
 def notify(config: Config, event: Messages.Origin) -> Void

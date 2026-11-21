@@ -4,6 +4,7 @@
 
 import BDD from "std/bdd"
 import H2Steps from "specs/h2_steps"
+import PoolSteps from "specs/pool_steps"
 import Protocol from "specs/protocol"
 import {Call, Check, Expectation, How, Reads, Request, Script, Setup} from "specs/protocol"
 import WriterSteps from "specs/writer_steps"
@@ -14,14 +15,20 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
+    BDD.step("the manager keeps watched pools and replaces expired ones", &PoolSteps.idle),
     BDD.step("the HTTP/2 client streams response chunks as they arrive", &H2Steps.streaming),
     BDD.step("a cancelled H2 stream frees its slot for the next request", &H2Steps.streaming_cancel),
     BDD.step("a stalled H2 stream times out its body", &H2Steps.streaming_idle),
     BDD.step("an H2 stream refills its window only after the reader takes a piece", &H2Steps.streaming_flow),
     BDD.step("a retried H2 stream hides its first head", &H2Steps.streaming_retry),
     BDD.step("the origin applies the admission timeout while a stream slot is retiring", &WriterSteps.pool_timeout),
+    BDD.step("a malformed response keeps its slot while its reset is queued", &WriterSteps.malformed_timeout),
+    BDD.step("a retiring completion reuses its session for a queued call", &WriterSteps.reuse),
+    BDD.step("a peer reset releases a malformed stream and suppresses its reset", &WriterSteps.malformed_reset),
+    BDD.step("an atomic origin completion reuses its session", &WriterSteps.atomic_scheduler),
     BDD.step("a peer reset suppresses the expired upload and local reset", &WriterSteps.reset_by_peer),
     BDD.step("a complete buffered response drains at EOF while the writer is blocked", &WriterSteps.eof),
+    BDD.step("a closed reader drains its queued final bytes into the buffered response", &WriterSteps.eof_drained),
     BDD.step("a skipped final upload releases the peer stream slot", &WriterSteps.skipped_end),
     BDD.step("a blocked writer skips expired stream writes", &WriterSteps.expired),
     BDD.step("a mismatched content length resets only its stream", &H2Steps.malformed),

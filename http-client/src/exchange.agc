@@ -120,7 +120,7 @@ def run_h2(origin: H2Origin.Origin, call: Call) -> Result[Response]
 end
 
 def run_h2_stream(origin: H2Origin.Origin, request: H2.Request, call: Call, streaming: Streaming) -> Result[Response]
-  head: Channel[Result[H2.StreamHead]] = Channel.new(1)
+  head: Channel[H2.HeadArrival] = Channel.new(2)
   body: Channel[Bytes] = Channel.new(1)
   whole = ->(response: H2.Response) {
     streaming.whole.call(
@@ -133,6 +133,7 @@ def run_h2_stream(origin: H2Origin.Origin, request: H2.Request, call: Call, stre
     H2Origin.request(origin, request.with(streaming: some(h2_streaming)), call.connect_timeout_ms)
   end
 
+  Task.monitor(running, head) do |_down| H2.HeadArrival.Over end
   received = try await_h2_head(head, running, call, streaming.stopping)
   if received.whole
     response = try await_h2(running, call)
@@ -145,7 +146,7 @@ def run_h2_stream(origin: H2Origin.Origin, request: H2.Request, call: Call, stre
 end
 
 def await_h2_head(
-  head: Channel[Result[H2.StreamHead]],
+  head: Channel[H2.HeadArrival],
   task: Task[Result[H2.Response]],
   call: Call,
   stopping: Channel[Bool],
@@ -166,14 +167,14 @@ def await_h2_head(
     end
 
     case head.recv([left, 5].min.unwrap!)
-      ok(result) -> return result
-      error(_) -> nil
-    end
+      ok(H2.HeadArrival.Head(received)) -> return ok(received)
+      ok(H2.HeadArrival.Over) ->
+        case Task.await(task)
+          error(e) -> return error(e)
+          ok(_) -> return failure("HTTP/2 completed without a response head", "network")
+        end
 
-    case Task.await(task, 0)
-      Await.Done(error(e)) -> return error(e)
-      Await.Done(ok(_)) -> return failure("HTTP/2 completed without a response head", "network")
-      Await.TimedOut -> nil
+      error(_) -> nil
     end
   end
 
@@ -181,14 +182,17 @@ def await_h2_head(
 end
 
 def await_h2(task: Task[Result[H2.Response]], call: Call) -> Result[H2.Response]
-  left = [call.deadline - Time.monotonic_ms(), 0].max.unwrap!
-  case Task.await(task, left)
-    Await.Done(result) -> result
-    Await.TimedOut ->
-      Task.cancel(task)
-      _ = Task.await(task, 1_000)
-      failure("the request timed out", "timeout.request")
+  left = call.deadline - Time.monotonic_ms()
+  if left > 0
+    case Task.await(task, left)
+      Await.Done(result) -> return result
+      Await.TimedOut -> nil
+    end
   end
+
+  Task.cancel(task)
+  _ = Task.await(task, 1_000)
+  failure("the request timed out", "timeout.request")
 end
 
 def h2_streamed(
