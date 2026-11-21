@@ -5,11 +5,15 @@
 
 import Dial from "dial"
 import HTTP from "std/http"
+import H2Origin from "http2/origin"
 import Link from "link"
 import Pool from "pkg/pool/pool"
 import {Protocol} from "protocol"
 
-type OriginPool = Pool.Pool[Link.Origin, Link.Link]
+enum OriginPool
+  Http1(Pool.Pool[Link.Origin, Link.Link])
+  Http2(H2Origin.Origin)
+end
 
 ## The settings that every pool of the client gets, and the options its connections are opened with.
 struct Settings
@@ -156,7 +160,7 @@ def manage(settings: Settings, inbox: Channel[Msg]) -> Void
   swept = Time.monotonic_ms()
   while true
     case inbox.recv(SWEEP_MS)
-      ok(Msg.Want(wanted)) -> state = state.with(pools: want(settings, state.pools, wanted))
+      ok(Msg.Want(wanted)) -> state = state.with(pools: want(settings, state.pools, wanted, state.ended))
       ok(Msg.Watch(watched)) ->
         Task.monitor(watched.task, ended) do |notice| notice end
         state = state.with(streams: state.streams.put(watched.task.id, watched))
@@ -182,15 +186,20 @@ def manage(settings: Settings, inbox: Channel[Msg]) -> Void
 end
 
 # Answers the pool of the origin, started now if there is none, and gives the pools with it.
-def want(settings: Settings, pools: Map[String, Entry], wanted: Wanted) -> Map[String, Entry]
+def want(settings: Settings, pools: Map[String, Entry], wanted: Wanted, ended: Channel[TaskDown]) -> Map[String, Entry]
   until = Time.monotonic_ms() + ASK_MS + wanted.timeout_ms + settings.idle_ms
   case pools.get(wanted.origin)
-    some(entry) ->
+    some(entry) if live?(entry.pool) ->
       _ = wanted.reply.send(ok(entry.pool), 0)
       pools.put(wanted.origin, entry.with(until: [entry.until, until].max.unwrap!))
-    none ->
+    _ ->
       case start_pool(settings, wanted.origin)
         ok(pool) ->
+          case pool
+            OriginPool.Http2(origin) -> Task.monitor(origin.ref.task, ended) do |notice| notice end
+            OriginPool.Http1(_) -> nil
+          end
+
           _ = wanted.reply.send(ok(pool), 0)
           pools.put(wanted.origin, Entry(pool: pool, until: until))
         error(e) ->
@@ -208,8 +217,8 @@ def sweep(state: State, now: Int, idle_ms: Int) -> State
   swept = without_ended(state)
   closers = swept.closers
   streamed = swept.streams.values.map { |watched| watched.origin }
-  for origin in state.pools.keys
-    entry = state.pools.get(origin).unwrap!
+  for origin in swept.pools.keys
+    entry = swept.pools.get(origin).unwrap!
     if entry.until > now
       kept = kept.put(origin, entry)
     elsif streamed.include?(origin)
@@ -230,11 +239,27 @@ def without_ended(state: State) -> State
   notice = state.ended.recv(0)
   while notice.ok?
     id = notice.unwrap!.task_id
-    left = left.with(closers: left.closers.delete(id), streams: left.streams.delete(id))
+    left = left.with(
+      closers: left.closers.delete(id),
+      streams: left.streams.delete(id),
+      pools: without_origin(left.pools, id),
+    )
+
     notice = state.ended.recv(0)
   end
 
   left
+end
+
+def without_origin(pools: Map[String, Entry], task_id: Int) -> Map[String, Entry]
+  for key in pools.keys
+    case pools.get(key).unwrap!.pool
+      OriginPool.Http2(origin) if origin.ref.task.id == task_id -> return pools.delete(key)
+      _ -> nil
+    end
+  end
+
+  pools
 end
 
 # Waits for the tasks of the streams, which end once their connection closes or at their next piece. One that does not
@@ -260,14 +285,39 @@ end
 
 # Closes the pool and waits for its owner task to end: `Pool.close` cancels it without waiting.
 def shut(pool: OriginPool, drain_ms: Int) -> Result[Void]
-  ended: Channel[TaskDown] = Channel.new(1)
-  Task.monitor(pool.owner, ended) do |notice| notice end
-  Pool.close(pool, drain_ms)
-  _ = ended.recv(CLOSE_SLACK_MS)
-  ok()
+  case pool
+    OriginPool.Http2(origin) -> H2Origin.close(origin, drain_ms)
+    OriginPool.Http1(http1) ->
+      ended: Channel[TaskDown] = Channel.new(1)
+      Task.monitor(http1.owner, ended) do |notice| notice end
+      Pool.close(http1, drain_ms)
+      _ = ended.recv(CLOSE_SLACK_MS)
+      ok()
+  end
+end
+
+def live?(pool: OriginPool) -> Bool
+  case pool
+    OriginPool.Http2(origin) -> H2Origin.live?(origin)
+    OriginPool.Http1(_) -> true
+  end
 end
 
 def start_pool(settings: Settings, origin: String) -> Result[OriginPool]
-  config = Link.Origin(url: origin, options: settings.options, dialer: settings.dialer, protocol: settings.protocol)
-  Pool.start(Link.spec(config, settings.size, settings.wait_ms, settings.idle_ms, settings.health_ms))
+  if settings.protocol == Protocol.Http2
+    config = H2Origin.Config(
+      origin: origin,
+      dialer: settings.dialer,
+      options: settings.options,
+      size: settings.size,
+      wait_ms: settings.wait_ms,
+      idle_ms: settings.idle_ms,
+    )
+
+    return ok(OriginPool.Http2(H2Origin.start(config)))
+  end
+
+  config = Link.Origin(url: origin, options: settings.options, dialer: settings.dialer)
+  pool = try Pool.start(Link.spec(config, settings.size, settings.wait_ms, settings.idle_ms, settings.health_ms))
+  ok(OriginPool.Http1(pool))
 end

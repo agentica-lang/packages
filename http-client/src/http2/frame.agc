@@ -15,7 +15,7 @@ end
 
 def parse(buffer: Bytes) -> Result[Optional[Parsed]]
   return ok(none) if buffer.size < 9
-  size = buffer[0] * 65536 + buffer[1] * 256 + buffer[2]
+  size = payload_size(buffer)
   return invalid("frame exceeds the advertised maximum") if size > MAX_PAYLOAD
   return ok(none) if buffer.size < size + 9
   frame = Frame(
@@ -26,6 +26,12 @@ def parse(buffer: Bytes) -> Result[Optional[Parsed]]
   )
 
   ok(some(Parsed(frame: frame, rest: buffer.drop(9 + size))))
+end
+
+def pending?(buffer: Bytes) -> Bool
+  return false if buffer.size < 9
+  size = payload_size(buffer)
+  size > MAX_PAYLOAD or buffer.size >= size + 9
 end
 
 def encode(kind: Int, flags: Int, stream: Int, payload: Bytes) -> Bytes
@@ -59,3 +65,7 @@ def word(value: Int) -> Bytes
 end
 
 def invalid[T](message: String) -> Result[T] = error("http_client: #{message}", kind: "http_client.http2.protocol")
+
+private
+
+def payload_size(buffer: Bytes) -> Int = buffer[0] * 65536 + buffer[1] * 256 + buffer[2]

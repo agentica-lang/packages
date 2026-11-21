@@ -730,7 +730,10 @@ def borrowed(client: Client, pool: Pools.OriginPool, call: Exchange.Call, stream
     try Pools.watch(client.pools, Task.current, call.target.origin)
   end
 
-  Pool.with(pool) do |link| Exchange.run(link, call) end
+  case pool
+    Pools.OriginPool.Http1(http1) -> Pool.with(http1) do |link| Exchange.run(link, call) end
+    Pools.OriginPool.Http2(http2) -> Exchange.run_h2(http2, call)
+  end
 end
 
 def arrived(client: Client, running: Task[Result[Exchange.Response]], arrival: Exchange.Arrival) -> Result[Got]

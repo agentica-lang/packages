@@ -90,6 +90,11 @@ def stalled(listener: TCP.Listener, wait_for_settings: Bool) -> Result[Void]
   else
     try handshake(socket, "".bytes)
     _ = try read_headers(socket, 1)
+    case read(socket)
+      ok(reset) if reset.kind == 3 and reset.stream == 1 -> nil
+      ok(_) -> return error("expected reset or close")
+      error(_) -> return ok()
+    end
   end
 
   expect_closed(socket)
@@ -114,7 +119,7 @@ end
 
 def wait_for_close(listener: TCP.Listener, started: Channel[Bool]) -> Result[Void]
   socket = try TCP.accept(listener, WAIT)
-  try handshake(socket, "".bytes)
+  try handshake(socket, hex("000300000001"))
   _ = try read_headers(socket, 1)
   try started.send(true, WAIT)
   expect_closed(socket)
@@ -130,9 +135,130 @@ def idle_until_close(listener: TCP.Listener, release: Channel[Bool]) -> Result[V
   ok()
 end
 
+def multiplex(listener: TCP.Listener, started: Channel[Bool], finished: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, hex("000400000000"))
+  post = try read_headers(socket, 1)
+  try expect_request(post, "POST", "/blocked")
+  try started.send(true, WAIT)
+  get = try read_headers(socket, 3)
+  try expect_request(get, "GET", "/fast")
+  try send(socket, 1, 4, 3, hex("884006782d74657374036f6e65"))
+  try send(socket, 0, 1, 3, "fast".bytes)
+  _ = try finished.recv(WAIT)
+  try send(socket, 8, 0, 1, Frame.word(8))
+  body = try read(socket)
+  if body.kind != 0 or body.stream != 1 or body.flags != 1 or body.payload != "upload".bytes
+    return error("the blocked upload did not resume")
+  end
+
+  try send(socket, 1, 4, 1, hex("88be"))
+  try send(socket, 0, 1, 1, "slow".bytes)
+  expect_closed(socket)
+end
+
+def cancelled(listener: TCP.Listener, waiting: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, hex("000300000002"))
+  first = try read_headers(socket, 1)
+  try expect_request(first, "GET", "/cancelled")
+  try send(socket, 4, 0, 0, hex("000300000000"))
+  try settings_ack(socket)
+  try send(socket, 1, 0, 1, hex("884006782d74657374"))
+  try waiting.send(true, 0)
+  reset = try read(socket)
+  if reset.kind != 3 or reset.stream != 1 or reset.payload != Frame.word(8)
+    return error("expected cancellation while new streams were paused")
+  end
+
+  try send(socket, 9, 4, 1, hex("036f6e65"))
+  try send(socket, 4, 0, 0, hex("000300000001"))
+  try settings_ack(socket)
+  next_headers = try read_headers(socket, 3)
+  try expect_request(next_headers, "GET", "/queued")
+  try send(socket, 1, 5, 3, hex("88be"))
+  expect_closed(socket)
+end
+
+def shared_window(listener: TCP.Listener, started: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, hex("000400000000"))
+  first = try read_headers(socket, 1)
+  try expect_request(first, "POST", "/one")
+  try started.send(true, WAIT)
+  second = try read_headers(socket, 3)
+  try expect_request(second, "POST", "/two")
+  try send(socket, 4, 0, 0, hex("00040000ffff"))
+  try settings_ack(socket)
+  blocked = try take_upload(socket, Upload(), 65_535)
+  return error("both streams must receive upload credit") if blocked.one == 0 or blocked.two == 0
+  next_frame = try resumed(socket, 0, 10_000)
+  prefix = try count_upload(blocked, next_frame)
+  final = try take_upload(socket, prefix, 70_000)
+  return error("wrong upload sizes or end flags") if final.one != 35_000 or final.two != 35_000
+  try send(socket, 7, 0, 0, Frame.word(3) + Frame.word(0))
+  try send(socket, 1, 5, 3, hex("88"))
+  try send(socket, 1, 5, 1, hex("88"))
+  try expect_closed(socket)
+  replacement = try TCP.accept(listener, WAIT)
+  try handshake(replacement, "".bytes)
+  headers = try read_headers(replacement, 1)
+  try expect_request(headers, "GET", "/after-goaway")
+  try send(replacement, 1, 5, 1, hex("88"))
+  expect_closed(replacement)
+end
+
+def broken(listener: TCP.Listener, started: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, "".bytes)
+  _ = try read_headers(socket, 1)
+  try started.send(true, WAIT)
+  _ = try read_headers(socket, 3)
+  TCP.close(socket)
+  replacement = try TCP.accept(listener, WAIT)
+  try handshake(replacement, "".bytes)
+  headers = try read_headers(replacement, 1)
+  try expect_request(headers, "GET", "/replacement")
+  try send(replacement, 1, 5, 1, hex("88"))
+  expect_closed(replacement)
+end
+
 private
 
 WAIT = 5_000
+
+struct Upload
+  one: Int = 0
+  two: Int = 0
+end
+
+def take_upload(socket: TCP.Socket, prefix: Upload, limit: Int) -> Result[Upload]
+  total = prefix
+  while total.one + total.two < limit
+    frame = try read(socket)
+    total = try count_upload(total, frame)
+  end
+
+  return error("connection credit was exceeded") if total.one + total.two != limit
+  ok(total)
+end
+
+def count_upload(prefix: Upload, frame: Frame.Frame) -> Result[Upload]
+  if frame.kind != 0 or (frame.stream != 1 and frame.stream != 3) or frame.payload.empty?
+    return error("expected DATA on an active stream")
+  end
+
+  previous = prefix.two
+  if frame.stream == 1
+    previous = prefix.one
+  end
+
+  size = previous + frame.payload.size
+  return error("incorrect DATA length or end flag") if size > 35_000 or (frame.flags == 1) != (size == 35_000)
+
+  return ok(prefix.with(one: size)) if frame.stream == 1
+  ok(prefix.with(two: size))
+end
 
 def refuse_socket(listener: TCP.Listener, settings: Bytes, after_settings: Bytes) -> Result[Void]
   socket = try TCP.accept(listener, WAIT)
@@ -152,15 +278,19 @@ def refuse_socket(listener: TCP.Listener, settings: Bytes, after_settings: Bytes
   end
 end
 
+def settings_ack(socket: TCP.Socket) -> Result[Void]
+  ack = try read(socket)
+  return error("expected settings acknowledgment") if ack.kind != 4 or ack.flags != 1
+  ok()
+end
+
 def handshake(socket: TCP.Socket, settings: Bytes) -> Result[Void]
   preface = try exact(socket, 24)
   return error("wrong connection preface") if preface != "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".bytes
   first = try read(socket)
   return error("expected client settings") if first.kind != 4 or first.payload != hex("000200000000")
   try send(socket, 4, 0, 0, settings)
-  ack = try read(socket)
-  return error("expected settings acknowledgment") if ack.kind != 4 or ack.flags != 1
-  ok()
+  settings_ack(socket)
 end
 
 def upload(socket: TCP.Socket) -> Result[Void]

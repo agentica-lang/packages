@@ -86,7 +86,7 @@ HttpClient.close(client: Client, drain_ms: Int = 5000) -> Void
 
 The unreleased transport needs Agentica 0.35.0 and uses [hpack](https://www.agentica-lang.com/packages/hpack/) for header blocks. HTTP/1.1 is the default. To use HTTP/2, pass `protocol: HttpClient.Protocol.Http2` to `HttpClient.new`, then call the same `get`, `post` or `request` functions. The setting is fixed for that client's pools. For `https://`, the peer must negotiate `h2` via ALPN. If you supply a TLS context, configure it to advertise `h2`. For `http://`, the peer must accept the HTTP/2 connection preface directly.
 
-Each HTTP/2 connection handles one active request at a time and can serve further requests on new streams. Request and response bodies are buffered, and flow control applies to both the stream and the connection. The current HTTP/2 transport supports direct connections and buffered responses. Calls to the proxy, streaming, and SSE APIs with HTTP/2 return an argument error.
+Each HTTP/2 connection multiplexes up to 100 active streams, or the peer’s lower limit. Requests reuse sessions with space before opening more sockets, up to `pool_size` per origin. When all sessions are busy, up to 1,000 requests per origin can wait in arrival order within `pool_timeout_ms` and the whole request deadline. A full queue returns `http_client.timeout.pool`. Request and response bodies are buffered, with separate flow-control windows for the connection and each stream. A request timeout cancels its stream while other requests on the connection can continue. The current HTTP/2 transport supports direct connections and buffered responses. Calls to the proxy, streaming, and SSE APIs with HTTP/2 return an argument error.
 
 ## JSON, auth and steps
 
@@ -218,9 +218,9 @@ The client gives std/http the address with `connect_to`, so the connection goes 
 
 ## The pool
 
-Each origin has a pool of at most `pool_size` connections, made when a request needs one. After a response read to its end, its connection waits for the next request, unless the server said `Connection: close`. A connection is never reused after an error, after a body that ended with its close (no `Content-Length`, not chunked), past the `Keep-Alive: timeout` of the server (a day at most), or once the server has closed it or written to it while it was idle: the next request opens a new one. One unused for `idle_ms` is closed. When the connection of a request turns out to be closed before the request is written, the request goes on a new one.
+Each HTTP/1.1 origin has a pool of at most `pool_size` connections, made when a request needs one. After a response read to its end, its connection waits for the next request, unless the server said `Connection: close`. A connection is never reused after an error, after a body that ended with its close (no `Content-Length`, not chunked), past the `Keep-Alive: timeout` of the server (a day at most), or once the server has closed it or written to it while it was idle: the next request opens a new one. One unused for `idle_ms` is closed. When the connection of a request turns out to be closed before the request is written, the request goes on a new one.
 
-The connections belong to the client, not to the task of the request that opened them: a task that is cancelled or crashes ends only the connection it was using. The pool of an origin that no request used for `timeout_ms` and then `idle_ms` is closed, so a client that talks to many origins keeps only those in use.
+Connections belong to the client. When an HTTP/1.1 request task is cancelled or crashes, its connection ends. The HTTP/2 origin instead cancels the affected stream or removes the request from its queue. The pool of an origin that no request used for `timeout_ms` and then `idle_ms` is closed, so a client that talks to many origins keeps only those in use.
 
 ## Errors
 

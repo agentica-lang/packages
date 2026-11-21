@@ -13,6 +13,10 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
+    BDD.step("two uploads share one connection window", &H2Steps.shared),
+    BDD.step("the origin replaces a failed session after settling all requests", &H2Steps.broken),
+    BDD.step("HTTP/2 pauses admission and preserves HPACK across a cancelled stream", &H2Steps.cancelled),
+    BDD.step("the GET finishes on the socket that is waiting to upload", &H2Steps.multiplex),
     BDD.step("closing the HTTP/2 client settles an active request", &H2Steps.closing),
     BDD.step("HTTP/2 reports the limiting deadline", &H2Steps.deadlines),
     BDD.step("an unsent HTTP/2 POST reconnects and returns the early response", &H2Steps.early),
