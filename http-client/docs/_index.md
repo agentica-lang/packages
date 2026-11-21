@@ -7,17 +7,17 @@ description: An HTTP client with a pool of keep-alive connections per origin, an
 
 ## Install
 
-The released version needs Agentica 0.34.0. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
+The released version needs Agentica 0.35.0. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
-agentica add http-client agentica-lang/packages --tag http-client-0.2.0 --subdir http-client
+agentica add http-client agentica-lang/packages --tag http-client-0.3.0 --subdir http-client
 ```
 
-That writes this line of `agentica.toml`, and the entry of `agentica.lock` (with its `pool` dependency):
+That writes this line of `agentica.toml`, and the entry of `agentica.lock` (with its `pool` and `hpack` dependencies):
 
 ```toml
 [dependencies]
-http-client = { git = "https://github.com/agentica-lang/packages", tag = "http-client-0.2.0", subdir = "http-client" }
+http-client = { git = "https://github.com/agentica-lang/packages", tag = "http-client-0.3.0", subdir = "http-client" }
 ```
 
 ## Example
@@ -82,9 +82,9 @@ HttpClient.close(client: Client, drain_ms: Int = 5000) -> Void
 - `client.with(read_timeout_ms: 500)` gives a client with other values for its public fields (`base_url`, `headers`, `params`, the timeouts below, `max_body_bytes`, the retry and redirect settings, `decompress` and the steps), and it shares the pools of the first one. A request checks them as `new` does.
 - Make the client in a task that lives as long as it does, such as `main`, and `close` it at the end: the requests in flight have `drain_ms` to end, and `close` returns once every task of the client has ended, so a test that closes its client leaves no task behind.
 
-## HTTP/2 (unreleased)
+## HTTP/2
 
-The unreleased transport needs Agentica 0.35.0 and uses [hpack](https://www.agentica-lang.com/packages/hpack/) for header blocks. HTTP/1.1 is the default. To use HTTP/2, pass `protocol: HttpClient.Protocol.Http2` to `HttpClient.new`, then call the same `get`, `post` or `request` functions. The setting is fixed for that client's pools. For `https://`, the peer must negotiate `h2` via ALPN. If you supply a TLS context, configure it to advertise `h2`. For `http://`, the peer must accept the HTTP/2 connection preface directly.
+The HTTP/2 transport uses [hpack](https://www.agentica-lang.com/packages/hpack/) for header blocks. HTTP/1.1 is the default. To use HTTP/2, pass `protocol: HttpClient.Protocol.Http2` to `HttpClient.new`, then call the same `get`, `post` or `request` functions. The setting is fixed for that client's pools. For `https://`, the peer must negotiate `h2` via ALPN. If you supply a TLS context, configure it to advertise `h2`. For `http://`, the peer must accept the HTTP/2 connection preface directly.
 
 Each HTTP/2 connection multiplexes up to 100 active streams, or the peer’s lower limit. Requests reuse sessions with space before opening more sockets, up to `pool_size` per origin. When all sessions are busy, up to 1,000 requests per origin can wait in arrival order within `pool_timeout_ms` and the whole request deadline. A full queue returns `http_client.timeout.pool`. Request and response bodies are buffered, with separate flow-control windows for the connection and each stream. A request timeout cancels its stream while other requests on the connection can continue. The current HTTP/2 transport supports direct connections and buffered responses. Calls to the proxy, streaming, and SSE APIs with HTTP/2 return an argument error.
 
