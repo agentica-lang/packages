@@ -3,6 +3,7 @@
 ## writes the answers of a script by hand and says which TCP connection served each one (`fixtures/raw_peer.agc`).
 
 import BDD from "std/bdd"
+import H2Steps from "h2_steps"
 import Protocol from "protocol"
 import {Call, Check, Expectation, How, Reads, Request, Script, Setup} from "protocol"
 
@@ -12,6 +13,13 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
+    BDD.step("closing the HTTP/2 client settles an active request", &H2Steps.closing),
+    BDD.step("HTTP/2 reports the limiting deadline", &H2Steps.deadlines),
+    BDD.step("an unsent HTTP/2 POST reconnects and returns the early response", &H2Steps.early),
+    BDD.step("HTTP/2 startup rejects invalid settings and respects an adjacent GOAWAY", &H2Steps.startup),
+    BDD.step("the HTTP/2 client tries the next address after stalled settings", &H2Steps.alternate),
+    BDD.step("an HTTP/2 client reuses the socket and obeys flow control", &H2Steps.flow),
+    BDD.step("the HTTP/2 client checks ALPN against a TLS peer", &H2Steps.tls),
     BDD.step("the server {string} listens") do |ctx, args| send(ctx, Request.Server(args[0])) end,
     BDD.step("the TLS server {string} listens") do |ctx, args| send(ctx, Request.TlsServer(args[0])) end,
     BDD.step("the resolver was asked {int} times") do |ctx, args| send(ctx, Request.Asked(args[0].to_i!)) end,

@@ -45,18 +45,31 @@ def connect(dialer: Dialer, url: String, options: HTTP.ClientOptions, wait_ms: I
 
   deadline = Time.monotonic_ms() + wait_ms
   addresses = try allowed(dialer, host, try resolved(dialer, host, deadline))
-  last: Result[HTTP.Connection] = timed_out()
-  for at in 0..(addresses.size - 1)
-    left = deadline - Time.monotonic_ms()
-    return timed_out() if left < 1
+  connect_addresses(addresses, deadline, ->(address, share) { reach(url, address, limited(options, share)) })
+end
 
-    # Each address gets its share of the time left, so that one that never answers leaves time for the next.
-    share = [left / (addresses.size - at), 1].max.unwrap!
-    last = reach(url, addresses[at], limited(options, share))
-    return last if last.ok?
+def open_h2[T](
+  dialer: Dialer,
+  url: String,
+  options: HTTP.ClientOptions,
+  deadline: Int,
+  start: Fn[TCP.Socket, Int, Result[T]],
+) -> Result[T]
+  target = try Url.resolve("", url)
+  host = Address.unbracketed(target.host)
+  return start.call(try reach_h2(target, host, options, deadline), deadline) if not dialer.own
+
+  addresses = [host]
+  if not Address.literal?(target.host)
+    addresses = try resolved(dialer, host, deadline)
   end
 
-  last
+  choices = try allowed(dialer, host, addresses)
+  connect_addresses(
+    choices,
+    deadline,
+    ->(address, share) { attempt_h2(target, address, options, Time.monotonic_ms() + share, start) },
+  )
 end
 
 private
@@ -70,6 +83,31 @@ CANCEL_MS = 1_000
 # 10 s unless set).
 def limited(options: HTTP.ClientOptions, ms: Int) -> HTTP.ClientOptions
   options.with(timeout_ms: ms, connect_timeout_ms: ms)
+end
+
+def connect_addresses[T](addresses: List[String], deadline: Int, open: Fn[String, Int, Result[T]]) -> Result[T]
+  last: Result[T] = timed_out()
+  alpn_error: Optional[Error] = none
+  for at in 0...addresses.size
+    left = deadline - Time.monotonic_ms()
+    if left < 1
+      last = timed_out()
+      break
+    end
+
+    share = [left / (addresses.size - at), 1].max.unwrap!
+    last = open.call(addresses[at], share)
+    case last
+      ok(_) -> return last
+      error(e) if e.is_a?("http_client.http2.alpn") -> alpn_error = some(e)
+      error(_) -> nil
+    end
+  end
+
+  case alpn_error
+    some(e) -> error(e)
+    none -> last
+  end
 end
 
 def timed_out[T]() -> Result[T] = error("network: operation timed out", kind: "net.timeout")
@@ -133,4 +171,45 @@ end
 # URL and `Host` names it.
 def reach(url: String, address: String, options: HTTP.ClientOptions) -> Result[HTTP.Connection]
   HTTP.start(url, options.with(connect_to: address))
+end
+
+def attempt_h2[T](
+  target: Url.Target,
+  address: String,
+  options: HTTP.ClientOptions,
+  deadline: Int,
+  start: Fn[TCP.Socket, Int, Result[T]],
+) -> Result[T]
+  socket = try reach_h2(target, address, options, deadline)
+  start.call(socket, deadline)
+end
+
+def reach_h2(target: Url.Target, address: String, options: HTTP.ClientOptions, deadline: Int) -> Result[TCP.Socket]
+  left = deadline - Time.monotonic_ms()
+  return timed_out() if left < 1
+  socket = try TCP.connect(address, target.port, left)
+  return ok(socket) if target.scheme == "http"
+  result = secure_h2(socket, Address.unbracketed(target.host), options.tls, deadline)
+  if not result.ok?
+    TCP.close(socket)
+  end
+
+  result
+end
+
+def secure_h2(socket: TCP.Socket, host: String, tls: Optional[TLS.Context], deadline: Int) -> Result[TCP.Socket]
+  context = case tls
+    some(given) -> given
+    none -> try TLS.client_context(TLS.ClientOptions(alpn: ["h2"]))
+  end
+
+  left = deadline - Time.monotonic_ms()
+  return timed_out() if left < 1
+  secured = try TLS.upgrade(socket, context, host, left)
+  if TLS.alpn(secured) != "h2"
+    TCP.close(secured)
+    return error("http_client: TLS did not negotiate h2", kind: "http_client.http2.alpn")
+  end
+
+  ok(secured)
 end

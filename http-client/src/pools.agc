@@ -7,6 +7,7 @@ import Dial from "dial"
 import HTTP from "std/http"
 import Link from "link"
 import Pool from "pkg/pool/pool"
+import {Protocol} from "protocol"
 
 type OriginPool = Pool.Pool[Link.Origin, Link.Link]
 
@@ -18,6 +19,7 @@ struct Settings
   health_ms: Int
   options: HTTP.ClientOptions
   dialer: Dial.Dialer
+  protocol: Protocol = Protocol.Http1
 end
 
 ## The manager of the pools of a client. `stopping` closes when the client closes: the tasks of the streams read it
@@ -266,6 +268,6 @@ def shut(pool: OriginPool, drain_ms: Int) -> Result[Void]
 end
 
 def start_pool(settings: Settings, origin: String) -> Result[OriginPool]
-  config = Link.Origin(url: origin, options: settings.options, dialer: settings.dialer)
+  config = Link.Origin(url: origin, options: settings.options, dialer: settings.dialer, protocol: settings.protocol)
   Pool.start(Link.spec(config, settings.size, settings.wait_ms, settings.idle_ms, settings.health_ms))
 end

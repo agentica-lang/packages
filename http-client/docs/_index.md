@@ -3,17 +3,17 @@ title: http-client
 description: An HTTP client with a pool of keep-alive connections per origin, and timeouts for the connect, the response head, the idle body, the whole request and the wait for a connection.
 ---
 
-`http-client` sends HTTP/1.1 requests from an Agentica program, in the spirit of Elixir's Req. You make a `Client` once, and each request goes through a pool of keep-alive connections for its origin (scheme, host and port), made with the [pool](https://www.agentica-lang.com/packages/pool/) package. It is built on the `HTTP.start`, `send_request` and `read_body` calls of `std/http`.
+`http-client` sends HTTP requests from an Agentica program, in the spirit of Elixir's Req. You make a `Client` once, and each request goes through a pool of keep-alive connections for its origin (scheme, host and port), made with the [pool](https://www.agentica-lang.com/packages/pool/) package. HTTP/1.1 uses `std/http`.
 
 ## Install
 
-Needs Agentica 0.34.0, which has the per-call timeouts and `connect_to` of std/http. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
+The released version needs Agentica 0.34.0. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
 agentica add http-client agentica-lang/packages --tag http-client-0.2.0 --subdir http-client
 ```
 
-That writes this line of `agentica.toml`, and the entry of `agentica.lock` (with the `pool` package that it needs):
+That writes this line of `agentica.toml`, and the entry of `agentica.lock` (with its `pool` dependency):
 
 ```toml
 [dependencies]
@@ -55,7 +55,7 @@ end
 ## API
 
 ```signature
-HttpClient.new(base_url: String = "", headers: List[HTTP.Header] = [], params: List[URI.Pair] = [], connect_timeout_ms: Int = 10000, read_timeout_ms: Int = 30000, body_idle_ms: Optional[Int] = none, timeout_ms: Int = 60000, max_body_bytes: Int = 16777216, max_retries: Int = 3, retry_delay_ms: Int = 500, max_retry_delay_ms: Int = 30000, max_redirects: Int = 10, decompress: Bool = true, request_steps: List[Fn[Request, Result[Request]]] = [], response_steps: List[Fn[Response, Result[Response]]] = [], pool_size: Int = 10, pool_timeout_ms: Int = 5000, idle_ms: Int = 30000, resolver: Optional[Fn[String, Result[List[String]]]] = none, dns_cache_ms: Int = 10000, public_only: Bool = false, proxy: String = "", tls: Optional[TLS.Context] = none) -> Result[Client]
+HttpClient.new(base_url: String = "", headers: List[HTTP.Header] = [], params: List[URI.Pair] = [], connect_timeout_ms: Int = 10000, read_timeout_ms: Int = 30000, body_idle_ms: Optional[Int] = none, timeout_ms: Int = 60000, max_body_bytes: Int = 16777216, max_retries: Int = 3, retry_delay_ms: Int = 500, max_retry_delay_ms: Int = 30000, max_redirects: Int = 10, decompress: Bool = true, request_steps: List[Fn[Request, Result[Request]]] = [], response_steps: List[Fn[Response, Result[Response]]] = [], pool_size: Int = 10, pool_timeout_ms: Int = 5000, idle_ms: Int = 30000, resolver: Optional[Fn[String, Result[List[String]]]] = none, dns_cache_ms: Int = 10000, public_only: Bool = false, proxy: String = "", tls: Optional[TLS.Context] = none, protocol: HttpClient.Protocol = HttpClient.Protocol.Http1) -> Result[Client]
 HttpClient.request(client: Client, method: String, url: String, body: Optional[Bytes] = none, json: Optional[JSON.Value] = none, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
 HttpClient.get(client: Client, url: String, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
 HttpClient.head(client: Client, url: String, params: List[URI.Pair] = [], headers: List[HTTP.Header] = []) -> Result[Response]
@@ -81,6 +81,12 @@ HttpClient.close(client: Client, drain_ms: Int = 5000) -> Void
 - A `Response` has `status`, `headers` (names in lowercase), `body` (`Bytes`, read whole) and `url`. A 4xx or 5xx is a response, not an error.
 - `client.with(read_timeout_ms: 500)` gives a client with other values for its public fields (`base_url`, `headers`, `params`, the timeouts below, `max_body_bytes`, the retry and redirect settings, `decompress` and the steps), and it shares the pools of the first one. A request checks them as `new` does.
 - Make the client in a task that lives as long as it does, such as `main`, and `close` it at the end: the requests in flight have `drain_ms` to end, and `close` returns once every task of the client has ended, so a test that closes its client leaves no task behind.
+
+## HTTP/2 (unreleased)
+
+The unreleased transport needs Agentica 0.35.0 and uses [hpack](https://www.agentica-lang.com/packages/hpack/) for header blocks. HTTP/1.1 is the default. To use HTTP/2, pass `protocol: HttpClient.Protocol.Http2` to `HttpClient.new`, then call the same `get`, `post` or `request` functions. The setting is fixed for that client's pools. For `https://`, the peer must negotiate `h2` via ALPN. If you supply a TLS context, configure it to advertise `h2`. For `http://`, the peer must accept the HTTP/2 connection preface directly.
+
+Each HTTP/2 connection handles one active request at a time and can serve further requests on new streams. Request and response bodies are buffered, and flow control applies to both the stream and the connection. The current HTTP/2 transport supports direct connections and buffered responses. Calls to the proxy, streaming, and SSE APIs with HTTP/2 return an argument error.
 
 ## JSON, auth and steps
 
