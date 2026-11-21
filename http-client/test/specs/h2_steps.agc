@@ -449,7 +449,8 @@ def broken_calls(client: HttpClient.Client, started: Channel[Bool]) -> Result[Vo
   _ = try started.recv(2_000)
   second = HttpClient.get(client, "/two")
   try lost(second)
-  try lost(Task.await(first))
+  complete = try Task.await(first)
+  return error("the complete response was lost at EOF") if complete.body != "partdone".bytes
   replacement = try HttpClient.get(client, "/replacement")
   return error("replacement session failed") if replacement.status != 200
   ok()
@@ -489,16 +490,17 @@ def surplus_calls(client: HttpClient.Client, started: Channel[Bool]) -> Result[V
   ok()
 end
 
-def malformed_calls(client: HttpClient.Client, started: Channel[Bool]) -> Result[Void]
+def malformed_calls(client: HttpClient.Client, started: Channel[Bool], has_entry: Bool) -> Result[Void]
   first = Task.spawn do HttpClient.get(client, "/bad-length") end
   _ = try started.recv(2_000)
   good = try HttpClient.get(client, "/good")
   case Task.await(first)
     error(e) if e.is_a?("http_client.http2.protocol") -> nil
-    _ -> return error("expected a content-length error")
+    _ -> return error("expected a malformed response error")
   end
 
-  if good.status != 200 or good.headers.size != 1 or good.headers[0].value != "one"
+  return error("unrelated response did not complete") if good.status != 200
+  if has_entry and (good.headers.size != 1 or good.headers[0].value != "one")
     return error("the malformed response affected another stream or lost HPACK state")
   end
 
@@ -506,6 +508,12 @@ def malformed_calls(client: HttpClient.Client, started: Channel[Bool]) -> Result
 end
 
 def malformed_checks() -> Result[Void]
-  try peer_check(->(listener, started) { H2Peer.malformed(listener, started, false) }, &malformed_calls)
-  peer_check(->(listener, started) { H2Peer.malformed(listener, started, true) }, &malformed_calls)
+  for mode in 0..3
+    try peer_check(
+      ->(listener, started) { H2Peer.malformed(listener, started, mode) },
+      ->(client, started) { malformed_calls(client, started, mode != 2) },
+    )
+  end
+
+  ok()
 end

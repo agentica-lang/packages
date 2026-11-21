@@ -38,3 +38,9 @@ Feature: HTTP/2 requests
 
   Scenario: A malformed response preserves the shared HPACK decoder
     Then a mismatched content length resets only its stream
+
+  Scenario: Queued writes expire while another write is blocked
+    Then a blocked writer skips expired stream writes
+
+  Scenario: An early response completes before its final queued upload expires
+    Then a skipped final upload releases the peer stream slot

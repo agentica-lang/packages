@@ -214,6 +214,8 @@ def broken(listener: TCP.Listener, started: Channel[Bool]) -> Result[Void]
   _ = try read_headers(socket, 1)
   try started.send(true, WAIT)
   _ = try read_headers(socket, 3)
+  wire = Frame.encode(1, 4, 1, hex("88")) + Frame.encode(0, 0, 1, "part".bytes) + Frame.encode(0, 1, 1, "done".bytes)
+  try TCP.send_bytes(socket, wire, WAIT)
   TCP.close(socket)
   replacement = try TCP.accept(listener, WAIT)
   try handshake(replacement, "".bytes)
@@ -237,16 +239,20 @@ def surplus(listener: TCP.Listener, started: Channel[Bool]) -> Result[Void]
   expect_closed(busy)
 end
 
-def malformed(listener: TCP.Listener, started: Channel[Bool], bad_headers: Bool) -> Result[Void]
+def malformed(listener: TCP.Listener, started: Channel[Bool], mode: Int) -> Result[Void]
   socket = try TCP.accept(listener, WAIT)
   try handshake(socket, "".bytes)
   _ = try read_headers(socket, 1)
   try started.send(true, WAIT)
   _ = try read_headers(socket, 3)
-  if bad_headers
-    try send(socket, 1, 5, 1, hex("4006782d74657374036f6e65"))
-  else
-    try send(socket, 1, 4, 1, hex("880f0d01324006782d74657374036f6e65"))
+  case mode
+    0 -> try send(socket, 1, 4, 1, hex("880f0d01324006782d74657374036f6e65"))
+    1 -> try send(socket, 1, 5, 1, hex("4006782d74657374036f6e65"))
+    2 -> nil
+    _ -> try send(socket, 1, 4, 1, hex("894006782d74657374036f6e65"))
+  end
+
+  if mode != 1
     try send(socket, 0, 1, 1, "x".bytes)
   end
 
@@ -255,7 +261,36 @@ def malformed(listener: TCP.Listener, started: Channel[Bool], bad_headers: Bool)
     return error("expected a stream protocol error")
   end
 
-  try send(socket, 1, 5, 3, hex("88be"))
+  block = hex("88be")
+  if mode == 2
+    block = hex("88")
+  end
+
+  try send(socket, 1, 5, 3, block)
+  expect_closed(socket)
+end
+
+def skipped_end(listener: TCP.Listener, blocked: Channel[Bool], cleared: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, hex("000300000001"))
+  _ = try read_headers(socket, 1)
+  _ = try blocked.recv(WAIT)
+  Task.sleep(30)
+  try send(socket, 1, 5, 1, hex("0803343133"))
+  first = try read(socket)
+  if first.kind != 0 or first.stream != 1 or first.flags != 0
+    return error("expected the first DATA without end_stream")
+  end
+
+  reset = try read(socket)
+  if reset.kind != 3 or reset.stream != 1 or reset.payload != Frame.word(8)
+    return error("the expired final DATA did not release its stream slot")
+  end
+
+  try cleared.send(true, WAIT)
+  later = try read_headers(socket, 3)
+  try expect_request(later, "GET", "/after")
+  try send(socket, 1, 5, 3, hex("88"))
   expect_closed(socket)
 end
 

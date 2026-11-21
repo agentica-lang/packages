@@ -3,6 +3,7 @@
 ## writes the answers of a script by hand and says which TCP connection served each one (`fixtures/raw_peer.agc`).
 
 import BDD from "std/bdd"
+import WriterSteps from "specs/writer_steps"
 import H2Steps from "specs/h2_steps"
 import Protocol from "specs/protocol"
 import {Call, Check, Expectation, How, Reads, Request, Script, Setup} from "specs/protocol"
@@ -13,6 +14,8 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
+    BDD.step("a skipped final upload releases the peer stream slot", &WriterSteps.skipped_end),
+    BDD.step("a blocked writer skips expired stream writes", &WriterSteps.expired),
     BDD.step("a mismatched content length resets only its stream", &H2Steps.malformed),
     BDD.step("a spare HTTP/2 session closes while its origin has an active request", &H2Steps.surplus),
     BDD.step("two uploads share one connection window", &H2Steps.shared),

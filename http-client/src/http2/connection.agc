@@ -28,6 +28,7 @@ struct Write
   cancelled: Optional[Channel[Bool]] = none
   credit: Int = 0
   opening: Bool = false
+  end_stream: Bool = false
   reset: Bool = false
 end
 
@@ -336,7 +337,14 @@ def send_data(state: Progress, body: Bytes, deadline: Int) -> Result[Progress]
   bytes = Frame.encode(0, flags, s.id, body.slice(s.sent, count))
   try write(
     c,
-    Write(bytes: bytes, stream: s.id, credit: count, deadline: some(deadline), cancelled: s.cancelled),
+    Write(
+      bytes: bytes,
+      stream: s.id,
+      credit: count,
+      deadline: some(deadline),
+      cancelled: s.cancelled,
+      end_stream: flags == 1,
+    ),
     deadline,
   )
 
@@ -351,14 +359,22 @@ end
 def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Result[Progress]
   s = state.stream
   c = state.session
-  return Frame.invalid("data before the final response") if s.status == 0
   payload = try unpad(frame, 0)
-  return Frame.invalid("body on a bodyless response") if bodyless?(req.method, s.status) and not payload.empty?
 
   size = frame.payload.size
   connection_credit = c.receive_credit - size
   stream_credit = s.receive_credit - size
   return Frame.invalid("incoming flow control window exhausted") if connection_credit < 0 or stream_credit < 0
+  if s.status == 0 or (bodyless?(req.method, s.status) and not payload.empty?)
+    message = "data before the final response"
+    if s.status != 0
+      message = "body on a bodyless response"
+    end
+
+    discarded = try dispatch_closed(c, frame, s, deadline)
+    return ok(discarded.with(malformed: some(message)))
+  end
+
   if payload.size > req.max_body_bytes - s.received
     return error("http_client: response body exceeds its limit", kind: "http_client.too_large")
   end
