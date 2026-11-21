@@ -40,10 +40,10 @@ http-client/         an HTTP/1.1 client: http_client.agc is the API (new, reques
                      reused), src/retry.agc when and after how long a request goes again, src/redirect.agc the next hop
                      of a redirect, src/dial.agc the opt-in dial path (the resolver, its cache and the connect to a
                      checked address), src/address.agc which IP addresses are public (pure), src/encoding.agc the
-                     gzip and deflate decoding of a body, src/sse.agc the reading of server-sent events (pure); specs/
+                     gzip and deflate decoding of a body, src/sse.agc the reading of server-sent events (pure); test/specs/
                      has the features (client, retries, redirects, dns, options, streams), whose program under test
-                     is specs/driver.agc (a client, its requests and the peers, driven by JSON lines from
-                     specs/steps.agc); the peers are programs the
+                     is test/specs/driver.agc (a client, its requests and the peers, driven by JSON lines from
+                     test/steps.agc); the peers are programs the
                      driver starts: fixtures/server.agc (the server of std/http, for the normal flows, or over HTTPS
                      with fixtures/tls/, a certificate for api.test and its CA) and fixtures/raw_peer.agc (a TCP server
                      that reads requests by hand and writes the answers of a script: slow heads, stalls, closes, and
@@ -170,7 +170,7 @@ yaml/                a YAML 1.2 parser: yaml.agc is the API (parse, parse_all, O
   two sources for one name in a tree is `PKG-SOURCE-CONFLICT`. A bump of Bond is a package release first, then the
   app.
 - `agentica.toml` has `blank_line_after_end = true`: every bare `end` is followed by an empty line.
-- BDD first: a behavior is a Gherkin scenario in `specs/`, with steps in `specs/steps.agc`. A pure helper may have a
+- BDD first: a behavior is a Gherkin scenario in `specs/` or `test/specs/`, with steps in `specs/steps.agc` or `test/steps.agc` respectively. A pure helper may have a
   unit test in `test/` (`*_test.agc`). Tests are hermetic: 127.0.0.1, port 0, no external services, and a step that makes
   something on disk removes it with `BDD.after`.
 - Tests, models and peers are written in Agentica. A peer in another language (Python or Node, standard library

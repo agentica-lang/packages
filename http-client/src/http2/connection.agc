@@ -21,6 +21,16 @@ struct Response
   body: Bytes
 end
 
+struct Write
+  bytes: Bytes
+  stream: Int = 0
+  deadline: Optional[Int] = none
+  cancelled: Optional[Channel[Bool]] = none
+  credit: Int = 0
+  opening: Bool = false
+  reset: Bool = false
+end
+
 struct Session
   socket: TCP.Socket
   incoming: Channel[Bytes]
@@ -32,22 +42,47 @@ struct Session
   receive_credit: Int = 65_535
   initial_window: Int = 65_535
   frame_size: Int = 16_384
-  stream_limit: Int = 1
+  stream_limit: Int = 100
   last_stream: Int = 0x7fffffff
   draining: Bool = false
-  control_pending: Bool = false
   write_error: Optional[Error] = none
+  writer: Optional[Channel[Write]] = none
 end
 
-struct Answer
-  response: Response
+enum StreamPhase
+  Open
+  HalfClosedLocal
+  HalfClosedRemote
+  Closed
+end
+
+struct Stream
+  id: Int
+  phase: StreamPhase = StreamPhase.Open
+  cancelled: Optional[Channel[Bool]] = none
+  send_credit: Int
+  receive_credit: Int = 65_535
+  sent: Int = 0
+  status: Int = 0
+  fields: List[HTTP.Header] = []
+  parts: List[Bytes] = []
+  received: Int = 0
+  ended: Bool = false
+  block: Bytes = "".bytes
+  continuing: Bool = false
+  end_on_headers: Bool = false
+  expected_size: Optional[Int] = none
+end
+
+struct Progress
   session: Session
+  stream: Stream
+  malformed: Optional[String] = none
 end
 
-struct Submission
-  request: Request
-  connect_timeout_ms: Int
-  reply: Channel[Result[Response]]
+struct Read
+  frame: Frame.Frame
+  session: Session
 end
 
 def start(socket: TCP.Socket, incoming: Channel[Bytes], reader: Task[Result[Void]], deadline: Int) -> Result[Session]
@@ -69,41 +104,81 @@ def reusable?(session: Session) -> Bool
   session.write_error.none? and not session.draining and session.next_stream <= Frame.MAX_WINDOW
 end
 
-def idle(session: Session, deadline: Int, frame_budget: Int = 32) -> Result[Session]
-  active = session
-  processed = 0
-  while reusable?(active) and processed < frame_budget
-    _ = try remaining(deadline)
-    case try Frame.parse(active.buffer)
-      some(parsed) ->
-        active = try idle_control(active.with(buffer: parsed.rest), parsed.frame, deadline)
-        processed = processed + 1
-      none ->
-        case active.incoming.recv(0)
-          ok(bytes) -> active = active.with(buffer: active.buffer + bytes)
-          error(e) if e.is_a?("channel.closed") -> return closed()
-          error(_) -> return ok(active.with(control_pending: false))
-        end
-    end
+def open_stream(session: Session, req: Request, block: Bytes, deadline: Int) -> Result[Progress]
+  id = session.next_stream
+  cancel: Channel[Bool] = Channel.new(1)
+  try send_headers(session, id, block, req.body.empty?, deadline, cancel)
+  phase = StreamPhase.Open
+  if req.body.empty?
+    phase = StreamPhase.HalfClosedLocal
   end
 
-  ok(active.with(control_pending: reusable?(active)))
+  ok(
+    Progress(
+      session: session.with(next_stream: id + 2),
+      stream: Stream(id: id, send_credit: session.initial_window, phase: phase, cancelled: some(cancel)),
+    ),
+  )
 end
 
-def request(session: Session, req: Request, block: Bytes, head_deadline: Int) -> Result[Answer]
-  active = try classify_timeout(ready_to_send(session, head_deadline), head_deadline, req.deadline)
-  id = active.next_stream
-  try classify_timeout(send_headers(active, id, block, req.body.empty?, head_deadline), head_deadline, req.deadline)
-  stream = Stream(id: id, send_credit: active.initial_window)
-  next_session = active.with(next_stream: id + 2)
-  exchange(next_session, stream, req, head_deadline)
+def pull(session: Session, deadline: Int) -> Result[Session] = read_available(session, deadline)
+
+def dispatch(session: Session, frame: Frame.Frame, deadline: Int) -> Result[Session]
+  idle_control(session, frame, deadline)
 end
 
-def classify_timeout[T](result: Result[T], deadline: Int, request_deadline: Int) -> Result[T]
-  case result
-    error(e) if e.is_a?("net.timeout") and deadline == request_deadline ->
-      error("http_client: the request timed out", kind: "http_client.timeout.request", cause: e)
-    _ -> result
+def dispatch_stream(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Result[Progress]
+  updated = try receive(state, frame, req, deadline)
+  stream = updated.stream
+  return ok(updated) if not stream.ended
+  phase = StreamPhase.HalfClosedRemote
+  if stream.phase == StreamPhase.HalfClosedLocal
+    phase = StreamPhase.Closed
+  end
+
+  ok(updated.with(stream: stream.with(phase: phase)))
+end
+
+def send_piece(state: Progress, body: Bytes, deadline: Int) -> Result[Progress]
+  sent = try send_data(state, body, deadline)
+  return ok(sent.with(stream: sent.stream.with(phase: StreamPhase.HalfClosedLocal))) if sent.stream.sent == body.size
+
+  ok(sent)
+end
+
+def can_send?(state: Progress, size: Int) -> Bool = can_upload?(state, size)
+
+def reset(session: Session, id: Int, code: Int, deadline: Int) -> Result[Void]
+  send(session, 3, 0, id, Frame.word(code), deadline)
+end
+
+def response(stream: Stream) -> Response
+  Response(status: stream.status, headers: stream.fields, body: Bytes.concat(stream.parts))
+end
+
+def dispatch_closed(session: Session, frame: Frame.Frame, stream: Stream, deadline: Int) -> Result[Progress]
+  if frame.kind == 0
+    credit = session.receive_credit - frame.payload.size
+    return Frame.invalid("incoming connection window exhausted") if credit < 0
+    if credit <= REFILL and session.write_error.none?
+      try send(session, 8, 0, 0, Frame.word(WINDOW - credit), deadline)
+      credit = WINDOW
+    end
+
+    return ok(Progress(session: session.with(receive_credit: credit), stream: stream))
+  end
+
+  return discard_headers(session, frame, stream) if frame.kind == 1 or frame.kind == 9
+
+  changed = try dispatch(session, frame, deadline)
+  ok(Progress(session: changed, stream: stream))
+end
+
+def length_valid?(stream: Stream, method: String) -> Bool
+  return true if bodyless?(method, stream.status)
+  case stream.expected_size
+    some(size) -> stream.received <= size and (not stream.ended or stream.received == size)
+    none -> true
   end
 end
 
@@ -112,109 +187,6 @@ private
 EMPTY = "".bytes
 WINDOW = 65_535
 REFILL = 32_768
-
-struct Read
-  frame: Frame.Frame
-  session: Session
-end
-
-struct Stream
-  id: Int
-  send_credit: Int
-  receive_credit: Int = 65_535
-  sent: Int = 0
-  status: Int = 0
-  fields: List[HTTP.Header] = []
-  parts: List[Bytes] = []
-  received: Int = 0
-  ended: Bool = false
-  block: Bytes = "".bytes
-  continuing: Bool = false
-  end_on_headers: Bool = false
-  expected_size: Optional[Int] = none
-end
-
-struct Progress
-  session: Session
-  stream: Stream
-end
-
-def ready_to_send(session: Session, deadline: Int) -> Result[Session]
-  active = session
-  while true
-    case idle(active, deadline)
-      ok(next_session) -> active = next_session
-      error(e) if e.is_a?("net.closed") -> return unsent()
-      error(e) -> return error(e)
-    end
-
-    case active.write_error
-      some(e) if not e.is_a?("net.closed") -> return error(e)
-      _ -> nil
-    end
-
-    return unsent() if not reusable?(active)
-    next if active.control_pending
-    return ok(active) if active.stream_limit > 0
-    waiting = read_control(active, deadline)
-    case waiting
-      ok(updated) -> active = updated
-      error(e) if e.is_a?("net.closed") -> return unsent()
-      error(e) -> return error(e)
-    end
-  end
-
-  unsent()
-end
-
-def read_control(session: Session, deadline: Int) -> Result[Session]
-  read = try read_frame(session, deadline)
-  idle_control(read.session, read.frame, deadline)
-end
-
-def exchange(session: Session, stream: Stream, req: Request, head_deadline: Int) -> Result[Answer]
-  state = Progress(session: session, stream: stream)
-  body_deadline = req.deadline
-  while not state.stream.ended
-    current = state.stream
-    wait_until = head_deadline
-    if current.status > 0
-      wait_until = body_deadline
-    end
-
-    ready = try classify_timeout(read_available(state.session, wait_until), wait_until, req.deadline)
-    state = state.with(session: ready)
-    buffered = try Frame.parse(ready.buffer)
-    if buffered.none? and can_upload?(state, req.body.size)
-      case send_data(state, req.body, wait_until)
-        ok(sent) -> state = sent
-        error(e) -> state = state.with(session: ready.with(write_error: some(e)))
-      end
-
-      next
-    end
-
-    read = try classify_timeout(read_response_frame(state.session, wait_until), wait_until, req.deadline)
-    state = try receive(Progress(session: read.session, stream: state.stream), read.frame, req, wait_until)
-    if req.body_idle_ms > 0 and state.stream.status > 0
-      if current.status == 0 or state.stream.received > current.received
-        body_deadline = [req.deadline, Time.monotonic_ms() + req.body_idle_ms].min.unwrap!
-      end
-    end
-  end
-
-  finished = state.stream
-  session_after_response = state.session
-  if finished.sent < req.body.size and reusable?(session_after_response)
-    reset = send(session_after_response, 3, 0, finished.id, Frame.word(8), cleanup_deadline(req.deadline))
-    if not reset.ok?
-      session_after_response = session_after_response.with(draining: true)
-    end
-  end
-
-  response = Response(status: finished.status, headers: finished.fields, body: Bytes.concat(finished.parts))
-  ok(Answer(response: response, session: session_after_response))
-end
 
 def can_upload?(state: Progress, size: Int) -> Bool
   (
@@ -227,7 +199,7 @@ end
 
 def read_available(session: Session, deadline: Int) -> Result[Session]
   ready = session
-  while (try Frame.parse(ready.buffer)).none?
+  while not Frame.pending?(ready.buffer)
     _ = try remaining(deadline)
     case ready.incoming.recv(0)
       ok(bytes) -> ready = ready.with(buffer: ready.buffer + bytes)
@@ -236,14 +208,6 @@ def read_available(session: Session, deadline: Int) -> Result[Session]
   end
 
   ok(ready)
-end
-
-def read_response_frame(session: Session, deadline: Int) -> Result[Read]
-  case read_frame(session, deadline)
-    ok(read) -> ok(read)
-    error(e) if e.is_a?("net.closed") -> error(session.write_error.unwrap_or(e))
-    error(e) -> error(e)
-  end
 end
 
 def receive(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Result[Progress]
@@ -264,7 +228,7 @@ def receive(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) ->
 
   case frame.kind
     0 -> data(state, frame, req, deadline)
-    1, 9 -> header_fragment(state, frame, req.method)
+    1, 9 -> header_fragment(state, frame)
     3 ->
       return Frame.invalid("invalid rst_stream") if frame.payload.size != 4
       error("http_client: the peer reset stream #{stream.id}", kind: "http_client.network")
@@ -369,7 +333,13 @@ def send_data(state: Progress, body: Bytes, deadline: Int) -> Result[Progress]
     flags = 1
   end
 
-  try send(c, 0, flags, s.id, body.slice(s.sent, count), deadline)
+  bytes = Frame.encode(0, flags, s.id, body.slice(s.sent, count))
+  try write(
+    c,
+    Write(bytes: bytes, stream: s.id, credit: count, deadline: some(deadline), cancelled: s.cancelled),
+    deadline,
+  )
+
   ok(
     Progress(
       session: c.with(send_credit: c.send_credit - count),
@@ -399,11 +369,10 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
     next_stream = next_stream.with(parts: s.parts.push(payload), received: s.received + payload.size)
   end
 
-  try check_length(next_stream, req.method)
-  if connection_credit <= REFILL and c.write_error.none? and (not ended or reusable?(c))
+  if connection_credit <= REFILL and c.write_error.none?
     wait = deadline
     if ended
-      wait = cleanup_deadline(deadline)
+      wait = Time.monotonic_ms() + 1_000
     end
 
     case send(c, 8, 0, 0, Frame.word(WINDOW - connection_credit), wait)
@@ -427,22 +396,39 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
   )
 end
 
-def cleanup_deadline(deadline: Int) -> Int = [deadline, Time.monotonic_ms() + 10].min.unwrap!
+def discard_headers(session: Session, frame: Frame.Frame, stream: Stream) -> Result[Progress]
+  fragment = try header_bytes(stream, frame)
+  if fragment.size > Headers.BLOCK_LIMIT - stream.block.size
+    return Frame.invalid("compressed header block exceeds its limit")
+  end
 
-def header_fragment(state: Progress, frame: Frame.Frame, method: String) -> Result[Progress]
-  s = state.stream
-  fragment = frame.payload
-  ended = s.end_on_headers
+  block = stream.block + fragment
+  return ok(Progress(session: session, stream: stream.with(block: block, continuing: true))) if not flag?(frame, 4)
+
+  decoded = try Hpack.decode(session.decoder, block)
+  ok(Progress(session: session.with(decoder: decoded.state), stream: stream.with(block: EMPTY, continuing: false)))
+end
+
+def header_bytes(stream: Stream, frame: Frame.Frame) -> Result[Bytes]
   if frame.kind == 1
     priority = 0
     if flag?(frame, 32)
       priority = 5
     end
 
-    fragment = try unpad(frame, priority)
+    return unpad(frame, priority)
+  end
+
+  return Frame.invalid("unexpected continuation") if not stream.continuing
+  ok(frame.payload)
+end
+
+def header_fragment(state: Progress, frame: Frame.Frame) -> Result[Progress]
+  s = state.stream
+  fragment = try header_bytes(s, frame)
+  ended = s.end_on_headers
+  if frame.kind == 1
     ended = flag?(frame, 1)
-  elsif not s.continuing
-    return Frame.invalid("unexpected continuation")
   end
 
   if fragment.size > Headers.BLOCK_LIMIT - s.block.size
@@ -453,41 +439,45 @@ def header_fragment(state: Progress, frame: Frame.Frame, method: String) -> Resu
   return ok(state.with(stream: s.with(block: block, continuing: true, end_on_headers: ended))) if not flag?(frame, 4)
 
   decoded = try Hpack.decode(state.session.decoder, block)
-  head = try Headers.decode(decoded.headers, s.status > 0)
-  next_stream = s.with(block: EMPTY, continuing: false, end_on_headers: false)
-  if s.status > 0
-    return Frame.invalid("trailers without end_stream") if not ended
-    next_stream = next_stream.with(ended: true)
-  elsif head.status < 200
-    return Frame.invalid("invalid informational response") if ended or head.status == 101
-  else
-    next_stream = next_stream.with(status: head.status, fields: head.fields, expected_size: head.length, ended: ended)
-  end
+  completed = Progress(
+    session: state.session.with(decoder: decoded.state),
+    stream: s.with(block: EMPTY, continuing: false, end_on_headers: false),
+  )
 
-  try check_length(next_stream, method)
-  ok(Progress(session: state.session.with(decoder: decoded.state), stream: next_stream))
+  case Headers.decode(decoded.headers, s.status > 0)
+    error(e) -> ok(completed.with(malformed: some(e.message)))
+    ok(head) -> ok(apply_head(completed, head, ended))
+  end
 end
 
-def check_length(stream: Stream, method: String) -> Result[Void]
-  if not bodyless?(method, stream.status)
-    case stream.expected_size
-      some(size) ->
-        if stream.received > size or (stream.ended and stream.received != size)
-          return Frame.invalid("content-length does not match response body")
-        end
-
-      none -> nil
-    end
+def apply_head(state: Progress, head: Headers.Head, ended: Bool) -> Progress
+  stream = state.stream
+  if stream.status > 0
+    return state.with(malformed: some("trailers without end_stream")) if not ended
+    return state.with(stream: stream.with(ended: true))
   end
 
-  ok()
+  if head.status < 200
+    return state.with(malformed: some("invalid informational response")) if ended or head.status == 101
+    return state
+  end
+
+  state.with(stream: stream.with(status: head.status, fields: head.fields, expected_size: head.length, ended: ended))
 end
 
 def bodyless?(method: String, status: Int) -> Bool = method == "HEAD" or status == 204 or status == 304
 
-def send_headers(session: Session, id: Int, block: Bytes, empty: Bool, deadline: Int) -> Result[Void]
+def send_headers(
+  session: Session,
+  id: Int,
+  block: Bytes,
+  empty: Bool,
+  deadline: Int,
+  cancel: Channel[Bool],
+) -> Result[Void]
   offset = 0
   kind = 1
+  frames: List[Bytes] = []
   while offset < block.size
     count = [session.frame_size, block.size - offset].min.unwrap!
     flags = 0
@@ -499,12 +489,16 @@ def send_headers(session: Session, id: Int, block: Bytes, empty: Bool, deadline:
       flags = flags + 4
     end
 
-    try send(session, kind, flags, id, block.slice(offset, count), deadline)
+    frames = frames.push(Frame.encode(kind, flags, id, block.slice(offset, count)))
     offset = offset + count
     kind = 9
   end
 
-  ok()
+  write(
+    session,
+    Write(bytes: Bytes.concat(frames), stream: id, deadline: some(deadline), opening: true, cancelled: some(cancel)),
+    deadline,
+  )
 end
 
 def unpad(frame: Frame.Frame, skip: Int) -> Result[Bytes]
@@ -545,7 +539,14 @@ def read_chunk(session: Session, deadline: Int) -> Result[Bytes]
 end
 
 def send(session: Session, kind: Int, flags: Int, id: Int, bytes: Bytes, deadline: Int) -> Result[Void]
-  TCP.send_bytes(session.socket, Frame.encode(kind, flags, id, bytes), try remaining(deadline))
+  write(session, Write(bytes: Frame.encode(kind, flags, id, bytes), stream: id, reset: kind == 3), deadline)
+end
+
+def write(session: Session, item: Write, deadline: Int) -> Result[Void]
+  case session.writer
+    some(writer) -> writer.send(item, 0)
+    none -> TCP.send_bytes(session.socket, item.bytes, try remaining(deadline))
+  end
 end
 
 def remaining(deadline: Int) -> Result[Int]
@@ -557,5 +558,3 @@ end
 def flag?(frame: Frame.Frame, flag: Int) -> Bool = frame.flags.bit_and(flag) != 0
 
 def closed[T]() -> Result[T] = error("http_client: the HTTP/2 session is closed", kind: "net.closed")
-
-def unsent[T]() -> Result[T] = error("HTTP/2 session closed before request headers", kind: "http2.unsent")

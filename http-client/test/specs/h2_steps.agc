@@ -1,6 +1,6 @@
 import BDD from "std/bdd"
 import H2Peer from "fixtures/h2_peer"
-import HttpClient from "../http_client"
+import HttpClient from "../../http_client"
 import HTTP from "std/http"
 
 def flow(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, flow_check())
@@ -22,6 +22,22 @@ def early(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, e
 def deadlines(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, check_deadlines())
 
 def closing(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, close_checks())
+
+def multiplex(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, multiplex_check())
+
+def cancelled(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, cancelled_check())
+
+def shared(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  checked(ctx, peer_check(&H2Peer.shared_window, &shared_calls))
+end
+
+def broken(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  checked(ctx, peer_check(&H2Peer.broken, &broken_calls))
+end
+
+def surplus(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, surplus_check())
+
+def malformed(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, malformed_checks())
 
 private
 
@@ -105,15 +121,15 @@ end
 def server_context(alpn: String) -> Result[TLS.Context]
   TLS.server_context(
     TLS.ServerOptions(
-      cert_file: "specs/fixtures/tls/server.pem",
-      key_file: "specs/fixtures/tls/server.key",
+      cert_file: "test/specs/fixtures/tls/server.pem",
+      key_file: "test/specs/fixtures/tls/server.key",
       alpn: [alpn],
     ),
   )
 end
 
 def tls_request(port: Int, alpn: List[String], h2: Bool, addresses: List[String]) -> Result[Void]
-  context = try TLS.client_context(TLS.ClientOptions(ca_file: "specs/fixtures/tls/ca.pem", alpn: alpn))
+  context = try TLS.client_context(TLS.ClientOptions(ca_file: "test/specs/fixtures/tls/ca.pem", alpn: alpn))
   client = try HttpClient.new(
     base_url: "https://api.test:#{port}",
     protocol: HttpClient.Protocol.Http2,
@@ -134,11 +150,12 @@ def tls_request(port: Int, alpn: List[String], h2: Bool, addresses: List[String]
 end
 
 def await_peer(listener: TCP.Listener, peer: Task[Result[Void]], result: Result[Void]) -> Result[Void]
+  finished = Task.await(peer, 2_000)
   TCP.close_listener(listener)
-  case Task.await(peer, 2_000)
+  case finished
     Await.Done(outcome) ->
-      try outcome
-      result
+      try result
+      outcome
     _ ->
       Task.cancel(peer)
       _ = Task.await(peer, 1_000)
@@ -268,13 +285,31 @@ def close_active(port: Int, started: Channel[Bool]) -> Result[Void]
     base_url: "http://127.0.0.1:#{port}",
     protocol: HttpClient.Protocol.Http2,
     timeout_ms: 30_000,
+    pool_size: 1,
+    pool_timeout_ms: 100,
     max_retries: 0,
   )
 
   request = Task.spawn do HttpClient.get(client, "/") end
   began = started.recv(2_000)
+  queued_timeout = expired_queue(client)
+  waiting = Task.spawn do HttpClient.get(client, "/queued") end
   HttpClient.close(client, 0)
   try began
+  try queued_timeout
+  try closed_request(waiting)
+  closed_request(request)
+end
+
+def expired_queue(client: HttpClient.Client) -> Result[Void]
+  case HttpClient.get(client, "/pool-timeout")
+    error(e) if e.is_a?("http_client.timeout.pool") -> ok()
+    error(e) -> error(e)
+    ok(_) -> error("expected a pool timeout while the only stream was occupied")
+  end
+end
+
+def closed_request(request: Task[Result[HttpClient.Response]]) -> Result[Void]
   case Task.await(request, 500)
     Await.Done(error(e)) if e.is_a?("http_client.closed") -> ok()
     Await.Done(error(e)) -> error(e)
@@ -309,4 +344,168 @@ def close_idle(port: Int) -> Result[Void]
   _ = try result
   return error("HTTP/2 close left tasks running") if Task.pending_count() != before
   ok()
+end
+
+def multiplex_check() -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  started: Channel[Bool] = Channel.new(1)
+  finished: Channel[Bool] = Channel.new(1)
+  peer = Task.spawn do H2Peer.multiplex(listener, started, finished) end
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{TCP.local_port(listener)}",
+    protocol: HttpClient.Protocol.Http2,
+    pool_size: 1,
+    max_retries: 0,
+  )
+
+  result = concurrent_calls(client, started, finished)
+  HttpClient.close(client, 0)
+  await_peer(listener, peer, result)
+end
+
+def concurrent_calls(client: HttpClient.Client, started: Channel[Bool], finished: Channel[Bool]) -> Result[Void]
+  upload = Task.spawn do HttpClient.post(client, "/blocked", body: some("upload".bytes)) end
+  _ = try started.recv(2_000)
+  fast = try HttpClient.get(client, "/fast")
+  return error("wrong response to concurrent GET") if fast.status != 200 or fast.body != "fast".bytes
+
+  try finished.send(true, 0)
+  slow = try Task.await(upload)
+  if slow.status != 200 or slow.body != "slow".bytes or slow.headers.size != 1 or slow.headers[0].value != "one"
+    return error("wrong POST response or shared HPACK state")
+  end
+
+  ok()
+end
+
+def cancelled_check() -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  waiting: Channel[Bool] = Channel.new(1)
+  peer = Task.spawn do H2Peer.cancelled(listener, waiting) end
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{TCP.local_port(listener)}",
+    protocol: HttpClient.Protocol.Http2,
+    pool_size: 1,
+    max_retries: 0,
+    timeout_ms: 3_000,
+  )
+
+  result = cancelled_calls(client, waiting)
+  HttpClient.close(client, 0)
+  await_peer(listener, peer, result)
+end
+
+def cancelled_calls(client: HttpClient.Client, waiting: Channel[Bool]) -> Result[Void]
+  shorter = client.with(read_timeout_ms: 500)
+  first = Task.spawn do HttpClient.get(shorter, "/cancelled") end
+  _ = try waiting.recv(2_000)
+  queued = try HttpClient.get(client, "/queued")
+  case Task.await(first)
+    error(e) if e.is_a?("http_client.timeout.read") -> nil
+    _ -> return error("first request did not get its read timeout")
+  end
+
+  if queued.status != 200 or queued.headers.size != 1 or queued.headers[0].value != "one"
+    return error("the second stream did not use the HPACK entry from the cancelled stream")
+  end
+
+  ok()
+end
+
+def peer_check(
+  serve: Fn[TCP.Listener, Channel[Bool], Result[Void]],
+  calls: Fn[HttpClient.Client, Channel[Bool], Result[Void]],
+) -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  started: Channel[Bool] = Channel.new(1)
+  peer = Task.spawn do serve.call(listener, started) end
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{TCP.local_port(listener)}",
+    pool_size: 1,
+    protocol: HttpClient.Protocol.Http2,
+    max_retries: 0,
+    timeout_ms: 5_000,
+  )
+
+  result = calls.call(client, started)
+  HttpClient.close(client, 0)
+  await_peer(listener, peer, result)
+end
+
+def shared_calls(client: HttpClient.Client, started: Channel[Bool]) -> Result[Void]
+  body = some(("u" * 35_000).bytes)
+  first = Task.spawn do HttpClient.post(client, "/one", body: body) end
+  _ = try started.recv(2_000)
+  second = try HttpClient.post(client, "/two", body: body)
+  first_response = try Task.await(first)
+  return error("either upload failed") if first_response.status != 200 or second.status != 200
+  replacement = try HttpClient.get(client, "/after-goaway")
+  return error("expected a new session after goaway") if replacement.status != 200
+  ok()
+end
+
+def broken_calls(client: HttpClient.Client, started: Channel[Bool]) -> Result[Void]
+  first = Task.spawn do HttpClient.get(client, "/one") end
+  _ = try started.recv(2_000)
+  second = HttpClient.get(client, "/two")
+  try lost(second)
+  try lost(Task.await(first))
+  replacement = try HttpClient.get(client, "/replacement")
+  return error("replacement session failed") if replacement.status != 200
+  ok()
+end
+
+def lost(result: Result[HttpClient.Response]) -> Result[Void]
+  case result
+    error(e) if e.is_a?("http_client.network") -> ok()
+    _ -> error("expected the failed session to settle the request")
+  end
+end
+
+def surplus_check() -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  started: Channel[Bool] = Channel.new(1)
+  peer = Task.spawn do H2Peer.surplus(listener, started) end
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{TCP.local_port(listener)}",
+    pool_size: 2,
+    protocol: HttpClient.Protocol.Http2,
+    max_retries: 0,
+    timeout_ms: 3_000,
+    idle_ms: 100,
+  )
+
+  result = surplus_calls(client, started)
+  HttpClient.close(client, 0)
+  await_peer(listener, peer, result)
+end
+
+def surplus_calls(client: HttpClient.Client, started: Channel[Bool]) -> Result[Void]
+  busy = Task.spawn do HttpClient.get(client, "/busy") end
+  _ = try started.recv(2_000)
+  spare = try HttpClient.get(client, "/spare")
+  first = try Task.await(busy)
+  return error("idle retirement affected the busy session") if spare.status != 200 or first.status != 200
+  ok()
+end
+
+def malformed_calls(client: HttpClient.Client, started: Channel[Bool]) -> Result[Void]
+  first = Task.spawn do HttpClient.get(client, "/bad-length") end
+  _ = try started.recv(2_000)
+  good = try HttpClient.get(client, "/good")
+  case Task.await(first)
+    error(e) if e.is_a?("http_client.http2.protocol") -> nil
+    _ -> return error("expected a content-length error")
+  end
+
+  if good.status != 200 or good.headers.size != 1 or good.headers[0].value != "one"
+    return error("the malformed response affected another stream or lost HPACK state")
+  end
+
+  ok()
+end
+
+def malformed_checks() -> Result[Void]
+  try peer_check(->(listener, started) { H2Peer.malformed(listener, started, false) }, &malformed_calls)
+  peer_check(->(listener, started) { H2Peer.malformed(listener, started, true) }, &malformed_calls)
 end

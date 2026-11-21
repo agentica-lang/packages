@@ -12,7 +12,7 @@ STREAM_MS = 1_000
 
 # The server is a process of its own, so that its tasks are not counted with the client's.
 def server() -> Result[Process]
-  Process.spawn(System.env("HTTP_CLIENT_AGENTICA").unwrap_or("agentica"), ["specs/fixtures/server.agc"])
+  Process.spawn(System.env("HTTP_CLIENT_AGENTICA").unwrap_or("agentica"), ["test/specs/fixtures/server.agc"])
 end
 
 # The idle watcher of the connection must be gone before each request reads its response: a watcher still reading
@@ -66,7 +66,7 @@ end
 def test_close_ends_the_tasks_of_a_stream_whose_reader_is_gone() -> Result[Void]
   before = Task.pending_count()
   agentica = System.env("HTTP_CLIENT_AGENTICA").unwrap_or("agentica")
-  peer = try Process.spawn(agentica, ["specs/fixtures/raw_peer.agc", "repeat 20 500 data:_x\\n\\n"])
+  peer = try Process.spawn(agentica, ["test/specs/fixtures/raw_peer.agc", "repeat 20 500 data:_x\\n\\n"])
   port = (try Process.read_line(peer, PEER_START_MS)).split(" ").last
   client = try HttpClient.new(base_url: "http://127.0.0.1:#{port}", read_timeout_ms: 60_000, max_retries: 0)
   events = try HttpClient.get_events(client, "/events")
@@ -91,7 +91,7 @@ end
 def test_cancel_after_close_does_nothing() -> Result[Void]
   before = Task.pending_count()
   agentica = System.env("HTTP_CLIENT_AGENTICA").unwrap_or("agentica")
-  peer = try Process.spawn(agentica, ["specs/fixtures/raw_peer.agc", "repeat 20 500 data:_x\\n\\n"])
+  peer = try Process.spawn(agentica, ["test/specs/fixtures/raw_peer.agc", "repeat 20 500 data:_x\\n\\n"])
   port = (try Process.read_line(peer, PEER_START_MS)).split(" ").last
   client = try HttpClient.new(base_url: "http://127.0.0.1:#{port}", read_timeout_ms: 60_000, max_retries: 0)
   stream = try HttpClient.stream(client, "GET", "/events")
