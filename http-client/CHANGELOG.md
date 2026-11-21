@@ -2,11 +2,11 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-21
 
 - Add opt-in HTTP/2 for buffered requests, with HPACK, TLS ALPN, connection reuse and flow control.
 - Multiplex HTTP/2 requests per connection, respecting peer concurrency and flow-control limits. Cancel individual streams and replace failed sessions on demand.
-- Keep HTTP/2 stream slots and connection credit consistent when an early response, EOF, or malformed DATA interrupts a request.
+- Preserve buffered HTTP/2 responses at EOF and isolate malformed DATA to the affected stream.
 - **Breaking:** Requires Agentica 0.35.0.
 
 ## [0.2.0] - 2026-11-20
