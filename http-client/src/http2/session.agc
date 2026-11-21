@@ -59,7 +59,7 @@ struct State
 end
 
 struct Retiring
-  stream: Connection.Stream
+  cancelled: Optional[Channel[Bool]]
   suppress: Channel[Bool]
 end
 
@@ -250,12 +250,7 @@ end
 def writable?(state: State, conn: Connection.Session) -> Bool
   return false if conn.write_error.some? or not conn.writer.unwrap!.empty?
   return true if not state.resets.empty?
-  if (
-    not state.pending.empty? and
-    (state.retiring.empty? or state.active.size + state.retiring.size < conn.stream_limit)
-  )
-    return true
-  end
+  return true if not state.pending.empty?
 
   for flight in state.active.values
     if Connection.can_send?(Connection.Progress(session: conn, stream: flight.stream), flight.call.request.body.size)
@@ -313,9 +308,7 @@ def admit(state: State) -> Result[State]
     return ok(state.with(pending: state.pending.drop(1)))
   end
 
-  return upload(state) if not state.retiring.empty? and state.active.size + state.retiring.size >= conn.stream_limit
-
-  if state.active.size >= conn.stream_limit
+  if state.active.size >= seats(state, conn)
     updated = publish(state)
     complete(updated, entry.call.caller.id, error("HTTP/2 session has no stream capacity", kind: "http2.capacity"))
     return ok(updated.with(pending: updated.pending.drop(1)))
@@ -452,7 +445,7 @@ def received_stream(state: State, flight: Flight, frame: Frame.Frame) -> Result[
 
   if stream.ended
     if not flight.local_done and changed.session.write_error.none? and not changed.session.read_only
-      pending = Retiring(stream: stream, suppress: Channel.new(1))
+      pending = Retiring(cancelled: stream.cancelled, suppress: Channel.new(1))
       current = current.with(retiring: current.retiring.put(stream.id, pending))
       if stream.phase == Connection.StreamPhase.HalfClosedRemote
         cancel_writes(stream)
@@ -460,7 +453,7 @@ def received_stream(state: State, flight: Flight, frame: Frame.Frame) -> Result[
       end
     end
 
-    return ok(finish(current, stream.id, ok(Connection.response(stream))))
+    return ok(finish(publish(current), stream.id, ok(Connection.response(stream))))
   end
 
   deadline = flight.deadline
@@ -485,7 +478,7 @@ def received_inactive(state: State, frame: Frame.Frame) -> Result[State]
   if frame.kind == 3 and frame.payload.size == 4
     case state.retiring.get(frame.stream)
       some(retiring) ->
-        cancel_writes(retiring.stream)
+        cancel_signal(retiring.cancelled)
         retiring.suppress.close
         remaining = state.resets.select { |reset| reset.stream != frame.stream }
         return ok(state.with(retiring: state.retiring.delete(frame.stream), resets: remaining))
@@ -552,16 +545,24 @@ def abort_stream(state: State, flight: Flight, reason: Result[Connection.Respons
 end
 
 def cancel_writes(stream: Connection.Stream) -> Void
-  case stream.cancelled
+  cancel_signal(stream.cancelled)
+end
+
+def cancel_signal(signal: Optional[Channel[Bool]]) -> Void
+  case signal
     some(channel) -> channel.close
     none -> nil
   end
 end
 
+def seats(state: State, conn: Connection.Session) -> Int
+  [[conn.stream_limit, 100].min.unwrap! - state.retiring.size, 0].max.unwrap!
+end
+
 def publish(state: State) -> State
   conn = state.conn.unwrap!
   draining = state.phase == Phase.Draining or not Connection.reusable?(conn)
-  capacity = [conn.stream_limit, 100].min.unwrap!
+  capacity = seats(state, conn)
   if draining
     capacity = 0
   end
@@ -642,7 +643,7 @@ def skipped(state: State, item: Connection.Write) -> State
       abort_stream(current, flight, reason)
     none ->
       if item.end_stream and current.retiring.get(item.stream).some? and not cancelled?(item.cancelled)
-        cancel_writes(current.retiring.get(item.stream).unwrap!.stream)
+        cancel_signal(current.retiring.get(item.stream).unwrap!.cancelled)
         return current.with(resets: current.resets.push(Reset(stream: item.stream)))
       end
 

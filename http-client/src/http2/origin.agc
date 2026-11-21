@@ -13,6 +13,7 @@ struct Config
   size: Int
   wait_ms: Int
   idle_ms: Int
+  send: Optional[Fn[TCP.Socket, Bytes, Result[Void]]] = none
 end
 
 struct Pending
@@ -300,6 +301,7 @@ def start_peer(state: State, pending: Pending) -> State
       options: config.options,
       connect_deadline: deadline,
       timeout_kind: kind,
+      send: config.send,
     ),
   )
 

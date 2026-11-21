@@ -50,3 +50,6 @@ Feature: HTTP/2 requests
 
   Scenario: A blocked writer does not delay buffered response DATA at EOF
     Then a complete buffered response drains at EOF while the writer is blocked
+
+  Scenario: A retiring stream slot counts against the pool wait deadline
+    Then the origin applies the admission timeout while a stream slot is retiring

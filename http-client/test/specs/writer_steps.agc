@@ -1,10 +1,8 @@
+import Origin from "../../src/http2/origin"
 import Url from "../../src/url"
 import Peer from "fixtures/h2_peer"
-import Messages from "../../src/http2/messages"
 import HTTP from "std/http"
-import Headers from "../../src/http2/headers"
 import Dial from "../../src/dial"
-import Actor from "std/actor"
 import BDD from "std/bdd"
 import Connection from "../../src/http2/connection"
 import Session from "../../src/http2/session"
@@ -32,6 +30,13 @@ end
 
 def eof(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   case exercise_end(false, true)
+    ok(_) -> BDD.assert(ctx, true, "")
+    error(e) -> BDD.assert(ctx, false, e.message)
+  end
+end
+
+def pool_timeout(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  case exercise_end(false, false, 100)
     ok(_) -> BDD.assert(ctx, true, "")
     error(e) -> BDD.assert(ctx, false, e.message)
   end
@@ -101,12 +106,12 @@ def skipped(inbox: Channel[Session.Msg], credit: Int) -> Result[Void]
   error("the expired write was not reported")
 end
 
-def exercise_end(peer_resets: Bool, eof: Bool) -> Result[Void]
+def exercise_end(peer_resets: Bool, eof: Bool, wait_ms: Int = 2_000) -> Result[Void]
   listener = try TCP.listen("127.0.0.1", 0)
   gate = Gate(blocked: Channel.new(1), release: Channel.new(1), cleared: Channel.new(1))
   peer = Task.spawn do peer_exchange(listener, gate, peer_resets, eof) end
 
-  result = exchange(TCP.local_port(listener), gate, eof)
+  result = exchange(TCP.local_port(listener), gate, eof, wait_ms)
   TCP.close_listener(listener)
   case Task.await(peer, 1_000)
     Await.Done(outcome) ->
@@ -125,8 +130,7 @@ def peer_exchange(listener: TCP.Listener, gate: Gate, peer_resets: Bool, eof: Bo
   Peer.skipped_end(listener, gate.blocked, gate.cleared, peer_resets)
 end
 
-def exchange(port: Int, gate: Gate, eof: Bool) -> Result[Void]
-  owner: Channel[Messages.Origin] = Channel.new(16)
+def exchange(port: Int, gate: Gate, eof: Bool, wait_ms: Int) -> Result[Void]
   base = "http://127.0.0.1:#{port}"
   cache: ATS[String, Dial.Resolved] = ATS.new()
   dialer = Dial.Dialer(
@@ -137,61 +141,70 @@ def exchange(port: Int, gate: Gate, eof: Bool) -> Result[Void]
     public_only: false,
   )
 
-  config = Session.Config(
-    id: 1,
-    owner: owner.address,
+  config = Origin.Config(
+    origin: base,
     dialer: dialer,
     options: HTTP.ClientOptions(),
-    origin: base,
-    connect_deadline: Time.monotonic_ms() + 2_000,
-    timeout_kind: "http_client.timeout.connect",
+    size: 1,
+    wait_ms: wait_ms,
+    idle_ms: 5_000,
     send: some(->(socket, bytes) { gated_send(socket, bytes, gate) }),
   )
 
-  session = Session.start(config)
-  result = requests(session, owner, base, gate, eof)
-  _ = Actor.cast(session.address, Session.Msg.Stop, 100)
-  _ = Actor.stop(session, 1_000)
+  origin = Origin.start(config)
+  result = requests(origin, base, gate, eof, wait_ms)
+  _ = Origin.close(origin, 0)
   result
 end
 
-def requests(
-  session: Actor.Ref[Session.State, Session.Msg],
-  owner: Channel[Messages.Origin],
-  base: String,
-  gate: Gate,
-  eof: Bool,
-) -> Result[Void]
-  try Actor.cast(session.address, Session.Msg.Boot, 100)
-  case try owner.recv(2_000)
-    Messages.Origin.Capacity(_, 1, false) -> nil
-    _ -> return error("expected a one-stream session")
-  end
-
-  deadline = Time.monotonic_ms() + 500
-  try send_request(session.address, base, "POST", "/early", ("x" * 20_000).bytes, deadline)
+def requests(origin: Origin.Origin, base: String, gate: Gate, eof: Bool, wait_ms: Int) -> Result[Void]
+  deadline = Time.monotonic_ms() + 700
+  post = try send_request(origin, base, "POST", "/early", ("x" * 20_000).bytes, deadline)
+  return error("expected an early 413") if post.status != 413
   if eof
-    read = try response(owner)
-    return error("the buffered response did not drain at EOF") if read.status != 413 or read.body != "complete".bytes
+    return error("the buffered response did not drain at EOF") if post.body != "complete".bytes
     return ok()
   end
 
-  try completed(owner, 413)
-  try send_request(session.address, base, "GET", "/after", "".bytes, Time.monotonic_ms() + 2_000)
+  if wait_ms == 100
+    try check_pool_timeout(origin, base)
+    try release_writer(gate, deadline)
+    following = try send_request(origin, base, "GET", "/after", "".bytes, Time.monotonic_ms() + 2_000)
+    return error("expected response status 200") if following.status != 200
+    return ok()
+  end
+
+  successor = Task.spawn do send_request(origin, base, "GET", "/after", "".bytes, Time.monotonic_ms() + 2_000) end
+  try release_writer(gate, deadline)
+  result = try Task.await(successor)
+  return error("expected response status 200") if result.status != 200
+  ok()
+end
+
+def check_pool_timeout(origin: Origin.Origin, base: String) -> Result[Void]
+  result = send_request(origin, base, "GET", "/never", "".bytes, Time.monotonic_ms() + 2_000)
+  case result
+    error(e) if e.is_a?("http_client.timeout.pool") -> ok()
+    error(e) -> error("expected pool timeout, got #{e.kind}")
+    ok(_) -> error("the retiring stream admitted a request")
+  end
+end
+
+def release_writer(gate: Gate, deadline: Int) -> Result[Void]
   Task.sleep([deadline - Time.monotonic_ms() + 10, 1].max.unwrap!)
   try gate.release.send(true, 100)
   _ = try gate.cleared.recv(2_000)
-  completed(owner, 200)
+  ok()
 end
 
 def send_request(
-  address: Address[Session.Msg],
+  origin: Origin.Origin,
   base: String,
   method: String,
   path: String,
   body: Bytes,
   deadline: Int,
-) -> Result[Void]
+) -> Result[Connection.Response]
   target = try Url.resolve(base, path)
   req = Connection.Request(
     method: method,
@@ -204,34 +217,7 @@ def send_request(
     max_body_bytes: 1_024,
   )
 
-  reply: Channel[Result[Connection.Response]] = Channel.new(1)
-  call = Messages.Call(
-    request: req,
-    connect_ms: 1_000,
-    caller: Task.current,
-    reply: reply,
-    admission_deadline: deadline,
-  )
-
-  block = try Headers.encode(method, target, [], body.size)
-  Actor.cast(address, Session.Msg.Open(call, block), 100)
-end
-
-def completed(owner: Channel[Messages.Origin], status: Int) -> Result[Void]
-  received = try response(owner)
-  return error("expected response status #{status}") if received.status != status
-  ok()
-end
-
-def response(owner: Channel[Messages.Origin]) -> Result[Connection.Response]
-  for _ in 1..4
-    case try owner.recv(2_000)
-      Messages.Origin.Complete(_, _, result) -> return result
-      _ -> nil
-    end
-  end
-
-  error("expected a response completion")
+  Origin.request(origin, req, 1_000)
 end
 
 def gated_send(socket: TCP.Socket, bytes: Bytes, gate: Gate) -> Result[Void]
