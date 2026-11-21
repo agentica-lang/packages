@@ -243,9 +243,12 @@ def step(state: State) -> Result[State]
     none -> nil
   end
 
-  return error(ready.write_error.unwrap!) if ready.write_error.some?
+  if ready.incoming.closed?
+    return error(ready.write_error.unwrap!) if ready.write_error.some?
+    return error("the HTTP/2 connection closed", kind: "http_client.network")
+  end
 
-  return error("the HTTP/2 connection closed", kind: "http_client.network") if ready.incoming.closed?
+  return ok(current) if ready.write_error.some?
 
   if not current.resets.empty? and ready.writer.unwrap!.empty?
     reset = current.resets.first
