@@ -111,8 +111,189 @@ def run_h2(origin: H2Origin.Origin, call: Call) -> Result[Response]
     max_body_bytes: call.max_body_bytes,
   )
 
-  response = try H2Origin.request(origin, request, call.connect_timeout_ms)
-  ok(Response(status: response.status, headers: response.headers, body: response.body, url: Url.to_s(call.target)))
+  case call.streaming
+    some(streaming) -> run_h2_stream(origin, request, call, streaming)
+    none ->
+      response = try H2Origin.request(origin, request, call.connect_timeout_ms)
+      ok(Response(status: response.status, headers: response.headers, body: response.body, url: Url.to_s(call.target)))
+  end
+end
+
+def run_h2_stream(origin: H2Origin.Origin, request: H2.Request, call: Call, streaming: Streaming) -> Result[Response]
+  head: Channel[Result[H2.StreamHead]] = Channel.new(1)
+  body: Channel[Bytes] = Channel.new(1)
+  whole = ->(response: H2.Response) {
+    streaming.whole.call(
+      Response(status: response.status, headers: response.headers, body: response.body, url: Url.to_s(call.target)),
+    )
+  }
+
+  h2_streaming = H2.Streaming(whole: whole, head: head, body: body)
+  running = Task.spawn do
+    H2Origin.request(origin, request.with(streaming: some(h2_streaming)), call.connect_timeout_ms)
+  end
+
+  received = try await_h2_head(head, running, call, streaming.stopping)
+  if received.whole
+    response = try await_h2(running, call)
+    return ok(
+      Response(status: response.status, headers: response.headers, body: response.body, url: Url.to_s(call.target)),
+    )
+  end
+
+  h2_streamed(call, received, body, streaming, running)
+end
+
+def await_h2_head(
+  head: Channel[Result[H2.StreamHead]],
+  task: Task[Result[H2.Response]],
+  call: Call,
+  stopping: Channel[Bool],
+) -> Result[H2.StreamHead]
+  deadline = [call.deadline, Time.monotonic_ms() + call.read_timeout_ms].min.unwrap!
+  while true
+    if stopping.closed?
+      Task.cancel(task)
+      _ = Task.await(task, 1_000)
+      return failure("the client is closed", "closed")
+    end
+
+    left = deadline - Time.monotonic_ms()
+    if left < 1
+      Task.cancel(task)
+      _ = Task.await(task, 1_000)
+      return failure("the response head did not come within #{call.read_timeout_ms} ms", "timeout.read")
+    end
+
+    case head.recv([left, 5].min.unwrap!)
+      ok(result) -> return result
+      error(_) -> nil
+    end
+
+    case Task.await(task, 0)
+      Await.Done(error(e)) -> return error(e)
+      Await.Done(ok(_)) -> return failure("HTTP/2 completed without a response head", "network")
+      Await.TimedOut -> nil
+    end
+  end
+
+  failure("the response head did not come", "network")
+end
+
+def await_h2(task: Task[Result[H2.Response]], call: Call) -> Result[H2.Response]
+  left = [call.deadline - Time.monotonic_ms(), 0].max.unwrap!
+  case Task.await(task, left)
+    Await.Done(result) -> result
+    Await.TimedOut ->
+      Task.cancel(task)
+      _ = Task.await(task, 1_000)
+      failure("the request timed out", "timeout.request")
+  end
+end
+
+def h2_streamed(
+  call: Call,
+  received: H2.StreamHead,
+  source: Channel[Bytes],
+  streaming: Streaming,
+  running: Task[Result[H2.Response]],
+) -> Result[Response]
+  body: Channel[Result[Bytes]] = Channel.new(BODY_PLACES)
+  relayed: Channel[Bool] = Channel.new(1)
+  relay_down: Channel[Bool] = Channel.new(1)
+  ended: Channel[Bool] = Channel.new(1)
+  response = Response(status: received.status, headers: received.headers, body: NO_BYTES, url: Url.to_s(call.target))
+  head = Head(
+    status: response.status,
+    headers: response.headers,
+    url: response.url,
+    body: body,
+    relayed: relayed,
+    relay_down: relay_down,
+    ended: ended,
+  )
+
+  # `arrivals` holds the head plus the close: a 0 wait never blocks the session, and a full channel
+  # means the caller went away, so failing fast beats hanging in `pump_h2`.
+  if not streaming.arrivals.send(Arrival.Head(head), 0).ok?
+    Task.cancel(running)
+    _ = Task.await(running, 1_000)
+    ended.close
+    return failure("the caller went away before the streamed head", "closed")
+  end
+
+  result = pump_h2(call, source, head, streaming.stopping)
+  case result
+    error(e) ->
+      Task.cancel(running)
+      _ = Task.await(running, 1_000)
+      ended.close
+      cut(body, e)
+      error(e)
+    ok(_) ->
+      ended.close
+      case await_h2_end(running)
+        ok(_) ->
+          body.close
+          ok(response)
+        error(e) ->
+          Task.cancel(running)
+          _ = Task.await(running, 1_000)
+          cut(body, e)
+          error(e)
+      end
+  end
+end
+
+def await_h2_end(task: Task[Result[H2.Response]]) -> Result[H2.Response]
+  # The body is already drained when this runs: the session closed the source after it ended the stream,
+  # so the runner should settle at once. A loaded session may still need a moment, so this bound is longer
+  # than the 1s cancel joins elsewhere; on a hang the task is cancelled and its real outcome is used.
+  case Task.await(task, 5_000)
+    Await.Done(result) -> result
+    Await.TimedOut ->
+      Task.cancel(task)
+      case Task.await(task, 1_000)
+        Await.Done(result) -> result
+        Await.TimedOut -> failure("HTTP/2 response did not finish after its body", "network")
+      end
+  end
+end
+
+def pump_h2(call: Call, source: Channel[Bytes], head: Head, stopping: Channel[Bool]) -> Result[Void]
+  given_at = 0
+  heard_at = Time.monotonic_ms()
+  piece = try next_h2_piece(source, call, stopping, heard_at)
+  while not piece.empty?
+    given_at = try hand(head, piece, given_at, call.read_timeout_ms, stopping)
+    heard_at = Time.monotonic_ms()
+    piece = try next_h2_piece(source, call, stopping, heard_at)
+  end
+
+  ok()
+end
+
+def next_h2_piece(source: Channel[Bytes], call: Call, stopping: Channel[Bool], heard_at: Int) -> Result[Bytes]
+  while true
+    return failure("the client is closed", "closed") if stopping.closed?
+    return ok(NO_BYTES) if source.closed? and source.empty?
+    if call.body_idle_ms > 0 and Time.monotonic_ms() - heard_at >= call.body_idle_ms
+      return failure("the body did not come within #{call.body_idle_ms} ms", "timeout.read")
+    end
+
+    wait_ms = 5
+    if call.body_idle_ms > 0
+      wait_ms = [wait_ms, call.body_idle_ms - (Time.monotonic_ms() - heard_at)].min.unwrap!
+    end
+
+    case source.recv(wait_ms)
+      ok(bytes) -> return ok(bytes)
+      error(_) if source.closed? and source.empty? -> return ok(NO_BYTES)
+      error(_) -> nil
+    end
+  end
+
+  ok(NO_BYTES)
 end
 
 private

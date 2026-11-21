@@ -1,5 +1,20 @@
 Feature: HTTP/2 requests
 
+  Scenario: A streamed response is delivered before the peer sends its next chunk
+    Then the HTTP/2 client streams response chunks as they arrive
+
+  Scenario: Cancelling a stream frees its slot for the next request
+    Then a cancelled H2 stream frees its slot for the next request
+
+  Scenario: A stalled stream times out its body
+    Then a stalled H2 stream times out its body
+
+  Scenario: Stream flow control waits for the reader
+    Then an H2 stream refills its window only after the reader takes a piece
+
+  Scenario: A retried stream keeps its first head buffered
+    Then a retried H2 stream hides its first head
+
   Scenario: Buffered requests reuse a connection and respect both send windows
     Then an HTTP/2 client reuses the socket and obeys flow control
 

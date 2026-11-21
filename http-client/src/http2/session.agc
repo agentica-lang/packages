@@ -227,6 +227,7 @@ def next_wait(state: State) -> Optional[Int]
   return none if state.conn.none?
   conn = state.conn.unwrap!
   return some(0) if readable?(state, conn) or writable?(state, conn)
+  return some(5) if waiting_piece(state)
 
   limit = 3_600_000
   now = Time.monotonic_ms()
@@ -260,9 +261,15 @@ def defer?(state: State, conn: Connection.Session) -> Bool
   return false if final
 
   case state.active.get(id)
-    some(flight) -> Connection.needs_refill?(flight.stream.receive_credit - size)
+    some(flight) ->
+      return true if Connection.blocked_piece?(flight.stream)
+      Connection.needs_refill?(flight.stream.receive_credit - size)
     none -> false
   end
+end
+
+def waiting_piece(state: State) -> Bool
+  state.active.values.any? { |flight| Connection.waiting_piece?(flight.stream) }
 end
 
 def writable?(state: State, conn: Connection.Session) -> Bool
@@ -281,27 +288,39 @@ end
 
 def step(state: State) -> Result[State]
   conn = state.conn.unwrap!
-  ready = try Connection.pull(conn, Time.monotonic_ms() + 1_000)
-  if ready.incoming.closed?
-    ready = ready.with(read_only: true)
+  wait_ms = 1_000
+  if waiting_piece(state)
+    wait_ms = 5
   end
 
-  current = state.with(conn: some(ready))
-  return ok(current) if Frame.pending?(ready.buffer) and defer?(current, ready)
-  case try Frame.parse(ready.buffer)
-    some(parsed) -> return received(current.with(conn: some(ready.with(buffer: parsed.rest))), parsed.frame)
+  ready = Connection.pull(conn, Time.monotonic_ms() + wait_ms)
+  case ready
+    error(e) if waiting_piece(state) and e.is_a?("net.timeout") -> return flush_streams(state)
+    error(e) -> return error(e)
+    ok(session) -> conn = session
+  end
+
+  if conn.incoming.closed?
+    conn = conn.with(read_only: true)
+  end
+
+  current = state.with(conn: some(conn))
+  return flush_streams(current) if Frame.pending?(conn.buffer) and defer?(current, conn)
+  case try Frame.parse(conn.buffer)
+    some(parsed) ->
+      return flush_streams(try received(current.with(conn: some(conn.with(buffer: parsed.rest))), parsed.frame))
     none -> nil
   end
 
-  if ready.read_only
-    return ok(current) if not ready.incoming.empty?
-    return error(ready.write_error.unwrap!) if ready.write_error.some?
+  if conn.read_only
+    return ok(current) if not conn.incoming.empty?
+    return error(conn.write_error.unwrap!) if conn.write_error.some?
     return error("the HTTP/2 connection closed", kind: "http_client.network")
   end
 
-  return ok(current) if ready.incoming.closed? or ready.write_error.some?
+  return ok(current) if conn.incoming.closed? or conn.write_error.some?
 
-  if not current.resets.empty? and ready.writer.unwrap!.empty?
+  if not current.resets.empty? and conn.writer.unwrap!.empty?
     reset = current.resets.first
     suppress: Optional[Channel[Bool]] = none
     case current.retiring.get(reset.stream)
@@ -309,13 +328,48 @@ def step(state: State) -> Result[State]
       none -> nil
     end
 
-    try Connection.reset(ready, reset.stream, reset.code, Time.monotonic_ms() + 1_000, suppress)
-    return ok(current.with(resets: current.resets.drop(1)))
+    try Connection.reset(conn, reset.stream, reset.code, Time.monotonic_ms() + 1_000, suppress)
+    return flush_streams(current.with(resets: current.resets.drop(1)))
   end
 
-  return admit(current) if not current.pending.empty?
+  return flush_streams(try admit(current)) if not current.pending.empty?
 
-  upload(current)
+  flush_streams(try upload(current))
+end
+
+def flush_streams(state: State) -> Result[State]
+  current = state
+  for id in state.active.keys
+    flight = current.active.get(id).unwrap!
+    progress = Connection.Progress(session: current.conn.unwrap!, stream: flight.stream)
+    delivered = try Connection.deliver(progress, Time.monotonic_ms() + 1_000)
+    stream = delivered.stream
+    current = current.with(conn: some(delivered.session), active: current.active.put(id, flight.with(stream: stream)))
+    if stream.ended and stream.pending.empty?
+      close_body(stream)
+      if not flight.local_done and delivered.session.write_error.none? and not delivered.session.read_only
+        pending = Retiring(cancelled: stream.cancelled, suppress: Channel.new(1))
+        current = current.with(retiring: current.retiring.put(stream.id, pending))
+        if stream.phase == Connection.StreamPhase.HalfClosedRemote
+          cancel_writes(stream)
+          current = current.with(resets: current.resets.push(Reset(stream: stream.id)))
+        end
+      end
+
+      current = finish(publish(current), id, ok(Connection.response(stream)))
+    end
+  end
+
+  ok(current)
+end
+
+# `flush_streams` closes the body and then `finish` closes it again for the same stream: `Channel.close`
+# is idempotent (cancelling twice does nothing), so the guard below only avoids the redundant call.
+def close_body(stream: Connection.Stream) -> Void
+  case stream.streaming
+    some(streaming) if not streaming.body.closed? -> streaming.body.close
+    _ -> nil
+  end
 end
 
 def admit(state: State) -> Result[State]
@@ -461,7 +515,7 @@ def received_stream(state: State, flight: Flight, frame: Frame.Frame) -> Result[
     return ok(abort_stream(current, flight.with(stream: stream), failed, code: 1))
   end
 
-  if stream.ended
+  if stream.ended and stream.streaming.none?
     if not flight.local_done and changed.session.write_error.none? and not changed.session.read_only
       pending = Retiring(cancelled: stream.cancelled, suppress: Channel.new(1))
       current = current.with(retiring: current.retiring.put(stream.id, pending))
@@ -478,12 +532,20 @@ def received_stream(state: State, flight: Flight, frame: Frame.Frame) -> Result[
   req = flight.call.request
   if stream.status > 0 and (flight.stream.status == 0 or stream.received > flight.stream.received)
     deadline = req.deadline
+    if stream.head_sent
+      deadline = Time.monotonic_ms() + 31_536_000_000
+    end
+
     if req.body_idle_ms > 0
-      deadline = [deadline, Time.monotonic_ms() + req.body_idle_ms].min.unwrap!
+      deadline = Time.monotonic_ms() + req.body_idle_ms
+      if not stream.head_sent
+        deadline = [req.deadline, deadline].min.unwrap!
+      end
     end
   end
 
-  ok(current.with(active: current.active.put(stream.id, flight.with(stream: stream, deadline: deadline))))
+  current = current.with(active: current.active.put(stream.id, flight.with(stream: stream, deadline: deadline)))
+  flush_streams(current)
 end
 
 def received_inactive(state: State, frame: Frame.Frame) -> Result[State]
@@ -521,6 +583,7 @@ end
 
 def finish(state: State, id: Int, result: Result[Connection.Response]) -> State
   flight = state.active.get(id).unwrap!
+  close_body(flight.stream)
   complete(state, flight.call.caller.id, result)
   state.with(active: state.active.delete(id), order: state.order.select { |key| key != id })
 end
@@ -601,6 +664,7 @@ end
 
 def fail_all(state: State, reason: Result[Connection.Response], code: Int = 8) -> State
   for flight in state.active.values
+    close_body(flight.stream)
     complete(state, flight.call.caller.id, reason)
   end
 
