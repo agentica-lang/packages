@@ -4,6 +4,7 @@
 
 import BDD from "std/bdd"
 import H2Steps from "specs/h2_steps"
+import PoolSteps from "specs/pool_steps"
 import Protocol from "specs/protocol"
 import {Call, Check, Expectation, How, Reads, Request, Script, Setup} from "specs/protocol"
 import WriterSteps from "specs/writer_steps"
@@ -14,6 +15,7 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
+    BDD.step("the manager keeps watched pools and replaces expired ones", &PoolSteps.idle),
     BDD.step("the HTTP/2 client streams response chunks as they arrive", &H2Steps.streaming),
     BDD.step("a cancelled H2 stream frees its slot for the next request", &H2Steps.streaming_cancel),
     BDD.step("a stalled H2 stream times out its body", &H2Steps.streaming_idle),

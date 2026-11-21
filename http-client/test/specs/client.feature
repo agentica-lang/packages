@@ -4,6 +4,9 @@ Feature: Requests and the pool of connections
   answers by hand with the answers of its script, in order, and each of its answers says which of its TCP connections
   served it (`x-connection`, from 1).
 
+  Scenario: A pool with a live stream survives an idle sweep and is replaced after the stream ends
+    Then the manager keeps watched pools and replaces expired ones
+
   Scenario: A GET gives the status, the headers and the body
     Given the server "a" listens
     And a client of "a" with:

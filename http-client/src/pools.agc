@@ -24,6 +24,7 @@ struct Settings
   options: HTTP.ClientOptions
   dialer: Dial.Dialer
   protocol: Protocol = Protocol.Http1
+  clock: Optional[Fn[Int]] = none
 end
 
 ## The manager of the pools of a client. `stopping` closes when the client closes: the tasks of the streams read it
@@ -157,7 +158,7 @@ end
 def manage(settings: Settings, inbox: Channel[Msg]) -> Void
   ended: Channel[TaskDown] = Channel.new(INBOX_SIZE)
   state = State(pools: {}, closers: {}, streams: {}, ended: ended)
-  swept = Time.monotonic_ms()
+  swept = now_ms(settings)
   while true
     case inbox.recv(SWEEP_MS)
       ok(Msg.Want(wanted)) -> state = state.with(pools: want(settings, state.pools, wanted, state.ended))
@@ -177,7 +178,7 @@ def manage(settings: Settings, inbox: Channel[Msg]) -> Void
       _ -> nil
     end
 
-    now = Time.monotonic_ms()
+    now = now_ms(settings)
     if now - swept >= SWEEP_MS
       state = sweep(state, now, settings.idle_ms)
       swept = now
@@ -185,9 +186,16 @@ def manage(settings: Settings, inbox: Channel[Msg]) -> Void
   end
 end
 
+def now_ms(settings: Settings) -> Int
+  case settings.clock
+    some(clock) -> clock.call()
+    none -> Time.monotonic_ms()
+  end
+end
+
 # Answers the pool of the origin, started now if there is none, and gives the pools with it.
 def want(settings: Settings, pools: Map[String, Entry], wanted: Wanted, ended: Channel[TaskDown]) -> Map[String, Entry]
-  until = Time.monotonic_ms() + ASK_MS + wanted.timeout_ms + settings.idle_ms
+  until = now_ms(settings) + ASK_MS + wanted.timeout_ms + settings.idle_ms
   case pools.get(wanted.origin)
     some(entry) if live?(entry.pool) ->
       _ = wanted.reply.send(ok(entry.pool), 0)

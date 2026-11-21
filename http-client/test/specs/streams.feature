@@ -79,12 +79,12 @@ Feature: Streamed bodies and server-sent events
   Scenario: A steady reader of events slower than a fast server gets every event
     Given the raw peer "a" listens with the script:
       """
-      repeat 20 40 data:_x\n\n
+      repeat 5 40 data:_x\n\n
       """
     And a client of "a" with:
       | setting         | value |
       | read_timeout_ms | 300   |
-    When "e" reads the events of "/events" taking one every 150 ms
+    When "e" reads the events of "/events" taking one every 30 ms
     Then "e" has a body of 399 bytes
 
   Scenario: Events read by a task that is cancelled, or that crashes, end their body, and its connection goes
@@ -129,17 +129,17 @@ Feature: Streamed bodies and server-sent events
     Then "r" has the body "after"
     And "r" came on connection 2
 
-  Scenario: A stream that outlives timeout_ms and idle_ms keeps its pool
+  Scenario: A stream can outlive the whole-request deadline
     Given the raw peer "a" listens with the script:
       """
-      repeat 100 90 p
+      repeat 100 16 p
       """
     And a client of "a" with:
       | setting    | value |
       | timeout_ms | 1000  |
       | idle_ms    | 300   |
     When "s" streams "GET" from "/s"
-    Then "s" has a body of 90 bytes
+    Then "s" has a body of 16 bytes
 
   Scenario: get_events refuses a response that is not a 2xx event stream
     Given the server "a" listens
