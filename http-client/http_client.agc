@@ -234,7 +234,6 @@ def stream(
   params: List[URI.Pair] = [],
   headers: List[HTTP.Header] = [],
 ) -> Result[Stream]
-  return argument("HTTP/2 streaming is not supported") if client.protocol == ProtocolTypes.Protocol.Http2
   first = try prepared(client, method, url, body, json, params, headers, false)
   got = try sent(client, first, true)
   case got.stream

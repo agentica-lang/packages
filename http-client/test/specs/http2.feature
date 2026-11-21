@@ -1,5 +1,8 @@
 Feature: HTTP/2 requests
 
+  Scenario: A streamed response is delivered before the peer sends its next chunk
+    Then the HTTP/2 client streams response chunks as they arrive
+
   Scenario: Buffered requests reuse a connection and respect both send windows
     Then an HTTP/2 client reuses the socket and obeys flow control
 

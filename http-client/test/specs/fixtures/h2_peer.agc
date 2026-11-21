@@ -36,6 +36,19 @@ def serve(listener: TCP.Listener, pinged: Channel[Bool]) -> Result[Void]
   ok()
 end
 
+def streaming(listener: TCP.Listener, resumed: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, "".bytes)
+  headers = try read_headers(socket, 1)
+  try expect_request(headers, "GET", "/stream")
+  try send(socket, 1, 4, 1, hex("88"))
+  try send(socket, 0, 0, 1, "first".bytes)
+  _ = try resumed.recv(WAIT)
+  try send(socket, 0, 1, 1, "second".bytes)
+  TCP.close(socket)
+  ok()
+end
+
 def serve_tls(listener: TCP.Listener, h2: Bool) -> Result[Void]
   socket = try TCP.accept(listener, WAIT)
   if h2

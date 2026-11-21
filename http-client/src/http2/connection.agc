@@ -13,12 +13,31 @@ struct Request
   body_idle_ms: Int
   deadline: Int
   max_body_bytes: Int
+  streaming: Optional[Streaming] = none
 end
 
 struct Response
   status: Int
   headers: List[HTTP.Header]
   body: Bytes
+end
+
+struct StreamHead
+  id: Int
+  status: Int
+  headers: List[HTTP.Header]
+  whole: Bool
+end
+
+struct Piece
+  body: Bytes
+  credit: Int
+end
+
+struct Streaming
+  whole: Fn[Response, Bool]
+  head: Channel[Result[StreamHead]]
+  body: Channel[Bytes]
 end
 
 struct Write
@@ -75,6 +94,10 @@ struct Stream
   continuing: Bool = false
   end_on_headers: Bool = false
   expected_size: Optional[Int] = none
+  streaming: Optional[Streaming] = none
+  pending: List[Piece] = []
+  head_sent: Bool = false
+  inflight_credit: Int = 0
 end
 
 struct Progress
@@ -124,7 +147,13 @@ def open_stream(session: Session, req: Request, block: Bytes, deadline: Int) -> 
   ok(
     Progress(
       session: session.with(next_stream: id + 2),
-      stream: Stream(id: id, send_credit: session.initial_window, phase: phase, cancelled: some(cancel)),
+      stream: Stream(
+        id: id,
+        send_credit: session.initial_window,
+        phase: phase,
+        cancelled: some(cancel),
+        streaming: req.streaming,
+      ),
     ),
   )
 end
@@ -172,6 +201,20 @@ def response(stream: Stream) -> Response
 end
 
 def needs_refill?(credit: Int) -> Bool = credit <= REFILL
+
+def waiting_piece?(stream: Stream) -> Bool
+  return false if stream.streaming.none?
+  return true if not stream.pending.empty?
+  stream.inflight_credit > 0
+end
+
+def blocked_piece?(stream: Stream) -> Bool
+  return false if stream.streaming.none?
+  return true if not stream.pending.empty?
+  stream.inflight_credit > 0 and not stream.streaming.unwrap!.body.empty?
+end
+
+def deliver(state: Progress, deadline: Int) -> Result[Progress] = deliver_stream(state, deadline)
 
 def dispatch_closed(session: Session, frame: Frame.Frame, stream: Stream, deadline: Int) -> Result[Progress]
   if frame.kind == 0
@@ -391,13 +434,27 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
     return ok(discarded.with(malformed: some(message)))
   end
 
-  if payload.size > req.max_body_bytes - s.received
+  stream_body = false
+  case s.streaming
+    some(streaming) -> stream_body = s.head_sent and not streaming.whole.call(response(s))
+    none -> nil
+  end
+
+  if not stream_body and payload.size > req.max_body_bytes - s.received
     return error("http_client: response body exceeds its limit", kind: "http_client.too_large")
   end
 
   ended = flag?(frame, 1)
   next_stream = s.with(ended: ended)
-  if not payload.empty?
+
+  if stream_body
+    pending = s.pending
+    if not payload.empty? or size > 0
+      pending = pending.push(Piece(body: payload, credit: size))
+    end
+
+    next_stream = next_stream.with(pending: pending, received: s.received + payload.size)
+  elsif not payload.empty?
     next_stream = next_stream.with(parts: s.parts.push(payload), received: s.received + payload.size)
   end
 
@@ -413,10 +470,12 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
     end
   end
 
-  if not ended and needs_refill?(stream_credit) and c.write_error.none? and not c.read_only
-    case send(c, 8, 0, s.id, Frame.word(WINDOW - stream_credit), deadline)
-      ok(_) -> stream_credit = WINDOW
-      error(e) -> c = c.with(write_error: some(e))
+  if not stream_body
+    if not ended and needs_refill?(stream_credit) and c.write_error.none? and not c.read_only
+      case send(c, 8, 0, s.id, Frame.word(WINDOW - stream_credit), deadline)
+        ok(_) -> stream_credit = WINDOW
+        error(e) -> c = c.with(write_error: some(e))
+      end
     end
   end
 
@@ -426,6 +485,51 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
       stream: next_stream.with(receive_credit: stream_credit),
     ),
   )
+end
+
+def deliver_stream(state: Progress, deadline: Int) -> Result[Progress]
+  stream = state.stream
+  case stream.streaming
+    none -> return ok(state)
+    some(_) -> nil
+  end
+
+  streaming = stream.streaming.unwrap!
+  if stream.inflight_credit > 0 and streaming.body.empty?
+    consumed = try consume(state, stream.inflight_credit, deadline)
+    state = consumed.with(stream: consumed.stream.with(inflight_credit: 0))
+    stream = state.stream
+  end
+
+  while not stream.pending.empty?
+    piece = stream.pending.first
+    if piece.body.empty?
+      consumed = try consume(state, piece.credit, deadline)
+      state = consumed.with(stream: consumed.stream.with(pending: stream.pending.drop(1)))
+      stream = state.stream
+      next
+    end
+
+    case streaming.body.send(piece.body, 0)
+      ok(_) ->
+        stream = stream.with(pending: stream.pending.drop(1), inflight_credit: piece.credit)
+        return ok(state.with(stream: stream))
+      error(_) -> return ok(state.with(stream: stream))
+    end
+  end
+
+  ok(state.with(stream: stream))
+end
+
+def consume(state: Progress, credit: Int, deadline: Int) -> Result[Progress]
+  return ok(state) if credit == 0
+  stream_credit = state.stream.receive_credit + credit
+  return Frame.invalid("stream window overflow") if stream_credit > Frame.MAX_WINDOW
+  if state.session.write_error.none? and not state.session.read_only
+    try send(state.session, 8, 0, state.stream.id, Frame.word(credit), deadline)
+  end
+
+  ok(state.with(stream: state.stream.with(receive_credit: stream_credit)))
 end
 
 def discard_headers(session: Session, frame: Frame.Frame, stream: Stream) -> Result[Progress]
@@ -494,7 +598,20 @@ def apply_head(state: Progress, head: Headers.Head, ended: Bool) -> Progress
     return state
   end
 
-  state.with(stream: stream.with(status: head.status, fields: head.fields, expected_size: head.length, ended: ended))
+  updated = stream.with(status: head.status, fields: head.fields, expected_size: head.length, ended: ended)
+  case stream.streaming
+    some(streaming) if not stream.head_sent ->
+      whole = streaming.whole.call(response(updated))
+      _ = streaming.head.send(
+        ok(StreamHead(id: stream.id, status: head.status, headers: head.fields, whole: whole)),
+        0,
+      )
+
+      updated = updated.with(head_sent: not whole)
+    _ -> nil
+  end
+
+  state.with(stream: updated)
 end
 
 def bodyless?(method: String, status: Int) -> Bool = method == "HEAD" or status == 204 or status == 304

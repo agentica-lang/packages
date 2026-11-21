@@ -5,6 +5,8 @@ import HTTP from "std/http"
 
 def flow(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, flow_check())
 
+def streaming(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, streaming_check())
+
 def tls(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   result = tls_check(true)
   case result
@@ -54,6 +56,39 @@ def flow_check() -> Result[Void]
   peer = Task.spawn do H2Peer.serve(listener, pinged) end
   result = requests(TCP.local_port(listener), pinged)
   await_peer(listener, peer, result)
+end
+
+def streaming_check() -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  resumed: Channel[Bool] = Channel.new(1)
+  peer = Task.spawn do H2Peer.streaming(listener, resumed) end
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{TCP.local_port(listener)}",
+    protocol: HttpClient.Protocol.Http2,
+    timeout_ms: 3_000,
+    max_retries: 0,
+    max_body_bytes: 5,
+  )
+
+  outcome = streamed_chunks(client, resumed)
+  HttpClient.close(client, 0)
+  await_peer(listener, peer, outcome)
+end
+
+def streamed_chunks(client: HttpClient.Client, resumed: Channel[Bool]) -> Result[Void]
+  stream = try HttpClient.stream(client, "GET", "/stream")
+  return error("unexpected HTTP/2 stream head") if stream.status != 200
+  first = try stream.body.recv(1_000)
+  return error("first HTTP/2 chunk did not arrive independently") if try first != "first".bytes
+
+  try resumed.send(true, 5_000)
+  second = try stream.body.recv(1_000)
+  return error("second HTTP/2 chunk did not arrive") if try second != "second".bytes
+  case stream.body.recv(1_000)
+    error(e) if e.is_a?("channel.closed") -> ok()
+    error(e) -> error(e)
+    ok(_) -> error("HTTP/2 stream had an unexpected extra chunk")
+  end
 end
 
 def requests(port: Int, pinged: Channel[Bool]) -> Result[Void]

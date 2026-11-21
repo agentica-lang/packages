@@ -14,6 +14,7 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
+    BDD.step("the HTTP/2 client streams response chunks as they arrive", &H2Steps.streaming),
     BDD.step("the origin applies the admission timeout while a stream slot is retiring", &WriterSteps.pool_timeout),
     BDD.step("a peer reset suppresses the expired upload and local reset", &WriterSteps.reset_by_peer),
     BDD.step("a complete buffered response drains at EOF while the writer is blocked", &WriterSteps.eof),
