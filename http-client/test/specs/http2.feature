@@ -38,3 +38,18 @@ Feature: HTTP/2 requests
 
   Scenario: A malformed response preserves the shared HPACK decoder
     Then a mismatched content length resets only its stream
+
+  Scenario: Queued writes expire while another write is blocked
+    Then a blocked writer skips expired stream writes
+
+  Scenario: An early response completes before its final queued upload expires
+    Then a skipped final upload releases the peer stream slot
+
+  Scenario: A peer reset closes an upload after an early response
+    Then a peer reset suppresses the expired upload and local reset
+
+  Scenario: A blocked writer does not delay buffered response DATA at EOF
+    Then a complete buffered response drains at EOF while the writer is blocked
+
+  Scenario: A retiring stream slot counts against the pool wait deadline
+    Then the origin applies the admission timeout while a stream slot is retiring

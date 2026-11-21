@@ -6,6 +6,7 @@ import BDD from "std/bdd"
 import H2Steps from "specs/h2_steps"
 import Protocol from "specs/protocol"
 import {Call, Check, Expectation, How, Reads, Request, Script, Setup} from "specs/protocol"
+import WriterSteps from "specs/writer_steps"
 
 private
 
@@ -13,6 +14,11 @@ REPLY_MS = 60_000
 
 def main() -> Void
   BDD.run([
+    BDD.step("the origin applies the admission timeout while a stream slot is retiring", &WriterSteps.pool_timeout),
+    BDD.step("a peer reset suppresses the expired upload and local reset", &WriterSteps.reset_by_peer),
+    BDD.step("a complete buffered response drains at EOF while the writer is blocked", &WriterSteps.eof),
+    BDD.step("a skipped final upload releases the peer stream slot", &WriterSteps.skipped_end),
+    BDD.step("a blocked writer skips expired stream writes", &WriterSteps.expired),
     BDD.step("a mismatched content length resets only its stream", &H2Steps.malformed),
     BDD.step("a spare HTTP/2 session closes while its origin has an active request", &H2Steps.surplus),
     BDD.step("two uploads share one connection window", &H2Steps.shared),

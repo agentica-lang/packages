@@ -13,6 +13,7 @@ struct Config
   origin: String
   connect_deadline: Int
   timeout_kind: String
+  send: Optional[Fn[TCP.Socket, Bytes, Fn[Bool], Result[Void]]] = none
 end
 
 enum Msg
@@ -20,7 +21,9 @@ enum Msg
   Open(Messages.Call, Bytes)
   Cancel(Int)
   Readable
+  Writing
   Written(Result[Void])
+  Settled(Connection.Write)
   Skipped(Connection.Write)
   ReaderDown
   Drain
@@ -31,6 +34,7 @@ struct Flight
   call: Messages.Call
   stream: Connection.Stream
   deadline: Int
+  local_done: Bool = false
 end
 
 enum Phase
@@ -44,13 +48,20 @@ struct State
   conn: Optional[Connection.Session] = none
   writer: Optional[Task[Result[Void]]] = none
   active: Map[Int, Flight] = {}
+  retiring: Map[Int, Retiring] = {}
   order: List[Int] = []
   pending: List[OpenCall] = []
   receiving: Int = 0
   resets: List[Reset] = []
   discarded: Optional[Connection.Stream] = none
   advertised: Int = -1
+  advertised_retiring: Int = 0
   phase: Phase = Phase.AwaitingSettings
+end
+
+struct Retiring
+  cancelled: Optional[Channel[Bool]]
+  suppress: Channel[Bool]
 end
 
 struct Reset
@@ -86,11 +97,16 @@ def write_loop(
         if unopened.include?(item.stream)
           if item.reset
             unopened = unopened.delete(item.stream)
-            try inbox.send(Msg.Written(ok()), 1_000)
+            try inbox.send(Msg.Settled(item), 1_000)
           else
             try inbox.send(Msg.Skipped(item), 1_000)
           end
 
+          next
+        end
+
+        if item.reset and cancelled?(item.suppress)
+          try inbox.send(Msg.Settled(item), 1_000)
           next
         end
 
@@ -104,9 +120,15 @@ def write_loop(
           next
         end
 
+        _ = inbox.send(Msg.Writing, 0)
         sent = send_bytes.call(item.bytes)
-        try inbox.send(Msg.Written(sent), 1_000)
-        break if not sent.ok?
+        if sent.ok?
+          try inbox.send(Msg.Settled(item), 1_000)
+        else
+          try inbox.send(Msg.Written(sent), 1_000)
+          break
+        end
+
       error(e) if e.is_a?("channel.closed") -> break
       error(_) -> nil
     end
@@ -126,6 +148,10 @@ def cancelled?(signal: Optional[Channel[Bool]]) -> Bool
   end
 end
 
+def socket_write(socket: TCP.Socket, bytes: Bytes, _queued: Fn[Bool]) -> Result[Void]
+  TCP.send_bytes(socket, bytes, WRITE_TIMEOUT_MS)
+end
+
 def handle(state: State, message: Msg) -> Actor.Step[State]
   current = state
   case message
@@ -140,9 +166,9 @@ def handle(state: State, message: Msg) -> Actor.Step[State]
       )
         ok(conn) ->
           out: Channel[Connection.Write] = Channel.new(16)
-          writer = Task.spawn do
-            write_loop(out, inbox, ->(bytes) { TCP.send_bytes(conn.socket, bytes, WRITE_TIMEOUT_MS) })
-          end
+          send_bytes = state.config.send.unwrap_or(&socket_write)
+          queued = -> { not out.empty? }
+          writer = Task.spawn do write_loop(out, inbox, ->(bytes) { send_bytes.call(conn.socket, bytes, queued) }) end
 
           Task.monitor(conn.reader, inbox) do |_down| Msg.ReaderDown end
           Task.monitor(writer, inbox) do |_down| Msg.Written(error("HTTP/2 writer ended", kind: "net.closed")) end
@@ -163,6 +189,7 @@ def handle(state: State, message: Msg) -> Actor.Step[State]
         end
       end
 
+    Msg.Settled(item) -> current = settled(state, item)
     Msg.Skipped(item) ->
       if state.conn.some?
         current = skipped(state, item)
@@ -199,7 +226,7 @@ end
 def next_wait(state: State) -> Optional[Int]
   return none if state.conn.none?
   conn = state.conn.unwrap!
-  return some(0) if readable?(conn) or writable?(state, conn)
+  return some(0) if readable?(state, conn) or writable?(state, conn)
 
   limit = 3_600_000
   now = Time.monotonic_ms()
@@ -210,18 +237,38 @@ def next_wait(state: State) -> Optional[Int]
   some([limit, 0].max.unwrap!)
 end
 
-def readable?(conn: Connection.Session) -> Bool
-  return not conn.incoming.empty? if not Frame.pending?(conn.buffer)
-  not defer?(conn, conn.buffer[3])
+def readable?(state: State, conn: Connection.Session) -> Bool
+  return conn.incoming.closed? or not conn.incoming.empty? if not Frame.pending?(conn.buffer)
+  not defer?(state, conn)
 end
 
-def defer?(conn: Connection.Session, kind: Int) -> Bool
-  conn.write_error.none? and not conn.writer.unwrap!.empty? and (kind == 0 or kind == 4 or kind == 6)
+def defer?(state: State, conn: Connection.Session) -> Bool
+  return false if conn.incoming.closed? or conn.write_error.some? or conn.writer.unwrap!.empty?
+
+  buffer = conn.buffer
+  size = Frame.payload_size(buffer)
+  return false if size > Frame.MAX_PAYLOAD or state.receiving != 0
+
+  kind = buffer[3]
+  final = buffer[4].bit_and(1) != 0
+  return not final if kind == 4 or kind == 6
+  return false if kind != 0
+
+  id = Frame.u32(buffer, 5).bit_and(Frame.MAX_WINDOW)
+  return false if id == 0 or id % 2 == 0 or id >= conn.next_stream
+  return true if Connection.needs_refill?(conn.receive_credit - size)
+  return false if final
+
+  case state.active.get(id)
+    some(flight) -> Connection.needs_refill?(flight.stream.receive_credit - size)
+    none -> false
+  end
 end
 
 def writable?(state: State, conn: Connection.Session) -> Bool
   return false if conn.write_error.some? or not conn.writer.unwrap!.empty?
-  return true if not state.pending.empty? or not state.resets.empty?
+  return true if not state.resets.empty?
+  return true if not state.pending.empty?
 
   for flight in state.active.values
     if Connection.can_send?(Connection.Progress(session: conn, stream: flight.stream), flight.call.request.body.size)
@@ -235,24 +282,34 @@ end
 def step(state: State) -> Result[State]
   conn = state.conn.unwrap!
   ready = try Connection.pull(conn, Time.monotonic_ms() + 1_000)
+  if ready.incoming.closed?
+    ready = ready.with(read_only: true)
+  end
+
   current = state.with(conn: some(ready))
+  return ok(current) if Frame.pending?(ready.buffer) and defer?(current, ready)
   case try Frame.parse(ready.buffer)
-    some(parsed) ->
-      return ok(current) if defer?(ready, parsed.frame.kind)
-      return received(current.with(conn: some(ready.with(buffer: parsed.rest))), parsed.frame)
+    some(parsed) -> return received(current.with(conn: some(ready.with(buffer: parsed.rest))), parsed.frame)
     none -> nil
   end
 
-  if ready.incoming.closed?
+  if ready.read_only
+    return ok(current) if not ready.incoming.empty?
     return error(ready.write_error.unwrap!) if ready.write_error.some?
     return error("the HTTP/2 connection closed", kind: "http_client.network")
   end
 
-  return ok(current) if ready.write_error.some?
+  return ok(current) if ready.incoming.closed? or ready.write_error.some?
 
   if not current.resets.empty? and ready.writer.unwrap!.empty?
     reset = current.resets.first
-    try Connection.reset(ready, reset.stream, reset.code, Time.monotonic_ms() + 1_000)
+    suppress: Optional[Channel[Bool]] = none
+    case current.retiring.get(reset.stream)
+      some(retiring) -> suppress = some(retiring.suppress)
+      none -> nil
+    end
+
+    try Connection.reset(ready, reset.stream, reset.code, Time.monotonic_ms() + 1_000, suppress)
     return ok(current.with(resets: current.resets.drop(1)))
   end
 
@@ -269,7 +326,7 @@ def admit(state: State) -> Result[State]
     return ok(state.with(pending: state.pending.drop(1)))
   end
 
-  if state.active.size >= conn.stream_limit
+  if state.active.size >= seats(state, conn)
     updated = publish(state)
     complete(updated, entry.call.caller.id, error("HTTP/2 session has no stream capacity", kind: "http2.capacity"))
     return ok(updated.with(pending: updated.pending.drop(1)))
@@ -405,12 +462,16 @@ def received_stream(state: State, flight: Flight, frame: Frame.Frame) -> Result[
   end
 
   if stream.ended
-    if stream.phase == Connection.StreamPhase.HalfClosedRemote and changed.session.write_error.none?
-      cancel_writes(stream)
-      current = current.with(resets: current.resets.push(Reset(stream: stream.id)))
+    if not flight.local_done and changed.session.write_error.none? and not changed.session.read_only
+      pending = Retiring(cancelled: stream.cancelled, suppress: Channel.new(1))
+      current = current.with(retiring: current.retiring.put(stream.id, pending))
+      if stream.phase == Connection.StreamPhase.HalfClosedRemote
+        cancel_writes(stream)
+        current = current.with(resets: current.resets.push(Reset(stream: stream.id)))
+      end
     end
 
-    return ok(finish(current, stream.id, ok(Connection.response(stream))))
+    return ok(finish(publish(current), stream.id, ok(Connection.response(stream))))
   end
 
   deadline = flight.deadline
@@ -430,6 +491,17 @@ def received_inactive(state: State, frame: Frame.Frame) -> Result[State]
   if frame.stream >= conn.next_stream or frame.stream % 2 == 0
     return Frame.invalid("unexpected frame on idle stream") if frame.kind <= 9
     return ok(state)
+  end
+
+  if frame.kind == 3 and frame.payload.size == 4
+    case state.retiring.get(frame.stream)
+      some(retiring) ->
+        cancel_signal(retiring.cancelled)
+        retiring.suppress.close
+        remaining = state.resets.select { |reset| reset.stream != frame.stream }
+        return ok(state.with(retiring: state.retiring.delete(frame.stream), resets: remaining))
+      none -> nil
+    end
   end
 
   stream = state.discarded.unwrap_or(Connection.Stream(id: frame.stream, send_credit: 0))
@@ -491,26 +563,40 @@ def abort_stream(state: State, flight: Flight, reason: Result[Connection.Respons
 end
 
 def cancel_writes(stream: Connection.Stream) -> Void
-  case stream.cancelled
+  cancel_signal(stream.cancelled)
+end
+
+def cancel_signal(signal: Optional[Channel[Bool]]) -> Void
+  case signal
     some(channel) -> channel.close
     none -> nil
   end
 end
 
+def seats(state: State, conn: Connection.Session) -> Int
+  [[conn.stream_limit, 100].min.unwrap! - state.retiring.size, 0].max.unwrap!
+end
+
 def publish(state: State) -> State
   conn = state.conn.unwrap!
   draining = state.phase == Phase.Draining or not Connection.reusable?(conn)
-  capacity = [conn.stream_limit, 100].min.unwrap!
+  capacity = seats(state, conn)
   if draining
     capacity = 0
   end
 
-  if state.advertised != capacity or draining != (state.phase == Phase.Draining)
-    notify(state.config, Messages.Origin.Capacity(state.config.id, capacity, draining))
+  retiring = state.retiring.size
+  if (
+    state.advertised != capacity or
+    state.advertised_retiring != retiring or
+    draining != (state.phase == Phase.Draining)
+  )
+    notify(state.config, Messages.Origin.Capacity(state.config.id, capacity, retiring, draining))
   end
 
-  return state.with(advertised: capacity, phase: Phase.Draining) if draining
-  state.with(advertised: capacity)
+  updated = state.with(advertised: capacity, advertised_retiring: retiring)
+  return updated.with(phase: Phase.Draining) if draining
+  updated
 end
 
 def fail_all(state: State, reason: Result[Connection.Response], code: Int = 8) -> State
@@ -559,6 +645,19 @@ def read_loop(socket: TCP.Socket, incoming: Channel[Bytes], inbox: Channel[Msg])
   ok()
 end
 
+def settled(state: State, item: Connection.Write) -> State
+  if item.end_stream
+    case state.active.get(item.stream)
+      some(flight) -> return state.with(active: state.active.put(item.stream, flight.with(local_done: true)))
+      none -> nil
+    end
+  end
+
+  return state.with(retiring: state.retiring.delete(item.stream)) if item.reset or item.end_stream
+
+  state
+end
+
 def skipped(state: State, item: Connection.Write) -> State
   conn = state.conn.unwrap!
   current = state.with(conn: some(conn.with(send_credit: conn.send_credit + item.credit)))
@@ -566,7 +665,13 @@ def skipped(state: State, item: Connection.Write) -> State
     some(flight) ->
       reason: Result[Connection.Response] = error("http_client: the request timed out", kind: timeout_kind(flight))
       abort_stream(current, flight, reason)
-    none -> current
+    none ->
+      if item.end_stream and current.retiring.get(item.stream).some? and not cancelled?(item.cancelled)
+        cancel_signal(current.retiring.get(item.stream).unwrap!.cancelled)
+        return current.with(resets: current.resets.push(Reset(stream: item.stream)))
+      end
+
+      current
   end
 end
 

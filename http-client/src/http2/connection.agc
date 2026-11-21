@@ -28,7 +28,9 @@ struct Write
   cancelled: Optional[Channel[Bool]] = none
   credit: Int = 0
   opening: Bool = false
+  end_stream: Bool = false
   reset: Bool = false
+  suppress: Optional[Channel[Bool]] = none
 end
 
 struct Session
@@ -45,6 +47,7 @@ struct Session
   stream_limit: Int = 100
   last_stream: Int = 0x7fffffff
   draining: Bool = false
+  read_only: Bool = false
   write_error: Optional[Error] = none
   writer: Optional[Channel[Write]] = none
 end
@@ -101,7 +104,12 @@ def start(socket: TCP.Socket, incoming: Channel[Bytes], reader: Task[Result[Void
 end
 
 def reusable?(session: Session) -> Bool
-  session.write_error.none? and not session.draining and session.next_stream <= Frame.MAX_WINDOW
+  (
+    session.write_error.none? and
+    not session.read_only and
+    not session.draining and
+    session.next_stream <= Frame.MAX_WINDOW
+  )
 end
 
 def open_stream(session: Session, req: Request, block: Bytes, deadline: Int) -> Result[Progress]
@@ -148,19 +156,28 @@ end
 
 def can_send?(state: Progress, size: Int) -> Bool = can_upload?(state, size)
 
-def reset(session: Session, id: Int, code: Int, deadline: Int) -> Result[Void]
-  send(session, 3, 0, id, Frame.word(code), deadline)
+def reset(
+  session: Session,
+  id: Int,
+  code: Int,
+  deadline: Int,
+  suppress: Optional[Channel[Bool]] = none,
+) -> Result[Void]
+  bytes = Frame.encode(3, 0, id, Frame.word(code))
+  write(session, Write(bytes: bytes, stream: id, reset: true, suppress: suppress), deadline)
 end
 
 def response(stream: Stream) -> Response
   Response(status: stream.status, headers: stream.fields, body: Bytes.concat(stream.parts))
 end
 
+def needs_refill?(credit: Int) -> Bool = credit <= REFILL
+
 def dispatch_closed(session: Session, frame: Frame.Frame, stream: Stream, deadline: Int) -> Result[Progress]
   if frame.kind == 0
     credit = session.receive_credit - frame.payload.size
     return Frame.invalid("incoming connection window exhausted") if credit < 0
-    if credit <= REFILL and session.write_error.none?
+    if needs_refill?(credit) and session.write_error.none? and not session.read_only
       try send(session, 8, 0, 0, Frame.word(WINDOW - credit), deadline)
       credit = WINDOW
     end
@@ -286,7 +303,7 @@ def control(session: Session, frame: Frame.Frame, deadline: Int) -> Result[Sessi
 end
 
 def acknowledge(session: Session, frame: Frame.Frame, deadline: Int) -> Session
-  return session if session.write_error.some?
+  return session if session.write_error.some? or session.read_only
   case send(session, frame.kind, 1, 0, frame.payload, deadline)
     ok(_) -> session
     error(e) -> session.with(write_error: some(e))
@@ -336,7 +353,14 @@ def send_data(state: Progress, body: Bytes, deadline: Int) -> Result[Progress]
   bytes = Frame.encode(0, flags, s.id, body.slice(s.sent, count))
   try write(
     c,
-    Write(bytes: bytes, stream: s.id, credit: count, deadline: some(deadline), cancelled: s.cancelled),
+    Write(
+      bytes: bytes,
+      stream: s.id,
+      credit: count,
+      deadline: some(deadline),
+      cancelled: s.cancelled,
+      end_stream: flags == 1,
+    ),
     deadline,
   )
 
@@ -351,14 +375,22 @@ end
 def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Result[Progress]
   s = state.stream
   c = state.session
-  return Frame.invalid("data before the final response") if s.status == 0
   payload = try unpad(frame, 0)
-  return Frame.invalid("body on a bodyless response") if bodyless?(req.method, s.status) and not payload.empty?
 
   size = frame.payload.size
   connection_credit = c.receive_credit - size
   stream_credit = s.receive_credit - size
   return Frame.invalid("incoming flow control window exhausted") if connection_credit < 0 or stream_credit < 0
+  if s.status == 0 or (bodyless?(req.method, s.status) and not payload.empty?)
+    message = "data before the final response"
+    if s.status != 0
+      message = "body on a bodyless response"
+    end
+
+    discarded = try dispatch_closed(c, frame, s, deadline)
+    return ok(discarded.with(malformed: some(message)))
+  end
+
   if payload.size > req.max_body_bytes - s.received
     return error("http_client: response body exceeds its limit", kind: "http_client.too_large")
   end
@@ -369,7 +401,7 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
     next_stream = next_stream.with(parts: s.parts.push(payload), received: s.received + payload.size)
   end
 
-  if connection_credit <= REFILL and c.write_error.none?
+  if needs_refill?(connection_credit) and c.write_error.none? and not c.read_only
     wait = deadline
     if ended
       wait = Time.monotonic_ms() + 1_000
@@ -381,7 +413,7 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
     end
   end
 
-  if not ended and stream_credit <= REFILL and c.write_error.none?
+  if not ended and needs_refill?(stream_credit) and c.write_error.none? and not c.read_only
     case send(c, 8, 0, s.id, Frame.word(WINDOW - stream_credit), deadline)
       ok(_) -> stream_credit = WINDOW
       error(e) -> c = c.with(write_error: some(e))
@@ -496,7 +528,14 @@ def send_headers(
 
   write(
     session,
-    Write(bytes: Bytes.concat(frames), stream: id, deadline: some(deadline), opening: true, cancelled: some(cancel)),
+    Write(
+      bytes: Bytes.concat(frames),
+      stream: id,
+      deadline: some(deadline),
+      opening: true,
+      end_stream: empty,
+      cancelled: some(cancel),
+    ),
     deadline,
   )
 end
