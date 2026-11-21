@@ -3,9 +3,9 @@
 ## writes the answers of a script by hand and says which TCP connection served each one (`fixtures/raw_peer.agc`).
 
 import BDD from "std/bdd"
-import H2Steps from "h2_steps"
-import Protocol from "protocol"
-import {Call, Check, Expectation, How, Reads, Request, Script, Setup} from "protocol"
+import H2Steps from "specs/h2_steps"
+import Protocol from "specs/protocol"
+import {Call, Check, Expectation, How, Reads, Request, Script, Setup} from "specs/protocol"
 
 private
 

@@ -1,4 +1,4 @@
-import Frame from "../../src/http2/frame"
+import Frame from "../../../src/http2/frame"
 import Hpack from "pkg/hpack/hpack"
 
 def serve(listener: TCP.Listener, pinged: Channel[Bool]) -> Result[Void]

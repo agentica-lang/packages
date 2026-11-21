@@ -1,6 +1,6 @@
 import BDD from "std/bdd"
 import H2Peer from "fixtures/h2_peer"
-import HttpClient from "../http_client"
+import HttpClient from "../../http_client"
 import HTTP from "std/http"
 
 def flow(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, flow_check())
@@ -123,15 +123,15 @@ end
 def server_context(alpn: String) -> Result[TLS.Context]
   TLS.server_context(
     TLS.ServerOptions(
-      cert_file: "specs/fixtures/tls/server.pem",
-      key_file: "specs/fixtures/tls/server.key",
+      cert_file: "test/specs/fixtures/tls/server.pem",
+      key_file: "test/specs/fixtures/tls/server.key",
       alpn: [alpn],
     ),
   )
 end
 
 def tls_request(port: Int, alpn: List[String], h2: Bool, addresses: List[String]) -> Result[Void]
-  context = try TLS.client_context(TLS.ClientOptions(ca_file: "specs/fixtures/tls/ca.pem", alpn: alpn))
+  context = try TLS.client_context(TLS.ClientOptions(ca_file: "test/specs/fixtures/tls/ca.pem", alpn: alpn))
   client = try HttpClient.new(
     base_url: "https://api.test:#{port}",
     protocol: HttpClient.Protocol.Http2,

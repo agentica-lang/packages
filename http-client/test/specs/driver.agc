@@ -2,7 +2,7 @@
 ## runs the requests that `steps.agc` sends (`protocol.agc`), one JSON line in and one reply line out.
 
 import HTTP from "std/http"
-import HttpClient from "../http_client"
+import HttpClient from "../../http_client"
 import Protocol from "protocol"
 import URI from "std/uri"
 import {Call, Check, Expectation, How, Reads, Request, Setup} from "protocol"
