@@ -363,10 +363,12 @@ def flush_streams(state: State) -> Result[State]
   ok(current)
 end
 
+# `flush_streams` closes the body and then `finish` closes it again for the same stream: `Channel.close`
+# is idempotent (cancelling twice does nothing), so the guard below only avoids the redundant call.
 def close_body(stream: Connection.Stream) -> Void
   case stream.streaming
-    some(streaming) -> streaming.body.close
-    none -> nil
+    some(streaming) if not streaming.body.closed? -> streaming.body.close
+    _ -> nil
   end
 end
 

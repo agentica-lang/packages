@@ -18,6 +18,7 @@ def main() -> Void
     BDD.step("a cancelled H2 stream frees its slot for the next request", &H2Steps.streaming_cancel),
     BDD.step("a stalled H2 stream times out its body", &H2Steps.streaming_idle),
     BDD.step("an H2 stream refills its window only after the reader takes a piece", &H2Steps.streaming_flow),
+    BDD.step("a retried H2 stream hides its first head", &H2Steps.streaming_retry),
     BDD.step("the origin applies the admission timeout while a stream slot is retiring", &WriterSteps.pool_timeout),
     BDD.step("a peer reset suppresses the expired upload and local reset", &WriterSteps.reset_by_peer),
     BDD.step("a complete buffered response drains at EOF while the writer is blocked", &WriterSteps.eof),

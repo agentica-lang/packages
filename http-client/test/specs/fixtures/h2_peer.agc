@@ -77,17 +77,29 @@ def streaming_idle(listener: TCP.Listener) -> Result[Void]
   expect_closed(socket)
 end
 
-def streaming_flow(listener: TCP.Listener) -> Result[Void]
+def streaming_flow(listener: TCP.Listener, quiet: Channel[Bool]) -> Result[Void]
   socket = try TCP.accept(listener, WAIT)
   try handshake(socket, "".bytes)
   headers = try read_headers(socket, 1)
   try expect_request(headers, "GET", "/flow")
   try send(socket, 1, 4, 1, hex("88"))
-  chunk = ("f" * 16_384).bytes
+  chunk = ("f" * 4_096).bytes
   try send(socket, 0, 0, 1, chunk)
   try send(socket, 0, 0, 1, chunk)
-  try send(socket, 0, 0, 1, ("g" * 7_232).bytes)
+  try send(socket, 0, 0, 1, chunk)
+  try send(socket, 0, 0, 1, chunk)
   try await_refill(socket, 1)
+  try await_refill(socket, 1)
+  stalled = Task.spawn do read(socket) end
+  case Task.await(stalled, 100)
+    Await.Done(_) -> return error("stream kept refilling while its reader was stalled")
+    _ -> nil
+  end
+
+  try quiet.send(true, WAIT)
+  third = try Task.await(stalled)
+  return error("missing stream window refill for streamed flow") if third.kind != 8 or third.stream != 1
+
   try send(socket, 0, 1, 1, "tail".bytes)
   drain_updates(socket)
 end
@@ -137,6 +149,19 @@ def await_refill(socket: TCP.Socket, id: Int) -> Result[Void]
   end
 
   ok()
+end
+
+def streaming_retry(listener: TCP.Listener) -> Result[Void]
+  socket = try TCP.accept(listener, WAIT)
+  try handshake(socket, "".bytes)
+  first = try read_headers(socket, 1)
+  try expect_request(first, "GET", "/retry")
+  try send(socket, 1, 5, 1, hex("8e"))
+  second = try read_headers(socket, 3)
+  try expect_request(second, "GET", "/retry")
+  try send(socket, 1, 4, 3, hex("88"))
+  try send(socket, 0, 1, 3, "ok".bytes)
+  expect_closed(socket)
 end
 
 def serve_tls(listener: TCP.Listener, h2: Bool) -> Result[Void]

@@ -246,9 +246,17 @@ def h2_streamed(
 end
 
 def await_h2_end(task: Task[Result[H2.Response]]) -> Result[H2.Response]
-  case Task.await(task, 1_000)
+  # The body is already drained when this runs: the session closed the source after it ended the stream,
+  # so the runner should settle at once. A loaded session may still need a moment, so this bound is longer
+  # than the 1s cancel joins elsewhere; on a hang the task is cancelled and its real outcome is used.
+  case Task.await(task, 5_000)
     Await.Done(result) -> result
-    Await.TimedOut -> failure("HTTP/2 response did not finish after its body", "network")
+    Await.TimedOut ->
+      Task.cancel(task)
+      case Task.await(task, 1_000)
+        Await.Done(result) -> result
+        Await.TimedOut -> failure("HTTP/2 response did not finish after its body", "network")
+      end
   end
 end
 

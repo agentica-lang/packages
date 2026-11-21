@@ -12,6 +12,9 @@ Feature: HTTP/2 requests
   Scenario: Stream flow control waits for the reader
     Then an H2 stream refills its window only after the reader takes a piece
 
+  Scenario: A retried stream keeps its first head buffered
+    Then a retried H2 stream hides its first head
+
   Scenario: Buffered requests reuse a connection and respect both send windows
     Then an HTTP/2 client reuses the socket and obeys flow control
 

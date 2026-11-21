@@ -13,6 +13,8 @@ def streaming_idle(ctx: BDD.Context, _args: List[String]) -> BDD.Context = check
 
 def streaming_flow(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, streaming_flow_check())
 
+def streaming_retry(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, streaming_retry_check())
+
 def tls(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   result = tls_check(true)
   case result
@@ -162,34 +164,67 @@ end
 
 def streaming_flow_check() -> Result[Void]
   listener = try TCP.listen("127.0.0.1", 0)
-  peer = Task.spawn do H2Peer.streaming_flow(listener) end
+  quiet: Channel[Bool] = Channel.new(1)
+  peer = Task.spawn do H2Peer.streaming_flow(listener, quiet) end
   client = try HttpClient.new(
     base_url: "http://127.0.0.1:#{TCP.local_port(listener)}",
     protocol: HttpClient.Protocol.Http2,
-    timeout_ms: 5_000,
+    timeout_ms: 10_000,
     max_retries: 0,
   )
 
-  outcome = flow_stream(client)
+  outcome = flow_stream(client, quiet)
   HttpClient.close(client, 0)
   await_peer(listener, peer, outcome)
 end
 
-def flow_stream(client: HttpClient.Client) -> Result[Void]
+def flow_stream(client: HttpClient.Client, quiet: Channel[Bool]) -> Result[Void]
   stream = try HttpClient.stream(client, "GET", "/flow")
   return error("unexpected HTTP/2 flow head") if stream.status != 200
-  first = try stream.body.recv(2_000)
-  return error("wrong first flow piece") if (try first).size != 16_384
-  second = try stream.body.recv(2_000)
-  return error("wrong second flow piece") if (try second).size != 16_384
-  third = try stream.body.recv(2_000)
-  return error("wrong third flow piece") if (try third).size != 7_232
-  tail = try stream.body.recv(2_000)
+  _ = try quiet.recv(5_000)
+  first = try stream.body.recv(5_000)
+  return error("wrong first flow piece") if (try first).size != 4_096
+  second = try stream.body.recv(5_000)
+  return error("wrong second flow piece") if (try second).size != 4_096
+  third = try stream.body.recv(5_000)
+  return error("wrong third flow piece") if (try third).size != 4_096
+  fourth = try stream.body.recv(5_000)
+  return error("wrong fourth flow piece") if (try fourth).size != 4_096
+  tail = try stream.body.recv(5_000)
   return error("missing flow tail") if try tail != "tail".bytes
   case stream.body.recv(1_000)
     error(e) if e.is_a?("channel.closed") -> ok()
     error(e) -> error(e)
     ok(_) -> error("flow stream had an unexpected extra chunk")
+  end
+end
+
+def streaming_retry_check() -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  peer = Task.spawn do H2Peer.streaming_retry(listener) end
+  client = try HttpClient.new(
+    base_url: "http://127.0.0.1:#{TCP.local_port(listener)}",
+    protocol: HttpClient.Protocol.Http2,
+    timeout_ms: 10_000,
+    max_retries: 1,
+    retry_delay_ms: 10,
+    max_retry_delay_ms: 10,
+  )
+
+  outcome = retry_stream(client)
+  HttpClient.close(client, 0)
+  await_peer(listener, peer, outcome)
+end
+
+def retry_stream(client: HttpClient.Client) -> Result[Void]
+  stream = try HttpClient.stream(client, "GET", "/retry")
+  return error("retried stream leaked its first head") if stream.status != 200
+  piece = try stream.body.recv(5_000)
+  return error("retried stream missed its body") if try piece != "ok".bytes
+  case stream.body.recv(1_000)
+    error(e) if e.is_a?("channel.closed") -> ok()
+    error(e) -> error(e)
+    ok(_) -> error("retried stream had an unexpected extra chunk")
   end
 end
 
@@ -293,6 +328,7 @@ def await_peer(listener: TCP.Listener, peer: Task[Result[Void]], result: Result[
     Await.Done(outcome) ->
       try result
       outcome
+
     _ ->
       Task.cancel(peer)
       _ = Task.await(peer, 1_000)
