@@ -66,5 +66,20 @@ Feature: HTTP/2 requests
   Scenario: A blocked writer does not delay buffered response DATA at EOF
     Then a complete buffered response drains at EOF while the writer is blocked
 
+  Scenario: A reader closed with queued final bytes still completes the buffered response
+    Then a closed reader drains its queued final bytes into the buffered response
+
   Scenario: A retiring stream slot counts against the pool wait deadline
     Then the origin applies the admission timeout while a stream slot is retiring
+
+  Scenario: A malformed response keeps its slot while its reset waits on the writer
+    Then a malformed response keeps its slot while its reset is queued
+
+  Scenario: A queued call reuses its session after a retiring completion
+    Then a retiring completion reuses its session for a queued call
+
+  Scenario: A peer reset releases a malformed stream and suppresses its reset
+    Then a peer reset releases a malformed stream and suppresses its reset
+
+  Scenario: An atomic completion reuses its session instead of opening another socket
+    Then an atomic origin completion reuses its session

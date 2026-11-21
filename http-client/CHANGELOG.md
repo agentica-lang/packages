@@ -5,6 +5,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 - Return HTTP/2 streaming errors instead of crashing on a zero-duration task wait.
+- Keep a malformed HTTP/2 response slot reserved while its reset waits on a blocked writer, releasing it when the writer settles the reset or the peer resets the stream; a one-slot regression proves the following call hits the pool deadline (#204).
+- Apply a retiring HTTP/2 stream capacity change together with its call completion before the origin schedules, reusing an existing session instead of opening a needless socket (#204).
+- Force the EOF regression to keep final response bytes queued when the reader closes, so removing the drain guard must fail it (#204).
 
 ## [0.4.0] - 2026-11-21
 

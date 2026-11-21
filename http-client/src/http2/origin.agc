@@ -14,6 +14,7 @@ struct Config
   wait_ms: Int
   idle_ms: Int
   send: Optional[Fn[TCP.Socket, Bytes, Fn[Bool], Result[Void]]] = none
+  spawn: Optional[Fn[Session.Config, Actor.Ref[Session.State, Session.Msg]]] = none
 end
 
 struct Pending
@@ -142,7 +143,8 @@ def handle(state: State, msg: Messages.Origin) -> Actor.Step[State]
         none -> nil
       end
 
-    Messages.Origin.Complete(id, key, result) -> current = completed(state, id, key, result)
+    Messages.Origin.Complete(id, key, result, seats, retiring, draining) ->
+      current = completed(state, id, key, result, seats, retiring, draining)
     Messages.Origin.SessionDown(id) -> current = disconnected(state, id)
     Messages.Origin.Close(deadline) -> current = begin_close(state, deadline)
   end
@@ -293,36 +295,79 @@ def start_peer(state: State, pending: Pending) -> State
 
   inbox: Channel[Messages.Origin] = Actor.inbox
   config = state.config
-  ref = Session.start(
-    Session.Config(
-      id: id,
-      owner: inbox.address,
-      origin: config.origin,
-      dialer: config.dialer,
-      options: config.options,
-      connect_deadline: deadline,
-      timeout_kind: kind,
-      send: config.send,
-    ),
+  session_config = Session.Config(
+    id: id,
+    owner: inbox.address,
+    origin: config.origin,
+    dialer: config.dialer,
+    options: config.options,
+    connect_deadline: deadline,
+    timeout_kind: kind,
+    send: config.send,
   )
+
+  ref = match_spawn(config, session_config)
 
   Task.monitor(ref.task, inbox) do |_down| Messages.Origin.SessionDown(id) end
   _ = Actor.cast(ref.address, Session.Msg.Boot, 0)
   state.with(next_id: id + 1, peers: state.peers.put(id, Peer(ref: ref, starting: pending.call.caller.id)))
 end
 
-def completed(state: State, id: Int, key: Int, result: Result[Connection.Response]) -> State
+# Test-only session double (atomic scheduler regression): counts dials without
+# opening a socket. Production passes none and keeps `Session.start`.
+def match_spawn(config: Config, session_config: Session.Config) -> Actor.Ref[Session.State, Session.Msg]
+  case config.spawn
+    some(spawn) -> spawn.call(session_config)
+    none -> Session.start(session_config)
+  end
+end
+
+def completed(
+  state: State,
+  id: Int,
+  key: Int,
+  result: Result[Connection.Response],
+  seats: Int,
+  retiring: Int,
+  draining: Bool,
+) -> State
   case state.peers.get(id)
     none -> state
     some(peer) ->
       return reject_start(state, peer.starting, result) if key == 0
 
       case state.calls.get(key)
-        none -> state
+        none ->
+          idle_since = peer.idle_since
+          if peer.starting != 0 or (peer.used == 0 and peer.retiring != 0 and retiring == 0)
+            idle_since = Time.monotonic_ms()
+          end
+
+          state.with(
+            peers: state.peers.put(
+              id,
+              peer.with(starting: 0, seats: seats, retiring: retiring, draining: draining, idle_since: idle_since),
+            ),
+          )
         some(pending) ->
           return state if pending.session != id
+          idle_since = peer.idle_since
+          if peer.used - 1 == 0 and retiring == 0
+            idle_since = Time.monotonic_ms()
+          end
+
           next_state = state.with(
-            peers: state.peers.put(id, peer.with(used: peer.used - 1, idle_since: Time.monotonic_ms())),
+            peers: state.peers.put(
+              id,
+              peer.with(
+                starting: 0,
+                seats: seats,
+                retiring: retiring,
+                draining: draining,
+                used: peer.used - 1,
+                idle_since: idle_since,
+              ),
+            ),
           )
 
           case result
