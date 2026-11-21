@@ -37,9 +37,7 @@ end
 
 def surplus(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, surplus_check())
 
-def malformed(ctx: BDD.Context, _args: List[String]) -> BDD.Context
-  checked(ctx, peer_check(&H2Peer.malformed, &malformed_calls))
-end
+def malformed(ctx: BDD.Context, _args: List[String]) -> BDD.Context = checked(ctx, malformed_checks())
 
 private
 
@@ -505,4 +503,9 @@ def malformed_calls(client: HttpClient.Client, started: Channel[Bool]) -> Result
   end
 
   ok()
+end
+
+def malformed_checks() -> Result[Void]
+  try peer_check(->(listener, started) { H2Peer.malformed(listener, started, false) }, &malformed_calls)
+  peer_check(->(listener, started) { H2Peer.malformed(listener, started, true) }, &malformed_calls)
 end

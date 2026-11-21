@@ -21,6 +21,7 @@ enum Msg
   Cancel(Int)
   Readable
   Written(Result[Void])
+  Skipped(Connection.Write)
   ReaderDown
   Drain
   Stop
@@ -73,9 +74,57 @@ def start(config: Config) -> Actor.Ref[State, Msg]
   Actor.start(behaviour, Actor.Options(capacity: 256))
 end
 
+def write_loop(
+  out: Channel[Connection.Write],
+  inbox: Channel[Msg],
+  send_bytes: Fn[Bytes, Result[Void]],
+) -> Result[Void]
+  unopened: Set[Int] = Set.new([])
+  while not out.closed?
+    case out.recv(3_600_000)
+      ok(item) ->
+        if unopened.include?(item.stream)
+          if item.reset
+            unopened = unopened.delete(item.stream)
+            try inbox.send(Msg.Written(ok()), 1_000)
+          else
+            try inbox.send(Msg.Skipped(item), 1_000)
+          end
+
+          next
+        end
+
+        now = Time.monotonic_ms()
+        if item.deadline.unwrap_or(now + 1) <= now or cancelled?(item.cancelled)
+          if item.opening
+            unopened = unopened.add(item.stream)
+          end
+
+          try inbox.send(Msg.Skipped(item), 1_000)
+          next
+        end
+
+        sent = send_bytes.call(item.bytes)
+        try inbox.send(Msg.Written(sent), 1_000)
+        break if not sent.ok?
+      error(e) if e.is_a?("channel.closed") -> break
+      error(_) -> nil
+    end
+  end
+
+  ok()
+end
+
 private
 
 WRITE_TIMEOUT_MS = 30_000
+
+def cancelled?(signal: Optional[Channel[Bool]]) -> Bool
+  case signal
+    some(channel) -> channel.closed?
+    none -> false
+  end
+end
 
 def handle(state: State, message: Msg) -> Actor.Step[State]
   current = state
@@ -91,7 +140,10 @@ def handle(state: State, message: Msg) -> Actor.Step[State]
       )
         ok(conn) ->
           out: Channel[Connection.Write] = Channel.new(16)
-          writer = Task.spawn do write_loop(conn.socket, out, inbox) end
+          writer = Task.spawn do
+            write_loop(out, inbox, ->(bytes) { TCP.send_bytes(conn.socket, bytes, WRITE_TIMEOUT_MS) })
+          end
+
           Task.monitor(conn.reader, inbox) do |_down| Msg.ReaderDown end
           Task.monitor(writer, inbox) do |_down| Msg.Written(error("HTTP/2 writer ended", kind: "net.closed")) end
           current = state.with(conn: some(conn.with(writer: some(out))), writer: some(writer), phase: Phase.Ready)
@@ -109,6 +161,11 @@ def handle(state: State, message: Msg) -> Actor.Step[State]
         if conn.write_error.none?
           current = state.with(conn: some(conn.with(write_error: some(e))))
         end
+      end
+
+    Msg.Skipped(item) ->
+      if state.conn.some?
+        current = skipped(state, item)
       end
 
     Msg.ReaderDown ->
@@ -287,6 +344,7 @@ def received_control(state: State, frame: Frame.Frame) -> Result[State]
   if changed.draining
     for id in current.active.keys
       if id > changed.last_stream
+        cancel_writes(current.active.get(id).unwrap!.stream)
         current = finish(current, id, network("the peer closed the HTTP/2 stream"))
       end
     end
@@ -320,6 +378,7 @@ end
 def received_stream(state: State, flight: Flight, frame: Frame.Frame) -> Result[State]
   if frame.kind == 3
     return Frame.invalid("invalid rst_stream") if frame.payload.size != 4
+    cancel_writes(flight.stream)
     return ok(finish(state, frame.stream, network("the peer reset the HTTP/2 stream")))
   end
 
@@ -336,13 +395,15 @@ def received_stream(state: State, flight: Flight, frame: Frame.Frame) -> Result[
   changed = outcome.unwrap!
   stream = changed.stream
   current = state.with(conn: some(changed.session), receiving: continued(stream))
-  if not Connection.length_valid?(stream, flight.call.request.method)
-    failed: Result[Connection.Response] = Frame.invalid("content-length does not match response body")
+  if changed.malformed.some? or not Connection.length_valid?(stream, flight.call.request.method)
+    message = changed.malformed.unwrap_or("content-length does not match response body")
+    failed: Result[Connection.Response] = Frame.invalid(message)
     return ok(abort_stream(current, flight.with(stream: stream), failed, code: 1))
   end
 
   if stream.ended
     if stream.phase == Connection.StreamPhase.HalfClosedRemote and changed.session.write_error.none?
+      cancel_writes(stream)
       current = current.with(resets: current.resets.push(Reset(stream: stream.id)))
     end
 
@@ -408,12 +469,7 @@ def expire(state: State) -> State
   now = Time.monotonic_ms()
   for flight in state.active.values
     if flight.deadline <= now
-      kind = "http_client.timeout.read"
-      if flight.deadline == flight.call.request.deadline
-        kind = "http_client.timeout.request"
-      end
-
-      current = abort_stream(current, flight, error("http_client: the request timed out", kind: kind))
+      current = abort_stream(current, flight, error("http_client: the request timed out", kind: timeout_kind(flight)))
     end
   end
 
@@ -422,12 +478,20 @@ end
 
 def abort_stream(state: State, flight: Flight, reason: Result[Connection.Response], code: Int = 8) -> State
   s = flight.stream
+  cancel_writes(s)
   current = state.with(resets: state.resets.push(Reset(stream: s.id, code: code)))
   if s.continuing
     current = current.with(discarded: some(s.with(parts: [], phase: Connection.StreamPhase.Closed)))
   end
 
   finish(current, s.id, reason)
+end
+
+def cancel_writes(stream: Connection.Stream) -> Void
+  case stream.cancelled
+    some(channel) -> channel.close
+    none -> nil
+  end
 end
 
 def publish(state: State) -> State
@@ -492,19 +556,20 @@ def read_loop(socket: TCP.Socket, incoming: Channel[Bytes], inbox: Channel[Msg])
   ok()
 end
 
-def write_loop(socket: TCP.Socket, out: Channel[Connection.Write], inbox: Channel[Msg]) -> Result[Void]
-  while not out.closed?
-    case out.recv(3_600_000)
-      ok(item) ->
-        sent = TCP.send_bytes(socket, item.bytes, WRITE_TIMEOUT_MS)
-        try inbox.send(Msg.Written(sent), 1_000)
-        break if not sent.ok?
-      error(e) if e.is_a?("channel.closed") -> break
-      error(_) -> nil
-    end
+def skipped(state: State, item: Connection.Write) -> State
+  conn = state.conn.unwrap!
+  current = state.with(conn: some(conn.with(send_credit: conn.send_credit + item.credit)))
+  case state.active.get(item.stream)
+    some(flight) ->
+      reason: Result[Connection.Response] = error("http_client: the request timed out", kind: timeout_kind(flight))
+      abort_stream(current, flight, reason)
+    none -> current
   end
+end
 
-  ok()
+def timeout_kind(flight: Flight) -> String
+  return "http_client.timeout.request" if flight.deadline == flight.call.request.deadline
+  "http_client.timeout.read"
 end
 
 def terminate(state: State) -> Void

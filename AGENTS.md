@@ -170,7 +170,7 @@ yaml/                a YAML 1.2 parser: yaml.agc is the API (parse, parse_all, O
   two sources for one name in a tree is `PKG-SOURCE-CONFLICT`. A bump of Bond is a package release first, then the
   app.
 - `agentica.toml` has `blank_line_after_end = true`: every bare `end` is followed by an empty line.
-- BDD first: a behavior is a Gherkin scenario in `specs/`, with steps in `specs/steps.agc`. A pure helper may have a
+- BDD first: a behavior is a Gherkin scenario in `specs/` or `test/specs/`, with steps in `specs/steps.agc` or `test/steps.agc` respectively. A pure helper may have a
   unit test in `test/` (`*_test.agc`). Tests are hermetic: 127.0.0.1, port 0, no external services, and a step that makes
   something on disk removes it with `BDD.after`.
 - Tests, models and peers are written in Agentica. A peer in another language (Python or Node, standard library

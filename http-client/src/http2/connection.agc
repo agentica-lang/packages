@@ -23,6 +23,12 @@ end
 
 struct Write
   bytes: Bytes
+  stream: Int = 0
+  deadline: Optional[Int] = none
+  cancelled: Optional[Channel[Bool]] = none
+  credit: Int = 0
+  opening: Bool = false
+  reset: Bool = false
 end
 
 struct Session
@@ -53,6 +59,7 @@ end
 struct Stream
   id: Int
   phase: StreamPhase = StreamPhase.Open
+  cancelled: Optional[Channel[Bool]] = none
   send_credit: Int
   receive_credit: Int = 65_535
   sent: Int = 0
@@ -70,6 +77,7 @@ end
 struct Progress
   session: Session
   stream: Stream
+  malformed: Optional[String] = none
 end
 
 struct Read
@@ -98,7 +106,8 @@ end
 
 def open_stream(session: Session, req: Request, block: Bytes, deadline: Int) -> Result[Progress]
   id = session.next_stream
-  try send_headers(session, id, block, req.body.empty?, deadline)
+  cancel: Channel[Bool] = Channel.new(1)
+  try send_headers(session, id, block, req.body.empty?, deadline, cancel)
   phase = StreamPhase.Open
   if req.body.empty?
     phase = StreamPhase.HalfClosedLocal
@@ -107,7 +116,7 @@ def open_stream(session: Session, req: Request, block: Bytes, deadline: Int) -> 
   ok(
     Progress(
       session: session.with(next_stream: id + 2),
-      stream: Stream(id: id, send_credit: session.initial_window, phase: phase),
+      stream: Stream(id: id, send_credit: session.initial_window, phase: phase, cancelled: some(cancel)),
     ),
   )
 end
@@ -324,7 +333,13 @@ def send_data(state: Progress, body: Bytes, deadline: Int) -> Result[Progress]
     flags = 1
   end
 
-  try send(c, 0, flags, s.id, body.slice(s.sent, count), deadline)
+  bytes = Frame.encode(0, flags, s.id, body.slice(s.sent, count))
+  try write(
+    c,
+    Write(bytes: bytes, stream: s.id, credit: count, deadline: some(deadline), cancelled: s.cancelled),
+    deadline,
+  )
+
   ok(
     Progress(
       session: c.with(send_credit: c.send_credit - count),
@@ -424,23 +439,42 @@ def header_fragment(state: Progress, frame: Frame.Frame) -> Result[Progress]
   return ok(state.with(stream: s.with(block: block, continuing: true, end_on_headers: ended))) if not flag?(frame, 4)
 
   decoded = try Hpack.decode(state.session.decoder, block)
-  head = try Headers.decode(decoded.headers, s.status > 0)
-  next_stream = s.with(block: EMPTY, continuing: false, end_on_headers: false)
-  if s.status > 0
-    return Frame.invalid("trailers without end_stream") if not ended
-    next_stream = next_stream.with(ended: true)
-  elsif head.status < 200
-    return Frame.invalid("invalid informational response") if ended or head.status == 101
-  else
-    next_stream = next_stream.with(status: head.status, fields: head.fields, expected_size: head.length, ended: ended)
+  completed = Progress(
+    session: state.session.with(decoder: decoded.state),
+    stream: s.with(block: EMPTY, continuing: false, end_on_headers: false),
+  )
+
+  case Headers.decode(decoded.headers, s.status > 0)
+    error(e) -> ok(completed.with(malformed: some(e.message)))
+    ok(head) -> ok(apply_head(completed, head, ended))
+  end
+end
+
+def apply_head(state: Progress, head: Headers.Head, ended: Bool) -> Progress
+  stream = state.stream
+  if stream.status > 0
+    return state.with(malformed: some("trailers without end_stream")) if not ended
+    return state.with(stream: stream.with(ended: true))
   end
 
-  ok(Progress(session: state.session.with(decoder: decoded.state), stream: next_stream))
+  if head.status < 200
+    return state.with(malformed: some("invalid informational response")) if ended or head.status == 101
+    return state
+  end
+
+  state.with(stream: stream.with(status: head.status, fields: head.fields, expected_size: head.length, ended: ended))
 end
 
 def bodyless?(method: String, status: Int) -> Bool = method == "HEAD" or status == 204 or status == 304
 
-def send_headers(session: Session, id: Int, block: Bytes, empty: Bool, deadline: Int) -> Result[Void]
+def send_headers(
+  session: Session,
+  id: Int,
+  block: Bytes,
+  empty: Bool,
+  deadline: Int,
+  cancel: Channel[Bool],
+) -> Result[Void]
   offset = 0
   kind = 1
   frames: List[Bytes] = []
@@ -460,7 +494,11 @@ def send_headers(session: Session, id: Int, block: Bytes, empty: Bool, deadline:
     kind = 9
   end
 
-  write(session, Bytes.concat(frames), deadline)
+  write(
+    session,
+    Write(bytes: Bytes.concat(frames), stream: id, deadline: some(deadline), opening: true, cancelled: some(cancel)),
+    deadline,
+  )
 end
 
 def unpad(frame: Frame.Frame, skip: Int) -> Result[Bytes]
@@ -501,13 +539,13 @@ def read_chunk(session: Session, deadline: Int) -> Result[Bytes]
 end
 
 def send(session: Session, kind: Int, flags: Int, id: Int, bytes: Bytes, deadline: Int) -> Result[Void]
-  write(session, Frame.encode(kind, flags, id, bytes), deadline)
+  write(session, Write(bytes: Frame.encode(kind, flags, id, bytes), stream: id, reset: kind == 3), deadline)
 end
 
-def write(session: Session, bytes: Bytes, deadline: Int) -> Result[Void]
+def write(session: Session, item: Write, deadline: Int) -> Result[Void]
   case session.writer
-    some(writer) -> writer.send(Write(bytes: bytes), 0)
-    none -> TCP.send_bytes(session.socket, bytes, try remaining(deadline))
+    some(writer) -> writer.send(item, 0)
+    none -> TCP.send_bytes(session.socket, item.bytes, try remaining(deadline))
   end
 end
 
