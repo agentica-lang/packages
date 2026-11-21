@@ -9,20 +9,37 @@ def main() -> Void
     protocol = HttpClient.Protocol.Http2
   end
 
+  inference = args[5] == "infer"
+  context: Optional[TLS.Context] = none
+  if inference
+    alpn = ["http/1.1"]
+    if protocol == HttpClient.Protocol.Http2
+      alpn = ["h2"]
+    end
+
+    context = some(
+      TLS.client_context(TLS.ClientOptions(ca_file: "test/specs/fixtures/tls/ca.pem", alpn: alpn)).unwrap!,
+    )
+  end
+
+  budget = args[6].to_i!
   client = HttpClient.new(
     base_url: args[0],
     protocol: protocol,
     pool_size: args[4].to_i!,
-    pool_timeout_ms: 10_000,
-    timeout_ms: 15_000,
+    pool_timeout_ms: budget,
+    read_timeout_ms: budget,
+    timeout_ms: budget,
     max_retries: 0,
+    tls: context,
+    resolver: some(->(_host) { ok(["127.0.0.1"]) }),
   ).unwrap!
 
   count = args[1].to_i!
   concurrency = args[2].to_i!
   chunk = "x" * 98_304
   start = Time.monotonic_ms()
-  results = Task.map((0...count).to_a, concurrency, 60_000) do |id| exchange(client, id, chunk) end
+  results = Task.map((0...count).to_a, concurrency, budget) do |id| exchange(client, id, chunk, inference) end
 
   elapsed = Time.monotonic_ms() - start
   HttpClient.close(client)
@@ -50,15 +67,18 @@ def main() -> Void
   puts("#{elapsed} #{p95}")
 end
 
-def exchange(client: HttpClient.Client, id: Int, chunk: String) -> Result[Int]
+def exchange(client: HttpClient.Client, id: Int, chunk: String, inference: Bool) -> Result[Int]
   path = "/#{id}"
   expected = "#{id}:".bytes
-  if id % 3 != 0
+  if inference
+    path = "/infer/#{id}"
+    expected = "#{id}:inference".bytes
+  elsif id % 3 != 0
     expected = "#{id}:#{chunk}".bytes
   end
 
   start = Time.monotonic_ms()
-  response = try fetch(client, id, path, expected)
+  response = try fetch(client, path, expected, not inference and id % 3 == 2)
   elapsed = Time.monotonic_ms() - start
   if response.status != 200 or response.body != expected
     return error(
@@ -69,7 +89,7 @@ def exchange(client: HttpClient.Client, id: Int, chunk: String) -> Result[Int]
   ok(elapsed)
 end
 
-def fetch(client: HttpClient.Client, id: Int, path: String, body: Bytes) -> Result[HttpClient.Response]
-  return HttpClient.post(client, path, body: some(body)) if id % 3 == 2
+def fetch(client: HttpClient.Client, path: String, body: Bytes, upload: Bool) -> Result[HttpClient.Response]
+  return HttpClient.post(client, path, body: some(body)) if upload
   HttpClient.get(client, path)
 end
