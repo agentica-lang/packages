@@ -141,14 +141,19 @@ def exchange(port: Int, gate: Gate, eof: Bool, wait_ms: Int) -> Result[Void]
     public_only: false,
   )
 
+  idle_ms = 5_000
+  if wait_ms == 100
+    idle_ms = 75
+  end
+
   config = Origin.Config(
     origin: base,
     dialer: dialer,
     options: HTTP.ClientOptions(),
     size: 1,
     wait_ms: wait_ms,
-    idle_ms: 5_000,
-    send: some(->(socket, bytes) { gated_send(socket, bytes, gate) }),
+    idle_ms: idle_ms,
+    send: some(->(socket, bytes, queued) { gated_send(socket, bytes, queued, gate) }),
   )
 
   origin = Origin.start(config)
@@ -161,10 +166,8 @@ def requests(origin: Origin.Origin, base: String, gate: Gate, eof: Bool, wait_ms
   deadline = Time.monotonic_ms() + 700
   post = try send_request(origin, base, "POST", "/early", ("x" * 20_000).bytes, deadline)
   return error("expected an early 413") if post.status != 413
-  if eof
-    return error("the buffered response did not drain at EOF") if post.body != "complete".bytes
-    return ok()
-  end
+  return error("the early response body was lost") if post.body != "complete".bytes
+  return ok() if eof
 
   if wait_ms == 100
     try check_pool_timeout(origin, base)
@@ -220,8 +223,14 @@ def send_request(
   Origin.request(origin, req, 1_000)
 end
 
-def gated_send(socket: TCP.Socket, bytes: Bytes, gate: Gate) -> Result[Void]
+def gated_send(socket: TCP.Socket, bytes: Bytes, queued: Fn[Bool], gate: Gate) -> Result[Void]
   if bytes[3] == 0 and bytes[4] == 0
+    deadline = Time.monotonic_ms() + 1_000
+    while not queued.call()
+      return error("the final DATA did not enter the writer queue") if Time.monotonic_ms() >= deadline
+      Task.sleep(1)
+    end
+
     try gate.blocked.send(true, 100)
     _ = try gate.release.recv(2_000)
   end

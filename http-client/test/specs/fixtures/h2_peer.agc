@@ -290,13 +290,12 @@ def skipped_end(
   try handshake(socket, hex("000300000001"))
   _ = try read_headers(socket, 1)
   _ = try blocked.recv(WAIT)
-  Task.sleep(30)
+  wire = Frame.encode(1, 4, 1, hex("0803343133")) + Frame.encode(0, 1, 1, "complete".bytes)
   if peer_resets
-    wire = Frame.encode(1, 5, 1, hex("0803343133")) + Frame.encode(3, 0, 1, Frame.word(0))
-    try TCP.send_bytes(socket, wire, WAIT)
-  else
-    try send(socket, 1, 5, 1, hex("0803343133"))
+    wire = wire + Frame.encode(3, 0, 1, Frame.word(0))
   end
+
+  try TCP.send_bytes(socket, wire, WAIT)
 
   first = try read(socket)
   if first.kind != 0 or first.stream != 1 or first.flags != 0
@@ -322,7 +321,6 @@ def eof_during_upload(listener: TCP.Listener, blocked: Channel[Bool]) -> Result[
   try handshake(socket, hex("000300000001"))
   _ = try read_headers(socket, 1)
   _ = try blocked.recv(WAIT)
-  Task.sleep(30)
   wire = Frame.encode(1, 4, 1, hex("0803343133")) + Frame.encode(0, 1, 1, "complete".bytes)
   try TCP.send_bytes(socket, wire, WAIT)
   TCP.close(socket)

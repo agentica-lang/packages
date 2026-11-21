@@ -171,11 +171,13 @@ def response(stream: Stream) -> Response
   Response(status: stream.status, headers: stream.fields, body: Bytes.concat(stream.parts))
 end
 
+def needs_refill?(credit: Int) -> Bool = credit <= REFILL
+
 def dispatch_closed(session: Session, frame: Frame.Frame, stream: Stream, deadline: Int) -> Result[Progress]
   if frame.kind == 0
     credit = session.receive_credit - frame.payload.size
     return Frame.invalid("incoming connection window exhausted") if credit < 0
-    if credit <= REFILL and session.write_error.none? and not session.read_only
+    if needs_refill?(credit) and session.write_error.none? and not session.read_only
       try send(session, 8, 0, 0, Frame.word(WINDOW - credit), deadline)
       credit = WINDOW
     end
@@ -399,7 +401,7 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
     next_stream = next_stream.with(parts: s.parts.push(payload), received: s.received + payload.size)
   end
 
-  if connection_credit <= REFILL and c.write_error.none? and not c.read_only
+  if needs_refill?(connection_credit) and c.write_error.none? and not c.read_only
     wait = deadline
     if ended
       wait = Time.monotonic_ms() + 1_000
@@ -411,7 +413,7 @@ def data(state: Progress, frame: Frame.Frame, req: Request, deadline: Int) -> Re
     end
   end
 
-  if not ended and stream_credit <= REFILL and c.write_error.none? and not c.read_only
+  if not ended and needs_refill?(stream_credit) and c.write_error.none? and not c.read_only
     case send(c, 8, 0, s.id, Frame.word(WINDOW - stream_credit), deadline)
       ok(_) -> stream_credit = WINDOW
       error(e) -> c = c.with(write_error: some(e))

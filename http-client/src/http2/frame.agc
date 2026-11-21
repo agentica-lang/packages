@@ -66,6 +66,4 @@ end
 
 def invalid[T](message: String) -> Result[T] = error("http_client: #{message}", kind: "http_client.http2.protocol")
 
-private
-
 def payload_size(buffer: Bytes) -> Int = buffer[0] * 65536 + buffer[1] * 256 + buffer[2]

@@ -13,7 +13,7 @@ struct Config
   size: Int
   wait_ms: Int
   idle_ms: Int
-  send: Optional[Fn[TCP.Socket, Bytes, Result[Void]]] = none
+  send: Optional[Fn[TCP.Socket, Bytes, Fn[Bool], Result[Void]]] = none
 end
 
 struct Pending
@@ -28,6 +28,7 @@ struct Peer
   starting: Int
   seats: Int = 0
   used: Int = 0
+  retiring: Int = 0
   idle_since: Int = 0
   draining: Bool = false
 end
@@ -118,18 +119,18 @@ def handle(state: State, msg: Messages.Origin) -> Actor.Step[State]
   case msg
     Messages.Origin.Submit(call) -> current = submit(state, call)
     Messages.Origin.CallerDown(key) -> current = cancel(state, key)
-    Messages.Origin.Capacity(id, seats, draining) ->
+    Messages.Origin.Capacity(id, seats, retiring, draining) ->
       case state.peers.get(id)
         some(peer) ->
           idle_since = peer.idle_since
-          if peer.starting != 0
+          if peer.starting != 0 or (peer.used == 0 and peer.retiring != 0 and retiring == 0)
             idle_since = Time.monotonic_ms()
           end
 
           updated = state.with(
             peers: state.peers.put(
               id,
-              peer.with(starting: 0, seats: seats, draining: draining, idle_since: idle_since),
+              peer.with(starting: 0, seats: seats, retiring: retiring, draining: draining, idle_since: idle_since),
             ),
           )
 
@@ -176,7 +177,7 @@ def retire_idle(state: State) -> State
   state.with(peers: peers)
 end
 
-def idle?(peer: Peer) -> Bool = peer.starting == 0 and peer.used == 0 and not peer.draining
+def idle?(peer: Peer) -> Bool = peer.starting == 0 and peer.used == 0 and peer.retiring == 0 and not peer.draining
 
 def next_wait(state: State) -> Optional[Int]
   now = Time.monotonic_ms()

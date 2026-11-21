@@ -13,7 +13,7 @@ struct Config
   origin: String
   connect_deadline: Int
   timeout_kind: String
-  send: Optional[Fn[TCP.Socket, Bytes, Result[Void]]] = none
+  send: Optional[Fn[TCP.Socket, Bytes, Fn[Bool], Result[Void]]] = none
 end
 
 enum Msg
@@ -55,6 +55,7 @@ struct State
   resets: List[Reset] = []
   discarded: Optional[Connection.Stream] = none
   advertised: Int = -1
+  advertised_retiring: Int = 0
   phase: Phase = Phase.AwaitingSettings
 end
 
@@ -147,7 +148,9 @@ def cancelled?(signal: Optional[Channel[Bool]]) -> Bool
   end
 end
 
-def socket_write(socket: TCP.Socket, bytes: Bytes) -> Result[Void] = TCP.send_bytes(socket, bytes, WRITE_TIMEOUT_MS)
+def socket_write(socket: TCP.Socket, bytes: Bytes, _queued: Fn[Bool]) -> Result[Void]
+  TCP.send_bytes(socket, bytes, WRITE_TIMEOUT_MS)
+end
 
 def handle(state: State, message: Msg) -> Actor.Step[State]
   current = state
@@ -164,7 +167,8 @@ def handle(state: State, message: Msg) -> Actor.Step[State]
         ok(conn) ->
           out: Channel[Connection.Write] = Channel.new(16)
           send_bytes = state.config.send.unwrap_or(&socket_write)
-          writer = Task.spawn do write_loop(out, inbox, ->(bytes) { send_bytes.call(conn.socket, bytes) }) end
+          queued = -> { not out.empty? }
+          writer = Task.spawn do write_loop(out, inbox, ->(bytes) { send_bytes.call(conn.socket, bytes, queued) }) end
 
           Task.monitor(conn.reader, inbox) do |_down| Msg.ReaderDown end
           Task.monitor(writer, inbox) do |_down| Msg.Written(error("HTTP/2 writer ended", kind: "net.closed")) end
@@ -222,7 +226,7 @@ end
 def next_wait(state: State) -> Optional[Int]
   return none if state.conn.none?
   conn = state.conn.unwrap!
-  return some(0) if readable?(conn) or writable?(state, conn)
+  return some(0) if readable?(state, conn) or writable?(state, conn)
 
   limit = 3_600_000
   now = Time.monotonic_ms()
@@ -233,18 +237,32 @@ def next_wait(state: State) -> Optional[Int]
   some([limit, 0].max.unwrap!)
 end
 
-def readable?(conn: Connection.Session) -> Bool
+def readable?(state: State, conn: Connection.Session) -> Bool
   return conn.incoming.closed? or not conn.incoming.empty? if not Frame.pending?(conn.buffer)
-  not defer?(conn, conn.buffer[3])
+  not defer?(state, conn)
 end
 
-def defer?(conn: Connection.Session, kind: Int) -> Bool
-  (
-    not conn.incoming.closed? and
-    conn.write_error.none? and
-    not conn.writer.unwrap!.empty? and
-    (kind == 0 or kind == 4 or kind == 6)
-  )
+def defer?(state: State, conn: Connection.Session) -> Bool
+  return false if conn.incoming.closed? or conn.write_error.some? or conn.writer.unwrap!.empty?
+
+  buffer = conn.buffer
+  size = Frame.payload_size(buffer)
+  return false if size > Frame.MAX_PAYLOAD or state.receiving != 0
+
+  kind = buffer[3]
+  final = buffer[4].bit_and(1) != 0
+  return not final if kind == 4 or kind == 6
+  return false if kind != 0
+
+  id = Frame.u32(buffer, 5).bit_and(Frame.MAX_WINDOW)
+  return false if id == 0 or id % 2 == 0 or id >= conn.next_stream
+  return true if Connection.needs_refill?(conn.receive_credit - size)
+  return false if final
+
+  case state.active.get(id)
+    some(flight) -> Connection.needs_refill?(flight.stream.receive_credit - size)
+    none -> false
+  end
 end
 
 def writable?(state: State, conn: Connection.Session) -> Bool
@@ -269,10 +287,9 @@ def step(state: State) -> Result[State]
   end
 
   current = state.with(conn: some(ready))
+  return ok(current) if Frame.pending?(ready.buffer) and defer?(current, ready)
   case try Frame.parse(ready.buffer)
-    some(parsed) ->
-      return ok(current) if defer?(ready, parsed.frame.kind)
-      return received(current.with(conn: some(ready.with(buffer: parsed.rest))), parsed.frame)
+    some(parsed) -> return received(current.with(conn: some(ready.with(buffer: parsed.rest))), parsed.frame)
     none -> nil
   end
 
@@ -567,12 +584,18 @@ def publish(state: State) -> State
     capacity = 0
   end
 
-  if state.advertised != capacity or draining != (state.phase == Phase.Draining)
-    notify(state.config, Messages.Origin.Capacity(state.config.id, capacity, draining))
+  retiring = state.retiring.size
+  if (
+    state.advertised != capacity or
+    state.advertised_retiring != retiring or
+    draining != (state.phase == Phase.Draining)
+  )
+    notify(state.config, Messages.Origin.Capacity(state.config.id, capacity, retiring, draining))
   end
 
-  return state.with(advertised: capacity, phase: Phase.Draining) if draining
-  state.with(advertised: capacity)
+  updated = state.with(advertised: capacity, advertised_retiring: retiring)
+  return updated.with(phase: Phase.Draining) if draining
+  updated
 end
 
 def fail_all(state: State, reason: Result[Connection.Response], code: Int = 8) -> State
