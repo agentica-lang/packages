@@ -28,6 +28,14 @@ def render(block: Analysis.NativeBlock, trait_name: String, source: String) -> R
   end
 
   try Names.validate(block, "Rust name", &rust_name)
+  for function in block.functions
+    if Names.fresh?(function)
+      return error(
+        "[NATIVE-GEN-UNKNOWN] #{function.name} is marked #{Names.FRESH_MARK}, which --lang rust does not write yet",
+      )
+    end
+  end
+
   for type in block.types
     # `Self` is a keyword of Rust that no type or variant can be named.
     variants = type.members.select do |member: Analysis.NativeMember| type.kind == "enum" and member.name == "Self" end

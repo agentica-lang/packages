@@ -9,10 +9,51 @@ import Analysis from "std/analysis"
 MODES = {"short": "AN_SHORT", "dirty": "AN_DIRTY"}
 KINDS = {"struct": "AN_STRUCT", "enum": "AN_ENUM"}
 
+## The line of a function's `##` doc that marks it fresh: the resources it makes own all their memory, so an arena that
+## keeps its result keeps it alone (`AN_FRESH`, API 1.5). The row is `AN_FRESH` or'd with its mode, and the header
+## needs API 1.5.
+FRESH_MARK = "@fresh"
+
+## The first minor version of the native API that has `AN_FRESH`.
+FRESH_MINOR = 5
+
 ## A C identifier of the header and the name of the block it comes from (`summary`, `Cell.Number`).
 struct Named
   c: String
   source: String
+end
+
+## Whether the doc of `function` has a line that is `@fresh`.
+def fresh?(function: Analysis.NativeFunction) -> Bool
+  function.doc.split("\n").any? do |line: String| line.strip == FRESH_MARK end
+end
+
+## The doc of `function` without its `@fresh` line, and without the blank lines that leave at its end.
+def doc_of(function: Analysis.NativeFunction) -> String
+  return function.doc if !fresh?(function)
+
+  kept = function.doc.split("\n").select do |line: String| line.strip != FRESH_MARK end
+  while !kept.empty? and kept.last.strip.empty?
+    kept = kept.take(kept.size - 1)
+  end
+
+  kept.join("\n")
+end
+
+## The flags of the row of `function` in the function table: its mode, and `AN_FRESH` when it is marked.
+def flags(function: Analysis.NativeFunction) -> String
+  return "#{MODES[function.mode]} | AN_FRESH" if fresh?(function)
+
+  MODES[function.mode]
+end
+
+## The version of the native API that `block` needs: the one `std/analysis` gives, or 1.5 when a function is fresh.
+def api_minor(block: Analysis.NativeBlock) -> Int
+  if block.api_minor >= FRESH_MINOR or !block.functions.any? do |f: Analysis.NativeFunction| fresh?(f) end
+    return block.api_minor
+  end
+
+  FRESH_MINOR
 end
 
 ## Whether `name` is a macro of the C or C++ standard library that a variant with a payload cannot be named after: the

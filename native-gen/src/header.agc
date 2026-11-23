@@ -119,10 +119,11 @@ def opening(block: Analysis.NativeBlock, names: Prefix, source: String) -> List[
     "#endif",
   ]
 
-  if block.api_minor > 0
+  minor = Names.api_minor(block)
+  if minor > 0
     lines = lines.concat([
-      "#if AN_API_MINOR < #{block.api_minor}",
-      "#error \"#{file} needs version #{block.api_major}.#{block.api_minor} or later of the native API (agentica_native.h)\"",
+      "#if AN_API_MINOR < #{minor}",
+      "#error \"#{file} needs version #{block.api_major}.#{minor} or later of the native API (agentica_native.h)\"",
       "#endif",
     ])
   end
@@ -248,7 +249,7 @@ def prototypes(block: Analysis.NativeBlock, names: Prefix, shelf: Collections.Sh
 
     params = ["an_env *env"].concat(typed)
     name = "#{names.lower}_#{Names.identifier(function.name)}"
-    lines = joined([lines, [""], doc_comment(function.doc), ["an_term #{name}(#{params.join(", ")});"]])
+    lines = joined([lines, [""], doc_comment(Names.doc_of(function)), ["an_term #{name}(#{params.join(", ")});"]])
   end
 
   lines.concat(["", "#ifdef __cplusplus", "}", "#endif", "", "#endif"])
@@ -362,9 +363,7 @@ def tables(block: Analysis.NativeBlock, names: Prefix) -> List[String]
     for function in block.functions
       c = Names.identifier(function.name)
       signature = c_string(function.signature)
-      lines = lines.push(
-        "  {#{c_string(function.name)}, #{signature}, #{p}_native_#{c}, #{Names.MODES[function.mode]}},",
-      )
+      lines = lines.push("  {#{c_string(function.name)}, #{signature}, #{p}_native_#{c}, #{Names.flags(function)}},")
     end
 
     lines = lines.push("};")

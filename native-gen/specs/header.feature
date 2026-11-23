@@ -16,6 +16,37 @@ Feature: The C header of an extern module block
     Examples:
       | name  |
       | stats |
+      | fresh |
+
+  Scenario: A function marked @fresh has AN_FRESH on its row, and its marker is not in the header's comments
+    Given the program argument "fixtures/fresh/fresh.agc"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout includes:
+      """
+      #if AN_API_MINOR < 5
+      """
+    And stdout includes:
+      """
+        {"make", "(Int) -> Result[Handle]", fresh_native_make, AN_DIRTY | AN_FRESH},
+        {"small", "(Int) -> Handle", fresh_native_small, AN_SHORT | AN_FRESH},
+        {"view", "(Handle) -> Handle", fresh_native_view, AN_SHORT},
+      """
+    And stdout includes:
+      """
+      /* A handle that owns all its memory. */
+      """
+
+  Scenario: --lang rust refuses a function marked @fresh
+    Given the program argument "fixtures/fresh/fresh.agc"
+    And the program argument "--lang"
+    And the program argument "rust"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-UNKNOWN] make is marked @fresh, which --lang rust does not write yet
+      """
 
   Scenario: --lang rust writes the Rust file, whose trait is named after --prefix
     Given the program argument "fixtures/stats/stats.agc"
