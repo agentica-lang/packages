@@ -18,25 +18,6 @@ Feature: The C header of an extern module block
       | stats |
       | fresh |
 
-  Scenario: A function marked @fresh has AN_FRESH on its row, and its marker is not in the header's comments
-    Given the program argument "fixtures/fresh/fresh.agc"
-    And the Agentica program "../cli.agc"
-    Then the program exits with code 0 within 25000 milliseconds
-    And stdout includes:
-      """
-      #if AN_API_MINOR < 5
-      """
-    And stdout includes:
-      """
-        {"make", "(Int) -> Result[Handle]", fresh_native_make, AN_DIRTY | AN_FRESH},
-        {"small", "(Int) -> Handle", fresh_native_small, AN_SHORT | AN_FRESH},
-        {"view", "(Handle) -> Handle", fresh_native_view, AN_SHORT},
-      """
-    And stdout includes:
-      """
-      /* A handle that owns all its memory. */
-      """
-
   Scenario: --lang rust refuses a function marked @fresh
     Given the program argument "fixtures/fresh/fresh.agc"
     And the program argument "--lang"
@@ -613,16 +594,18 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | file           | code              |
-      | clash.agc      | NATIVE-GEN-NAME   |
-      | keyword.agc    | NATIVE-GEN-NAME   |
-      | two_blocks.agc | NATIVE-GEN-BLOCK  |
-      | no_block.agc   | NATIVE-GEN-BLOCK  |
-      | reserved.agc   | NATIVE-GEN-NAME   |
-      | fields.agc     | NATIVE-GEN-NAME   |
-      | macro.agc      | NATIVE-GEN-NAME   |
-      | path.agc       | NATIVE-GEN-PREFIX |
-      | missing.agc    | QUERY-USAGE       |
+      | file            | code               |
+      | clash.agc       | NATIVE-GEN-NAME    |
+      | keyword.agc     | NATIVE-GEN-NAME    |
+      | two_blocks.agc  | NATIVE-GEN-BLOCK   |
+      | no_block.agc    | NATIVE-GEN-BLOCK   |
+      | reserved.agc    | NATIVE-GEN-NAME    |
+      | fields.agc      | NATIVE-GEN-NAME    |
+      | macro.agc       | NATIVE-GEN-NAME    |
+      | marker.agc      | NATIVE-GEN-UNKNOWN |
+      | fresh_value.agc | NATIVE-GEN-FRESH   |
+      | path.agc        | NATIVE-GEN-PREFIX  |
+      | missing.agc     | QUERY-USAGE        |
 
   Scenario Outline: The prefix <prefix> is in the namespace of the C API
     Given the program argument "fixtures/stats/stats.agc"

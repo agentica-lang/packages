@@ -28,16 +28,38 @@ def fresh?(function: Analysis.NativeFunction) -> Bool
   function.doc.split("\n").any? do |line: String| line.strip == FRESH_MARK end
 end
 
-## The doc of `function` without its `@fresh` line, and without the blank lines that leave at its end.
+## The doc of `function` without its `@fresh` line, and without the blank lines that the line leaves at an end of the
+## doc or twice in a row.
 def doc_of(function: Analysis.NativeFunction) -> String
   return function.doc if !fresh?(function)
 
-  kept = function.doc.split("\n").select do |line: String| line.strip != FRESH_MARK end
-  while !kept.empty? and kept.last.strip.empty?
-    kept = kept.take(kept.size - 1)
+  kept: List[String] = []
+  after_mark = false
+  for line in function.doc.split("\n")
+    if line.strip == FRESH_MARK
+      after_mark = true
+    elsif !(after_mark and line.strip.empty? and (kept.empty? or kept.last.strip.empty?))
+      after_mark = false
+      kept = kept.push(line)
+    end
   end
 
-  kept.join("\n")
+  trimmed(kept).join("\n")
+end
+
+## `lines` without the blank lines at its start and its end.
+def trimmed(lines: List[String]) -> List[String]
+  first = 0
+  while first < lines.size and lines[first].strip.empty?
+    first += 1
+  end
+
+  last = lines.size
+  while last > first and lines[last - 1].strip.empty?
+    last -= 1
+  end
+
+  lines.drop(first).take(last - first)
 end
 
 ## The flags of the row of `function` in the function table: its mode, and `AN_FRESH` when it is marked.
@@ -59,6 +81,33 @@ end
 ## Whether `name` is a macro of the C or C++ standard library that a variant with a payload cannot be named after: the
 ## payload is a member of a union, which the macro would replace.
 def macro?(name: String) -> Bool = MACROS.include?(name)
+
+## An error when a line of the doc of `function` starts with `@` and is not a marker (`@Fresh` and `@fresh.` are
+## typos, and the namespace is reserved), or when `@fresh` is on a function whose result reaches no resource.
+def check_markers(block: Analysis.NativeBlock, function: Analysis.NativeFunction) -> Result[Void]
+  for line in function.doc.split("\n")
+    text = line.strip
+    if text.start_with?("@") and text != FRESH_MARK
+      return error(
+        "[NATIVE-GEN-UNKNOWN] #{function.name} has the doc line #{text.inspect}, and #{FRESH_MARK} is the only marker",
+      )
+    end
+  end
+
+  if fresh?(function) and !makes_resource?(block, function)
+    return error(
+      "[NATIVE-GEN-FRESH] #{function.name} is marked #{FRESH_MARK}, but its result #{function.result} has no resource",
+    )
+  end
+
+  ok()
+end
+
+## Whether the result of `function` is, or holds, a resource of `block`.
+def makes_resource?(block: Analysis.NativeBlock, function: Analysis.NativeFunction) -> Bool
+  names = block.resources.map do |resource: Analysis.NativeResource| resource.name end
+  function.types_out.any? do |name: String| names.include?(name) end
+end
 
 ## A name of the block as a C identifier: `empty?` is `empty_p` and `save!` is `save_bang`.
 def identifier(name: String) -> String
@@ -122,6 +171,7 @@ def validate(block: Analysis.NativeBlock, target: String, rename: Fn[String, Str
     end
 
     try distinct(params, target)
+    try check_markers(block, function)
   end
 
   for type in block.types

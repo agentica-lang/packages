@@ -81,10 +81,10 @@ native-gen/          the C header of an `extern module` block: cli.agc is the co
                      run the same way; examples/rust_math/ the Rust module that the docs show, which
                      rust/build-check.sh builds with `cli.agc build` and runs, and compares with the docs' copies;
                      rust/new-check.sh builds and runs the module of `new --lang rust`;
-                     specs/fixtures/ are packages written on their headers (the one of stats is committed as the
-                     golden, a step makes the others: kinds, shapes, lists, options, resources), the files that fail
-                     (errors/) and cxx.sh, a CC that builds a module as C++; bench/wide the codecs of a struct of 26
-                     fields; the features need cc and c++
+                     specs/fixtures/ are packages written on their headers (the ones of stats and fresh are committed
+                     as the goldens, a step makes the others: kinds, shapes, lists, options, resources), the files
+                     that fail (errors/) and cxx.sh, a CC that builds a module as C++; bench/wide the codecs of a
+                     struct of 26 fields; the features need cc and c++
 dock/                a TCP server: dock.agc is the API (start, stop, wait, watch, stats, on_close, recv, send,
                      close); src/server.agc the supervisor task (listener, accept loop, monitors), src/connection.agc
                      the task of one client, src/outbox.agc its queue and writer, src/stats.agc the counters,

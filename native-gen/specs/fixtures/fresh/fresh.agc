@@ -11,7 +11,11 @@ extern module "fresh"
   compute def make(size: Int) -> Result[Handle]
   ## @fresh
   def small(size: Int) -> Handle
-  ## A handle made from another one, which it keeps alive.
+  ## @fresh
+  ##
+  ## Makes a handle.
+  def first(size: Int) -> Handle
+  ## A handle made from another one, which it keeps alive, so it is not @fresh.
   def view(handle: Handle) -> Handle
 end
 

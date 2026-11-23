@@ -63,7 +63,10 @@ an_term fresh_make(an_env *env, int64_t size);
 
 an_term fresh_small(an_env *env, int64_t size);
 
-/* A handle made from another one, which it keeps alive. */
+/* Makes a handle. */
+an_term fresh_first(an_env *env, int64_t size);
+
+/* A handle made from another one, which it keeps alive, so it is not @fresh. */
 an_term fresh_view(an_env *env, struct fresh_Handle_state *handle);
 
 #ifdef __cplusplus
@@ -103,6 +106,13 @@ static an_term fresh_native_small(an_env *env, int argc, const an_term *argv) {
   return fresh_small(env, a0);
 }
 
+static an_term fresh_native_first(an_env *env, int argc, const an_term *argv) {
+  (void)argc;
+  int64_t a0;
+  if (!an_get_int(env, argv[0], &a0)) return an_badarg(env, 0);
+  return fresh_first(env, a0);
+}
+
 static an_term fresh_native_view(an_env *env, int argc, const an_term *argv) {
   (void)argc;
   struct fresh_Handle_state *a0 = fresh_Handle_get(env, argv[0]);
@@ -113,6 +123,7 @@ static an_term fresh_native_view(an_env *env, int argc, const an_term *argv) {
 static const an_function fresh_native_functions[] = {
   {"make", "(Int) -> Result[Handle]", fresh_native_make, AN_DIRTY | AN_FRESH},
   {"small", "(Int) -> Handle", fresh_native_small, AN_SHORT | AN_FRESH},
+  {"first", "(Int) -> Handle", fresh_native_first, AN_SHORT | AN_FRESH},
   {"view", "(Handle) -> Handle", fresh_native_view, AN_SHORT},
 };
 
@@ -122,5 +133,5 @@ static const an_function fresh_native_functions[] = {
   static const an_resource_type fresh_native_resources[] = { \
     {"Handle", sizeof(struct fresh_Handle_state), FRESH_Handle_FREE}, \
   }; \
-  AN_MODULE_TABLES("fresh", fresh_native_functions, 3, NULL, 0, fresh_native_resources, 1, LOAD)
+  AN_MODULE_TABLES("fresh", fresh_native_functions, 4, NULL, 0, fresh_native_resources, 1, LOAD)
 #endif
