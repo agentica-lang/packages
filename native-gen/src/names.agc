@@ -9,15 +9,105 @@ import Analysis from "std/analysis"
 MODES = {"short": "AN_SHORT", "dirty": "AN_DIRTY"}
 KINDS = {"struct": "AN_STRUCT", "enum": "AN_ENUM"}
 
+## The line of a function's `##` doc that marks it fresh: the resources it makes own all their memory, so an arena that
+## keeps its result keeps it alone (`AN_FRESH`, API 1.5). The row is `AN_FRESH` or'd with its mode, and the header
+## needs API 1.5.
+FRESH_MARK = "@fresh"
+
+## The first minor version of the native API that has `AN_FRESH`.
+FRESH_MINOR = 5
+
 ## A C identifier of the header and the name of the block it comes from (`summary`, `Cell.Number`).
 struct Named
   c: String
   source: String
 end
 
+## Whether the doc of `function` has a line that is `@fresh`.
+def fresh?(function: Analysis.NativeFunction) -> Bool
+  function.doc.split("\n").any? do |line: String| line.strip == FRESH_MARK end
+end
+
+## The doc of `function` without its `@fresh` line, and without the blank lines that the line leaves at an end of the
+## doc or twice in a row.
+def doc_of(function: Analysis.NativeFunction) -> String
+  return function.doc if !fresh?(function)
+
+  kept: List[String] = []
+  after_mark = false
+  for line in function.doc.split("\n")
+    if line.strip == FRESH_MARK
+      after_mark = true
+    elsif !(after_mark and line.strip.empty? and (kept.empty? or kept.last.strip.empty?))
+      after_mark = false
+      kept = kept.push(line)
+    end
+  end
+
+  trimmed(kept).join("\n")
+end
+
+## `lines` without the blank lines at its start and its end.
+def trimmed(lines: List[String]) -> List[String]
+  first = 0
+  while first < lines.size and lines[first].strip.empty?
+    first += 1
+  end
+
+  last = lines.size
+  while last > first and lines[last - 1].strip.empty?
+    last -= 1
+  end
+
+  lines.drop(first).take(last - first)
+end
+
+## The flags of the row of `function` in the function table: its mode, and `AN_FRESH` when it is marked.
+def flags(function: Analysis.NativeFunction) -> String
+  return "#{MODES[function.mode]} | AN_FRESH" if fresh?(function)
+
+  MODES[function.mode]
+end
+
+## The version of the native API that `block` needs: the one `std/analysis` gives, or 1.5 when a function is fresh.
+def api_minor(block: Analysis.NativeBlock) -> Int
+  if block.api_minor >= FRESH_MINOR or !block.functions.any? do |f: Analysis.NativeFunction| fresh?(f) end
+    return block.api_minor
+  end
+
+  FRESH_MINOR
+end
+
 ## Whether `name` is a macro of the C or C++ standard library that a variant with a payload cannot be named after: the
 ## payload is a member of a union, which the macro would replace.
 def macro?(name: String) -> Bool = MACROS.include?(name)
+
+## An error when a line of the doc of `function` starts with `@` and is not a marker (`@Fresh` and `@fresh.` are
+## typos, and the namespace is reserved), or when `@fresh` is on a function whose result reaches no resource.
+def check_markers(block: Analysis.NativeBlock, function: Analysis.NativeFunction) -> Result[Void]
+  for line in function.doc.split("\n")
+    text = line.strip
+    if text.start_with?("@") and text != FRESH_MARK
+      return error(
+        "[NATIVE-GEN-UNKNOWN] #{function.name} has the doc line #{text.inspect}, and #{FRESH_MARK} is the only marker",
+      )
+    end
+  end
+
+  if fresh?(function) and !makes_resource?(block, function)
+    return error(
+      "[NATIVE-GEN-FRESH] #{function.name} is marked #{FRESH_MARK}, but its result #{function.result} has no resource",
+    )
+  end
+
+  ok()
+end
+
+## Whether the result of `function` is, or holds, a resource of `block`.
+def makes_resource?(block: Analysis.NativeBlock, function: Analysis.NativeFunction) -> Bool
+  names = block.resources.map do |resource: Analysis.NativeResource| resource.name end
+  function.types_out.any? do |name: String| names.include?(name) end
+end
 
 ## A name of the block as a C identifier: `empty?` is `empty_p` and `save!` is `save_bang`.
 def identifier(name: String) -> String
@@ -81,6 +171,7 @@ def validate(block: Analysis.NativeBlock, target: String, rename: Fn[String, Str
     end
 
     try distinct(params, target)
+    try check_markers(block, function)
   end
 
   for type in block.types

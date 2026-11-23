@@ -13,6 +13,7 @@ Needs Agentica 0.35.0; CI runs it on Agentica 0.35.0.
 
 ### Added
 
+- A line `@fresh` in the `##` doc of a function of the `extern module` block marks its row `AN_FRESH` (`AN_SHORT | AN_FRESH` or `AN_DIRTY | AN_FRESH`), for a function whose resources own all their memory. The line is left out of the header's comments, and a header with one needs Native API 1.5 (`#if AN_API_MINOR < 5`), so a module needs Agentica 0.37.0 to load it. `--lang rust` answers `[NATIVE-GEN-UNKNOWN]` for a `@fresh` function. A doc line that starts with `@` and is not `@fresh` is `[NATIVE-GEN-UNKNOWN]`, and `@fresh` on a function whose result holds no resource is `[NATIVE-GEN-FRESH]`.
 - `Env::blocking` of the `agentica-native` crate runs a closure out of the collector's way (`an_blocking`, Native API 1.3), for a library that switches stacks, or blocks a while, inside a short `def`. A module on the crate now declares API 1.3, so it needs Agentica 0.30.0 or later.
 
 ## [0.4.0] - 2026-11-13

@@ -16,6 +16,18 @@ Feature: The C header of an extern module block
     Examples:
       | name  |
       | stats |
+      | fresh |
+
+  Scenario: --lang rust refuses a function marked @fresh
+    Given the program argument "fixtures/fresh/fresh.agc"
+    And the program argument "--lang"
+    And the program argument "rust"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 1 within 25000 milliseconds
+    And stderr includes:
+      """
+      [NATIVE-GEN-UNKNOWN] make is marked @fresh, which --lang rust does not write yet
+      """
 
   Scenario: --lang rust writes the Rust file, whose trait is named after --prefix
     Given the program argument "fixtures/stats/stats.agc"
@@ -582,16 +594,18 @@ Feature: The C header of an extern module block
       """
 
     Examples:
-      | file           | code              |
-      | clash.agc      | NATIVE-GEN-NAME   |
-      | keyword.agc    | NATIVE-GEN-NAME   |
-      | two_blocks.agc | NATIVE-GEN-BLOCK  |
-      | no_block.agc   | NATIVE-GEN-BLOCK  |
-      | reserved.agc   | NATIVE-GEN-NAME   |
-      | fields.agc     | NATIVE-GEN-NAME   |
-      | macro.agc      | NATIVE-GEN-NAME   |
-      | path.agc       | NATIVE-GEN-PREFIX |
-      | missing.agc    | QUERY-USAGE       |
+      | file            | code               |
+      | clash.agc       | NATIVE-GEN-NAME    |
+      | keyword.agc     | NATIVE-GEN-NAME    |
+      | two_blocks.agc  | NATIVE-GEN-BLOCK   |
+      | no_block.agc    | NATIVE-GEN-BLOCK   |
+      | reserved.agc    | NATIVE-GEN-NAME    |
+      | fields.agc      | NATIVE-GEN-NAME    |
+      | macro.agc       | NATIVE-GEN-NAME    |
+      | marker.agc      | NATIVE-GEN-UNKNOWN |
+      | fresh_value.agc | NATIVE-GEN-FRESH   |
+      | path.agc        | NATIVE-GEN-PREFIX  |
+      | missing.agc     | QUERY-USAGE        |
 
   Scenario Outline: The prefix <prefix> is in the namespace of the C API
     Given the program argument "fixtures/stats/stats.agc"
