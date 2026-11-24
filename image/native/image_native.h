@@ -122,8 +122,7 @@ an_term image_to_bytes(an_env *env, struct image_Image_state *image, ng_str form
 /* The pixels, interleaved, in the format of the image and the byte order of this machine. */
 an_term image_to_pixels(an_env *env, struct image_Image_state *image);
 
-/* The image scaled to `width` by `height` with the Lanczos 3 kernel of libvips. Shrinking and enlarging are both
-   allowed; the aspect ratio is yours to keep. */
+/* The image scaled to `width` by `height` with the Lanczos 3 kernel of libvips; the aspect ratio is yours to keep. */
 an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width, int64_t height);
 
 /* The `width` by `height` area whose top left pixel is at `left`, `top`; an area outside the image is an error. */
@@ -138,7 +137,7 @@ an_term image_rotate(an_env *env, struct image_Image_state *image, int64_t degre
 /* The image in another colour model; a band of alpha is kept. */
 an_term image_colourspace(an_env *env, struct image_Image_state *image, image_Space space);
 
-/* The same values in another pixel format: out of range values are clipped, and a float is rounded to an integer. */
+/* The same values in another pixel format: out of range values are clipped, and a float is cut toward zero when it becomes an integer. */
 an_term image_cast(an_env *env, struct image_Image_state *image, image_Format format);
 
 an_term image_width(an_env *env, struct image_Image_state *image);
