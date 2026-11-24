@@ -68,6 +68,8 @@ def v2_parts(header: Header.Header, raw: Bytes, layout: Layout) -> Result[Parts]
   values = rest
   if header.is_compressed
     values = try Compression.expand(layout.codec, rest, header.size - levels)
+  elsif rest.size != header.size - levels
+    return Errors.malformed("a page of #{rest.size} value bytes, not #{header.size - levels}")
   end
 
   ok(Parts(definitions: raw.slice(0, header.definition_bytes), values: values))
