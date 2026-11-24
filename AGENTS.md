@@ -49,6 +49,12 @@ http-client/         an HTTP/1.1 client: http_client.agc is the API (new, reques
                      that reads requests by hand and writes the answers of a script: slow heads, stalls, closes, and
                      which connection served each); test/ the unit tests (URL, addresses, retry policy, redirects, link,
                      a client's checks) and a reuse test (many requests on one connection, no task left after close)
+image/               images on libvips (a native module made with native-gen): image.agc is the API and the extern
+                     block (load, from_bytes, from_pixels, save, to_bytes, to_pixels, width, height, bands,
+                     pixel_format); native/image.c the C side, native/image_native.h the header native-gen makes from
+                     the block (a spec checks it is current); specs/ has the feature, whose fixtures are written by
+                     specs/fixtures/peer.py (an independent PNG codec on Python's standard library, which also decodes
+                     what the module writes)
 jobs/                jobs to produce and consume, with the backend swappable: jobs.agc is the API (the `Backend`
                      record, enqueue, fetch, ack, nack, extend, counts, close, discard, json, decode, memory, drain,
                      manual_clock), conformance.agc the suite that every backend passes (run_all),

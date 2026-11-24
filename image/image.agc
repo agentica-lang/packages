@@ -1,0 +1,34 @@
+## Images on libvips: decode, encode, and the pixels as one `Bytes` buffer.
+
+## The pixel type of one band.
+enum Format
+  U8
+  I8
+  U16
+  I16
+  U32
+  I32
+  F32
+  F64
+  Complex
+end
+
+extern module "image"
+  resource Image
+  ## Decodes the file at `path`; the format is found from its contents.
+  compute def load(path: String) -> Result[Image]
+  ## Decodes an encoded image held in memory.
+  compute def from_bytes(data: Bytes) -> Result[Image]
+  ## An image from interleaved pixels: `width * height * bands` values of `format`, in the byte order of this machine.
+  compute def from_pixels(pixels: Bytes, width: Int, height: Int, bands: Int, format: Format) -> Result[Image]
+  ## Writes the image to `path`; the extension picks the encoder (`.png`, `.jpg[Q=90]`).
+  compute def save(image: Image, path: String) -> Result[Void]
+  ## Encodes the image as `format`, a suffix without the dot and with the options of libvips (`png`, `jpg[Q=90]`).
+  compute def to_bytes(image: Image, format: String) -> Result[Bytes]
+  ## The pixels, interleaved, in the format of the image and the byte order of this machine.
+  compute def to_pixels(image: Image) -> Result[Bytes]
+  def width(image: Image) -> Int
+  def height(image: Image) -> Int
+  def bands(image: Image) -> Int
+  def pixel_format(image: Image) -> Format
+end

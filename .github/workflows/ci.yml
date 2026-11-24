@@ -120,6 +120,11 @@ jobs:
           version: ${{ matrix.version }}
           sha256: ${{ matrix.sha256 }}
 
+      # The native module of image links libvips, which its specs and doc examples run.
+      - name: Install libvips
+        if: contains(format(' {0} {1} ', matrix.packages, matrix.docs), ' image ')
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvips-dev
+
       # The locked packages of each folder, checked against the hashes of its agentica.lock. The Makefile takes the
       # list as an argument: its own assignment ignores the environment.
       - name: Install the packages
