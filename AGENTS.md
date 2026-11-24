@@ -194,6 +194,10 @@ yaml/                a YAML 1.2 parser: yaml.agc is the API (parse, parse_all, O
   blocks are still fragments; a new example is a whole file with its `output`. The rules are in the header of
   `tools/doc_examples.agc`, and `make doc-examples-test` checks the tool on its fixture. Site prose: one line per
   paragraph or list item, simple words.
+- The API of a package page has one entry per public function, as Elixir's HexDocs do: a heading with the signature,
+  one to three short sentences on what it does and when it fails, and almost always a small `agentica` example with
+  its `output`. Types and enums get an entry each too. A rule that holds for many functions (resource lifetime,
+  untrusted input, requirements) is said once, in a short section of its own, not inside every entry.
 - `make test` runs the files and scenarios of a package `JOBS` at a time, so a scenario never writes in a folder
   that another one uses: it makes a fresh one (native-gen copies a fixture package before it builds it).
 - Each package has its own CHANGELOG.md; a user-visible change adds a line under its `## [Unreleased]`; a release renames
