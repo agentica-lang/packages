@@ -1,0 +1,9 @@
+name = "csv"
+agentica = "0.37.0"
+
+# Every bare `end` is followed by an empty line (AGENTS.md).
+[style]
+blank_line_after_end = true
+
+[dependencies]
+prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.4.2", subdir = "prop", group = "test" }

@@ -1,0 +1,9 @@
+version = 1
+
+[[package]]
+name = "prop"
+git = "https://github.com/agentica-lang/packages"
+subdir = "prop"
+tag = "prop-0.4.2"
+commit = "6e90cee2207bce255455b14e025379d95a99a599"
+hash = "sha256:a5f4a0f1aefb90b51c750c015ccad6baaf1c273131db45d1b5d409ccd64f06b4"
