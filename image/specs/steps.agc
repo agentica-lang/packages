@@ -16,6 +16,10 @@ def main() -> Void
     BDD.step("the pixels {string} as {int} by {int} with {int} bands of {string} are decoded by the peer", &peer),
     BDD.step("the pixels {string} as {int} by {int} with {int} bands of {string} encode as {string}", &encodes),
     BDD.step("a file that is loaded and then written with other pixels loads as the new pixels", &rewritten),
+    BDD.step(
+      "the pixels {string} as {int} by {int} with {int} bands of {string} under {string} are the peer's within {int}",
+      &transformed,
+    ),
     BDD.step("{int} tasks decode {string} to the pixels of {string}", &parallel),
     BDD.step("these calls fail:", &failures),
   ])
@@ -89,6 +93,67 @@ def rewritten(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   end
 end
 
+# A transform of the image, as the peer takes it: `crop 3 2 5 4`, `flip h`, `rotate 90`, `resize 32 24`, `grey`,
+# `srgb` or `cast f32`. The source is closed before the pixels are read: the result keeps what it needs.
+def transformed(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  words = args[5].split(" ")
+  img = from_raw(args)
+  result = apply_transform(img, words).unwrap!
+  Native.close(img)
+  actual = Image.to_pixels(result).unwrap!
+  with_folder(ctx) do |kept, folder|
+    out = Path.join([folder, "peer.raw"]).unwrap!
+    peer_args = ["#{FIXTURES}/peer.py", "apply", words[0], fixture_path(args[0]), out]
+    shape = [args[1], args[2], args[3]]
+    extra = words.drop(1)
+    if words[0] == "cast"
+      extra = [args[4].downcase, words[1]]
+    end
+
+    process = Process.spawn_captured("python3", peer_args + shape + extra).unwrap!
+    printed = Process.output(process, 20000).unwrap!.stdout.strip
+    seen = "#{Image.width(result)} #{Image.height(result)} #{Image.bands(result)}"
+    return BDD.assert(kept, false, "#{args[5]} gave #{seen}, the peer #{printed}") if printed != seen
+
+    worst = difference(actual, read_path(out))
+    BDD.assert(kept, worst <= args[6].to_i!, "#{args[5]} is #{worst} levels from the peer, not #{args[6]}")
+  end
+end
+
+def apply_transform(img: Image.Image, words: List[String]) -> Result[Image.Image]
+  case words[0]
+    "crop" -> Image.crop(img, words[1].to_i!, words[2].to_i!, words[3].to_i!, words[4].to_i!)
+    "flip" -> Image.flip(img, direction_of(words[1]))
+    "rotate" -> Image.rotate(img, words[1].to_i!)
+    "resize" -> Image.resize(img, words[1].to_i!, words[2].to_i!)
+    "grey" -> Image.colourspace(img, Image.Space.Grey)
+    "srgb" -> Image.colourspace(img, Image.Space.Srgb)
+    _ -> Image.cast(img, format_of(words[1].upcase))
+  end
+end
+
+def direction_of(name: String) -> Image.Direction
+  case name
+    "h" -> Image.Direction.Horizontal
+    _ -> Image.Direction.Vertical
+  end
+end
+
+# The largest difference between two bytes at the same place; a different length is more than any byte can differ.
+def difference(a: Bytes, b: Bytes) -> Int
+  return 256 if a.size != b.size
+
+  worst = 0
+  for i in 0...a.size
+    gap = (a[i] - b[i]).abs
+    if gap > worst
+      worst = gap
+    end
+  end
+
+  worst
+end
+
 def parallel(ctx: BDD.Context, args: List[String]) -> BDD.Context
   data = read(args[1])
   expected = read(args[2])
@@ -110,6 +175,10 @@ def failures(ctx: BDD.Context, _args: List[String]) -> BDD.Context
       "load" -> not Image.load(row[1]).ok?
       "from_pixels" -> not Image.from_pixels(good, row[1].to_i!, row[2].to_i!, row[3].to_i!, format_of(row[4])).ok?
       "to_bytes" -> not Image.to_bytes(img, row[1]).ok?
+      "crop" -> not Image.crop(img, row[1].to_i!, row[2].to_i!, row[3].to_i!, row[4].to_i!).ok?
+      "rotate" -> not Image.rotate(img, row[1].to_i!).ok?
+      "resize" -> not Image.resize(img, row[1].to_i!, row[2].to_i!).ok?
+      "cast" -> not Image.cast(img, format_of(row[1])).ok?
       _ -> false
     end
 

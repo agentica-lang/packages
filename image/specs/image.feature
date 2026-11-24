@@ -61,6 +61,11 @@ Feature: Images on libvips
       | from_pixels | 0                          | 12 | 3 | U8      |
       | from_pixels | 16                         | 12 | 3 | Complex |
       | to_bytes    | nope                       |    |   |         |
+      | crop        | 10                         | 5  | 10 | 10     |
+      | crop        | 0                          | 0  | 0  | 5      |
+      | rotate      | 45                         |    |   |         |
+      | resize      | 0                          | 5  |   |         |
+      | cast        | Complex                    |    |   |         |
 
   Scenario: The committed header is the one the block gives
     Given the program argument "../image.agc"

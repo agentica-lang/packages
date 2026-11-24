@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""An independent PNG codec on the standard library (zlib, struct), the peer of image's specs.
+"""An independent PNG codec and image transforms on the standard library, the peer of image's specs.
 
   peer.py generate DIR        writes the fixtures: each PNG with the raw pixels it holds (NAME.raw), and a float ramp
   peer.py decode IN.png OUT   decodes a PNG into raw pixels (interleaved, little endian) and prints "WIDTH HEIGHT BANDS"
+  peer.py apply OP IN OUT WIDTH HEIGHT BANDS [ARG...]
+                              the expected pixels of a transform of raw u8 pixels (crop LEFT TOP W H, flip h|v, rotate
+                              DEGREES clockwise, resize W H, grey, srgb), or `cast FROM TO` (u8, u16 or f32) of any raw
+                              pixels, and prints "WIDTH HEIGHT BANDS" of the result
 
 The scanlines of the PNGs use every filter type, so the decoder of libvips is checked on each.
 """
+import math
 import struct
 import sys
 import zlib
@@ -107,8 +112,145 @@ def generate(folder):
             f.write(png)
         with open(f"{folder}/{name}.raw", "wb") as f:
             f.write(little_endian(raw, depth))
+    with open(f"{folder}/grey.raw", "wb") as f:
+        f.write(gradient(10, 6, 1, 8))
+    with open(f"{folder}/photo.raw", "wb") as f:
+        f.write(gradient(64, 48, 3, 8))
     with open(f"{folder}/ramp_f32.raw", "wb") as f:
         f.write(struct.pack("<24f", *[(i - 8) / 4 + 0.0625 * i for i in range(24)]))
+
+
+def crop(px, width, bands, left, top, w, h):
+    return [px[((top + y) * width + left + x) * bands + b] for y in range(h) for x in range(w) for b in range(bands)]
+
+
+def flip(px, width, height, bands, axis):
+    cols = range(width - 1, -1, -1) if axis == "h" else range(width)
+    rows = range(height - 1, -1, -1) if axis == "v" else range(height)
+    return [px[(y * width + x) * bands + b] for y in rows for x in cols for b in range(bands)]
+
+
+def rotate(px, width, height, bands, degrees):
+    """Clockwise; a quarter turn takes the bottom row to the left column."""
+    for _ in range(degrees // 90 % 4):
+        px = [px[((height - 1 - y) * width + x) * bands + b] for x in range(width) for y in range(height)
+              for b in range(bands)]
+        width, height = height, width
+    return px, width, height
+
+
+def lanczos3(x):
+    if x == 0:
+        return 1.0
+    if abs(x) >= 3:
+        return 0.0
+    return 3 * math.sin(math.pi * x) * math.sin(math.pi * x / 3) / (math.pi * x) ** 2
+
+
+def weights(size_in, size_out):
+    """For each output index, the first input index and the normalised Lanczos 3 weights; the kernel widens by the
+    shrink factor, as libvips does when it reduces."""
+    scale = size_in / size_out
+    stretch = max(scale, 1.0)
+    rows = []
+    for o in range(size_out):
+        center = (o + 0.5) * scale - 0.5
+        first = math.floor(center - 3 * stretch) + 1
+        last = math.ceil(center + 3 * stretch) - 1
+        taps = [(max(0, min(size_in - 1, i)), lanczos3((i - center) / stretch)) for i in range(first, last + 1)]
+        total = sum(w for _, w in taps)
+        rows.append([(i, w / total) for i, w in taps])
+    return rows
+
+
+def box(px, width, height, bands, across, down):
+    """The mean of each `across` by `down` block, rounded, as the integer shrink of libvips."""
+    assert width % across == 0 and height % down == 0, "the shrink must divide the size"
+    out = []
+    for y in range(height // down):
+        for x in range(width // across):
+            for b in range(bands):
+                total = sum(px[((y * down + j) * width + x * across + i) * bands + b]
+                            for j in range(down) for i in range(across))
+                out.append((total + across * down // 2) // (across * down))
+    return out, width // across, height // down
+
+
+def resize(px, width, height, bands, w, h):
+    """The resize of libvips (Lanczos 3), the way it does it: an integer shrink by a box mean while the shrink is at
+    least twice the gap of 2 (a block per output pixel on each side), then the Lanczos 3 reduce, the rows before the
+    columns, each pass rounded and clamped to u8."""
+    px, width, height = box(px, width, height, bands, max(1, width // w // 2), max(1, height // h // 2))
+    down = weights(height, h)
+    across = weights(width, w)
+
+    def quantise(v):
+        return max(0, min(255, int(v + 0.5)))
+
+    tall = [[quantise(sum(px[(i * width + x) * bands + b] * k for i, k in down[y])) for b in range(bands)]
+            for y in range(h) for x in range(width)]
+    return [quantise(sum(tall[y * width + i][b] * k for i, k in across[x]))
+            for y in range(h) for x in range(w) for b in range(bands)]
+
+
+def grey(px, bands):
+    """sRGB to grey as libvips does it: the luminance of the linear light, encoded again; alpha is kept."""
+    def linear(v):
+        v /= 255
+        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
+    out = []
+    for i in range(0, len(px), bands):
+        y = 0.2126 * linear(px[i]) + 0.7152 * linear(px[i + 1]) + 0.0722 * linear(px[i + 2])
+        v = 12.92 * y if y <= 0.0031308 else 1.055 * y ** (1 / 2.4) - 0.055
+        out += [int(v * 255 + 0.5)] + px[i + 3:i + bands]
+    return out
+
+
+CODES = {"u8": "B", "u16": "H", "f32": "f"}
+
+
+def cast(data, source, target):
+    values = struct.unpack("<%d%s" % (len(data) // struct.calcsize(CODES[source]), CODES[source]), data)
+    if target == "f32":
+        converted = [float(v) for v in values]
+    else:
+        top = 255 if target == "u8" else 65535
+        converted = [max(0, min(top, int(v))) for v in values]
+    return struct.pack("<%d%s" % (len(converted), CODES[target]), *converted)
+
+
+def apply(op, args):
+    source, target, width, height, bands = args[0], args[1], int(args[2]), int(args[3]), int(args[4])
+    rest = args[5:]
+    with open(source, "rb") as f:
+        data = f.read()
+    shape = (width, height, bands)
+    if op == "cast":
+        out = cast(data, rest[0], rest[1])
+    else:
+        px = list(data)
+        if op == "crop":
+            left, top, w, h = map(int, rest)
+            out, shape = crop(px, width, bands, left, top, w, h), (w, h, bands)
+        elif op == "flip":
+            out = flip(px, width, height, bands, rest[0])
+        elif op == "rotate":
+            out, w, h = rotate(px, width, height, bands, int(rest[0]))
+            shape = (w, h, bands)
+        elif op == "resize":
+            w, h = int(rest[0]), int(rest[1])
+            out, shape = resize(px, width, height, bands, w, h), (w, h, bands)
+        elif op == "grey":
+            out, shape = grey(px, bands), (width, height, bands - 2 if bands > 2 else 1)
+        elif op == "srgb":
+            out, shape = [v for v in px for _ in range(3)], (width, height, 3)
+        else:
+            sys.exit(__doc__)
+        out = bytes(out)
+    with open(target, "wb") as f:
+        f.write(out)
+    print(*shape)
 
 
 def main():
@@ -120,6 +262,8 @@ def main():
         with open(sys.argv[3], "wb") as f:
             f.write(little_endian(raw, depth))
         print(width, height, bands)
+    elif len(sys.argv) >= 7 and sys.argv[1] == "apply":
+        apply(sys.argv[2], sys.argv[3:])
     else:
         sys.exit(__doc__)
 

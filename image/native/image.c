@@ -20,6 +20,13 @@ extern VipsImage *vips_image_new_from_memory_copy(const void *data, size_t size,
                                                   int format);
 extern VipsImage *vips_image_copy_memory(VipsImage *image);
 extern int vips_copy(VipsImage *in, VipsImage **out, ...);
+extern int vips_resize(VipsImage *in, VipsImage **out, double scale, ...);
+extern int vips_extract_area(VipsImage *in, VipsImage **out, int left, int top, int width, int height, ...);
+/* An enum without a negative member is an unsigned int. */
+extern int vips_flip(VipsImage *in, VipsImage **out, unsigned direction, ...);
+extern int vips_rot(VipsImage *in, VipsImage **out, unsigned angle, ...);
+extern int vips_colourspace(VipsImage *in, VipsImage **out, int space, ...);
+extern int vips_cast(VipsImage *in, VipsImage **out, int format, ...);
 extern int vips_image_write_to_file(VipsImage *image, const char *name, ...);
 extern int vips_image_write_to_buffer(VipsImage *in, const char *suffix, void **buf, size_t *size, ...);
 extern void *vips_image_write_to_memory(VipsImage *in, size_t *size);
@@ -35,6 +42,8 @@ extern void g_free(void *mem);
 
 enum { UCHAR, CHAR, USHORT, SHORT, UINT, INT, FLOAT, COMPLEX, DOUBLE, DPCOMPLEX };
 enum { MULTIBAND = 0, B_W = 1, SRGB = 22, RGB16 = 25, GREY16 = 26 };
+enum { HORIZONTAL, VERTICAL };
+enum { D0, D90, D180, D270 };
 
 /* The vips format of each image_Format_tag, in the order of the enum. */
 static const int vips_formats[] = {UCHAR, CHAR, USHORT, SHORT, UINT, INT, FLOAT, DOUBLE, COMPLEX};
@@ -86,13 +95,7 @@ static an_term ready(an_env *env, int *ok) {
   return *ok ? an_void(env) : an_error(env, init_error, strlen(init_error));
 }
 
-/* Decodes at once and drops the source, so that a bad file fails here and the image never reads the file or the
-   buffer again. */
-static an_term wrap(an_env *env, VipsImage *source) {
-  if (!source) return fail(env, "cannot decode the image");
-  VipsImage *vips = vips_image_copy_memory(source);
-  g_object_unref(source);
-  if (!vips) return fail(env, "cannot decode the image");
+static an_term make(an_env *env, VipsImage *vips) {
   an_term out;
   struct image_Image_state *state = image_Image_new(env, &out);
   if (!state) {
@@ -100,8 +103,18 @@ static an_term wrap(an_env *env, VipsImage *source) {
     return an_void(env);
   }
   state->vips = vips;
-  vips_error_clear();
   return image_result_Image_ok(env, out);
+}
+
+/* Decodes at once and drops the source, so that a bad file fails here and the image never reads the file or the
+   buffer again. */
+static an_term wrap(an_env *env, VipsImage *source) {
+  if (!source) return fail(env, "cannot decode the image");
+  VipsImage *vips = vips_image_copy_memory(source);
+  g_object_unref(source);
+  if (!vips) return fail(env, "cannot decode the image");
+  vips_error_clear();
+  return make(env, vips);
 }
 
 static char *cstring(ng_str s) {
@@ -154,14 +167,7 @@ an_term image_from_pixels(an_env *env, ng_buf pixels, int64_t width, int64_t hei
   int status = vips_copy(source, &vips, "interpretation", interpretation(vips_formats[format.tag], (int)bands), NULL);
   g_object_unref(source);
   if (status != 0) return fail(env, "cannot make the image");
-  an_term out;
-  struct image_Image_state *state = image_Image_new(env, &out);
-  if (!state) {
-    g_object_unref(vips);
-    return an_void(env);
-  }
-  state->vips = vips;
-  return image_result_Image_ok(env, out);
+  return make(env, vips);
 }
 
 an_term image_save(an_env *env, struct image_Image_state *image, ng_str path) {
@@ -195,6 +201,69 @@ an_term image_to_pixels(an_env *env, struct image_Image_state *image) {
   an_term out = image_result_Bytes_ok(env, (ng_buf){buffer, len});
   g_free(buffer);
   return out;
+}
+
+/* The operations are lazy: the result holds the image it came from, and the pixels are made when they are read. */
+an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width, int64_t height) {
+  VipsImage *in = image->vips;
+  if (width < 1 || height < 1 || width > INT32_MAX || height > INT32_MAX) {
+    return an_error(env, "the width and the height must be positive", 41);
+  }
+  VipsImage *out;
+  double horizontal = (double)width / vips_image_get_width(in);
+  double vertical = (double)height / vips_image_get_height(in);
+  if (vips_resize(in, &out, horizontal, "vscale", vertical, NULL) != 0) return fail(env, "cannot resize the image");
+  if (vips_image_get_width(out) != width || vips_image_get_height(out) != height) {
+    g_object_unref(out);
+    return an_error(env, "cannot resize the image to that size", 36);
+  }
+  return make(env, out);
+}
+
+an_term image_crop(an_env *env, struct image_Image_state *image, int64_t left, int64_t top, int64_t width,
+                   int64_t height) {
+  if (left < 0 || top < 0 || width < 1 || height < 1 || left > INT32_MAX || top > INT32_MAX || width > INT32_MAX ||
+      height > INT32_MAX) {
+    return an_error(env, "the area is outside the image", 29);
+  }
+  VipsImage *out;
+  if (vips_extract_area(image->vips, &out, (int)left, (int)top, (int)width, (int)height, NULL) != 0) {
+    return fail(env, "the area is outside the image");
+  }
+  return make(env, out);
+}
+
+an_term image_flip(an_env *env, struct image_Image_state *image, image_Direction direction) {
+  VipsImage *out;
+  if (vips_flip(image->vips, &out, direction.tag == IMAGE_Direction_Horizontal ? HORIZONTAL : VERTICAL, NULL) != 0) {
+    return fail(env, "cannot flip the image");
+  }
+  return make(env, out);
+}
+
+an_term image_rotate(an_env *env, struct image_Image_state *image, int64_t degrees) {
+  if (degrees % 90 != 0) return an_error(env, "the angle must be a multiple of 90 degrees", 42);
+  static const int angles[] = {D0, D90, D180, D270};
+  VipsImage *out;
+  if (vips_rot(image->vips, &out, angles[((degrees / 90) % 4 + 4) % 4], NULL) != 0) {
+    return fail(env, "cannot rotate the image");
+  }
+  return make(env, out);
+}
+
+an_term image_colourspace(an_env *env, struct image_Image_state *image, image_Space space) {
+  VipsImage *out;
+  if (vips_colourspace(image->vips, &out, space.tag == IMAGE_Space_Srgb ? SRGB : B_W, NULL) != 0) {
+    return fail(env, "cannot convert the colours of the image");
+  }
+  return make(env, out);
+}
+
+an_term image_cast(an_env *env, struct image_Image_state *image, image_Format format) {
+  if (format.tag == IMAGE_Format_Complex) return an_error(env, "complex pixels are not supported", 31);
+  VipsImage *out;
+  if (vips_cast(image->vips, &out, vips_formats[format.tag], NULL) != 0) return fail(env, "cannot cast the image");
+  return make(env, out);
 }
 
 an_term image_width(an_env *env, struct image_Image_state *image) {
