@@ -1,0 +1,11 @@
+name = "image"
+agentica = "0.35.0"
+
+[style]
+blank_line_after_end = true
+
+[native.image]
+build = { sources = ["native/image.c"], libs = ["vips", "gobject-2.0", "glib-2.0"] }
+
+[dependencies]
+native-gen = { git = "https://github.com/agentica-lang/packages", tag = "native-gen-0.5.0", subdir = "native-gen", group = "test" }

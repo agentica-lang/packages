@@ -1,0 +1,71 @@
+Feature: Images on libvips
+  An image is decoded, read as one buffer of pixels and encoded again. The fixtures are written by specs/fixtures/peer.py,
+  an independent PNG codec that uses every scanline filter; it also reads the PNGs that this package writes.
+
+  Scenario Outline: A PNG decodes to the pixels of the peer
+    Then "<file>" decodes as <width> by <height> with <bands> bands of "<format>", the pixels of "<raw>"
+
+    Examples:
+      | file       | width | height | bands | format | raw        |
+      | rgb.png    | 16    | 12     | 3     | U8     | rgb.raw    |
+      | rgba.png   | 9     | 7      | 4     | U8     | rgba.raw   |
+      | gray16.png | 8     | 6      | 1     | U16    | gray16.raw |
+
+  Scenario Outline: Pixels come back unchanged from an image
+    Then the pixels "<raw>" as <width> by <height> with <bands> bands of "<format>" come back from the image
+
+    Examples:
+      | raw          | width | height | bands | format |
+      | rgb.raw      | 16    | 12     | 3     | U8     |
+      | gray16.raw   | 8     | 6      | 1     | U16    |
+      | ramp_f32.raw | 4     | 3      | 2     | F32    |
+
+  Scenario Outline: A lossless format keeps the pixels
+    Then the pixels "<raw>" as <width> by <height> with <bands> bands of "<format>" survive "<encoding>"
+
+    Examples:
+      | raw          | width | height | bands | format | encoding |
+      | rgba.raw     | 9     | 7      | 4     | U8     | png      |
+      | gray16.raw   | 8     | 6      | 1     | U16    | png      |
+      | ramp_f32.raw | 4     | 3      | 2     | F32    | tif      |
+
+  Scenario Outline: The peer decodes the PNG that is written
+    Then the pixels "<raw>" as <width> by <height> with <bands> bands of "<format>" are decoded by the peer
+
+    Examples:
+      | raw        | width | height | bands | format |
+      | rgb.raw    | 16    | 12     | 3     | U8     |
+      | rgba.raw   | 9     | 7      | 4     | U8     |
+      | gray16.raw | 8     | 6      | 1     | U16    |
+
+  Scenario Outline: A lossy format keeps the size
+    Then the pixels "rgb.raw" as 16 by 12 with 3 bands of "U8" encode as "<encoding>"
+
+    Examples:
+      | encoding  |
+      | jpg[Q=90] |
+      | webp      |
+
+  Scenario: A file that changed is read again
+    Then a file that is loaded and then written with other pixels loads as the new pixels
+
+  Scenario: Tasks decode at once
+    Then 8 tasks decode "rgb.png" to the pixels of "rgb.raw"
+
+  Scenario: Bad input fails
+    Then these calls fail:
+      | call        | a                          | b  | c | d       |
+      | from_bytes  | not an image               |    |   |         |
+      | load        | specs/fixtures/missing.png |    |   |         |
+      | from_pixels | 16                         | 12 | 4 | U8      |
+      | from_pixels | 0                          | 12 | 3 | U8      |
+      | from_pixels | 16                         | 12 | 3 | Complex |
+      | to_bytes    | nope                       |    |   |         |
+
+  Scenario: The committed header is the one the block gives
+    Given the program argument "../image.agc"
+    And the program argument "--output"
+    And the program argument "../native/image_native.h"
+    And the program argument "--check"
+    And the Agentica program "../deps/native-gen/cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
