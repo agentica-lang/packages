@@ -48,7 +48,7 @@ abcabcabcabcabcabc
 
 Decodes a raw block: the length preamble, then literals and copies with one, two or four byte offsets. The data has the length of the preamble, and an error otherwise.
 
-A malformed block is an `error` of kind `snappy.malformed`, with the byte where it went wrong in its message: a preamble that is cut or longer than five bytes, a length over 4294967295, a literal or a copy that runs past the end, an offset of 0 or one before the start of the data, and output that is longer or shorter than the preamble says. A block never reads past its end, so a damaged block is an error and never a crash.
+A malformed block is an `error` of kind `snappy.malformed`, and its message usually names the byte where it went wrong (not a bad preamble or a wrong final length): a preamble that is cut or longer than five bytes, a length over 4294967295, a literal or a copy that runs past the end, an offset of 0 or one before the start of the data, and output that is longer or shorter than the preamble says. A block never reads past its end, so a damaged block is an error and never a crash.
 
 ```agentica
 import Snappy from "pkg/snappy/snappy"
@@ -74,7 +74,7 @@ snappy.malformed: snappy: copy offset 0 at byte 3
 
 ### `Snappy.compress(data: Bytes) -> Bytes`
 
-Encodes `data` as one raw block. A greedy matcher looks up the last earlier occurrence of each 4-byte word, writes a copy for a match of 4 bytes or more, and literals for the rest. A copy takes the shortest form that fits its length and offset: two bytes for a length of 4 to 11 at an offset below 2048, three bytes below 65536, five bytes otherwise. `decompress` reads every block that `compress` writes back unchanged.
+Encodes `data` as one raw block. A greedy matcher looks up the last earlier occurrence of each 4-byte word, writes a copy for a match of 4 bytes or more, and literals for the rest. A copy takes the shortest form that fits its length and offset: two bytes for a length of 4 to 11 at an offset below 2048, three bytes below 65536, five bytes otherwise. The table of earlier positions grows with the input, so the memory of `compress` does too. `decompress` reads every block that `compress` writes back unchanged.
 
 ```agentica
 import Snappy from "pkg/snappy/snappy"

@@ -77,7 +77,8 @@ def refuses_fixed(ctx: BDD.Context, _args: List[String]) -> BDD.Context
 end
 
 def reads_as_peer_says(ctx: BDD.Context, _args: List[String]) -> BDD.Context
-  for line in lines_of(ctx)
+  lines = lines_of(ctx)
+  for line in lines
     parts = line.split("\t")
     case Snappy.decompress(bytes_of(parts[0]))
       ok(data) ->
@@ -87,13 +88,14 @@ def reads_as_peer_says(ctx: BDD.Context, _args: List[String]) -> BDD.Context
     end
   end
 
-  BDD.assert(ctx, lines_of(ctx).size > 0, "no blocks to check")
+  BDD.assert(ctx, lines.size > 0, "no blocks to check")
 end
 
 def agrees_on_damaged(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   accepted = 0
   refused = 0
-  for line in lines_of(ctx)
+  lines = lines_of(ctx)
+  for line in lines
     parts = line.split("\t")
     seen = outcome(Snappy.decompress(bytes_of(parts[0])))
     return BDD.assert(ctx, false, "#{parts[0]}: the codec says #{seen}, the peer #{parts[1]}") if seen != parts[1]
@@ -105,7 +107,7 @@ def agrees_on_damaged(ctx: BDD.Context, _args: List[String]) -> BDD.Context
     end
   end
 
-  BDD.assert(ctx, accepted > 0 and refused > 0, "the blocks were all accepted or all refused: #{accepted}, #{refused}")
+  BDD.assert(ctx, accepted > 0 and refused > 0, "all accepted or all refused: #{accepted}, #{refused}")
 end
 
 def compresses_blocks(ctx: BDD.Context, _args: List[String]) -> BDD.Context

@@ -1,12 +1,3 @@
-MIN_MATCH = 4
-MAX_COPY = 64
-COPY_1_MAX_LENGTH = 11
-COPY_1_MAX_OFFSET = 2047
-COPY_2_MAX_OFFSET = 65_535
-LENGTH_WIDTHS = [0x100, 0x10000, 0x1000000]
-# As in the reference encoder, the step grows by one every 32 misses, so incompressible data costs few lookups.
-MISS_SHIFT = 5
-
 def compress(data: Bytes) -> Bytes
   size = data.size
   parts = [varint(size)]
@@ -43,6 +34,15 @@ def compress(data: Bytes) -> Bytes
 end
 
 private
+
+MIN_MATCH = 4
+MAX_COPY = 64
+COPY_1_MAX_LENGTH = 11
+COPY_1_MAX_OFFSET = 2047
+COPY_2_MAX_OFFSET = 65_535
+LENGTH_WIDTHS = [0x100, 0x10000, 0x1000000]
+# As in the reference encoder, the step grows by one every 32 misses, so incompressible data costs few lookups.
+MISS_SHIFT = 5
 
 def word(data: Bytes, i: Int) -> Int
   data[i] + data[i + 1].shift_left(8) + data[i + 2].shift_left(16) + data[i + 3].shift_left(24)

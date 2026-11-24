@@ -1,13 +1,3 @@
-CHUNK = 4096
-MAX_LENGTH = 4_294_967_295
-PREAMBLE_BYTES = 5
-OFFSET_WIDTHS = [0, 1, 2, 4]
-
-struct Preamble
-  length: Int
-  next: Int
-end
-
 def decompress(data: Bytes) -> Result[Bytes]
   head = try read_preamble(data)
   expected = head.length
@@ -53,6 +43,7 @@ def decompress(data: Bytes) -> Result[Bytes]
     end
 
     produced = produced + piece.size
+    # Each piece copies the tail, at most a chunk: linear in the pieces, fine for the pages of a Parquet file.
     tail = tail + piece
     if tail.size >= CHUNK
       full = tail.size / CHUNK
@@ -70,6 +61,16 @@ def decompress(data: Bytes) -> Result[Bytes]
 end
 
 private
+
+CHUNK = 4096
+MAX_LENGTH = 4_294_967_295
+PREAMBLE_BYTES = 5
+OFFSET_WIDTHS = [0, 1, 2, 4]
+
+struct Preamble
+  length: Int
+  next: Int
+end
 
 def malformed[T](message: String) -> Result[T] = error("snappy: #{message}", kind: "snappy.malformed")
 
@@ -117,6 +118,10 @@ def window(chunks: List[Bytes], tail: Bytes, start: Int, length: Int) -> Bytes
   return chunks[index].slice(skip, length) if skip + length <= CHUNK
 
   head = chunks[index].slice(skip, CHUNK - skip)
-  following = (chunks + [tail])[index + 1]
-  head + following.slice(0, length - head.size)
+  rest = length - head.size
+  if index + 1 < full
+    head + chunks[index + 1].slice(0, rest)
+  else
+    head + tail.slice(0, rest)
+  end
 end
