@@ -66,4 +66,3 @@ Feature: Images on libvips
     And the program argument "--check"
     And the Agentica program "../deps/native-gen/cli.agc"
     Then the program exits with code 0 within 25000 milliseconds
-
