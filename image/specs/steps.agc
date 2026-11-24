@@ -16,6 +16,10 @@ def main() -> Void
     BDD.step("the pixels {string} as {int} by {int} with {int} bands of {string} are decoded by the peer", &peer),
     BDD.step("the pixels {string} as {int} by {int} with {int} bands of {string} encode as {string}", &encodes),
     BDD.step("a file that is loaded and then written with other pixels loads as the new pixels", &rewritten),
+    BDD.step(
+      "the pixels {string} as {int} by {int} with {int} bands of {string} under {string} are the peer's within {int}",
+      &transformed,
+    ),
     BDD.step("{int} tasks decode {string} to the pixels of {string}", &parallel),
     BDD.step("these calls fail:", &failures),
   ])
@@ -89,6 +93,67 @@ def rewritten(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   end
 end
 
+# A transform of the image, as the peer takes it: `crop 3 2 5 4`, `flip h`, `rotate 90`, `resize 32 24`, `grey`,
+# `srgb` or `cast f32`. The source is closed before the pixels are read: the result keeps what it needs.
+def transformed(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  words = args[5].split(" ")
+  img = from_raw(args)
+  result = apply_transform(img, words).unwrap!
+  Native.close(img)
+  actual = Image.to_pixels(result).unwrap!
+  with_folder(ctx) do |kept, folder|
+    out = Path.join([folder, "peer.raw"]).unwrap!
+    peer_args = ["#{FIXTURES}/peer.py", "apply", words[0], fixture_path(args[0]), out]
+    shape = [args[1], args[2], args[3]]
+    extra = words.drop(1)
+    if words[0] == "cast"
+      extra = [args[4].downcase, words[1]]
+    end
+
+    process = Process.spawn_captured("python3", peer_args + shape + extra).unwrap!
+    printed = Process.output(process, 20000).unwrap!.stdout.strip
+    seen = "#{Image.width(result)} #{Image.height(result)} #{Image.bands(result)}"
+    return BDD.assert(kept, false, "#{args[5]} gave #{seen}, the peer #{printed}") if printed != seen
+
+    worst = difference(actual, read_path(out))
+    BDD.assert(kept, worst <= args[6].to_i!, "#{args[5]} is #{worst} levels from the peer, not #{args[6]}")
+  end
+end
+
+def apply_transform(img: Image.Image, words: List[String]) -> Result[Image.Image]
+  case words[0]
+    "crop" -> Image.crop(img, words[1].to_i!, words[2].to_i!, words[3].to_i!, words[4].to_i!)
+    "flip" -> Image.flip(img, direction_of(words[1]))
+    "rotate" -> Image.rotate(img, words[1].to_i!)
+    "resize" -> Image.resize(img, words[1].to_i!, words[2].to_i!)
+    "grey" -> Image.colourspace(img, Image.Space.Grey)
+    "srgb" -> Image.colourspace(img, Image.Space.Srgb)
+    _ -> Image.cast(img, format_of(words[1].upcase))
+  end
+end
+
+def direction_of(name: String) -> Image.Direction
+  case name
+    "h" -> Image.Direction.Horizontal
+    _ -> Image.Direction.Vertical
+  end
+end
+
+# The largest difference between two bytes at the same place; a different length is more than any byte can differ.
+def difference(a: Bytes, b: Bytes) -> Int
+  return 256 if a.size != b.size
+
+  worst = 0
+  for i in 0...a.size
+    gap = (a[i] - b[i]).abs
+    if gap > worst
+      worst = gap
+    end
+  end
+
+  worst
+end
+
 def parallel(ctx: BDD.Context, args: List[String]) -> BDD.Context
   data = read(args[1])
   expected = read(args[2])
@@ -99,24 +164,48 @@ def parallel(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.assert(ctx, results.all?(->(r) { r == ok(true) }), "a task decoded other pixels")
 end
 
-# One row per call: its name, then the arguments it takes.
+# One row per call: its name, the arguments it takes, and the message when this package makes it (libvips makes the
+# others).
 def failures(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   rows = BDD.table(ctx).drop(1)
   good = read("rgb.raw")
   img = Image.from_pixels(good, 16, 12, 3, Image.Format.U8).unwrap!
+  ramp = Image.from_pixels(read("ramp_f32.raw"), 4, 3, 2, Image.Format.F32).unwrap!
   for row in rows
-    failed = case row[0]
-      "from_bytes" -> not Image.from_bytes(row[1].bytes).ok?
-      "load" -> not Image.load(row[1]).ok?
-      "from_pixels" -> not Image.from_pixels(good, row[1].to_i!, row[2].to_i!, row[3].to_i!, format_of(row[4])).ok?
-      "to_bytes" -> not Image.to_bytes(img, row[1]).ok?
-      _ -> false
+    failure = case row[0]
+      "from_bytes" -> refusal(Image.from_bytes(row[1].bytes))
+      "load" -> refusal(Image.load(row[1]))
+      "from_pixels" -> refusal(Image.from_pixels(good, row[1].to_i!, row[2].to_i!, row[3].to_i!, format_of(row[4])))
+      "to_bytes" -> refusal(Image.to_bytes(img, row[1]))
+      "crop" -> refusal(Image.crop(img, row[1].to_i!, row[2].to_i!, row[3].to_i!, row[4].to_i!))
+      "rotate" -> refusal(Image.rotate(img, row[1].to_i!))
+      "resize" -> refusal(Image.resize(img, row[1].to_i!, row[2].to_i!))
+      "cast" -> refusal(Image.cast(img, format_of(row[1])))
+      _ -> refusal(Image.colourspace(ramp, space_of(row[1])))
     end
 
-    return BDD.assert(ctx, false, "#{row.join(" ")} did not fail") if not failed
+    message = failure.unwrap_or("")
+    return BDD.assert(ctx, false, "#{row[0]} #{row[1]} did not fail") if failure == none
+    if not row[5].empty? and message != row[5]
+      return BDD.assert(ctx, false, "#{row[0]} #{row[1]} failed with #{message}, not #{row[5]}")
+    end
   end
 
   BDD.assert(ctx, rows.size > 0, "no calls to check")
+end
+
+def refusal[T](result: Result[T]) -> Optional[String]
+  case result
+    ok(_) -> none
+    error(e) -> some(e.message)
+  end
+end
+
+def space_of(name: String) -> Image.Space
+  case name
+    "Grey" -> Image.Space.Grey
+    _ -> Image.Space.Srgb
+  end
 end
 
 # The image of the pixels of args[0] as the width, the height, the bands and the format that follow.

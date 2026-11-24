@@ -31,10 +31,16 @@ typedef struct {
 #endif
 
 /* The rows of the type table: the TYPE of an_struct, an_enum and their getters. */
-enum { IMAGE_TYPE_Format = 0 };
+enum { IMAGE_TYPE_Format = 0, IMAGE_TYPE_Direction = 1, IMAGE_TYPE_Space = 2 };
 
 /* The variants of Format, in declared order: the tag of its C value. */
 typedef enum { IMAGE_Format_U8 = 0, IMAGE_Format_I8 = 1, IMAGE_Format_U16 = 2, IMAGE_Format_I16 = 3, IMAGE_Format_U32 = 4, IMAGE_Format_I32 = 5, IMAGE_Format_F32 = 6, IMAGE_Format_F64 = 7, IMAGE_Format_Complex = 8 } image_Format_tag;
+
+/* The variants of Direction, in declared order: the tag of its C value. */
+typedef enum { IMAGE_Direction_Horizontal = 0, IMAGE_Direction_Vertical = 1 } image_Direction_tag;
+
+/* The variants of Space, in declared order: the tag of its C value. */
+typedef enum { IMAGE_Space_Srgb = 0, IMAGE_Space_Grey = 1 } image_Space_tag;
 
 /* The rows of the resource table: the TYPE of an_resource_new and an_get_resource. */
 enum { IMAGE_RESOURCE_Image = 0 };
@@ -72,6 +78,16 @@ an_term image_Format_F32(an_env *env);
 an_term image_Format_F64(an_env *env);
 an_term image_Format_Complex(an_env *env);
 
+typedef struct {
+  image_Direction_tag tag;
+} image_Direction;
+bool image_Direction_get(an_env *env, an_term t, image_Direction *out);
+
+typedef struct {
+  image_Space_tag tag;
+} image_Space;
+bool image_Space_get(an_env *env, an_term t, image_Space *out);
+
 /* The Lists, Maps, Optionals and Results. A List or Map that is read is a cursor: _next gives 1 for an item, 0 at
    the end, and -1 when the item does not decode: the call has then failed with the path of the item in its own
    List or Map (an item of a List or Map read from another has the path from the inner one, `List[Float].1`),
@@ -105,6 +121,24 @@ an_term image_to_bytes(an_env *env, struct image_Image_state *image, ng_str form
 
 /* The pixels, interleaved, in the format of the image and the byte order of this machine. */
 an_term image_to_pixels(an_env *env, struct image_Image_state *image);
+
+/* The image scaled to `width` by `height` with the Lanczos 3 kernel of libvips; the aspect ratio is yours to keep. */
+an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width, int64_t height);
+
+/* The `width` by `height` area whose top left pixel is at `left`, `top`; an area outside the image is an error. */
+an_term image_crop(an_env *env, struct image_Image_state *image, int64_t left, int64_t top, int64_t width, int64_t height);
+
+/* The image mirrored left to right (`Horizontal`) or top to bottom (`Vertical`). */
+an_term image_flip(an_env *env, struct image_Image_state *image, image_Direction direction);
+
+/* The image turned clockwise by `degrees`, a multiple of 90 (negative turns counterclockwise). */
+an_term image_rotate(an_env *env, struct image_Image_state *image, int64_t degrees);
+
+/* The image in another colour model; a band of alpha is kept. */
+an_term image_colourspace(an_env *env, struct image_Image_state *image, image_Space space);
+
+/* The same values in another pixel format: out of range values are clipped, and a float is cut toward zero when it becomes an integer. */
+an_term image_cast(an_env *env, struct image_Image_state *image, image_Format format);
 
 an_term image_width(an_env *env, struct image_Image_state *image);
 
@@ -319,6 +353,42 @@ an_term image_Format_Complex(an_env *env) {
   return an_enum(env, IMAGE_TYPE_Format, IMAGE_Format_Complex, NULL);
 }
 
+static bool image_native_get_Direction(an_env *env, an_term t, image_Direction *out, ng_fail *fail) {
+  uint32_t variant;
+  if (!an_get_variant(env, t, IMAGE_TYPE_Direction, &variant)) return ng_expected(fail, "Direction");
+  out->tag = (image_Direction_tag)variant;
+  switch (out->tag) {
+    case IMAGE_Direction_Horizontal:
+      return true;
+    case IMAGE_Direction_Vertical:
+      return true;
+  }
+  return ng_expected(fail, "Direction");
+}
+
+bool image_Direction_get(an_env *env, an_term t, image_Direction *out) {
+  ng_fail fail;
+  return image_native_get_Direction(env, t, out, &fail) || ng_raise(env, "", "Direction", &fail);
+}
+
+static bool image_native_get_Space(an_env *env, an_term t, image_Space *out, ng_fail *fail) {
+  uint32_t variant;
+  if (!an_get_variant(env, t, IMAGE_TYPE_Space, &variant)) return ng_expected(fail, "Space");
+  out->tag = (image_Space_tag)variant;
+  switch (out->tag) {
+    case IMAGE_Space_Srgb:
+      return true;
+    case IMAGE_Space_Grey:
+      return true;
+  }
+  return ng_expected(fail, "Space");
+}
+
+bool image_Space_get(an_env *env, an_term t, image_Space *out) {
+  ng_fail fail;
+  return image_native_get_Space(env, t, out, &fail) || ng_raise(env, "", "Space", &fail);
+}
+
 an_term image_result_Image_ok(an_env *env, an_term value) {
   return an_ok(env, value);
 }
@@ -386,6 +456,71 @@ static an_term image_native_to_pixels(an_env *env, int argc, const an_term *argv
   return image_to_pixels(env, a0);
 }
 
+static an_term image_native_resize(an_env *env, int argc, const an_term *argv) {
+  (void)argc;
+  struct image_Image_state *a0 = image_Image_get(env, argv[0]);
+  if (!a0) return an_badarg(env, 0);
+  int64_t a1;
+  if (!an_get_int(env, argv[1], &a1)) return an_badarg(env, 1);
+  int64_t a2;
+  if (!an_get_int(env, argv[2], &a2)) return an_badarg(env, 2);
+  return image_resize(env, a0, a1, a2);
+}
+
+static an_term image_native_crop(an_env *env, int argc, const an_term *argv) {
+  (void)argc;
+  struct image_Image_state *a0 = image_Image_get(env, argv[0]);
+  if (!a0) return an_badarg(env, 0);
+  int64_t a1;
+  if (!an_get_int(env, argv[1], &a1)) return an_badarg(env, 1);
+  int64_t a2;
+  if (!an_get_int(env, argv[2], &a2)) return an_badarg(env, 2);
+  int64_t a3;
+  if (!an_get_int(env, argv[3], &a3)) return an_badarg(env, 3);
+  int64_t a4;
+  if (!an_get_int(env, argv[4], &a4)) return an_badarg(env, 4);
+  return image_crop(env, a0, a1, a2, a3, a4);
+}
+
+static an_term image_native_flip(an_env *env, int argc, const an_term *argv) {
+  (void)argc;
+  ng_fail fail;
+  struct image_Image_state *a0 = image_Image_get(env, argv[0]);
+  if (!a0) return an_badarg(env, 0);
+  image_Direction a1;
+  if (!image_native_get_Direction(env, argv[1], &a1, &fail)) return ng_fail_argument(env, &fail, "Direction", 1);
+  return image_flip(env, a0, a1);
+}
+
+static an_term image_native_rotate(an_env *env, int argc, const an_term *argv) {
+  (void)argc;
+  struct image_Image_state *a0 = image_Image_get(env, argv[0]);
+  if (!a0) return an_badarg(env, 0);
+  int64_t a1;
+  if (!an_get_int(env, argv[1], &a1)) return an_badarg(env, 1);
+  return image_rotate(env, a0, a1);
+}
+
+static an_term image_native_colourspace(an_env *env, int argc, const an_term *argv) {
+  (void)argc;
+  ng_fail fail;
+  struct image_Image_state *a0 = image_Image_get(env, argv[0]);
+  if (!a0) return an_badarg(env, 0);
+  image_Space a1;
+  if (!image_native_get_Space(env, argv[1], &a1, &fail)) return ng_fail_argument(env, &fail, "Space", 1);
+  return image_colourspace(env, a0, a1);
+}
+
+static an_term image_native_cast(an_env *env, int argc, const an_term *argv) {
+  (void)argc;
+  ng_fail fail;
+  struct image_Image_state *a0 = image_Image_get(env, argv[0]);
+  if (!a0) return an_badarg(env, 0);
+  image_Format a1;
+  if (!image_native_get_Format(env, argv[1], &a1, &fail)) return ng_fail_argument(env, &fail, "Format", 1);
+  return image_cast(env, a0, a1);
+}
+
 static an_term image_native_width(an_env *env, int argc, const an_term *argv) {
   (void)argc;
   struct image_Image_state *a0 = image_Image_get(env, argv[0]);
@@ -421,6 +556,12 @@ static const an_function image_native_functions[] = {
   {"save", "(Image, String) -> Result[Void]", image_native_save, AN_DIRTY},
   {"to_bytes", "(Image, String) -> Result[Bytes]", image_native_to_bytes, AN_DIRTY},
   {"to_pixels", "(Image) -> Result[Bytes]", image_native_to_pixels, AN_DIRTY},
+  {"resize", "(Image, Int, Int) -> Result[Image]", image_native_resize, AN_DIRTY},
+  {"crop", "(Image, Int, Int, Int, Int) -> Result[Image]", image_native_crop, AN_DIRTY},
+  {"flip", "(Image, Direction) -> Result[Image]", image_native_flip, AN_DIRTY},
+  {"rotate", "(Image, Int) -> Result[Image]", image_native_rotate, AN_DIRTY},
+  {"colourspace", "(Image, Space) -> Result[Image]", image_native_colourspace, AN_DIRTY},
+  {"cast", "(Image, Format) -> Result[Image]", image_native_cast, AN_DIRTY},
   {"width", "(Image) -> Int", image_native_width, AN_SHORT},
   {"height", "(Image) -> Int", image_native_height, AN_SHORT},
   {"bands", "(Image) -> Int", image_native_bands, AN_SHORT},
@@ -429,6 +570,8 @@ static const an_function image_native_functions[] = {
 
 static const an_type image_native_types[] = {
   {"Format", AN_ENUM, "U8 | I8 | U16 | I16 | U32 | I32 | F32 | F64 | Complex"},
+  {"Direction", AN_ENUM, "Horizontal | Vertical"},
+  {"Space", AN_ENUM, "Srgb | Grey"},
 };
 
 /* Ends the module's one .c file: the tables and agentica_native_init. LOAD is NULL or a const char *(*)(void)
@@ -437,5 +580,5 @@ static const an_type image_native_types[] = {
   static const an_resource_type image_native_resources[] = { \
     {"Image", sizeof(struct image_Image_state), IMAGE_Image_FREE}, \
   }; \
-  AN_MODULE_TABLES("image", image_native_functions, 10, image_native_types, 1, image_native_resources, 1, LOAD)
+  AN_MODULE_TABLES("image", image_native_functions, 16, image_native_types, 3, image_native_resources, 1, LOAD)
 #endif
