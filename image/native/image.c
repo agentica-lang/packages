@@ -27,6 +27,9 @@ extern int vips_image_get_width(const VipsImage *image);
 extern int vips_image_get_height(const VipsImage *image);
 extern int vips_image_get_bands(const VipsImage *image);
 extern int vips_image_get_format(const VipsImage *image);
+/* A newer glib.h makes these macros that call the same functions: undefined when the check of CI includes vips.h. */
+#undef g_object_unref
+#undef g_free
 extern void g_object_unref(void *object);
 extern void g_free(void *mem);
 
