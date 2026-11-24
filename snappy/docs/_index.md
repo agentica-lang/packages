@@ -7,7 +7,7 @@ description: The Snappy raw block format in pure Agentica. Decode a block, refus
 
 ## Install
 
-Needs Agentica 0.37.0. Once the first release is tagged, add it to a project with an `agentica.toml`:
+Needs Agentica 0.37.0. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
 
 ```sh
 agentica add snappy https://github.com/agentica-lang/packages --tag snappy-0.1.0 --subdir snappy
