@@ -53,6 +53,10 @@ Feature: Transforms of images
       | rgba.raw | 9     | 7      | 4     | grey      | 1      |
       | grey.raw | 10    | 6      | 1     | srgb      | 0      |
 
+  # A 16-bit image stays 16-bit: the peer copies each 2-byte sample to the three bands.
+  Scenario: Colours of a 16-bit image keep their depth
+    Then the pixels "gray16.raw" as 8 by 6 with 1 bands of "U16" under "srgb 2" are the peer's within 0
+
   Scenario Outline: Cast keeps the values
     Then the pixels "<raw>" as <width> by <height> with <bands> bands of "<format>" under "cast <to>" are the peer's within 0
 
@@ -62,3 +66,5 @@ Feature: Transforms of images
       | rgb.raw      | 16    | 12     | 3     | U8     | u16 |
       | ramp_f32.raw | 4     | 3      | 2     | F32    | u8  |
       | ramp_f32.raw | 4     | 3      | 2     | F32    | u16 |
+      | ramp_f32.raw | 4     | 3      | 2     | F32    | i16 |
+      | gray16.raw   | 8     | 6      | 1     | U16    | u8  |

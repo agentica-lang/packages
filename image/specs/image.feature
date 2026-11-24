@@ -54,18 +54,19 @@ Feature: Images on libvips
 
   Scenario: Bad input fails
     Then these calls fail:
-      | call        | a                          | b  | c | d       |
-      | from_bytes  | not an image               |    |   |         |
-      | load        | specs/fixtures/missing.png |    |   |         |
-      | from_pixels | 16                         | 12 | 4 | U8      |
-      | from_pixels | 0                          | 12 | 3 | U8      |
-      | from_pixels | 16                         | 12 | 3 | Complex |
-      | to_bytes    | nope                       |    |   |         |
-      | crop        | 10                         | 5  | 10 | 10     |
-      | crop        | 0                          | 0  | 0  | 5      |
-      | rotate      | 45                         |    |   |         |
-      | resize      | 0                          | 5  |   |         |
-      | cast        | Complex                    |    |   |         |
+      | call         | a                          | b  | c  | d       | says                                                                                       |
+      | from_bytes   | not an image               |    |    |         |                                                                                            |
+      | load         | specs/fixtures/missing.png |    |    |         |                                                                                            |
+      | from_pixels  | 16                         | 12 | 4  | U8      | the size of the pixels does not match width * height * bands * the size of the format      |
+      | from_pixels  | 0                          | 12 | 3  | U8      | the width, the height and the bands must be positive                                       |
+      | from_pixels  | 16                         | 12 | 3  | Complex | complex pixels are not supported                                                           |
+      | to_bytes     | nope                       |    |    |         |                                                                                            |
+      | crop         | 10                         | 5  | 10 | 10      |                                                                                            |
+      | crop         | 0                          | 0  | 0  | 5       | the area is outside the image                                                              |
+      | rotate       | 45                         |    |    |         | the angle must be a multiple of 90 degrees                                                 |
+      | resize       | 0                          | 5  |    |         | the width and the height must be positive                                                  |
+      | cast         | Complex                    |    |    |         | complex pixels are not supported                                                           |
+      | colourspace  | Srgb                       |    |    |         | colourspace needs a U8 or U16 image                                                        |
 
   Scenario: The committed header is the one the block gives
     Given the program argument "../image.agc"

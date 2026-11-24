@@ -4,9 +4,10 @@
   peer.py generate DIR        writes the fixtures: each PNG with the raw pixels it holds (NAME.raw), and a float ramp
   peer.py decode IN.png OUT   decodes a PNG into raw pixels (interleaved, little endian) and prints "WIDTH HEIGHT BANDS"
   peer.py apply OP IN OUT WIDTH HEIGHT BANDS [ARG...]
-                              the expected pixels of a transform of raw u8 pixels (crop LEFT TOP W H, flip h|v, rotate
-                              DEGREES clockwise, resize W H, grey, srgb), or `cast FROM TO` (u8, u16 or f32) of any raw
-                              pixels, and prints "WIDTH HEIGHT BANDS" of the result
+                              the expected pixels of a transform of raw pixels, and prints "WIDTH HEIGHT BANDS" of the
+                              result: for u8 samples crop LEFT TOP W H, flip h|v, rotate DEGREES clockwise, resize W H
+                              and grey; srgb [BYTES PER SAMPLE] for u8 or u16; and `cast FROM TO` (u8, u16, i16 or
+                              f32) of any raw samples
 
 The scanlines of the PNGs use every filter type, so the decoder of libvips is checked on each.
 """
@@ -207,7 +208,8 @@ def grey(px, bands):
     return out
 
 
-CODES = {"u8": "B", "u16": "H", "f32": "f"}
+CODES = {"u8": "B", "u16": "H", "i16": "h", "f32": "f"}
+RANGES = {"u8": (0, 255), "u16": (0, 65535), "i16": (-32768, 32767)}
 
 
 def cast(data, source, target):
@@ -215,8 +217,8 @@ def cast(data, source, target):
     if target == "f32":
         converted = [float(v) for v in values]
     else:
-        top = 255 if target == "u8" else 65535
-        converted = [max(0, min(top, int(v))) for v in values]
+        low, top = RANGES[target]
+        converted = [max(low, min(top, int(v))) for v in values]
     return struct.pack("<%d%s" % (len(converted), CODES[target]), *converted)
 
 
@@ -244,7 +246,9 @@ def apply(op, args):
         elif op == "grey":
             out, shape = grey(px, bands), (width, height, bands - 2 if bands > 2 else 1)
         elif op == "srgb":
-            out, shape = [v for v in px for _ in range(3)], (width, height, 3)
+            size = int(rest[0]) if rest else 1
+            out = b"".join(bytes(px[i:i + size]) * 3 for i in range(0, len(px), size))
+            shape = (width, height, 3)
         else:
             sys.exit(__doc__)
         out = bytes(out)

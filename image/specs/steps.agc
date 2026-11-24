@@ -164,28 +164,48 @@ def parallel(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.assert(ctx, results.all?(->(r) { r == ok(true) }), "a task decoded other pixels")
 end
 
-# One row per call: its name, then the arguments it takes.
+# One row per call: its name, the arguments it takes, and the message when this package makes it (libvips makes the
+# others).
 def failures(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   rows = BDD.table(ctx).drop(1)
   good = read("rgb.raw")
   img = Image.from_pixels(good, 16, 12, 3, Image.Format.U8).unwrap!
+  ramp = Image.from_pixels(read("ramp_f32.raw"), 4, 3, 2, Image.Format.F32).unwrap!
   for row in rows
-    failed = case row[0]
-      "from_bytes" -> not Image.from_bytes(row[1].bytes).ok?
-      "load" -> not Image.load(row[1]).ok?
-      "from_pixels" -> not Image.from_pixels(good, row[1].to_i!, row[2].to_i!, row[3].to_i!, format_of(row[4])).ok?
-      "to_bytes" -> not Image.to_bytes(img, row[1]).ok?
-      "crop" -> not Image.crop(img, row[1].to_i!, row[2].to_i!, row[3].to_i!, row[4].to_i!).ok?
-      "rotate" -> not Image.rotate(img, row[1].to_i!).ok?
-      "resize" -> not Image.resize(img, row[1].to_i!, row[2].to_i!).ok?
-      "cast" -> not Image.cast(img, format_of(row[1])).ok?
-      _ -> false
+    failure = case row[0]
+      "from_bytes" -> refusal(Image.from_bytes(row[1].bytes))
+      "load" -> refusal(Image.load(row[1]))
+      "from_pixels" -> refusal(Image.from_pixels(good, row[1].to_i!, row[2].to_i!, row[3].to_i!, format_of(row[4])))
+      "to_bytes" -> refusal(Image.to_bytes(img, row[1]))
+      "crop" -> refusal(Image.crop(img, row[1].to_i!, row[2].to_i!, row[3].to_i!, row[4].to_i!))
+      "rotate" -> refusal(Image.rotate(img, row[1].to_i!))
+      "resize" -> refusal(Image.resize(img, row[1].to_i!, row[2].to_i!))
+      "cast" -> refusal(Image.cast(img, format_of(row[1])))
+      _ -> refusal(Image.colourspace(ramp, space_of(row[1])))
     end
 
-    return BDD.assert(ctx, false, "#{row.join(" ")} did not fail") if not failed
+    message = failure.unwrap_or("")
+    return BDD.assert(ctx, false, "#{row[0]} #{row[1]} did not fail") if failure == none
+    if not row[5].empty? and message != row[5]
+      return BDD.assert(ctx, false, "#{row[0]} #{row[1]} failed with #{message}, not #{row[5]}")
+    end
   end
 
   BDD.assert(ctx, rows.size > 0, "no calls to check")
+end
+
+def refusal[T](result: Result[T]) -> Optional[String]
+  case result
+    ok(_) -> none
+    error(e) -> some(e.message)
+  end
+end
+
+def space_of(name: String) -> Image.Space
+  case name
+    "Grey" -> Image.Space.Grey
+    _ -> Image.Space.Srgb
+  end
 end
 
 # The image of the pixels of args[0] as the width, the height, the bands and the format that follow.

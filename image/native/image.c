@@ -89,10 +89,12 @@ static an_term fail(an_env *env, const char *fallback) {
   return out;
 }
 
+static an_term refuse(an_env *env, const char *message) { return an_error(env, message, strlen(message)); }
+
 static an_term ready(an_env *env, int *ok) {
   pthread_once(&once, init_vips);
   *ok = init_error == NULL;
-  return *ok ? an_void(env) : an_error(env, init_error, strlen(init_error));
+  return *ok ? an_void(env) : refuse(env, init_error);
 }
 
 static an_term make(an_env *env, VipsImage *vips) {
@@ -149,16 +151,16 @@ an_term image_from_bytes(an_env *env, ng_buf data) {
 an_term image_from_pixels(an_env *env, ng_buf pixels, int64_t width, int64_t height, int64_t bands,
                           image_Format format) {
   READY(env);
-  if (format.tag == IMAGE_Format_Complex) return an_error(env, "complex pixels are not supported", 31);
+  if (format.tag == IMAGE_Format_Complex) return refuse(env, "complex pixels are not supported");
   if (width < 1 || height < 1 || bands < 1 || width > INT32_MAX || height > INT32_MAX || bands > 65535) {
-    return an_error(env, "the width, the height and the bands must be positive", 52);
+    return refuse(env, "the width, the height and the bands must be positive");
   }
   size_t item = format_sizes[format.tag];
   size_t count;
   if (__builtin_mul_overflow((size_t)width, (size_t)height, &count) ||
       __builtin_mul_overflow(count, (size_t)bands, &count) || __builtin_mul_overflow(count, item, &count) ||
       count != pixels.len) {
-    return an_error(env, "the size of the pixels does not match width * height * bands * the size of the format", 83);
+    return refuse(env, "the size of the pixels does not match width * height * bands * the size of the format");
   }
   VipsImage *source = vips_image_new_from_memory_copy(pixels.data, pixels.len, (int)width, (int)height, (int)bands,
                                                       vips_formats[format.tag]);
@@ -207,7 +209,7 @@ an_term image_to_pixels(an_env *env, struct image_Image_state *image) {
 an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width, int64_t height) {
   VipsImage *in = image->vips;
   if (width < 1 || height < 1 || width > INT32_MAX || height > INT32_MAX) {
-    return an_error(env, "the width and the height must be positive", 41);
+    return refuse(env, "the width and the height must be positive");
   }
   VipsImage *out;
   double horizontal = (double)width / vips_image_get_width(in);
@@ -215,7 +217,7 @@ an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width
   if (vips_resize(in, &out, horizontal, "vscale", vertical, NULL) != 0) return fail(env, "cannot resize the image");
   if (vips_image_get_width(out) != width || vips_image_get_height(out) != height) {
     g_object_unref(out);
-    return an_error(env, "cannot resize the image to that size", 36);
+    return refuse(env, "cannot resize the image to that size");
   }
   return make(env, out);
 }
@@ -224,7 +226,7 @@ an_term image_crop(an_env *env, struct image_Image_state *image, int64_t left, i
                    int64_t height) {
   if (left < 0 || top < 0 || width < 1 || height < 1 || left > INT32_MAX || top > INT32_MAX || width > INT32_MAX ||
       height > INT32_MAX) {
-    return an_error(env, "the area is outside the image", 29);
+    return refuse(env, "the area is outside the image");
   }
   VipsImage *out;
   if (vips_extract_area(image->vips, &out, (int)left, (int)top, (int)width, (int)height, NULL) != 0) {
@@ -242,7 +244,7 @@ an_term image_flip(an_env *env, struct image_Image_state *image, image_Direction
 }
 
 an_term image_rotate(an_env *env, struct image_Image_state *image, int64_t degrees) {
-  if (degrees % 90 != 0) return an_error(env, "the angle must be a multiple of 90 degrees", 42);
+  if (degrees % 90 != 0) return refuse(env, "the angle must be a multiple of 90 degrees");
   static const int angles[] = {D0, D90, D180, D270};
   VipsImage *out;
   if (vips_rot(image->vips, &out, angles[((degrees / 90) % 4 + 4) % 4], NULL) != 0) {
@@ -252,15 +254,19 @@ an_term image_rotate(an_env *env, struct image_Image_state *image, int64_t degre
 }
 
 an_term image_colourspace(an_env *env, struct image_Image_state *image, image_Space space) {
+  int format = vips_image_get_format(image->vips);
+  if (format != UCHAR && format != USHORT) return refuse(env, "colourspace needs a U8 or U16 image");
+  bool grey = space.tag == IMAGE_Space_Grey;
+  bool sixteen = format == USHORT;
   VipsImage *out;
-  if (vips_colourspace(image->vips, &out, space.tag == IMAGE_Space_Srgb ? SRGB : B_W, NULL) != 0) {
+  if (vips_colourspace(image->vips, &out, grey ? (sixteen ? GREY16 : B_W) : (sixteen ? RGB16 : SRGB), NULL) != 0) {
     return fail(env, "cannot convert the colours of the image");
   }
   return make(env, out);
 }
 
 an_term image_cast(an_env *env, struct image_Image_state *image, image_Format format) {
-  if (format.tag == IMAGE_Format_Complex) return an_error(env, "complex pixels are not supported", 31);
+  if (format.tag == IMAGE_Format_Complex) return refuse(env, "complex pixels are not supported");
   VipsImage *out;
   if (vips_cast(image->vips, &out, vips_formats[format.tag], NULL) != 0) return fail(env, "cannot cast the image");
   return make(env, out);
