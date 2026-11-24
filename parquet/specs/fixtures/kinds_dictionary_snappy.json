@@ -1,0 +1,54 @@
+{
+ "rows": [
+  {
+   "fixed": "616263",
+   "flag": true,
+   "id": 1,
+   "name": "ann",
+   "ratio": 0.5,
+   "raw": "00ff",
+   "single": 0.5,
+   "small": 7
+  },
+  {
+   "fixed": "000102",
+   "flag": false,
+   "id": 2,
+   "name": "bob",
+   "ratio": -1.25,
+   "raw": "",
+   "single": 1.5,
+   "small": -2
+  },
+  {
+   "fixed": "78797a",
+   "flag": true,
+   "id": 3,
+   "name": "",
+   "ratio": 0.0,
+   "raw": "616263",
+   "single": -2.0,
+   "small": 0
+  },
+  {
+   "fixed": "ffffff",
+   "flag": true,
+   "id": 4,
+   "name": "caf\u00e9",
+   "ratio": 3.0,
+   "raw": "01",
+   "single": 0.25,
+   "small": 2147483647
+  },
+  {
+   "fixed": "313233",
+   "flag": false,
+   "id": 5,
+   "name": "\u00fcn\u00efcode \u2713",
+   "ratio": 0.001,
+   "raw": "fefefe",
+   "single": 8.0,
+   "small": -2147483648
+  }
+ ]
+}

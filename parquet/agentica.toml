@@ -1,0 +1,10 @@
+name = "parquet"
+agentica = "0.37.0"
+
+# Every bare `end` is followed by an empty line (AGENTS.md).
+[style]
+blank_line_after_end = true
+
+[dependencies]
+snappy = { git = "https://github.com/agentica-lang/packages", tag = "snappy-0.1.0", subdir = "snappy" }
+prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.4.2", subdir = "prop", group = "test" }

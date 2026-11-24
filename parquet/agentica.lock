@@ -1,0 +1,17 @@
+version = 1
+
+[[package]]
+name = "prop"
+git = "https://github.com/agentica-lang/packages"
+subdir = "prop"
+tag = "prop-0.4.2"
+commit = "6e90cee2207bce255455b14e025379d95a99a599"
+hash = "sha256:a5f4a0f1aefb90b51c750c015ccad6baaf1c273131db45d1b5d409ccd64f06b4"
+
+[[package]]
+name = "snappy"
+git = "https://github.com/agentica-lang/packages"
+subdir = "snappy"
+tag = "snappy-0.1.0"
+commit = "bc43dbddcb05ed293115deb4f904f8d66e925b97"
+hash = "sha256:41619cfea17b86fb868b68b2b9be6c7d0b954451bb26f544b1adc6bebea368e4"

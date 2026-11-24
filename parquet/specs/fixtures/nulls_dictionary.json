@@ -1,0 +1,44 @@
+{
+ "rows": [
+  {
+   "flag": true,
+   "name": "ann",
+   "num": 1
+  },
+  {
+   "flag": null,
+   "name": null,
+   "num": 2
+  },
+  {
+   "flag": false,
+   "name": "ann",
+   "num": null
+  },
+  {
+   "flag": null,
+   "name": "bob",
+   "num": 4
+  },
+  {
+   "flag": true,
+   "name": null,
+   "num": null
+  },
+  {
+   "flag": false,
+   "name": "ann",
+   "num": 6
+  },
+  {
+   "flag": null,
+   "name": "carol",
+   "num": 7
+  },
+  {
+   "flag": true,
+   "name": null,
+   "num": null
+  }
+ ]
+}
