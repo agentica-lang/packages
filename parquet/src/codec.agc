@@ -6,6 +6,8 @@ import Thrift from "thrift"
 
 ## The body of a page after its codec, which must come to exactly `size` bytes.
 def expand(codec: Int, raw: Bytes, size: Int) -> Result[Bytes]
+  return ok(raw) if size == 0 and raw.size == 0
+
   if codec == UNCOMPRESSED
     sized(raw, size)
   elsif codec == SNAPPY
@@ -41,12 +43,19 @@ def snappy(raw: Bytes, size: Int) -> Result[Bytes]
 end
 
 # `Zlib.gunzip` holds a megabyte at most, so the page goes through the streaming step, which checks `max_bytes` as it
-# goes. An empty page has no gzip member worth reading (the step refuses a cap of 0).
+# goes. The step refuses a cap of 0, so an empty page must be a valid gzip stream of nothing (checked one-shot).
 def gzip(raw: Bytes, size: Int) -> Result[Bytes]
-  return sized("".bytes, size) if size == 0
+  return empty_gzip(raw) if size == 0
 
   case [raw].lazy.gunzip(size).to_a
     ok(chunks) -> sized(Bytes.concat(chunks), size)
     error(_) -> Errors.malformed("a gzip page that does not expand to #{size} bytes")
+  end
+end
+
+def empty_gzip(raw: Bytes) -> Result[Bytes]
+  case Zlib.gunzip(raw, 1)
+    ok(expanded) -> sized(expanded, 0)
+    error(_) -> Errors.malformed("a gzip page that is not an empty stream")
   end
 end
