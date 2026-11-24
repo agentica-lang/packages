@@ -1,6 +1,7 @@
 ## Reads of the fields of a decoded Thrift struct: a missing optional field gives its default, a required one is an error,
 ## and a field of another kind is an error too.
 
+import Errors from "errors"
 import Thrift from "thrift"
 
 def number(fields: Map[Int, Thrift.Value], id: Int, default: Int) -> Result[Int]
@@ -51,28 +52,26 @@ end
 def as_text(value: Thrift.Value) -> Result[String]
   case value
     Thrift.Value.Blob(bytes) -> strict_text(-1, bytes)
-    _ -> malformed("a list item is not a string")
+    _ -> Errors.malformed("a list item is not a string")
   end
 end
 
 def as_struct(value: Thrift.Value) -> Result[Map[Int, Thrift.Value]]
   case value
     Thrift.Value.Fields(inner) -> ok(inner)
-    _ -> malformed("a list item is not a struct")
+    _ -> Errors.malformed("a list item is not a struct")
   end
 end
 
 private
 
-def malformed[T](message: String) -> Result[T] = error("parquet: #{message}", kind: "parquet.malformed")
+def missing[T](id: Int, kind: String) -> Result[T] = Errors.malformed("field #{id} is missing or not #{kind}")
 
-def missing[T](id: Int, kind: String) -> Result[T] = malformed("field #{id} is missing or not #{kind}")
-
-def wrong_kind[T](id: Int, kind: String) -> Result[T] = malformed("field #{id} is not #{kind}")
+def wrong_kind[T](id: Int, kind: String) -> Result[T] = Errors.malformed("field #{id} is not #{kind}")
 
 def strict_text(id: Int, bytes: Bytes) -> Result[String]
   case String.from_bytes(bytes)
     ok(s) -> ok(s)
-    error(_) -> malformed("field #{id} is not valid UTF-8")
+    error(_) -> Errors.malformed("field #{id} is not valid UTF-8")
   end
 end

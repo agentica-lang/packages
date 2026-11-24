@@ -76,6 +76,15 @@ def main():
     write("row_groups", groups, row_group_size=3, use_dictionary=False, compression="NONE",
           data_page_version="1.0")
 
+    big = pa.table({"s": pa.array(["".join(chr(97 + (j + i) % 26) for j in range(400000)) for i in range(3)], pa.string())})
+    pq.write_table(big, HERE / "gzip_big.parquet", use_dictionary=False, compression="GZIP", data_page_version="1.0",
+                   data_page_size=8 * 1024 * 1024)
+    nothing = pa.table({"n": pa.array([None, None, None, None], pa.int64())})
+    write("gzip_nulls_v2", nothing, use_dictionary=False, compression="GZIP", data_page_version="2.0")
+    write("uint32", pa.table({"u": pa.array([0, 1, 3000000000, 4294967295], pa.uint32())}), use_dictionary=False,
+          compression="NONE", data_page_version="1.0")
+    pq.write_table(pa.table({"u": pa.array([1, 2], pa.uint64())}), HERE / "uint64.parquet")
+
     many = pa.table({"n": pa.array([None if i % 7 == 3 else i * 3 for i in range(300)], pa.int64()),
                      "s": pa.array([None if i % 5 == 1 else f"row {i % 17}" for i in range(300)], pa.string())})
     paged = {"data_page_size": 100, "write_batch_size": 20, "row_group_size": 120}

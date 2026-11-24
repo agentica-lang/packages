@@ -25,14 +25,15 @@ The releases and their notes are in the [changelog](https://github.com/agentica-
 
 - Flat columns of the physical types boolean, int32, int64, float, double, byte array and fixed-length byte array. A byte array that the schema marks as UTF-8 is a `String`.
 - The PLAIN, PLAIN_DICTIONARY and RLE_DICTIONARY encodings, data pages v1 and v2, and dictionary pages.
-- The codecs none, Snappy (with the `snappy` package) and gzip.
+- The codecs none, Snappy (with the `snappy` package) and gzip, with pages of up to 256 MiB once expanded.
 - Several row groups, and several pages in a column chunk.
+- Logical types are read as their physical values, except UINT_32, which is read unsigned and reported as `Int64`. A DECIMAL is its raw integer or bytes, and a DATE or a TIMESTAMP is its integer, so a caller applies the scale or the unit. A UINT_64 column is `parquet.unsupported`, since an `Int` is signed.
 
-What it does not read is an error of kind `parquet.unsupported`: nested or repeated columns, INT96 columns, the ZSTD, LZ4 and Brotli codecs, and the DELTA encodings. `open` refuses a nested or INT96 column, and a codec or an encoding is refused when its column is read.
+What it does not read is an error of kind `parquet.unsupported`: nested or repeated columns, INT96 columns, the ZSTD, LZ4 and Brotli codecs, and the DELTA encodings. `open` refuses a nested, UINT_64 or INT96 column, and a codec or an encoding is refused when its column is read.
 
 ## Errors
 
-- `parquet.malformed`: the bytes are not a Parquet file, or a size, an offset or a count in them lies. Every size is checked against the bytes before it is used, so a hostile file is an error and never a crash. The memory a read uses grows with the number of rows the file claims, so cap the size of the file you accept.
+- `parquet.malformed`: the bytes are not a Parquet file, or a size, an offset or a count in them lies. Every size is checked against the bytes before it is used, so a hostile file is an error and never a crash. Without a `limit` the memory a read uses grows with the number of rows the file claims, so cap the size of the file you accept, and pass a `limit` to read only the first pages of each column.
 - `parquet.unsupported`: a feature listed above.
 - `parquet.invalid`: a negative limit or a column the file does not have.
 
@@ -88,9 +89,44 @@ parquet.malformed
 
 The number of rows in the file, from its footer.
 
+```agentica
+import Parquet from "pkg/parquet/parquet"
+
+def main() -> Void
+  handle = File.open("../specs/fixtures/row_groups.parquet").unwrap!
+  file = Parquet.open(File.read_bytes(handle, 1048576).unwrap!).unwrap!
+  IO.puts("#{Parquet.row_count(file)}")
+end
+```
+
+```output
+7
+```
+
 ### `Parquet.schema(file: Table) -> List[Field]`
 
 The columns in the order of the file. A `Field` has the `name` of the column, its `kind` and `nullable`, which is true for an optional column.
+
+```agentica
+import Parquet from "pkg/parquet/parquet"
+
+def main() -> Void
+  handle = File.open("../specs/fixtures/row_groups.parquet").unwrap!
+  file = Parquet.open(File.read_bytes(handle, 1048576).unwrap!).unwrap!
+  for field in Parquet.schema(file)
+    case field.kind
+      Parquet.Kind.Int64 -> IO.puts("#{field.name}: Int64")
+      Parquet.Kind.String -> IO.puts("#{field.name}: String")
+      _ -> IO.puts("#{field.name}: other")
+    end
+  end
+end
+```
+
+```output
+n: Int64
+s: String
+```
 
 ### `Parquet.Kind`
 
@@ -108,7 +144,7 @@ The values of a column, one case for each way of holding them. Each is a list of
 
 ### `Parquet.column(file: Table, name: String, limit: Optional[Int] = none) -> Result[Values]`
 
-The values of the column `name`, in file order and through the first `limit` rows when a limit is given (the row groups after those rows are not read). An unknown name or a negative limit is a `parquet.invalid` error. The values are exact: NaN and the infinities stay floats.
+The values of the column `name`, in file order and through the first `limit` rows when a limit is given (the pages after those rows are not read, and the result is cut to the limit). An unknown name or a negative limit is a `parquet.invalid` error. The values are exact: NaN and the infinities stay floats.
 
 ```agentica
 import Parquet from "pkg/parquet/parquet"
@@ -137,3 +173,22 @@ parquet.invalid
 ### `Parquet.rows(file: Table, limit: Optional[Int] = none) -> Result[List[Map[String, JSON.Value]]]`
 
 The rows as maps from the name of a column to a JSON value, through the first `limit` rows when a limit is given. Binary values are lowercase hex text, and NaN and the infinities are `null`, since JSON has no such numbers. Use `column` when you need them exactly.
+
+```agentica
+import Parquet from "pkg/parquet/parquet"
+
+def main() -> Void
+  handle = File.open("../specs/fixtures/row_groups.parquet").unwrap!
+  file = Parquet.open(File.read_bytes(handle, 1048576).unwrap!).unwrap!
+  for row in Parquet.rows(file, some(4)).unwrap!
+    IO.puts(JSON.encode(row))
+  end
+end
+```
+
+```output
+{"n":1,"s":"a"}
+{"n":null,"s":"b"}
+{"n":3,"s":null}
+{"n":4,"s":"d"}
+```

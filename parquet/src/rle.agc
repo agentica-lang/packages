@@ -2,13 +2,14 @@
 ## bit clear repeats one value; with it set, the header counts groups of eight values that are bit-packed, least
 ## significant bit first.
 
+import Errors from "errors"
 import Thrift from "thrift"
 
 MAX_WIDTH = 32
 
 ## The number of values, each `width` bits wide, at the start of `data`, which holds nothing else.
 def decode(data: Bytes, width: Int, count: Int) -> Result[List[Int]]
-  return malformed("a bit width of #{width}") if width < 0 or width > MAX_WIDTH
+  return Errors.malformed("a bit width of #{width}") if width < 0 or width > MAX_WIDTH
   return ok([]) if count == 0
 
   values: List[Int] = []
@@ -45,12 +46,10 @@ end
 
 private
 
-def malformed[T](message: String) -> Result[T] = error("parquet: #{message}", kind: "parquet.malformed")
-
 # A run of `length` copies of one value, stored in as many bytes as its width needs (least significant byte first).
 def repeated(data: Bytes, pos: Int, width: Int, length: Int, wanted: Int) -> Result[Thrift.Read[List[Int]]]
   bytes = (width + 7).shift_right(3)
-  return malformed("a run value past the data") if bytes > data.size - pos
+  return Errors.malformed("a run value past the data") if bytes > data.size - pos
 
   value = 0
   for k in 0...bytes
@@ -67,7 +66,9 @@ end
 
 # `groups` groups of eight values, each group `width` bytes long, of which only `wanted` values are kept.
 def bit_packed(data: Bytes, pos: Int, width: Int, groups: Int, wanted: Int) -> Result[Thrift.Read[List[Int]]]
-  return malformed("#{groups} bit-packed groups past the data") if width > 0 and groups > (data.size - pos) / width
+  if width > 0 and groups > (data.size - pos) / width
+    return Errors.malformed("#{groups} bit-packed groups past the data")
+  end
 
   bytes = groups * width
   kept = wanted

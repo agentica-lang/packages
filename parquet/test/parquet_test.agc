@@ -1,3 +1,4 @@
+import Binary from "std/binary"
 import Prop from "pkg/prop/prop"
 import Parquet from "../parquet"
 
@@ -29,19 +30,43 @@ def outcome(data: Bytes) -> Result[Void]
   end
 end
 
-def damaged(pair: Prop.Pair[Int, Int]) -> Bytes
-  data = fixture("nulls_snappy")
-  at = pair.first % data.size
-  data.slice(0, at) + Bytes.from_list([pair.second]).unwrap! + data.slice(at + 1, data.size - at - 1)
+# One byte of a fixture changed. `body_only` keeps the magic and the footer, so the damage lands in the pages.
+def damaged(name: String, change: Prop.Pair[Int, Int], body_only: Bool) -> Bytes
+  data = fixture(name)
+  span = data.size
+  start = 0
+  if body_only
+    footer = Binary.read_u32_le(data, data.size - 8).unwrap!
+    start = 4
+    span = data.size - 8 - footer - 4
+  end
+
+  at = start + change.first % span
+  data.slice(0, at) + Bytes.from_list([change.second]).unwrap! + data.slice(at + 1, data.size - at - 1)
 end
 
 def shown(data: Bytes) -> String = "#{data.size} bytes, #{data.to_a}"
+
+def changes() -> Prop.Gen[Prop.Pair[Int, Int]] = Prop.pair(Prop.int(0, 1000000), Prop.int(0, 255))
+
+def pages_of(name: String) -> Result[Void]
+  in_pages = Prop.map_shown(changes(), &shown, ->(change) { damaged(name, change, true) })
+  Prop.check(in_pages, Prop.Config(runs: 20), &outcome)
+end
 
 def test_random_bytes_are_read_or_refused() -> Result[Void]
   Prop.check(Prop.bytes(0, 300), Prop.Config(runs: 100), &outcome)
 end
 
 def test_a_damaged_fixture_is_read_or_refused() -> Result[Void]
-  changed = Prop.map_shown(Prop.pair(Prop.int(0, 100000), Prop.int(0, 255)), &shown, &damaged)
-  Prop.check(changed, Prop.Config(runs: 25), &outcome)
+  anywhere = Prop.map_shown(changes(), &shown, ->(change) { damaged("nulls_snappy", change, false) })
+  Prop.check(anywhere, Prop.Config(runs: 25), &outcome)
 end
+
+def test_damaged_dictionary_pages_are_read_or_refused() -> Result[Void] = pages_of("kinds_dictionary_snappy")
+
+def test_damaged_gzip_pages_are_read_or_refused() -> Result[Void] = pages_of("nulls_gzip")
+
+def test_damaged_v2_pages_are_read_or_refused() -> Result[Void] = pages_of("nulls_v2_snappy")
+
+def test_damaged_byte_array_pages_are_read_or_refused() -> Result[Void] = pages_of("nulls_plain")

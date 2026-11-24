@@ -75,7 +75,7 @@ def test_a_hybrid_stream_past_its_bytes_is_malformed() -> Result[Void]
 end
 
 def test_plain_integers_are_little_endian_and_a_count_past_the_bytes_is_malformed() -> Result[Void]
-  kind = Plain.Kind(physical: Plain.INT32, text: false, width: 0)
+  kind = Plain.Kind(physical: Plain.INT32, text: false, width: 0, unsigned: false)
   data = bytes_of([1, 0, 0, 0, 255, 255, 255, 255])
   decoded = try Plain.decode(kind, data, 2)
   try must(decoded == Values.Values.Integers([some(1), some(-1)]), "decoded another value")
@@ -83,6 +83,17 @@ def test_plain_integers_are_little_endian_and_a_count_past_the_bytes_is_malforme
 end
 
 def test_a_byte_array_longer_than_the_data_is_malformed() -> Result[Void]
-  kind = Plain.Kind(physical: Plain.BYTE_ARRAY, text: true, width: 0)
+  kind = Plain.Kind(physical: Plain.BYTE_ARRAY, text: true, width: 0, unsigned: false)
   refused(Plain.decode(kind, bytes_of([9, 0, 0, 0, 97]), 1), MALFORMED)
+end
+
+def test_a_byte_array_with_no_room_for_its_length_is_malformed() -> Result[Void]
+  kind = Plain.Kind(physical: Plain.BYTE_ARRAY, text: false, width: 0, unsigned: false)
+  refused(Plain.decode(kind, bytes_of([1, 0, 0, 0, 97]), 2), MALFORMED)
+end
+
+def test_an_unsigned_integer_column_reads_negatives_as_large_numbers() -> Result[Void]
+  kind = Plain.Kind(physical: Plain.INT32, text: false, width: 0, unsigned: true)
+  decoded = try Plain.decode(kind, bytes_of([255, 255, 255, 255]), 1)
+  must(decoded == Values.Values.Integers([some(4294967295)]), "decoded another value")
 end

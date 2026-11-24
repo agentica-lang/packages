@@ -21,6 +21,8 @@ Feature: reading the rows of a Parquet file
       | runs_dictionary  |
       | row_groups       |
       | empty            |
+      | gzip_nulls_v2    |
+      | uint32           |
       | special_floats   |
 
   Scenario: the schema and the row count come from the footer
@@ -42,6 +44,7 @@ Feature: reading the rows of a Parquet file
       | nested |
       | int96  |
       | delta  |
+      | uint64 |
       | codec_zstd |
       | codec_lz4  |
 
@@ -90,3 +93,15 @@ Feature: reading the rows of a Parquet file
     Then reading 2 rows of the fixture "row_groups" gives 2 rows
     And reading the column "nope" of the fixture "row_groups" is refused as "parquet.invalid"
     And reading -1 rows of the fixture "row_groups" is refused as "parquet.invalid"
+
+  Scenario Outline: a limit across row groups keeps the first rows
+    Then reading <limit> rows of the fixture "row_groups" gives <rows> rows
+
+    Examples:
+      | limit | rows |
+      | 3     | 3    |
+      | 4     | 4    |
+      | 100   | 7    |
+
+  Scenario: a gzip page over a megabyte is read whole
+    Then the column "s" of the fixture "gzip_big" has texts of 400000 bytes each, 3 of them

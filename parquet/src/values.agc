@@ -1,5 +1,7 @@
 ## The values of a column, one list per kind of value. A null is `none`, so a column keeps every row.
 
+import Errors from "errors"
+
 enum Values
   Booleans(List[Optional[Bool]])
   Integers(List[Optional[Int]])
@@ -66,47 +68,45 @@ end
 
 private
 
-def malformed[T](message: String) -> Result[T] = error("parquet: #{message}", kind: "parquet.malformed")
-
 def join_booleans(xs: List[Optional[Bool]], b: Values) -> Result[Values]
   case b
     Values.Booleans(ys) -> ok(Values.Booleans(xs + ys))
-    _ -> malformed("a column with two kinds of values")
+    _ -> Errors.malformed("a column with two kinds of values")
   end
 end
 
 def join_integers(xs: List[Optional[Int]], b: Values) -> Result[Values]
   case b
     Values.Integers(ys) -> ok(Values.Integers(xs + ys))
-    _ -> malformed("a column with two kinds of values")
+    _ -> Errors.malformed("a column with two kinds of values")
   end
 end
 
 def join_floats(xs: List[Optional[Float]], b: Values) -> Result[Values]
   case b
     Values.Floats(ys) -> ok(Values.Floats(xs + ys))
-    _ -> malformed("a column with two kinds of values")
+    _ -> Errors.malformed("a column with two kinds of values")
   end
 end
 
 def join_texts(xs: List[Optional[String]], b: Values) -> Result[Values]
   case b
     Values.Texts(ys) -> ok(Values.Texts(xs + ys))
-    _ -> malformed("a column with two kinds of values")
+    _ -> Errors.malformed("a column with two kinds of values")
   end
 end
 
 def join_blobs(xs: List[Optional[Bytes]], b: Values) -> Result[Values]
   case b
     Values.Blobs(ys) -> ok(Values.Blobs(xs + ys))
-    _ -> malformed("a column with two kinds of values")
+    _ -> Errors.malformed("a column with two kinds of values")
   end
 end
 
 def pick_list[T](xs: List[T], indices: List[Int]) -> Result[List[T]]
   picked: List[T] = []
   for index in indices
-    return malformed("dictionary index #{index} of #{xs.size} values") if index < 0 or index >= xs.size
+    return Errors.malformed("dictionary index #{index} of #{xs.size} values") if index < 0 or index >= xs.size
 
     picked = picked.push(xs[index])
   end
@@ -118,9 +118,9 @@ def spread_list[T](xs: List[Optional[T]], levels: List[Int], max_level: Int) -> 
   rows: List[Optional[T]] = []
   taken = 0
   for level in levels
-    return malformed("a definition level #{level} above #{max_level}") if level > max_level
+    return Errors.malformed("a definition level #{level} above #{max_level}") if level > max_level
     if level == max_level
-      return malformed("more defined values than the page holds") if taken >= xs.size
+      return Errors.malformed("more defined values than the page holds") if taken >= xs.size
 
       rows = rows.push(xs[taken])
       taken = taken + 1

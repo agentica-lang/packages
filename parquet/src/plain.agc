@@ -2,6 +2,7 @@
 ## before a loop runs, so a header that claims more values than the data holds is an error at once.
 
 import Binary from "std/binary"
+import Errors from "errors"
 import Values from "values"
 
 BOOLEAN = 0
@@ -13,16 +14,20 @@ DOUBLE = 5
 BYTE_ARRAY = 6
 FIXED_LEN_BYTE_ARRAY = 7
 
-## A physical type with what it needs: whether a byte array is text, and the length of a fixed-length value.
+## A physical type with what it needs: whether a byte array is text, the length of a fixed-length value, and whether
+## an INT32 is unsigned (UINT_32, which does not fit an Int32).
 struct Kind
   physical: Int
   text: Bool
   width: Int
+  unsigned: Bool
 end
 
 def decode(kind: Kind, data: Bytes, count: Int) -> Result[Values.Values]
   if kind.physical == BOOLEAN
     booleans(data, count)
+  elsif kind.physical == INT32 and kind.unsigned
+    integers(data, count, 4, ->(at) { Binary.read_u32_le(data, at) })
   elsif kind.physical == INT32
     integers(data, count, 4, ->(at) { Binary.read_i32_le(data, at) })
   elsif kind.physical == INT64
@@ -36,7 +41,7 @@ def decode(kind: Kind, data: Bytes, count: Int) -> Result[Values.Values]
   elsif kind.physical == FIXED_LEN_BYTE_ARRAY
     fixed_arrays(kind, data, count)
   else
-    unsupported("the physical type #{kind.physical}")
+    Errors.unsupported("the physical type #{kind.physical}")
   end
 end
 
@@ -62,12 +67,8 @@ end
 
 private
 
-def malformed[T](message: String) -> Result[T] = error("parquet: #{message}", kind: "parquet.malformed")
-
-def unsupported[T](message: String) -> Result[T] = error("parquet: #{message}", kind: "parquet.unsupported")
-
 def booleans(data: Bytes, count: Int) -> Result[Values.Values]
-  return malformed("#{count} booleans in #{data.size} bytes") if count > data.size * 8
+  return Errors.malformed("#{count} booleans in #{data.size} bytes") if count > data.size * 8
 
   bits: List[Optional[Bool]] = []
   for i in 0...count
@@ -79,7 +80,7 @@ def booleans(data: Bytes, count: Int) -> Result[Values.Values]
 end
 
 def integers(data: Bytes, count: Int, width: Int, read: Fn[Int, Result[Int]]) -> Result[Values.Values]
-  return malformed("#{count} integers in #{data.size} bytes") if count > data.size / width
+  return Errors.malformed("#{count} integers in #{data.size} bytes") if count > data.size / width
 
   items: List[Optional[Int]] = []
   for i in 0...count
@@ -91,7 +92,7 @@ def integers(data: Bytes, count: Int, width: Int, read: Fn[Int, Result[Int]]) ->
 end
 
 def floats(data: Bytes, count: Int, width: Int, read: Fn[Int, Result[Float]]) -> Result[Values.Values]
-  return malformed("#{count} floats in #{data.size} bytes") if count > data.size / width
+  return Errors.malformed("#{count} floats in #{data.size} bytes") if count > data.size / width
 
   items: List[Optional[Float]] = []
   for i in 0...count
@@ -108,8 +109,10 @@ def byte_arrays(kind: Kind, data: Bytes, count: Int) -> Result[Values.Values]
   texts: List[Optional[String]] = []
   blobs: List[Optional[Bytes]] = []
   for _ in 0...count
+    return Errors.malformed("a value with no length at #{at} of #{data.size}") if at > data.size - 4
+
     length = try Binary.read_u32_le(data, at)
-    return malformed("a value of #{length} bytes past the data") if length > data.size - at - 4
+    return Errors.malformed("a value of #{length} bytes past the data") if length > data.size - at - 4
 
     value = data.slice(at + 4, length)
     at = at + 4 + length
@@ -128,8 +131,10 @@ def byte_arrays(kind: Kind, data: Bytes, count: Int) -> Result[Values.Values]
 end
 
 def fixed_arrays(kind: Kind, data: Bytes, count: Int) -> Result[Values.Values]
-  return malformed("a fixed length of #{kind.width} bytes") if kind.width <= 0
-  return malformed("#{count} values of #{kind.width} bytes in #{data.size} bytes") if count > data.size / kind.width
+  return Errors.malformed("a fixed length of #{kind.width} bytes") if kind.width <= 0
+  if count > data.size / kind.width
+    return Errors.malformed("#{count} values of #{kind.width} bytes in #{data.size} bytes")
+  end
 
   texts: List[Optional[String]] = []
   blobs: List[Optional[Bytes]] = []
@@ -152,6 +157,6 @@ end
 def text(value: Bytes) -> Result[String]
   case String.from_bytes(value)
     ok(s) -> ok(s)
-    error(_) -> malformed("a text value that is not UTF-8")
+    error(_) -> Errors.malformed("a text value that is not UTF-8")
   end
 end

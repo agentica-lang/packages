@@ -1,6 +1,8 @@
 ## The Thrift compact protocol, as far as the footer of a Parquet file uses it: a struct is a map from its field id to the
 ## value of the field, and a list or a nested struct is a value of the same kind.
 
+import Errors from "errors"
+
 struct Read[T]
   value: T
   next: Int
@@ -22,7 +24,7 @@ def varint(data: Bytes, pos: Int) -> Result[Read[Int]]
   value = 0
   at = pos
   for i in 0...MAX_VARINT_BYTES
-    return malformed("a varint at #{pos} past the data") if at >= data.size
+    return Errors.malformed("a varint at #{pos} past the data") if at >= data.size
 
     byte = data[at]
     value = value + byte.bit_and(0x7F).shift_left(7 * i)
@@ -30,7 +32,7 @@ def varint(data: Bytes, pos: Int) -> Result[Read[Int]]
     return ok(Read(value: value, next: at)) if byte < 0x80
   end
 
-  malformed("a varint at #{pos} longer than nine bytes")
+  Errors.malformed("a varint at #{pos} longer than nine bytes")
 end
 
 private
@@ -47,12 +49,8 @@ TYPE_SET = 10
 TYPE_MAP = 11
 TYPE_STRUCT = 12
 
-def malformed[T](message: String) -> Result[T] = error("parquet: #{message}", kind: "parquet.malformed")
-
-def unsupported[T](message: String) -> Result[T] = error("parquet: #{message}", kind: "parquet.unsupported")
-
 def read_fields(data: Bytes, pos: Int, depth: Int) -> Result[Read[Map[Int, Value]]]
-  return malformed("structs nested deeper than #{MAX_DEPTH}") if depth >= MAX_DEPTH
+  return Errors.malformed("structs nested deeper than #{MAX_DEPTH}") if depth >= MAX_DEPTH
 
   fields: Map[Int, Value] = {}
   at = pos
@@ -81,7 +79,7 @@ def read_fields(data: Bytes, pos: Int, depth: Int) -> Result[Read[Map[Int, Value
     last = id
   end
 
-  malformed("a struct with no stop byte")
+  Errors.malformed("a struct with no stop byte")
 end
 
 def read_value(data: Bytes, pos: Int, kind: Int, depth: Int) -> Result[Read[Value]]
@@ -103,14 +101,14 @@ def read_value(data: Bytes, pos: Int, kind: Int, depth: Int) -> Result[Read[Valu
     nested = try read_fields(data, pos, depth + 1)
     ok(Read(value: Value.Fields(nested.value), next: nested.next))
   elsif kind == TYPE_MAP
-    unsupported("map fields are not read")
+    Errors.unsupported("map fields are not read")
   else
-    malformed("field type #{kind}")
+    Errors.malformed("field type #{kind}")
   end
 end
 
 def items(data: Bytes, pos: Int, depth: Int) -> Result[Read[Value]]
-  return malformed("lists nested deeper than #{MAX_DEPTH}") if depth >= MAX_DEPTH
+  return Errors.malformed("lists nested deeper than #{MAX_DEPTH}") if depth >= MAX_DEPTH
 
   head = try take(data, pos, 1)
   count = head.value[0].shift_right(4)
@@ -122,7 +120,7 @@ def items(data: Bytes, pos: Int, depth: Int) -> Result[Read[Value]]
     at = size.next
   end
 
-  return malformed("a list of #{count} items in #{data.size} bytes") if count > data.size - at
+  return Errors.malformed("a list of #{count} items in #{data.size} bytes") if count > data.size - at
 
   values: List[Value] = []
   for _ in 0...count
@@ -149,7 +147,7 @@ def integer(data: Bytes, pos: Int) -> Result[Read[Value]]
 end
 
 def take(data: Bytes, pos: Int, length: Int) -> Result[Read[Bytes]]
-  return malformed("#{length} bytes at #{pos} past #{data.size}") if length < 0 or length > data.size - pos
+  return Errors.malformed("#{length} bytes at #{pos} past #{data.size}") if length < 0 or length > data.size - pos
 
   ok(Read(value: data.slice(pos, length), next: pos + length))
 end

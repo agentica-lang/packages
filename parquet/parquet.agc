@@ -2,6 +2,7 @@
 ## is the error kind `parquet.malformed`; a feature this package does not read is `parquet.unsupported`.
 
 import Binary from "std/binary"
+import Errors from "src/errors"
 import Metadata from "src/metadata"
 import Plain from "src/plain"
 import Reader from "src/reader"
@@ -38,26 +39,17 @@ end
 
 ## Opens a file from its bytes and checks its footer and its row groups. Pages are read when a column or the rows are asked for.
 def open(data: Bytes) -> Result[Table]
-  return malformed("a file of #{data.size} bytes is too short") if data.size < MIN_SIZE
+  return Errors.malformed("a file of #{data.size} bytes is too short") if data.size < MIN_SIZE
 
   magic_bad = data.slice(0, 4) != MAGIC or data.slice(data.size - 4, 4) != MAGIC
-  return malformed("no PAR1 magic at the start and the end") if magic_bad
+  return Errors.malformed("no PAR1 magic at the start and the end") if magic_bad
 
   length = try Binary.read_u32_le(data, data.size - 8)
-  return malformed("a footer of #{length} bytes in a file of #{data.size}") if length > data.size - MIN_SIZE
+  return Errors.malformed("a footer of #{length} bytes in a file of #{data.size}") if length > data.size - MIN_SIZE
 
   meta = try Metadata.read_meta(data.slice(data.size - 8 - length, length))
   columns = try Schema.columns(meta.elements)
-  if group_rows(meta.groups) != meta.rows
-    return malformed("the row groups hold #{group_rows(meta.groups)} rows, the footer #{meta.rows}")
-  end
-
-  for group in meta.groups
-    if group.chunks.size != columns.size
-      return malformed("a row group of #{group.chunks.size} chunks for #{columns.size} columns")
-    end
-  end
-
+  try check_groups(meta, columns.size)
   ok(Table(data: data, meta: meta, columns: columns))
 end
 
@@ -76,7 +68,7 @@ end
 
 ## The values of the column `name`, through the first `limit` rows when a limit is given.
 def column(file: Table, name: String, limit: Optional[Int] = none) -> Result[Vals.Values]
-  return invalid("a negative limit") if negative(limit)
+  return Errors.invalid("a negative limit") if negative(limit)
 
   index = try column_index(file, name)
   read_column(file, index, limit)
@@ -85,7 +77,7 @@ end
 ## The rows of the file as JSON objects keyed by column name, through the first `limit` rows when a limit is given.
 ## Binary values are lowercase hex text, and NaN and infinite floats are null; `column` keeps the exact values.
 def rows(file: Table, limit: Optional[Int] = none) -> Result[List[Map[String, JSON.Value]]]
-  return invalid("a negative limit") if negative(limit)
+  return Errors.invalid("a negative limit") if negative(limit)
 
   cells_of: List[List[JSON.Value]] = []
   for index in 0...file.columns.size
@@ -117,10 +109,6 @@ MAGIC = "PAR1".bytes
 MIN_SIZE = 12
 MAX_FINITE = Float.from_bits(9218868437227405311)
 
-def malformed[T](message: String) -> Result[T] = error("parquet: #{message}", kind: "parquet.malformed")
-
-def invalid[T](message: String) -> Result[T] = error("parquet: #{message}", kind: "parquet.invalid")
-
 def negative(limit: Optional[Int]) -> Bool
   case limit
     some(n) -> n < 0
@@ -128,13 +116,30 @@ def negative(limit: Optional[Int]) -> Bool
   end
 end
 
-def group_rows(groups: List[Metadata.Group]) -> Int
+# The row groups hold the footer's rows, each chunk holds its group's rows, and no count is negative. The running total
+# is compared before each add, so the sum cannot overflow.
+def check_groups(meta: Metadata.Meta, columns: Int) -> Result[Void]
+  return Errors.malformed("#{meta.rows} rows in the footer") if meta.rows < 0
+
   total = 0
-  for group in groups
+  for group in meta.groups
+    return Errors.malformed("a row group of #{group.rows} rows") if group.rows < 0 or group.rows > meta.rows - total
+    if group.chunks.size != columns
+      return Errors.malformed("a row group of #{group.chunks.size} chunks for #{columns} columns")
+    end
+
+    for chunk in group.chunks
+      if chunk.count != group.rows
+        return Errors.malformed("a chunk of #{chunk.count} values in a group of #{group.rows} rows")
+      end
+    end
+
     total = total + group.rows
   end
 
-  total
+  return Errors.malformed("the row groups hold #{total} rows, the footer #{meta.rows}") if total != meta.rows
+
+  ok()
 end
 
 def column_index(file: Table, name: String) -> Result[Int]
@@ -142,7 +147,7 @@ def column_index(file: Table, name: String) -> Result[Int]
     return ok(index) if file.columns[index].name == name
   end
 
-  invalid("no column named #{name}")
+  Errors.invalid("no column named #{name}")
 end
 
 def read_column(file: Table, index: Int, limit: Optional[Int]) -> Result[Vals.Values]
@@ -153,15 +158,18 @@ def read_column(file: Table, index: Int, limit: Optional[Int]) -> Result[Vals.Va
 
     chunk = group.chunks[index]
     layout = try Reader.layout_of(col, chunk)
-    values = try Reader.chunk_values(file.data, chunk, layout)
-    if Vals.size(values) != group.rows
-      return malformed("a row group of #{group.rows} rows holds #{Vals.size(values)} values")
-    end
-
+    values = try Reader.chunk_values(file.data, chunk, layout, remaining(limit, Vals.size(acc)))
     acc = try Vals.join(acc, values)
   end
 
   ok(clip(acc, limit))
+end
+
+def remaining(limit: Optional[Int], have: Int) -> Optional[Int]
+  case limit
+    some(n) -> some(n - have)
+    none -> none
+  end
 end
 
 def reached(limit: Optional[Int], have: Int) -> Bool
@@ -179,7 +187,9 @@ def clip(values: Vals.Values, limit: Optional[Int]) -> Vals.Values
 end
 
 def field_kind(col: Schema.Column) -> Kind
-  if col.physical == Plain.BOOLEAN
+  if col.physical == Plain.INT32 and col.unsigned
+    Kind.Int64
+  elsif col.physical == Plain.BOOLEAN
     Kind.Boolean
   elsif col.physical == Plain.INT32
     Kind.Int32

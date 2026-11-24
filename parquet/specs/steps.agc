@@ -20,6 +20,7 @@ def main() -> Void
       &byte_refused,
     ),
     BDD.step("the fixture {string} missing its last {int} bytes is refused as {string}", &missing_refused),
+    BDD.step("the column {string} of the fixture {string} has texts of {int} bytes each, {int} of them", &big_texts),
     BDD.step("reading {int} rows of the fixture {string} gives {int} rows", &limit_gives),
     BDD.step("reading the column {string} of the fixture {string} is refused as {string}", &column_refused),
     BDD.step("reading {int} rows of the fixture {string} is refused as {string}", &limit_refused),
@@ -167,6 +168,25 @@ def limit_gives(ctx: BDD.Context, args: List[String]) -> BDD.Context
   case Parquet.rows(file, some(args[0].to_i!))
     ok(rows) -> BDD.assert(ctx, rows.size == args[2].to_i!, "got #{rows.size} rows")
     error(e) -> BDD.assert(ctx, false, "gave kind #{e.kind}")
+  end
+end
+
+def big_texts(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  file = Parquet.open(fixture_bytes(args[1]).unwrap!).unwrap!
+  case Parquet.column(file, args[0])
+    ok(Values.Values.Texts(xs)) ->
+      sizes = xs.map { |x| text_size(x) }
+      want = (0...args[3].to_i!).map(->(_i) { args[2].to_i! })
+      BDD.assert(ctx, sizes == want, "the sizes are #{sizes}")
+    ok(_) -> BDD.assert(ctx, false, "the column is not texts")
+    error(e) -> BDD.assert(ctx, false, "gave #{e.kind}: #{e.message}")
+  end
+end
+
+def text_size(x: Optional[String]) -> Int
+  case x
+    some(s) -> s.bytes.size
+    none -> -1
   end
 end
 
