@@ -1,6 +1,6 @@
 ---
 title: image
-description: Images on libvips: decode, encode, and the pixels as one Bytes buffer, with no value per pixel.
+description: "Images on libvips: decode, encode, and the pixels as one Bytes buffer, with no value per pixel."
 ---
 
 `image` loads and saves images (JPEG, PNG, WebP, TIFF and the rest that your libvips has) and hands their pixels to other code as one `Bytes` buffer, interleaved and in the byte order of the machine. It is a [libvips](https://www.libvips.org/) binding made with [native-gen](https://www.agentica-lang.com/packages/native-gen/): the C module is built on the first run.
