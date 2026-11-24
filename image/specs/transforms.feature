@@ -4,7 +4,9 @@ Feature: Transforms of images
   through the luminance of linear light, and resizes with the Lanczos 3 kernel: a box shrink by the whole part of half
   the shrink on each side when that is 2 or more, then the reduce of each side (the rows first), each pass rounded to u8,
   which the peer models alike.
-  The source image is closed before the pixels are read, since a result keeps what it needs.
+  The source image is closed before the pixels are read, since a result keeps what it needs. The resize model is
+  exact only when each integer shrink divides the size, so the scenarios use sizes that it does; the tolerance of 3
+  levels was measured with libvips 8.15 and 8.16, where the worst difference seen is 3 (no margin).
 
   Scenario Outline: Crop, flip and rotate move pixels exactly
     Then the pixels "<raw>" as <width> by <height> with <bands> bands of "U8" under "<transform>" are the peer's within 0
@@ -52,6 +54,16 @@ Feature: Transforms of images
       | rgb.raw  | 16    | 12     | 3     | grey      | 1      |
       | rgba.raw | 9     | 7      | 4     | grey      | 1      |
       | grey.raw | 10    | 6      | 1     | srgb      | 0      |
+
+  # The bytes of rgb.raw as grey and alpha.
+  Scenario: Colours of a grey image with alpha
+    Then the pixels "rgb.raw" as 24 by 12 with 2 bands of "U8" under "srgb" are the peer's within 0
+
+  Scenario: A chain of transforms outlives the images it came through
+    Then the pixels "rgba.raw" as 9 by 7 with 4 bands of "U8" turn a quarter and back
+
+  Scenario: Lazy images are read by several tasks at once
+    Then 8 tasks resize the pixels "photo.raw" as 64 by 48 with 3 bands of "U8" to 20 by 20
 
   # A 16-bit image stays 16-bit: the peer copies each 2-byte sample to the three bands.
   Scenario: Colours of a 16-bit image keep their depth

@@ -19,6 +19,11 @@ Feature: Images on libvips
       | rgb.raw      | 16    | 12     | 3     | U8     |
       | gray16.raw   | 8     | 6      | 1     | U16    |
       | ramp_f32.raw | 4     | 3      | 2     | F32    |
+      | rgb.raw      | 16    | 12     | 3     | I8     |
+      | rgb.raw      | 16    | 6      | 3     | I16    |
+      | rgb.raw      | 12    | 12     | 1     | U32    |
+      | rgb.raw      | 12    | 12     | 1     | I32    |
+      | rgb.raw      | 12    | 6      | 1     | F64    |
 
   Scenario Outline: A lossless format keeps the pixels
     Then the pixels "<raw>" as <width> by <height> with <bands> bands of "<format>" survive "<encoding>"
@@ -54,19 +59,33 @@ Feature: Images on libvips
 
   Scenario: Bad input fails
     Then these calls fail:
-      | call         | a                          | b  | c  | d       | says                                                                                       |
-      | from_bytes   | not an image               |    |    |         |                                                                                            |
-      | load         | specs/fixtures/missing.png |    |    |         |                                                                                            |
-      | from_pixels  | 16                         | 12 | 4  | U8      | the size of the pixels does not match width * height * bands * the size of the format      |
-      | from_pixels  | 0                          | 12 | 3  | U8      | the width, the height and the bands must be positive                                       |
-      | from_pixels  | 16                         | 12 | 3  | Complex | complex pixels are not supported                                                           |
-      | to_bytes     | nope                       |    |    |         |                                                                                            |
-      | crop         | 10                         | 5  | 10 | 10      |                                                                                            |
-      | crop         | 0                          | 0  | 0  | 5       | the area is outside the image                                                              |
-      | rotate       | 45                         |    |    |         | the angle must be a multiple of 90 degrees                                                 |
-      | resize       | 0                          | 5  |    |         | the width and the height must be positive                                                  |
-      | cast         | Complex                    |    |    |         | complex pixels are not supported                                                           |
-      | colourspace  | Srgb                       |    |    |         | colourspace needs a U8 or U16 image                                                        |
+      | call         | a                             | b          | c          | d       | says                                                                                  |
+      | from_bytes   | not an image                  |            |            |         |                                                                                       |
+      | load         | specs/fixtures/missing.png    |            |            |         |                                                                                       |
+      | load_nul     |                               |            |            |         | the path has a NUL byte                                                               |
+      | save         | /nonexistent/folder/image.png |            |            |         |                                                                                       |
+      | save         | image.nope                    |            |            |         |                                                                                       |
+      | save_nul     |                               |            |            |         | the path has a NUL byte                                                               |
+      | from_pixels  | 16                            | 12         | 4          | U8      | the size of the pixels does not match width * height * bands * the size of the format |
+      | from_pixels  | 0                             | 12         | 3          | U8      | the width, the height and the bands must be positive                                  |
+      | from_pixels  | 2147483648                    | 1          | 1          | U8      | the width and the height must be at most 2147483647                                   |
+      | from_pixels  | 1                             | 1          | 65536      | U8      | the bands must be at most 65535                                                       |
+      | from_pixels  | 2147483647                    | 2147483647 | 65535      | U8      | the size of the pixels does not match width * height * bands * the size of the format |
+      | from_pixels  | 16                            | 12         | 3          | Complex | complex pixels are not supported                                                      |
+      | to_bytes     | nope                          |            |            |         |                                                                                       |
+      | to_bytes_nul |                               |            |            |         | the suffix has a NUL byte                                                             |
+      | crop         | 10                            | 5          | 10         | 10      | the area is outside the image                                                         |
+      | crop         | 15                            | 0          | 2          | 1       | the area is outside the image                                                         |
+      | crop         | 0                             | 0          | 0          | 5       | the area is outside the image                                                         |
+      | crop         | -1                            | 0          | 2          | 2       | the area is outside the image                                                         |
+      | crop         | 0                             | 0          | 2147483648 | 1       | the area is outside the image                                                         |
+      | rotate       | 45                            |            |            |         | the angle must be a multiple of 90 degrees                                            |
+      | resize       | 0                             | 5          |            |         | the width and the height must be positive                                             |
+      | resize       | 1000000                       | 1000000    |            |         | the size is more than 268435456 pixels                                                |
+      | resize       | 2147483648                    | 1          |            |         | the width and the height must be at most 10000000                                                |
+      | resize       | 100000000                     | 1          |            |         | the width and the height must be at most 10000000                                                       |
+      | cast         | Complex                       |            |            |         | complex pixels are not supported                                                      |
+      | colourspace  | Srgb                          |            |            |         | colourspace needs a U8 or U16 image                                                   |
 
   Scenario: The committed header is the one the block gives
     Given the program argument "../image.agc"

@@ -35,22 +35,23 @@ extern module "image"
   compute def from_pixels(pixels: Bytes, width: Int, height: Int, bands: Int, format: Format) -> Result[Image]
   ## Writes the image to `path`; the extension picks the encoder (`.png`, `.jpg[Q=90]`).
   compute def save(image: Image, path: String) -> Result[Void]
-  ## Encodes the image as `format`, a suffix without the dot and with the options of libvips (`png`, `jpg[Q=90]`).
-  compute def to_bytes(image: Image, format: String) -> Result[Bytes]
+  ## Encodes the image as `suffix`, a file extension without the dot, with the options of libvips (`png`, `jpg[Q=90]`).
+  compute def to_bytes(image: Image, suffix: String) -> Result[Bytes]
   ## The pixels, interleaved, in the format of the image and the byte order of this machine.
   compute def to_pixels(image: Image) -> Result[Bytes]
   ## The image scaled to `width` by `height` with the Lanczos 3 kernel of libvips; the aspect ratio is yours to keep.
-  compute def resize(image: Image, width: Int, height: Int) -> Result[Image]
+  def resize(image: Image, width: Int, height: Int) -> Result[Image]
   ## The `width` by `height` area whose top left pixel is at `left`, `top`; an area outside the image is an error.
-  compute def crop(image: Image, left: Int, top: Int, width: Int, height: Int) -> Result[Image]
+  def crop(image: Image, left: Int, top: Int, width: Int, height: Int) -> Result[Image]
   ## The image mirrored left to right (`Horizontal`) or top to bottom (`Vertical`).
-  compute def flip(image: Image, direction: Direction) -> Result[Image]
+  def flip(image: Image, direction: Direction) -> Result[Image]
   ## The image turned clockwise by `degrees`, a multiple of 90 (negative turns counterclockwise).
-  compute def rotate(image: Image, degrees: Int) -> Result[Image]
+  def rotate(image: Image, degrees: Int) -> Result[Image]
   ## The image in another colour model; a band of alpha is kept.
-  compute def colourspace(image: Image, space: Space) -> Result[Image]
-  ## The same values in another pixel format: out of range values are clipped, and a float is cut toward zero when it becomes an integer.
-  compute def cast(image: Image, format: Format) -> Result[Image]
+  def colourspace(image: Image, space: Space) -> Result[Image]
+  ## The same values in another pixel format: out of range values are clipped, and a float is cut toward zero when it
+  ## becomes an integer.
+  def cast(image: Image, format: Format) -> Result[Image]
   def width(image: Image) -> Int
   def height(image: Image) -> Int
   def bands(image: Image) -> Int

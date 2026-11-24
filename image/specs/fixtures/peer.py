@@ -6,7 +6,7 @@
   peer.py apply OP IN OUT WIDTH HEIGHT BANDS [ARG...]
                               the expected pixels of a transform of raw pixels, and prints "WIDTH HEIGHT BANDS" of the
                               result: for u8 samples crop LEFT TOP W H, flip h|v, rotate DEGREES clockwise, resize W H
-                              and grey; srgb [BYTES PER SAMPLE] for u8 or u16; and `cast FROM TO` (u8, u16, i16 or
+                              and grey; srgb [BYTES PER SAMPLE] for grey (and alpha) of u8 or u16; and `cast FROM TO` (u8, u16, i16 or
                               f32) of any raw samples
 
 The scanlines of the PNGs use every filter type, so the decoder of libvips is checked on each.
@@ -247,8 +247,9 @@ def apply(op, args):
             out, shape = grey(px, bands), (width, height, bands - 2 if bands > 2 else 1)
         elif op == "srgb":
             size = int(rest[0]) if rest else 1
-            out = b"".join(bytes(px[i:i + size]) * 3 for i in range(0, len(px), size))
-            shape = (width, height, 3)
+            step = bands * size
+            out = b"".join(bytes(px[i:i + size]) * 3 + bytes(px[i + size:i + step]) for i in range(0, len(px), step))
+            shape = (width, height, 2 + bands)
         else:
             sys.exit(__doc__)
         out = bytes(out)

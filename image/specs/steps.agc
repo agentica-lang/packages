@@ -20,6 +20,14 @@ def main() -> Void
       "the pixels {string} as {int} by {int} with {int} bands of {string} under {string} are the peer's within {int}",
       &transformed,
     ),
+    BDD.step(
+      "the pixels {string} as {int} by {int} with {int} bands of {string} turn a quarter and back",
+      &turned_back,
+    ),
+    BDD.step(
+      "{int} tasks resize the pixels {string} as {int} by {int} with {int} bands of {string} to {int} by {int}",
+      &parallel_resize,
+    ),
     BDD.step("{int} tasks decode {string} to the pixels of {string}", &parallel),
     BDD.step("these calls fail:", &failures),
   ])
@@ -164,12 +172,36 @@ def parallel(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.assert(ctx, results.all?(->(r) { r == ok(true) }), "a task decoded other pixels")
 end
 
+# A chain of two transforms reads fine after both images it came through are closed.
+def turned_back(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  first = from_raw(args)
+  middle = Image.rotate(first, 90).unwrap!
+  last = Image.rotate(middle, 270).unwrap!
+  Native.close(first)
+  Native.close(middle)
+  BDD.assert(ctx, Image.to_pixels(last).unwrap! == read(args[0]), "the chain gave other pixels")
+end
+
+# Each task makes and reads its own lazy image: libvips evaluates them at once.
+def parallel_resize(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  shape = args.drop(1)
+  width = args[6].to_i!
+  height = args[7].to_i!
+  expected = Image.to_pixels(Image.resize(from_raw(args.drop(1)), width, height).unwrap!).unwrap!
+  results = Task.map((1..args[0].to_i!).to_a, 4, 30000) do |_n|
+    ok(Image.to_pixels(try Image.resize(from_raw(shape), width, height)) == ok(expected))
+  end
+
+  BDD.assert(ctx, results.all?(->(r) { r == ok(true) }), "a task read other pixels")
+end
+
 # One row per call: its name, the arguments it takes, and the message when this package makes it (libvips makes the
 # others).
 def failures(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   rows = BDD.table(ctx).drop(1)
   good = read("rgb.raw")
   img = Image.from_pixels(good, 16, 12, 3, Image.Format.U8).unwrap!
+  nul = String.from_bytes(Bytes.from_list([0]).unwrap!).unwrap!
   ramp = Image.from_pixels(read("ramp_f32.raw"), 4, 3, 2, Image.Format.F32).unwrap!
   for row in rows
     failure = case row[0]
@@ -177,6 +209,10 @@ def failures(ctx: BDD.Context, _args: List[String]) -> BDD.Context
       "load" -> refusal(Image.load(row[1]))
       "from_pixels" -> refusal(Image.from_pixels(good, row[1].to_i!, row[2].to_i!, row[3].to_i!, format_of(row[4])))
       "to_bytes" -> refusal(Image.to_bytes(img, row[1]))
+      "save" -> refusal(Image.save(img, row[1]))
+      "load_nul" -> refusal(Image.load("a.png#{nul}x"))
+      "save_nul" -> refusal(Image.save(img, "a.png#{nul}x"))
+      "to_bytes_nul" -> refusal(Image.to_bytes(img, "png#{nul}x"))
       "crop" -> refusal(Image.crop(img, row[1].to_i!, row[2].to_i!, row[3].to_i!, row[4].to_i!))
       "rotate" -> refusal(Image.rotate(img, row[1].to_i!))
       "resize" -> refusal(Image.resize(img, row[1].to_i!, row[2].to_i!))

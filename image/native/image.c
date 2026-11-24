@@ -13,7 +13,6 @@ extern char *vips_error_buffer_copy(void);
 extern int vips_version(int flag);
 extern void vips_cache_set_max(int max);
 extern void vips_block_untrusted_set(int state);
-extern void vips_error_clear(void);
 extern VipsImage *vips_image_new_from_file(const char *name, ...);
 extern VipsImage *vips_image_new_from_buffer(const void *buf, size_t len, const char *option_string, ...);
 extern VipsImage *vips_image_new_from_memory_copy(const void *data, size_t size, int width, int height, int bands,
@@ -42,6 +41,11 @@ extern void g_free(void *mem);
 
 enum { UCHAR, CHAR, USHORT, SHORT, UINT, INT, FLOAT, COMPLEX, DOUBLE, DPCOMPLEX };
 enum { MULTIBAND = 0, B_W = 1, SRGB = 22, RGB16 = 25, GREY16 = 26 };
+/* What a resize may make: the pixels of a lazy result are made when they are read, and a huge size would fill memory
+   there. */
+#define MAX_PIXELS ((int64_t)1 << 28)
+/* The largest side that libvips makes (VIPS_MAX_COORD): a larger scale or size makes it print a GLib critical. */
+#define MAX_SIDE ((int64_t)10000000)
 enum { HORIZONTAL, VERTICAL };
 enum { D0, D90, D180, D270 };
 
@@ -115,9 +119,10 @@ static an_term wrap(an_env *env, VipsImage *source) {
   VipsImage *vips = vips_image_copy_memory(source);
   g_object_unref(source);
   if (!vips) return fail(env, "cannot decode the image");
-  vips_error_clear();
   return make(env, vips);
 }
+
+static bool has_nul(ng_str s) { return memchr(s.data, 0, s.len) != NULL; }
 
 static char *cstring(ng_str s) {
   char *copy = malloc(s.len + 1);
@@ -136,6 +141,7 @@ static char *cstring(ng_str s) {
 
 an_term image_load(an_env *env, ng_str path) {
   READY(env);
+  if (has_nul(path)) return refuse(env, "the path has a NUL byte");
   char *name = cstring(path);
   if (!name) return an_raise(env, "out of memory");
   VipsImage *source = vips_image_new_from_file(name, NULL);
@@ -152,9 +158,11 @@ an_term image_from_pixels(an_env *env, ng_buf pixels, int64_t width, int64_t hei
                           image_Format format) {
   READY(env);
   if (format.tag == IMAGE_Format_Complex) return refuse(env, "complex pixels are not supported");
-  if (width < 1 || height < 1 || bands < 1 || width > INT32_MAX || height > INT32_MAX || bands > 65535) {
-    return refuse(env, "the width, the height and the bands must be positive");
+  if (width < 1 || height < 1 || bands < 1) return refuse(env, "the width, the height and the bands must be positive");
+  if (width > INT32_MAX || height > INT32_MAX) {
+    return refuse(env, "the width and the height must be at most 2147483647");
   }
+  if (bands > 65535) return refuse(env, "the bands must be at most 65535");
   size_t item = format_sizes[format.tag];
   size_t count;
   if (__builtin_mul_overflow((size_t)width, (size_t)height, &count) ||
@@ -173,6 +181,7 @@ an_term image_from_pixels(an_env *env, ng_buf pixels, int64_t width, int64_t hei
 }
 
 an_term image_save(an_env *env, struct image_Image_state *image, ng_str path) {
+  if (has_nul(path)) return refuse(env, "the path has a NUL byte");
   char *name = cstring(path);
   if (!name) return an_raise(env, "out of memory");
   int status = vips_image_write_to_file(image->vips, name, NULL);
@@ -181,6 +190,7 @@ an_term image_save(an_env *env, struct image_Image_state *image, ng_str path) {
 }
 
 an_term image_to_bytes(an_env *env, struct image_Image_state *image, ng_str format) {
+  if (has_nul(format)) return refuse(env, "the suffix has a NUL byte");
   char *suffix = malloc(format.len + 2);
   if (!suffix) return an_raise(env, "out of memory");
   suffix[0] = '.';
@@ -208,9 +218,9 @@ an_term image_to_pixels(an_env *env, struct image_Image_state *image) {
 /* The operations are lazy: the result holds the image it came from, and the pixels are made when they are read. */
 an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width, int64_t height) {
   VipsImage *in = image->vips;
-  if (width < 1 || height < 1 || width > INT32_MAX || height > INT32_MAX) {
-    return refuse(env, "the width and the height must be positive");
-  }
+  if (width < 1 || height < 1) return refuse(env, "the width and the height must be positive");
+  if (width > MAX_SIDE || height > MAX_SIDE) return refuse(env, "the width and the height must be at most 10000000");
+  if (width * height > MAX_PIXELS) return refuse(env, "the size is more than 268435456 pixels");
   VipsImage *out;
   double horizontal = (double)width / vips_image_get_width(in);
   double vertical = (double)height / vips_image_get_height(in);
@@ -224,13 +234,15 @@ an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width
 
 an_term image_crop(an_env *env, struct image_Image_state *image, int64_t left, int64_t top, int64_t width,
                    int64_t height) {
-  if (left < 0 || top < 0 || width < 1 || height < 1 || left > INT32_MAX || top > INT32_MAX || width > INT32_MAX ||
-      height > INT32_MAX) {
+  int64_t in_width = vips_image_get_width(image->vips);
+  int64_t in_height = vips_image_get_height(image->vips);
+  if (left < 0 || top < 0 || width < 1 || height < 1 || width > in_width || height > in_height ||
+      left > in_width - width || top > in_height - height) {
     return refuse(env, "the area is outside the image");
   }
   VipsImage *out;
   if (vips_extract_area(image->vips, &out, (int)left, (int)top, (int)width, (int)height, NULL) != 0) {
-    return fail(env, "the area is outside the image");
+    return fail(env, "cannot crop the image");
   }
   return make(env, out);
 }

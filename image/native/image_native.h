@@ -116,8 +116,8 @@ an_term image_from_pixels(an_env *env, ng_buf pixels, int64_t width, int64_t hei
 /* Writes the image to `path`; the extension picks the encoder (`.png`, `.jpg[Q=90]`). */
 an_term image_save(an_env *env, struct image_Image_state *image, ng_str path);
 
-/* Encodes the image as `format`, a suffix without the dot and with the options of libvips (`png`, `jpg[Q=90]`). */
-an_term image_to_bytes(an_env *env, struct image_Image_state *image, ng_str format);
+/* Encodes the image as `suffix`, a file extension without the dot, with the options of libvips (`png`, `jpg[Q=90]`). */
+an_term image_to_bytes(an_env *env, struct image_Image_state *image, ng_str suffix);
 
 /* The pixels, interleaved, in the format of the image and the byte order of this machine. */
 an_term image_to_pixels(an_env *env, struct image_Image_state *image);
@@ -137,7 +137,8 @@ an_term image_rotate(an_env *env, struct image_Image_state *image, int64_t degre
 /* The image in another colour model; a band of alpha is kept. */
 an_term image_colourspace(an_env *env, struct image_Image_state *image, image_Space space);
 
-/* The same values in another pixel format: out of range values are clipped, and a float is cut toward zero when it becomes an integer. */
+/* The same values in another pixel format: out of range values are clipped, and a float is cut toward zero when it
+   becomes an integer. */
 an_term image_cast(an_env *env, struct image_Image_state *image, image_Format format);
 
 an_term image_width(an_env *env, struct image_Image_state *image);
@@ -556,12 +557,12 @@ static const an_function image_native_functions[] = {
   {"save", "(Image, String) -> Result[Void]", image_native_save, AN_DIRTY},
   {"to_bytes", "(Image, String) -> Result[Bytes]", image_native_to_bytes, AN_DIRTY},
   {"to_pixels", "(Image) -> Result[Bytes]", image_native_to_pixels, AN_DIRTY},
-  {"resize", "(Image, Int, Int) -> Result[Image]", image_native_resize, AN_DIRTY},
-  {"crop", "(Image, Int, Int, Int, Int) -> Result[Image]", image_native_crop, AN_DIRTY},
-  {"flip", "(Image, Direction) -> Result[Image]", image_native_flip, AN_DIRTY},
-  {"rotate", "(Image, Int) -> Result[Image]", image_native_rotate, AN_DIRTY},
-  {"colourspace", "(Image, Space) -> Result[Image]", image_native_colourspace, AN_DIRTY},
-  {"cast", "(Image, Format) -> Result[Image]", image_native_cast, AN_DIRTY},
+  {"resize", "(Image, Int, Int) -> Result[Image]", image_native_resize, AN_SHORT},
+  {"crop", "(Image, Int, Int, Int, Int) -> Result[Image]", image_native_crop, AN_SHORT},
+  {"flip", "(Image, Direction) -> Result[Image]", image_native_flip, AN_SHORT},
+  {"rotate", "(Image, Int) -> Result[Image]", image_native_rotate, AN_SHORT},
+  {"colourspace", "(Image, Space) -> Result[Image]", image_native_colourspace, AN_SHORT},
+  {"cast", "(Image, Format) -> Result[Image]", image_native_cast, AN_SHORT},
   {"width", "(Image) -> Int", image_native_width, AN_SHORT},
   {"height", "(Image) -> Int", image_native_height, AN_SHORT},
   {"bands", "(Image) -> Int", image_native_bands, AN_SHORT},
