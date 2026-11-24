@@ -62,8 +62,18 @@ Feature: Transforms of images
   Scenario: A chain of transforms outlives the images it came through
     Then the pixels "rgba.raw" as 9 by 7 with 4 bands of "U8" turn a quarter and back
 
-  Scenario: Lazy images are read by several tasks at once
-    Then 8 tasks resize the pixels "photo.raw" as 64 by 48 with 3 bands of "U8" to 20 by 20
+  # Each task makes an image of its own: a resource belongs to the task that made it.
+  Scenario: Independent lazy images are read in parallel tasks
+    Then 8 tasks resize an image of "photo.raw" repeated to 2000 by 1500 down to 500 by 375
+
+  Scenario Outline: A resize up to the limits is accepted
+    Then a resize to <width> by <height> is accepted
+
+    Examples:
+      | width    | height   |
+      | 10000000 | 1        |
+      | 1        | 10000000 |
+      | 16384    | 16384    |
 
   # A 16-bit image stays 16-bit: the peer copies each 2-byte sample to the three bands.
   Scenario: Colours of a 16-bit image keep their depth

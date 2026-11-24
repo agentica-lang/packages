@@ -25,9 +25,11 @@ def main() -> Void
       &turned_back,
     ),
     BDD.step(
-      "{int} tasks resize the pixels {string} as {int} by {int} with {int} bands of {string} to {int} by {int}",
+      "{int} tasks resize an image of {string} repeated to {int} by {int} down to {int} by {int}",
       &parallel_resize,
     ),
+    BDD.step("a failed decode leaves no message behind", &clean_error),
+    BDD.step("a resize to {int} by {int} is accepted", &accepted),
     BDD.step("{int} tasks decode {string} to the pixels of {string}", &parallel),
     BDD.step("these calls fail:", &failures),
   ])
@@ -182,17 +184,52 @@ def turned_back(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.assert(ctx, Image.to_pixels(last).unwrap! == read(args[0]), "the chain gave other pixels")
 end
 
-# Each task makes and reads its own lazy image: libvips evaluates them at once.
+# Each task makes, resizes and reads an image of its own, a large one so that libvips works on several tiles at once;
+# no image is shared, since a resource belongs to its task.
 def parallel_resize(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  shape = args.drop(1)
-  width = args[6].to_i!
-  height = args[7].to_i!
-  expected = Image.to_pixels(Image.resize(from_raw(args.drop(1)), width, height).unwrap!).unwrap!
-  results = Task.map((1..args[0].to_i!).to_a, 4, 30000) do |_n|
-    ok(Image.to_pixels(try Image.resize(from_raw(shape), width, height)) == ok(expected))
+  width = args[2].to_i!
+  height = args[3].to_i!
+  need = width * height * 3
+  tile = read(args[1])
+  pixels = Bytes.concat((1..(need / tile.size + 1)).to_a.map(->(_i) { tile })).take(need)
+  target_width = args[4].to_i!
+  target_height = args[5].to_i!
+  expected = resized_pixels(pixels, width, height, target_width, target_height).unwrap!
+  results = Task.map((1..args[0].to_i!).to_a, 4, 60000) do |_n|
+    ok(resized_pixels(pixels, width, height, target_width, target_height) == ok(expected))
   end
 
   BDD.assert(ctx, results.all?(->(r) { r == ok(true) }), "a task read other pixels")
+end
+
+def resized_pixels(pixels: Bytes, width: Int, height: Int, target_width: Int, target_height: Int) -> Result[Bytes]
+  image = try Image.from_pixels(pixels, width, height, 3, Image.Format.U8)
+  Image.to_pixels(try Image.resize(image, target_width, target_height))
+end
+
+# A decode that libvips only warns about (the PNG lacks its last bytes, which it forgives) and one that it refuses must
+# not leave their text for the error of another call.
+def clean_error(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  png = read("rgb.png")
+  _ = Image.from_bytes(png.take(470))
+  with_folder(ctx) do |kept, folder|
+    path = Path.join([folder, "truncated.png"]).unwrap!
+    write_path(path, png.take(300))
+    _ = Image.load(path)
+    case Image.load("#{FIXTURES}/missing")
+      ok(_) -> BDD.assert(kept, false, "a missing file loaded")
+      error(e) ->
+        clean = e.message.include?("does not exist") and not e.message.include?("\n") and not e.message.include?("png")
+        BDD.assert(kept, clean, "the message of a missing file is #{e.message}")
+    end
+  end
+end
+
+# A size that is allowed is accepted (nothing is read, so a large one costs nothing).
+def accepted(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  img = Image.from_pixels(read("rgb.raw"), 16, 12, 3, Image.Format.U8).unwrap!
+  result = Image.resize(img, args[0].to_i!, args[1].to_i!)
+  BDD.assert(ctx, result.ok?, "resize to #{args[0]} by #{args[1]} failed: #{result.message}")
 end
 
 # One row per call: its name, the arguments it takes, and the message when this package makes it (libvips makes the
@@ -202,6 +239,7 @@ def failures(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   good = read("rgb.raw")
   img = Image.from_pixels(good, 16, 12, 3, Image.Format.U8).unwrap!
   nul = String.from_bytes(Bytes.from_list([0]).unwrap!).unwrap!
+  five = Image.from_pixels(good.take(15), 3, 1, 5, Image.Format.U8).unwrap!
   ramp = Image.from_pixels(read("ramp_f32.raw"), 4, 3, 2, Image.Format.F32).unwrap!
   for row in rows
     failure = case row[0]
@@ -217,6 +255,7 @@ def failures(ctx: BDD.Context, _args: List[String]) -> BDD.Context
       "rotate" -> refusal(Image.rotate(img, row[1].to_i!))
       "resize" -> refusal(Image.resize(img, row[1].to_i!, row[2].to_i!))
       "cast" -> refusal(Image.cast(img, format_of(row[1])))
+      "colourspace5" -> refusal(Image.colourspace(five, space_of(row[1])))
       _ -> refusal(Image.colourspace(ramp, space_of(row[1])))
     end
 

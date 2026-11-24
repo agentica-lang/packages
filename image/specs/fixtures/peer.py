@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """An independent PNG codec and image transforms on the standard library, the peer of image's specs.
 
-  peer.py generate DIR        writes the fixtures: each PNG with the raw pixels it holds (NAME.raw), and a float ramp
-  peer.py decode IN.png OUT   decodes a PNG into raw pixels (interleaved, little endian) and prints "WIDTH HEIGHT BANDS"
+  peer.py generate DIR        writes the fixtures: each PNG with the raw pixels it holds (NAME.raw), and more raw ones
+  peer.py decode IN.png OUT   decodes a PNG into raw pixels (little endian) and prints "WIDTH HEIGHT BANDS"
   peer.py apply OP IN OUT WIDTH HEIGHT BANDS [ARG...]
-                              the expected pixels of a transform of raw pixels, and prints "WIDTH HEIGHT BANDS" of the
-                              result: for u8 samples crop LEFT TOP W H, flip h|v, rotate DEGREES clockwise, resize W H
-                              and grey; srgb [BYTES PER SAMPLE] for grey (and alpha) of u8 or u16; and `cast FROM TO` (u8, u16, i16 or
-                              f32) of any raw samples
+                              the expected pixels of a transform of raw pixels, and prints "WIDTH HEIGHT BANDS"
+                              of the result. For u8 samples: crop LEFT TOP W H, flip h|v, rotate DEGREES
+                              clockwise, resize W H, grey. For grey (and alpha) of u8 or u16: srgb [BYTES PER
+                              SAMPLE]. For any raw samples: cast FROM TO (u8, u16, i16 or f32)
 
 The scanlines of the PNGs use every filter type, so the decoder of libvips is checked on each.
 """

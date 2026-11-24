@@ -20,20 +20,86 @@ That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 image = { git = "https://github.com/agentica-lang/packages", tag = "image-0.1.0", subdir = "image" }
 ```
 
-Every function takes the image first, so a chain reads well with `|>`. Each entry says what the function does and when it fails; the rules that hold for all of them are in [Memory and lifetime](#memory-and-lifetime), [Untrusted input](#untrusted-input) and [Requirements](#requirements). The examples below make their image with `from_pixels`: a grey image of 3 by 2 pixels, `1 2 3` on the first row and `4 5 6` on the second.
+A function that takes an image takes it first, so a chain reads well with `|>`. Each entry says what the function does and when it fails; the rules that hold for all of them are in [Memory and lifetime](#memory-and-lifetime), [Untrusted input](#untrusted-input) and [Requirements](#requirements). The examples below make their image with `from_pixels`: a grey image of 3 by 2 pixels, `1 2 3` on the first row and `4 5 6` on the second.
 
 ## Types
 
-- `Image.Image` is an image. It is a resource of the native module, so it follows the rules of [Memory and lifetime](#memory-and-lifetime).
-- `Image.Format` is the type of one sample: `U8`, `I8`, `U16`, `I16`, `U32`, `I32`, `F32`, `F64` or `Complex`. Both complex formats of libvips are `Complex`; an image of it can be read and saved, but `from_pixels` and `cast` do not make one.
-- `Image.Direction` is `Horizontal` or `Vertical`, the axis that `flip` mirrors across.
-- `Image.Space` is `Srgb` or `Grey`, the colour model that `colourspace` converts to.
+### `Image.Image`
+
+An image. It is a resource of the native module, so it follows the rules of [Memory and lifetime](#memory-and-lifetime).
+
+```agentica
+import Image from "pkg/image/image"
+
+def size(image: Image.Image) -> String = "#{Image.width(image)}x#{Image.height(image)}"
+
+def main() -> Void
+  image = Image.from_pixels(Bytes.from_list([1, 2, 3, 4]).unwrap!, 2, 2, 1, Image.Format.U8).unwrap!
+  puts(size(image))
+end
+```
+
+```output
+2x2
+```
+
+### `Image.Format`
+
+The type of one sample: `U8`, `I8`, `U16`, `I16`, `U32`, `I32`, `F32`, `F64` or `Complex`. Both complex formats of libvips are `Complex`: an image of it can be read and saved, but `from_pixels` and `cast` do not make one.
+
+```agentica
+import Image from "pkg/image/image"
+
+def main() -> Void
+  image = Image.from_pixels(Bytes.from_list([1, 2]).unwrap!, 2, 1, 1, Image.Format.U8).unwrap!
+  case Image.pixel_format(image)
+    Image.Format.U8 -> puts("one byte a sample")
+    _ -> puts("another format")
+  end
+end
+```
+
+```output
+one byte a sample
+```
+
+### `Image.Direction`
+
+`Horizontal` or `Vertical`: the axis that `flip` mirrors across.
+
+```agentica
+import Image from "pkg/image/image"
+
+def main() -> Void
+  puts(Image.Direction.Vertical)
+end
+```
+
+```output
+Direction.Vertical
+```
+
+### `Image.Space`
+
+`Srgb` or `Grey`: the colour model that `colourspace` converts to.
+
+```agentica
+import Image from "pkg/image/image"
+
+def main() -> Void
+  puts(Image.Space.Grey)
+end
+```
+
+```output
+Space.Grey
+```
 
 ## Reading and writing
 
 ### `Image.load(path) -> Result[Image]`
 
-Decodes the file at `path`; libvips finds the format from the contents. The file is read at once, so a bad file fails here. A missing file, a format libvips cannot read, or a path with a NUL byte is an error.
+Decodes the file at `path`; libvips finds the format from the contents. The file is read at once, so a bad file fails here. A missing file, a format libvips cannot read, or a path with a NUL byte is an error. To see a load that works, read the example of `save`.
 
 ```agentica
 import Image from "pkg/image/image"
@@ -58,7 +124,8 @@ Decodes an encoded image that is in memory. Like `load`, it decodes at once and 
 import Image from "pkg/image/image"
 
 def main() -> Void
-  png = Image.to_bytes(Image.from_pixels(Bytes.from_list([7]).unwrap!, 1, 1, 1, Image.Format.U8).unwrap!, "png").unwrap!
+  original = Image.from_pixels(Bytes.from_list([7]).unwrap!, 1, 1, 1, Image.Format.U8).unwrap!
+  png = Image.to_bytes(original, "png").unwrap!
   image = Image.from_bytes(png).unwrap!
   puts(Image.to_pixels(image).unwrap!.to_a)
 end
@@ -90,7 +157,7 @@ end
 
 ### `Image.to_bytes(image, suffix) -> Result[Bytes]`
 
-Encodes the image in memory. `suffix` is a file extension without the dot, with the same options as `save`: `"png"`, `"jpg[Q=90]"`, `"webp"`, `"tif"`. An unknown suffix is an error.
+Encodes the image in memory. `suffix` is a file extension without the dot, with the same options as `save`: `"png"`, `"jpg[Q=90]"`, `"webp"`, `"tif"`. An unknown suffix, or a suffix with a NUL byte, is an error.
 
 ```agentica
 import Image from "pkg/image/image"
@@ -109,7 +176,7 @@ end
 
 ### `Image.from_pixels(pixels, width, height, bands, format) -> Result[Image]`
 
-Makes an image from interleaved samples: `width * height * bands` of them, in `format`, in the byte order of the machine. A buffer of another size, a size that is not positive (at most 2147483647 for the width and the height, 65535 for the bands), or the format `Complex` is an error. A `U8` image of 1 or 2 bands is grey and of 3 or 4 bands is sRGB; `U16` is the same in 16 bits, so a PNG of a `U16` image is a 16-bit PNG.
+Makes an image from interleaved samples: `width * height * bands` of them, in `format`, in the byte order of the machine. A buffer of another size, a size that is not positive (at most 10000000 for the width and the height, 65535 for the bands), or the format `Complex` is an error. A `U8` image of 1 or 2 bands is grey and of 3 or 4 bands is sRGB; `U16` is the same in 16 bits, so a PNG of a `U16` image is a 16-bit PNG.
 
 ```agentica
 import Image from "pkg/image/image"
@@ -129,7 +196,7 @@ false
 
 ### `Image.to_pixels(image) -> Result[Bytes]`
 
-Gives the samples, interleaved, in the format of the image and the byte order of the machine. It is the reverse of `from_pixels`: the same bytes come back, for every format but `Complex`. The pixels of a chain of transforms are made here.
+Gives the samples, interleaved, in the format of the image and the byte order of the machine. It is the reverse of `from_pixels`: the same bytes come back, for every format but `Complex`.
 
 ```agentica
 import Image from "pkg/image/image"
@@ -214,11 +281,11 @@ Format.U8
 
 ## Transforms
 
-A transform returns a new image and leaves its source as it was. It is lazy, as libvips is: the pixels are made when you read them with `to_pixels`, `save` or `to_bytes`.
+A transform returns a new image and leaves its source as it was. It is lazy: see [Memory and lifetime](#memory-and-lifetime).
 
 ### `Image.resize(image, width, height) -> Result[Image]`
 
-Scales the image to `width` by `height` with the Lanczos 3 kernel of libvips, down or up; keep the ratio yourself. A size that is not positive, a side of more than 10000000 pixels, or more than 268435456 pixels in all is an error. An alpha band is not premultiplied, so the edge next to a transparent pixel may get a colour fringe.
+Scales the image to `width` by `height` with the Lanczos 3 kernel of libvips, down or up; keep the ratio yourself. A size that is not positive, a side of more than 10000000 pixels, or more than 268435456 pixels in all (pixels, not bytes) is an error. An alpha band is not premultiplied, so the edge next to a transparent pixel may get a colour fringe.
 
 ```agentica
 import Image from "pkg/image/image"
@@ -330,14 +397,18 @@ Format.U16, 12 bytes
 ## Memory and lifetime
 
 - An `Image.Image` is a resource: it belongs to the task that made it. Its memory is freed by `Native.close(image)`, when the task ends, or when the run ends. A loop that makes many images closes each one, or runs in a task of its own.
-- `load`, `from_bytes` and `from_pixels` hold their pixels in memory. A transform holds the image it came from, and makes its own pixels only when they are read, so a chain has no image for each step.
+- `load`, `from_bytes` and `from_pixels` hold their pixels in memory. A transform is lazy, as libvips is: it holds the image it came from, and its own pixels are made only when you read them (`to_pixels`, `save` or `to_bytes`), so a chain has no image for each step.
 - `Native.close` of a source frees only your handle: its pixels stay until every result made from it is closed too. A loop that makes a thousand thumbnails of a thousand big images holds a thousand decodes until the thumbnails are closed.
 - To free the source, make a result that stands alone: read its pixels with `to_pixels` and make an image of them with `from_pixels` (or `to_bytes` then `from_bytes`), then close the others.
 - libvips starts worker threads of its own when pixels are read. Set the environment variable `VIPS_CONCURRENCY` to limit them.
 
 ## Untrusted input
 
-`load` and `from_bytes` block the loaders that libvips marks untrusted (ImageMagick, for one), so an image from a user cannot reach them. A `[` in a name starts options for libvips: `photo.jpg[shrink=2]` loads with the option `shrink`, so a file named `a[1].png` cannot be loaded or saved by that name. The same holds for the `suffix` of `to_bytes`. The operation cache of libvips is off, so a file that changed is read again.
+- `load` and `from_bytes` block the loaders that libvips marks untrusted (ImageMagick, for one), so an image from a user cannot reach them.
+- A `[` in a name starts options for libvips: `photo.jpg[shrink=2]` loads with the option `shrink`, so a file named `a[1].png` cannot be loaded or saved by that name. The same holds for the `suffix` of `to_bytes`.
+- The size of a decoded image is not capped: a small file can decode to a huge image, so limit the size of what you accept.
+- The operation cache of libvips is off, so a file that changed is read again.
+- The error buffer of libvips is one for the process, so errors that happen at the same moment in two tasks may swap their messages.
 
 ## Requirements
 
@@ -348,4 +419,4 @@ Format.U16, 12 bytes
 
 ## Tests
 
-The fixtures of `specs/fixtures/` are written by `peer.py`, an independent PNG codec and image model in Python's standard library. A scenario checks that libvips decodes each PNG to the pixels of the peer, and that the peer decodes the PNGs that `image` writes to the pixels that went in. The peer also computes the transforms: the same bytes for crop, flip, rotate and cast, and within 1 level of u8 for grey and 3 for resize, which it models the way libvips does it (a box shrink, then the Lanczos 3 reduce of the rows and the columns, each pass rounded to u8). The resize model holds only when each integer shrink divides the size, and an upscale is checked for its size only. The tolerance of 3 was measured with libvips 8.15 and 8.16, where the worst difference seen is 3.
+The fixtures of `specs/fixtures/` are written by `peer.py`, an independent PNG codec and image model in Python's standard library. A scenario checks that libvips decodes each PNG to the pixels of the peer, and that the peer decodes the PNGs that `image` writes to the pixels that went in. The peer also computes the transforms: the same bytes for crop, flip, rotate and cast, and within 1 level of u8 for grey and 3 for resize, which it models the way libvips does it (a box shrink, then the Lanczos 3 reduce of the rows and the columns, each pass rounded to u8). The resize model holds only when each integer shrink divides the size, and an upscale is checked for its size only. The tolerance of 3 was measured with the libvips of the specs, where the worst difference seen is 3.

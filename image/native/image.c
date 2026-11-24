@@ -41,11 +41,12 @@ extern void g_free(void *mem);
 
 enum { UCHAR, CHAR, USHORT, SHORT, UINT, INT, FLOAT, COMPLEX, DOUBLE, DPCOMPLEX };
 enum { MULTIBAND = 0, B_W = 1, SRGB = 22, RGB16 = 25, GREY16 = 26 };
-/* What a resize may make: the pixels of a lazy result are made when they are read, and a huge size would fill memory
-   there. */
+/* The most pixels that a resize makes: the pixels of a lazy result are made when they are read, and a huge size would
+   fill memory there. It counts pixels, not bytes. */
 #define MAX_PIXELS ((int64_t)1 << 28)
-/* The largest side that libvips makes (VIPS_MAX_COORD): a larger scale or size makes it print a GLib critical. */
+/* The largest side of an image (VIPS_MAX_COORD): a larger one makes libvips print a GLib critical and fail. */
 #define MAX_SIDE ((int64_t)10000000)
+#define SIDE_MESSAGE "the width and the height must be at most 10000000"
 enum { HORIZONTAL, VERTICAL };
 enum { D0, D90, D180, D270 };
 
@@ -159,9 +160,7 @@ an_term image_from_pixels(an_env *env, ng_buf pixels, int64_t width, int64_t hei
   READY(env);
   if (format.tag == IMAGE_Format_Complex) return refuse(env, "complex pixels are not supported");
   if (width < 1 || height < 1 || bands < 1) return refuse(env, "the width, the height and the bands must be positive");
-  if (width > INT32_MAX || height > INT32_MAX) {
-    return refuse(env, "the width and the height must be at most 2147483647");
-  }
+  if (width > MAX_SIDE || height > MAX_SIDE) return refuse(env, SIDE_MESSAGE);
   if (bands > 65535) return refuse(env, "the bands must be at most 65535");
   size_t item = format_sizes[format.tag];
   size_t count;
@@ -219,7 +218,7 @@ an_term image_to_pixels(an_env *env, struct image_Image_state *image) {
 an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width, int64_t height) {
   VipsImage *in = image->vips;
   if (width < 1 || height < 1) return refuse(env, "the width and the height must be positive");
-  if (width > MAX_SIDE || height > MAX_SIDE) return refuse(env, "the width and the height must be at most 10000000");
+  if (width > MAX_SIDE || height > MAX_SIDE) return refuse(env, SIDE_MESSAGE);
   if (width * height > MAX_PIXELS) return refuse(env, "the size is more than 268435456 pixels");
   VipsImage *out;
   double horizontal = (double)width / vips_image_get_width(in);
