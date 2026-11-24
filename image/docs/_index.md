@@ -7,7 +7,7 @@ description: "Images on libvips: decode, encode, and the pixels as one Bytes buf
 
 ## Install
 
-Needs Agentica 0.35.0, a C compiler and libvips (see [Requirements](#requirements)). Once the first release is tagged, add it with its prefixed tag, in a project with an `agentica.toml`:
+Needs Agentica 0.35.0, a C compiler and libvips (see [Requirements](#requirements)). Add it with its prefixed tag, in a project with an `agentica.toml`:
 
 ```sh
 agentica add image https://github.com/agentica-lang/packages --tag image-0.1.0 --subdir image
