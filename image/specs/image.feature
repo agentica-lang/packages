@@ -46,6 +46,9 @@ Feature: Images on libvips
       | jpg[Q=90] |
       | webp      |
 
+  Scenario: A file that changed is read again
+    Then a file that is loaded and then written with other pixels loads as the new pixels
+
   Scenario: Tasks decode at once
     Then 8 tasks decode "rgb.png" to the pixels of "rgb.raw"
 

@@ -123,7 +123,12 @@ jobs:
       # The native module of image links libvips, which its specs and doc examples run.
       - name: Install libvips
         if: contains(format(' {0} {1} ', matrix.packages, matrix.docs), ' image ')
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvips-dev
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends libvips-dev
+          # image.c declares the libvips calls it uses by hand; the real header must agree with each one.
+          agentica_bin=$(readlink -f "$(command -v agentica)")
+          cc -std=c11 -Wno-enum-int-mismatch -fsyntax-only -I"${agentica_bin%/*}/../include" \
+            $(pkg-config --cflags vips) -include vips/vips.h image/native/image.c
 
       # The locked packages of each folder, checked against the hashes of its agentica.lock. The Makefile takes the
       # list as an argument: its own assignment ignores the environment.

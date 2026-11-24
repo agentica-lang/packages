@@ -15,6 +15,7 @@ def main() -> Void
     BDD.step("the pixels {string} as {int} by {int} with {int} bands of {string} survive {string}", &survive),
     BDD.step("the pixels {string} as {int} by {int} with {int} bands of {string} are decoded by the peer", &peer),
     BDD.step("the pixels {string} as {int} by {int} with {int} bands of {string} encode as {string}", &encodes),
+    BDD.step("a file that is loaded and then written with other pixels loads as the new pixels", &rewritten),
     BDD.step("{int} tasks decode {string} to the pixels of {string}", &parallel),
     BDD.step("these calls fail:", &failures),
   ])
@@ -41,10 +42,10 @@ def survive(ctx: BDD.Context, args: List[String]) -> BDD.Context
   in_memory = Image.from_bytes(Image.to_bytes(img, args[5]).unwrap!).unwrap!
   return BDD.assert(ctx, false, "#{args[5]} in memory changed the pixels") if Image.to_pixels(in_memory).unwrap! != raw
 
-  with_folder(ctx) do |folder|
+  with_folder(ctx) do |kept, folder|
     path = Path.join([folder, "image.#{args[5]}"]).unwrap!
     Image.save(img, path).unwrap!
-    BDD.assert(ctx, Image.to_pixels(Image.load(path).unwrap!).unwrap! == raw, "#{args[5]} on disk changed the pixels")
+    BDD.assert(kept, Image.to_pixels(Image.load(path).unwrap!).unwrap! == raw, "#{args[5]} on disk changed the pixels")
   end
 end
 
@@ -52,16 +53,16 @@ end
 def peer(ctx: BDD.Context, args: List[String]) -> BDD.Context
   raw = read(args[0])
   img = from_raw(args)
-  with_folder(ctx) do |folder|
+  with_folder(ctx) do |kept, folder|
     png = Path.join([folder, "image.png"]).unwrap!
     out = Path.join([folder, "peer.raw"]).unwrap!
     write_path(png, Image.to_bytes(img, "png").unwrap!)
     process = Process.spawn_captured("python3", ["#{FIXTURES}/peer.py", "decode", png, out]).unwrap!
     printed = Process.output(process, 20000).unwrap!.stdout.strip
     shape = "#{args[1]} #{args[2]} #{args[3]}"
-    return BDD.assert(ctx, false, "the peer read #{printed}, not #{shape}") if printed != shape
+    return BDD.assert(kept, false, "the peer read #{printed}, not #{shape}") if printed != shape
 
-    BDD.assert(ctx, read_path(out) == raw, "the peer read other pixels")
+    BDD.assert(kept, read_path(out) == raw, "the peer read other pixels")
   end
 end
 
@@ -71,6 +72,21 @@ def encodes(ctx: BDD.Context, args: List[String]) -> BDD.Context
   back = Image.from_bytes(Image.to_bytes(img, args[5]).unwrap!).unwrap!
   same = Image.width(back) == Image.width(img) and Image.height(back) == Image.height(img)
   BDD.assert(ctx, same, "#{args[5]} changed the size")
+end
+
+# The load of a path does not answer from an earlier load of it.
+def rewritten(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  first = Image.from_pixels(read("rgb.raw"), 16, 12, 3, Image.Format.U8).unwrap!
+  second_raw = read("rgba.raw")
+  second = Image.from_pixels(second_raw, 9, 7, 4, Image.Format.U8).unwrap!
+  with_folder(ctx) do |kept, folder|
+    path = Path.join([folder, "image.png"]).unwrap!
+    Image.save(first, path).unwrap!
+    Image.load(path).unwrap!
+    Image.save(second, path).unwrap!
+    loaded = Image.load(path).unwrap!
+    BDD.assert(kept, Image.to_pixels(loaded).unwrap! == second_raw, "the load gave the pixels of the file before")
+  end
 end
 
 def parallel(ctx: BDD.Context, args: List[String]) -> BDD.Context
@@ -145,12 +161,10 @@ def write_path(path: String, bytes: Bytes) -> Void
   File.close(file).unwrap!
 end
 
-# A private folder for the block, removed after it.
-def with_folder(ctx: BDD.Context, body: Fn[String, BDD.Context]) -> BDD.Context
+# A private folder for the block, which gets the context that removes it when the scenario ends.
+def with_folder(ctx: BDD.Context, body: Fn[BDD.Context, String, BDD.Context]) -> BDD.Context
   base = System.env("TMPDIR").unwrap_or("/tmp")
   folder = Path.join([base, "image-#{System.pid()}-#{Time.now.to_us}"]).unwrap!
   Dir.mkdir_private(folder).unwrap!
-  done = body.call(folder)
-  Path.remove(folder).unwrap!
-  done
+  body.call(BDD.after(ctx) do |_done| Path.remove(folder) end, folder)
 end

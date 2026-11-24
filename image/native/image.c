@@ -9,7 +9,10 @@
    `build` table cannot give. Their ABI is stable. */
 typedef struct _VipsImage VipsImage;
 extern int vips_init(const char *argv0);
-extern const char *vips_error_buffer(void);
+extern char *vips_error_buffer_copy(void);
+extern int vips_version(int flag);
+extern void vips_cache_set_max(int max);
+extern void vips_block_untrusted_set(int state);
 extern void vips_error_clear(void);
 extern VipsImage *vips_image_new_from_file(const char *name, ...);
 extern VipsImage *vips_image_new_from_buffer(const void *buf, size_t len, const char *option_string, ...);
@@ -49,24 +52,35 @@ static void free_image(void *state) { g_object_unref(((struct image_Image_state 
 #define IMAGE_Image_FREE free_image
 
 static pthread_once_t once = PTHREAD_ONCE_INIT;
-static int init_status;
+static const char *init_error;
 
-static void init_vips(void) { init_status = vips_init("agentica"); }
+/* The hand-written declarations above are those of libvips 8. The operation cache is off: an image owns its pixels
+   already, and a cached load would answer for a file that changed. */
+static void init_vips(void) {
+  if (vips_init("agentica") != 0) {
+    init_error = "libvips did not start";
+  } else if (vips_version(0) != 8) {
+    init_error = "libvips 8 is needed";
+  } else {
+    vips_cache_set_max(0);
+    vips_block_untrusted_set(1);
+  }
+}
 
-/* The message of libvips for the last failure, which it keeps per thread. */
+/* The message of libvips for the last failure; its buffer is one for the process, which the copy empties. */
 static an_term fail(an_env *env, const char *fallback) {
-  const char *message = vips_error_buffer();
+  char *message = vips_error_buffer_copy();
   size_t len = strlen(message);
   while (len > 0 && message[len - 1] == '\n') len--;
   an_term out = len > 0 ? an_error(env, message, len) : an_error(env, fallback, strlen(fallback));
-  vips_error_clear();
+  g_free(message);
   return out;
 }
 
 static an_term ready(an_env *env, int *ok) {
   pthread_once(&once, init_vips);
-  *ok = init_status == 0;
-  return *ok ? an_void(env) : fail(env, "libvips did not start");
+  *ok = init_error == NULL;
+  return *ok ? an_void(env) : an_error(env, init_error, strlen(init_error));
 }
 
 /* Decodes at once and drops the source, so that a bad file fails here and the image never reads the file or the
@@ -83,6 +97,7 @@ static an_term wrap(an_env *env, VipsImage *source) {
     return an_void(env);
   }
   state->vips = vips;
+  vips_error_clear();
   return image_result_Image_ok(env, out);
 }
 
