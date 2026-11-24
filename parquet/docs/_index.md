@@ -7,7 +7,7 @@ description: Reads Parquet files in pure Agentica. The schema, the row count, an
 
 ## Install
 
-Needs Agentica 0.37.0. Once the first release is tagged, add it to a project with an `agentica.toml`:
+Needs Agentica 0.37.0. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
 
 ```sh
 agentica add parquet https://github.com/agentica-lang/packages --tag parquet-0.1.0 --subdir parquet
