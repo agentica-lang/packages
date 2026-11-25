@@ -16,13 +16,13 @@ It is a tool package, run with `agentica`. It does no change to the `agentica` c
 Needs Agentica 0.39.0. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
 
 ```sh
-agentica add release https://github.com/agentica-lang/packages --tag release-0.1.0 --subdir release
+agentica add release https://github.com/agentica-lang/packages --tag release-0.2.0 --subdir release
 ```
 
 The dependency entry is:
 
 ```toml
-release = { git = "https://github.com/agentica-lang/packages", tag = "release-0.1.0", subdir = "release" }
+release = { git = "https://github.com/agentica-lang/packages", tag = "release-0.2.0", subdir = "release" }
 ```
 
 ## Build a release

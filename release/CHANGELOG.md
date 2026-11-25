@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-11-25
 
 - **Breaking:** a release keeps the agentica binary in `runtime/`, not `erts/`; `inspect` of this version refuses a release built by 0.1.0.
 
