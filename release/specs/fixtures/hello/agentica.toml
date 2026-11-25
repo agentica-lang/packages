@@ -1,0 +1,5 @@
+name = "hello"
+
+[tool.release]
+version = "1.2.3"
+include = ["assets"]
