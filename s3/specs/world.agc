@@ -13,6 +13,8 @@ REGION = "us-east-1"
 ## Starts `fixtures/s3_stub.py` for the scenario and remembers its port. A process belongs to the task that opens it, so
 ## this runs in a step; the stub is closed (SIGTERM, which removes its files) when the scenario ends.
 def start_stub(ctx: BDD.Context, session_token: String) -> BDD.Context
+  return use_external(ctx) if external?()
+
   args = ["-I", STUB, "--bucket", BUCKET, "--access-key", ACCESS_KEY, "--secret-key", SECRET_KEY]
   if session_token != ""
     args = args + ["--session-token", session_token]
@@ -24,7 +26,21 @@ def start_stub(ctx: BDD.Context, session_token: String) -> BDD.Context
   set_text(set_text(armed, "port", port), "token", session_token)
 end
 
+## With `S3_TEST_ENDPOINT` set, the specs run against that server instead (MinIO, rustfs, AWS) with `S3_TEST_REGION`,
+## `S3_TEST_BUCKET`, `S3_TEST_ACCESS_KEY` and `S3_TEST_SECRET_KEY`, in keys of a prefix of their own. The scenarios that
+## need the stub's session token or a virtual host skip.
+def external?() -> Bool = System.env("S3_TEST_ENDPOINT").ok?
+
 def set_text(ctx: BDD.Context, name: String, value: String) -> BDD.Context = BDD.set(ctx, name, JSON.from(value))
+
+## The key of a scenario: its own prefix on an external server, so that runs and scenarios never meet.
+def key(ctx: BDD.Context, name: String) -> String = "#{text(ctx, "prefix", "")}#{name}"
+
+def skip_external(ctx: BDD.Context, why: String) -> BDD.Context
+  return BDD.skip(ctx, why) if external?()
+
+  ctx
+end
 
 def text(ctx: BDD.Context, name: String, fallback: String) -> String
   case BDD.get(ctx, name)
@@ -41,8 +57,8 @@ def config_of(ctx: BDD.Context) -> S3.Config
   end
 
   S3.Config(
-    endpoint: "http://127.0.0.1:#{text(ctx, "port", "0")}",
-    region: REGION,
+    endpoint: text(ctx, "endpoint", "http://127.0.0.1:#{text(ctx, "port", "0")}"),
+    region: text(ctx, "region", REGION),
     access_key: text(ctx, "access_key", ACCESS_KEY),
     secret_key: text(ctx, "secret_key", SECRET_KEY),
     bucket: text(ctx, "bucket", BUCKET),
@@ -143,6 +159,23 @@ end
 private
 
 STUB = "specs/fixtures/s3_stub.py"
+
+def use_external(ctx: BDD.Context) -> BDD.Context
+  settings = [
+    ["endpoint", "S3_TEST_ENDPOINT"],
+    ["region", "S3_TEST_REGION"],
+    ["bucket", "S3_TEST_BUCKET"],
+    ["access_key", "S3_TEST_ACCESS_KEY"],
+    ["secret_key", "S3_TEST_SECRET_KEY"],
+  ]
+
+  armed = set_text(ctx, "prefix", "spec-#{OpenSSL.Random.hex(6)}/")
+  for pair in settings
+    armed = set_text(armed, pair[0], System.env(pair[1]).unwrap_or(""))
+  end
+
+  armed
+end
 
 def stop(stub: Process) -> Result[Void]
   Process.close(stub)

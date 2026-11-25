@@ -136,5 +136,6 @@ def read_error(stream: HTTP.Stream) -> Bytes
   end
 
   stream.body.close
+  Task.cancel(stream.done)
   collected
 end

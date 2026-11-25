@@ -5,10 +5,9 @@ import HTTP from "std/http"
 ## The kinds of the errors, for `e.is_a?("s3")` and `e.is_a?(S3.NO_SUCH_KEY)`: the code of the S3 error in snake case
 ## (`NoSuchKey` is `s3.no_such_key`), with its HTTP status as `e.code` and the code as it came in
 ## `e.details["s3_code"]`. A refusal before any request is `s3.invalid`, a body that is not what S3 answers
-## `s3.protocol`, an answer with no S3 error body `s3.http` and a failed connection `s3.network`.
+## `s3.protocol` and an answer with no S3 error body `s3.http`. A failed connection keeps the kind of `std/http`.
 INVALID = "s3.invalid"
 PROTOCOL = "s3.protocol"
-NETWORK = "s3.network"
 HTTP_STATUS = "s3.http"
 NO_SUCH_KEY = "s3.no_such_key"
 NO_SUCH_BUCKET = "s3.no_such_bucket"

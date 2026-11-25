@@ -120,6 +120,15 @@ prop/                property-based testing: prop.agc is the API (check, eq, ass
                      src/seed.agc the seed hashing (pure), src/check.agc the runner and the shrinking, src/laws.agc
                      the law helpers, src/schema.agc `Prop.of`, src/exhaustive.agc the bounded check; test/*_test.agc
                      are the unit tests (the API is plain function calls)
+s3/                  an S3 client (AWS S3, MinIO, rustfs): s3.agc is the API (client, close, put, put_file, get, get_range,
+                     get_file, open, head, delete, the presign_* functions, the multipart calls, upload_file); src/sigv4.agc
+                     the signing (pure), src/encoding.agc the percent-encoding and dates (pure), src/address.agc the URL, host and
+                     path of a key and the checks of a Config (pure), src/xml.agc and src/failure.agc the answers' XML and the
+                     errors (pure), src/request.agc the signed requests, src/objects.agc, src/multipart.agc, src/presigned.agc and
+                     src/service.agc the calls; test/ has the unit tests (test/sigv4_test.agc has the AWS vectors); specs/ has
+                     the features, whose peers are fixtures/s3_stub.py (an S3 server on Python's standard library that checks
+                     every signature; with S3_TEST_ENDPOINT the specs run on a real server instead) and fixtures/sigv4_peer.py
+                     (an independent signer that writes random requests: the differential check of specs/signing.feature)
 telemetry/           events for numbers: telemetry.agc is the API (start, stop, execute, enabled?, span, attach, detach,
                      handlers, dropped, flush); conformance.agc the check of an event against the conventions
                      (check); testing.agc the helper for tests (capture, events, stop, session); src/hub.agc the hub (the one actor that writes the routes, starts the actor of each

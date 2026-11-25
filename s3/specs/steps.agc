@@ -59,6 +59,8 @@ private
 def server(ctx: BDD.Context, _args: List[String]) -> BDD.Context = World.folder(World.start_stub(ctx, ""))
 
 def server_with_token(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  return World.skip_external(ctx, "a session token is for the stub") if World.external?()
+
   World.folder(World.start_stub(World.set_text(ctx, "session_token", args[0]), args[0]))
 end
 
@@ -72,6 +74,8 @@ def uses_token(ctx: BDD.Context, args: List[String]) -> BDD.Context = World.set_
 
 # Every request goes to the stub's port, while the URL names `photos.127.0.0.1`, as AWS's would name the bucket.
 def uses_virtual_host(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  return World.skip_external(ctx, "a virtual host needs the stub's address") if World.external?()
+
   World.set_text(World.set_text(ctx, "addressing", "virtual"), "connect_to", "127.0.0.1")
 end
 
@@ -81,14 +85,14 @@ def put_text_typed(ctx: BDD.Context, args: List[String]) -> BDD.Context = put_ty
 
 def put_typed(ctx: BDD.Context, key: String, text: String, content_type: String) -> BDD.Context
   client = World.client_of(ctx)
-  stored = S3.put(client, key, text.bytes, S3.PutOptions(content_type: content_type))
+  stored = S3.put(client, World.key(ctx, key), text.bytes, S3.PutOptions(content_type: content_type))
   S3.close(client)
   BDD.assert(ctx, stored.ok?, "put failed as #{World.failure_of(stored)}")
 end
 
 def read_object(ctx: BDD.Context, key: String) -> Result[S3.Object]
   client = World.client_of(ctx)
-  object = S3.get(client, key)
+  object = S3.get(client, World.key(ctx, key))
   S3.close(client)
   object
 end
@@ -101,7 +105,7 @@ end
 
 def is_bytes_of(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  info = S3.head(client, args[0])
+  info = S3.head(client, World.key(ctx, args[0]))
   S3.close(client)
   BDD.assert(ctx, info.ok?, "head failed as #{World.failure_of(info)}")
   seen = "#{info.unwrap!.size} #{info.unwrap!.content_type}"
@@ -118,7 +122,7 @@ end
 
 def ranged(ctx: BDD.Context, key: String, first: Int, last: Int, expected: String) -> BDD.Context
   client = World.client_of(ctx)
-  object = S3.get_range(client, key, first, last)
+  object = S3.get_range(client, World.key(ctx, key), first, last)
   S3.close(client)
   BDD.assert(ctx, object.ok?, "get_range failed as #{World.failure_of(object)}")
   BDD.assert(ctx, String.from_bytes(object.unwrap!.body).unwrap_or("") == expected, "the range is not #{expected}")
@@ -126,7 +130,7 @@ end
 
 def delete(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  deleted = S3.delete(client, args[0])
+  deleted = S3.delete(client, World.key(ctx, args[0]))
   S3.close(client)
   BDD.assert(ctx, deleted.ok?, "delete failed as #{World.failure_of(deleted)}")
 end
@@ -134,8 +138,8 @@ end
 # Both ways of asking for a key that is not there: a `GET` with the error body, and a `HEAD` with none.
 def is_missing(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  got = World.failure_of(S3.get(client, args[0]))
-  described = World.failure_of(S3.head(client, args[0]))
+  got = World.failure_of(S3.get(client, World.key(ctx, args[0])))
+  described = World.failure_of(S3.head(client, World.key(ctx, args[0])))
   S3.close(client)
   BDD.assert(ctx, got == "#{S3.NO_SUCH_KEY} 404" and described == got, "get: #{got}, head: #{described}")
 end
@@ -146,7 +150,7 @@ end
 
 def putting_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  stored = S3.put(client, args[0], "x".bytes)
+  stored = S3.put(client, World.key(ctx, args[0]), "x".bytes)
   S3.close(client)
   World.fails_with(ctx, stored, args[1], args[2].to_i!)
 end
@@ -158,21 +162,21 @@ end
 
 def put_file(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  stored = S3.put_file(client, args[1], World.file_path(ctx, args[0]))
+  stored = S3.put_file(client, World.key(ctx, args[1]), World.file_path(ctx, args[0]))
   S3.close(client)
   BDD.assert(ctx, stored.ok?, "put_file failed as #{World.failure_of(stored)}")
 end
 
 def get_file(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  info = S3.get_file(client, args[0], World.file_path(ctx, args[1]))
+  info = S3.get_file(client, World.key(ctx, args[0]), World.file_path(ctx, args[1]))
   S3.close(client)
   BDD.assert(ctx, info.ok?, "get_file failed as #{World.failure_of(info)}")
 end
 
 def stream_file(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  stream = S3.open(client, args[0]).unwrap!
+  stream = S3.open(client, World.key(ctx, args[0])).unwrap!
   path = World.file_path(ctx, args[1])
   World.drain_to_file(stream.body, path)
   done = Task.await(stream.done)
@@ -192,7 +196,7 @@ def object_has_file(ctx: BDD.Context, args: List[String]) -> BDD.Context
 end
 
 def presigned_url(ctx: BDD.Context, key: String, options: S3.Presign) -> String
-  S3.presign_get(World.config_of(ctx), key, options).unwrap!
+  S3.presign_get(World.config_of(ctx), World.key(ctx, key), options).unwrap!
 end
 
 def presigned_get(ctx: BDD.Context, args: List[String]) -> BDD.Context
@@ -205,7 +209,7 @@ def presigned_get(ctx: BDD.Context, args: List[String]) -> BDD.Context
 end
 
 def curl_puts(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  url = S3.presign_put(World.config_of(ctx), args[1]).unwrap!
+  url = S3.presign_put(World.config_of(ctx), World.key(ctx, args[1])).unwrap!
   curl = Process.spawn_captured("curl", ["-sS", "--fail-with-body", "-T", World.file_path(ctx, args[0]), url]).unwrap!
   code = Process.wait(curl, 60_000).unwrap!
   BDD.assert(ctx, code == 0, "curl exited with #{code}: #{Process.output(curl, 5_000).unwrap!.stderr}")
@@ -229,16 +233,16 @@ end
 
 def changed_url(ctx: BDD.Context, args: List[String]) -> BDD.Context
   url = presigned_url(ctx, args[0], S3.Presign())
-  refused_url(ctx, url.replace("/#{World.BUCKET}/#{args[0]}?", "/#{World.BUCKET}/#{args[1]}?"), args[2].to_i!, args[3])
+  refused_url(ctx, url.replace("/#{World.key(ctx, args[0])}?", "/#{World.key(ctx, args[1])}?"), args[2].to_i!, args[3])
 end
 
 def start_upload(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  id = S3.create_multipart(client, args[0])
+  id = S3.create_multipart(client, World.key(ctx, args[0]))
   S3.close(client)
   BDD.assert(ctx, id.ok?, "create failed as #{World.failure_of(id)}")
   parts: List[S3.Part] = []
-  started = World.set_text(World.set_text(ctx, "upload", id.unwrap!), "upload_key", args[0])
+  started = World.set_text(World.set_text(ctx, "upload", id.unwrap!), "upload_key", World.key(ctx, args[0]))
   BDD.set(started, "parts", JSON.from(parts))
 end
 
@@ -283,28 +287,28 @@ end
 
 def complete_upload(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  done = S3.complete_multipart(client, args[0], upload_id(ctx), kept_parts(ctx))
+  done = S3.complete_multipart(client, World.key(ctx, args[0]), upload_id(ctx), kept_parts(ctx))
   S3.close(client)
   BDD.assert(ctx, done.ok?, "complete failed as #{World.failure_of(done)}")
 end
 
 def completing_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  done = S3.complete_multipart(client, args[0], upload_id(ctx), kept_parts(ctx))
+  done = S3.complete_multipart(client, World.key(ctx, args[0]), upload_id(ctx), kept_parts(ctx))
   S3.close(client)
   World.fails_with(ctx, done, args[1], args[2].to_i!)
 end
 
 def abort_upload(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  aborted = S3.abort_multipart(client, args[0], upload_id(ctx))
+  aborted = S3.abort_multipart(client, World.key(ctx, args[0]), upload_id(ctx))
   S3.close(client)
   BDD.assert(ctx, aborted.ok?, "abort failed as #{World.failure_of(aborted)}")
 end
 
 def listing_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  listed = S3.list_parts(client, args[0], upload_id(ctx))
+  listed = S3.list_parts(client, World.key(ctx, args[0]), upload_id(ctx))
   S3.close(client)
   World.fails_with(ctx, listed, args[1], args[2].to_i!)
 end
@@ -312,7 +316,7 @@ end
 def upload_file(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
   options = S3.UploadOptions(part_size: args[2].to_i!)
-  info = S3.upload_file(client, args[1], World.file_path(ctx, args[0]), options)
+  info = S3.upload_file(client, World.key(ctx, args[1]), World.file_path(ctx, args[0]), options)
   S3.close(client)
   BDD.assert(ctx, info.ok?, "upload_file failed as #{World.failure_of(info)}")
   World.set_text(ctx, "etag", info.unwrap!.etag)
@@ -320,7 +324,7 @@ end
 
 def etag_ends(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
-  info = S3.head(client, args[0])
+  info = S3.head(client, World.key(ctx, args[0]))
   S3.close(client)
   BDD.assert(ctx, info.ok?, "head failed as #{World.failure_of(info)}")
   BDD.assert(ctx, info.unwrap!.etag.end_with?(args[1]), "the etag is #{info.unwrap!.etag}")
