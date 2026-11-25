@@ -1,7 +1,9 @@
 ## CSV (RFC 4180) in pure Agentica: the rows of a text as lists or as maps, the rows of a table as text, and a reader that
 ## takes the text in chunks. Quoted fields may hold the separator, quotes (doubled) and line breaks. A row ends with LF or
-## CRLF, and a text that ends with a line break has no extra row. A malformed text is a `csv.malformed` error that names
-## its line, and a bad argument is `csv.invalid`.
+## CRLF (a lone CR is data, except right after a closing quote, where it is an error), and a text that ends with a line
+## break has no extra row. The reader is strict: a quote inside a field that did not start with one (`a"b`) and text after
+## a closing quote (`"a" b`) are errors. A byte order mark at the start of the text is dropped. A malformed text is a
+## `csv.malformed` error that names its line, and a bad argument is `csv.invalid`.
 
 import Errors from "src/errors"
 import Rows from "src/reader"
@@ -14,7 +16,8 @@ export Rows.Feed
 def parse(text: String, separator: String = ",") -> Result[List[List[String]]] = Rows.parse(text, separator)
 
 ## The rows of `text` as maps from the names in its first row. A row of another width than the header, or a name that
-## appears twice in it, is a `csv.malformed` error.
+## appears twice in it, is a `csv.malformed` error that names the row (the header is row 1). A blank line is skipped when
+## the header has more than one column, as Python's DictReader does.
 def parse_maps(text: String, separator: String = ",") -> Result[List[Map[String, String]]]
   rows = try Rows.parse(text, separator)
   return ok([]) if rows.empty?
@@ -24,22 +27,26 @@ def parse_maps(text: String, separator: String = ",") -> Result[List[Map[String,
   out: List[Map[String, String]] = []
   for index in 1...rows.size
     row = rows[index]
-    if row.size != header.size
+    blank = row.size == 1 and row[0] == "" and header.size > 1
+    if !blank and row.size != header.size
       return Errors.malformed("row #{index + 1} has #{row.size} fields, the header #{header.size}")
     end
 
-    entry: Map[String, String] = {}
-    for column in 0...header.size
-      entry = entry.put(header[column], row[column])
-    end
+    if !blank
+      entry: Map[String, String] = {}
+      for column in 0...header.size
+        entry = entry.put(header[column], row[column])
+      end
 
-    out = out.push(entry)
+      out = out.push(entry)
+    end
   end
 
   ok(out)
 end
 
-## The rows as text, each ending with CRLF. A field is quoted only when it has to be.
+## The rows as text, each ending with CRLF. A field is quoted only when it has to be. A row with no fields is an empty
+## line, which reads back as a row of one empty field.
 def encode(rows: List[List[String]], separator: String = ",") -> Result[String] = Writer.encode(rows, separator)
 
 ## The header, then the rows as maps read in the order of the header; a name a row lacks is an empty field and a key the
@@ -53,8 +60,8 @@ def encode_maps(header: List[String], rows: List[Map[String, String]], separator
   Writer.encode(table, separator)
 end
 
-## A reader for text that comes in pieces, such as the chunks of a large file. Give each piece to `feed`, which returns the
-## rows it finished and the reader for the next piece, and call `finish` after the last one.
+## A reader for text that comes in pieces, such as the chunks of a large file. Build it with `reader`, give each piece to
+## `feed`, which returns the rows it finished and the reader for the next piece, and call `finish` after the last one.
 def reader(separator: String = ",") -> Result[Rows.Reader] = Rows.new(separator)
 
 def feed(state: Rows.Reader, chunk: String) -> Result[Rows.Feed] = Rows.feed(state, chunk)

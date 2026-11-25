@@ -29,7 +29,13 @@ MALFORMED = "csv.malformed"
 INVALID = "csv.invalid"
 
 # The marks of the features: a table cell cannot hold a CR, a tab or a backslash escape.
-MARKS = [["{CRLF}", "\r\n", "\\r\\n"], ["{LF}", "\n", "\\n"], ["{TAB}", "\t", "\\t"], ["{Q}", "\"", "\\\""]]
+MARKS = [
+  ["{CRLF}", "\r\n", "\\r\\n"],
+  ["{CR}", "\r", "\\r"],
+  ["{LF}", "\n", "\\n"],
+  ["{TAB}", "\t", "\\t"],
+  ["{Q}", "\"", "\\\""],
+]
 
 struct Table
   rows: List[List[String]]
@@ -41,7 +47,7 @@ end
 
 # A text or a separator as the feature writes it.
 def unescaped(cell: String) -> String
-  text = cell
+  text = cell.replace("{BOM}", String.from_code(65279))
   for mark in MARKS
     text = text.replace(mark[0], mark[1])
   end
@@ -56,7 +62,7 @@ def json_text(cell: String) -> String
     text = text.replace(mark[0], mark[2])
   end
 
-  text
+  text.replace("{BOM}", "\\ufeff")
 end
 
 def rows_of(json: String) -> List[List[String]] = JSON.decode("{\"rows\": #{json_text(json)}}", Table).unwrap!.rows
