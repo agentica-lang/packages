@@ -221,6 +221,15 @@ end
 
 def deliver(state: Progress, deadline: Int) -> Result[Progress] = deliver_stream(state, deadline)
 
+# `piece` is in the body channel. The send fits only once the reader took the previous piece, which may happen after
+# the emptiness check of `deliver_stream`, so that piece's credit is returned here, once.
+def handed(state: Progress, piece: Piece, deadline: Int) -> Result[Progress]
+  # A consume error after the send fails the connection: the piece is not delivered again.
+  consumed = try consume(state, state.stream.inflight_credit, deadline)
+  taken = consumed.stream
+  ok(consumed.with(stream: taken.with(pending: taken.pending.drop(1), inflight_credit: piece.credit)))
+end
+
 def dispatch_closed(session: Session, frame: Frame.Frame, stream: Stream, deadline: Int) -> Result[Progress]
   if frame.kind == 0
     credit = session.receive_credit - frame.payload.size
@@ -514,9 +523,7 @@ def deliver_stream(state: Progress, deadline: Int) -> Result[Progress]
     end
 
     case streaming.body.send(piece.body, 0)
-      ok(_) ->
-        stream = stream.with(pending: stream.pending.drop(1), inflight_credit: piece.credit)
-        return ok(state.with(stream: stream))
+      ok(_) -> return handed(state, piece, deadline)
       error(_) -> return ok(state.with(stream: stream))
     end
   end
