@@ -4,6 +4,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** needs Agentica 0.38.0 (`Task.spawn_link`), and `agentica = "0.38.0"` in the manifest says so. CI tests with Agentica 0.38.0.
+
+### Fixed
+
+- A crash of the writer of a client now ends its handler at once: the socket is closed, `on_close` runs and `crashed` counts it, as for a crash of the handler. Before, the handler stayed in its receive until the client left or the idle time passed.
+
 ## [0.3.0] - 2026-11-13
 
 Needs Agentica 0.31.0.

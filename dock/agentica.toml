@@ -1,5 +1,5 @@
 name = "dock"
-agentica = "0.31.0"
+agentica = "0.38.0"
 
 # Every bare `end` is followed by an empty line (AGENTS.md).
 [style]

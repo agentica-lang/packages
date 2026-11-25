@@ -697,6 +697,32 @@ def test_stop_ends_a_handed_over_connection_nobody_closes() -> Result[Void]
   Test.error?(ids.recv(300))
 end
 
+# Queues one message straight in the channel of the writer, with the counter of the queued bytes (key 0 of the pending
+# table) one step from the smallest Int: the writer sends the message, then its subtraction overflows and it crashes,
+# as a bug of the writer would. The handler then waits for the client, which is where it would stay.
+def break_writer(conn: Dock.Conn) -> Void
+  case conn.inside
+    Types.ClientParts.Parts(_, _, outbox) ->
+      outbox.pending.put(0, -9_223_372_036_854_775_800)
+      _ = outbox.queue.send(Outbox.Out.Data("x".bytes), 0)
+      _ = Dock.recv(conn, 16)
+  end
+end
+
+def test_a_writer_that_crashes_ends_the_handler_at_once_and_runs_on_close() -> Result[Void]
+  ids: Channel[Int] = Channel.new(8)
+  server = try Dock.start(noting(Dock.Config(port: 0), ids), &break_writer)
+  client = try TCP.connect("127.0.0.1", server.port, 5000)
+  try Test.eq(TCP.recv_bytes(client, 16, 5000), ok("x".bytes))
+  started = Time.now_ms
+  try Test.eq(ids.recv(5000), ok(1))
+  try Test.assert(Time.now_ms - started < 2000, "the handler stayed in its receive after the writer crashed")
+  try Test.eq(read_all(client), ok("".bytes))
+  try await_stats(server) do |s| s.open == 0 and s.crashed == 1 end
+  try Test.error?(ids.recv(300))
+  Dock.stop(server)
+end
+
 def test_a_bad_max_bytes_does_not_close_a_handed_over_connection() -> Result[Void]
   conns: Channel[Dock.Conn] = Channel.new(1)
   server = try Dock.start(Dock.Config(port: 0)) do |conn| pass_on(conn, conns) end
