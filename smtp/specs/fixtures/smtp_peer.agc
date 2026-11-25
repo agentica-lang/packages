@@ -1,12 +1,12 @@
-## A small SMTP server for the specs of `smtp.agc`, written without the code under test. It listens on
-## 127.0.0.1 and a free port, serves one connection and writes the dialogue to stdout, one line each: `C: ` for a
-## line of the client (the lines of the message too, as they came, dot-stuffed) and `S: ` for a reply. When the
-## connection ends it writes `closed` and stops. The first line is `listening on PORT`.
+## A small SMTP server for the specs of `smtp.agc`, written without the code under test. It listens on 127.0.0.1 and a
+## free port, serves one connection and writes the dialogue to stdout, one line each: `C: ` for a line of the client
+## (the lines of the message too, as they came, dot-stuffed) and `S: ` for a reply. The peer reads the bytes itself, and
+## a line of the client that ends in a bare LF instead of CRLF is written as `C (bare LF): `. When the connection ends
+## it writes `closed` and stops. The first line is `listening on PORT`.
 ##
-## What it does comes from
-## the environment, which the steps set: SMTP_PEER_MODE is `plain`, `starttls` (it offers STARTTLS) or `implicit`
-## (TLS from the first byte), SMTP_PEER_AUTH the AUTH mechanisms it offers (`PLAIN LOGIN`, none by default),
-## SMTP_PEER_REJECT_RCPT an address that gets a 550, SMTP_PEER_STALL a command that it never answers, and
+## What it does comes from the environment, which the steps set: SMTP_PEER_MODE is `plain`, `starttls` (it offers
+## STARTTLS) or `implicit` (TLS from the first byte), SMTP_PEER_AUTH the AUTH mechanisms it offers (`PLAIN LOGIN`, none
+## by default), SMTP_PEER_REJECT_RCPT an address that gets a 550, SMTP_PEER_STALL a command that it never answers, and
 ## SMTP_PEER_CERTS the folder with the certificates and SMTP_PEER_CERT the name of the one to use (`server` by default;
 ## its files are `NAME.pem` and `NAME-key.pem`). The login that it accepts is `ana` with `secret`. In `starttls` mode
 ## AUTH and MAIL before the upgrade get a 530.
@@ -33,6 +33,9 @@ STALL_MS = 20_000
 USER = "ana"
 PASSWORD = "secret"
 NUL = String.from_code(0)
+CR = 13
+LF = 10
+MAX_LINE_BYTES = 100_000
 
 struct Settings
   mode: String
@@ -103,14 +106,44 @@ def say(socket: TCP.Socket, text: String) -> Void
 end
 
 def hear(socket: TCP.Socket, wait_ms: Int = IDLE_MS) -> Result[String]
-  line = try TCP.read_line(socket, wait_ms)
+  bytes = try read_line_bytes(socket, wait_ms)
+  crlf = bytes.size > 0 and bytes[bytes.size - 1] == CR
+  kept = bytes
+  if crlf
+    kept = bytes.take(bytes.size - 1)
+  end
+
+  line = Bytes.from_list(kept).unwrap!.scrub
+  tag = "C"
+  if not crlf
+    tag = "C (bare LF)"
+  end
+
   if line.empty?
-    puts("C:")
+    puts("#{tag}:")
   else
-    puts("C: #{line}")
+    puts("#{tag}: #{line}")
   end
 
   ok(line)
+end
+
+# The bytes of a line up to its LF, which `TCP.read_line` would hide: it takes LF and CRLF alike. One byte at a
+# time, so
+# nothing of the next line is read.
+def read_line_bytes(socket: TCP.Socket, wait_ms: Int) -> Result[List[Int]]
+  bytes: List[Int] = []
+  for _ in 0...MAX_LINE_BYTES
+    chunk = try TCP.recv_bytes(socket, 1, wait_ms)
+    return error("the client closed the connection") if Bytes.empty?(chunk)
+
+    byte = chunk.to_a[0]
+    return ok(bytes) if byte == LF
+
+    bytes = bytes.push(byte)
+  end
+
+  error("a line of the client is too long")
 end
 
 # One command after another until QUIT, a stall or the end of the connection. STARTTLS swaps the socket for the

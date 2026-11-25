@@ -134,9 +134,8 @@ s3/                  an S3 client (AWS S3, MinIO, rustfs): s3.agc is the API (cl
                      the features, whose peers are fixtures/s3_stub.py (an S3 server on Python's standard library that checks
                      every signature; with S3_TEST_ENDPOINT the specs run on a real server instead) and fixtures/sigv4_peer.py
                      (an independent signer that writes random requests: the differential check of specs/signing.feature)
-smtp/                an SMTP client: smtp.agc is the API (send, connect, send_message, quit, close, open, ehlo, starttls,
-                     login, error_code, error_summary, loopback?; it exports the Message, Field and Envelope of the message
-                     module), src/message.agc the message (headers, addresses, encoded words, bodies, all pure); test/ has
+smtp/                an SMTP client: smtp.agc is the API (send, connect, send_message, quit, close, error_code,
+                     error_summary; it exports the Message, Field and Envelope of the message module), src/message.agc the message (headers, addresses, encoded words, bodies, all pure); test/ has
                      the unit test of the message; specs/ has the features, whose peer is fixtures/smtp_peer.agc (an SMTP
                      server in Agentica written apart from the client, which writes the dialogue it saw; fixtures/tls/ are
                      test certificates made by make-certs.sh)

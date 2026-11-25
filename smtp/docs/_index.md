@@ -53,7 +53,7 @@ def main() -> Void
 end
 ```
 
-The default security is STARTTLS on port 587. The client says EHLO, upgrades the connection, says EHLO again and only then logs in, so a password never goes in the clear.
+The default security is STARTTLS on port 587. The client says EHLO, upgrades the connection, says EHLO again and only then logs in, so a password never goes in the clear. For TLS from the first byte, set `security: Smtp.Security.Implicit` and `port: 465`: the port does not follow the security.
 
 Every function gives a `Result`. An error from a server that answered has its reply code in the message, and `error_code` reads it back:
 
@@ -78,7 +78,7 @@ smtp 550: a recipient was refused
 - The certificate of the server is checked against the system's authorities, or against `ca_file`, and the host name must match.
 - The password is sent only over an encrypted connection (or to this machine). A `Client` that `connect` gives no longer holds it.
 - A message with a line break or another control character in a header, in an address or in a name is refused before any connection, so a value that comes from a user cannot add a header or a recipient. A custom header must be ASCII.
-- The text of the server that goes into an error is cut to 200 characters and loses its control characters, including the C1 and bidirectional ones, so an error is safe to print. `error_summary` keeps only what is safe for a log read by many people.
+- The text of the server that goes into an error is cut to 200 characters and loses its control characters, including the C1 and bidirectional ones, so an error is safe to print. The errors of the login hold no text of the server at all, so a server that echoes what it was sent cannot put the password in an error. `error_summary` keeps only what is safe for a log read by many people.
 - `Options` holds the password: never print or log one. The password is never part of an error.
 
 ## Types
@@ -113,11 +113,11 @@ The addresses of the dialogue, `MAIL FROM` and one `RCPT TO` each, apart from th
 Smtp.Options(host: String, local_hostname: String, port: Int = 587, security: Smtp.Security = Smtp.Security.Starttls, username: String = "", password: String = "", ca_file: String = "", timeout_ms: Int = 60000, data_timeout_ms: Int = 600000)
 ```
 
-Where to connect and as whom. `username` and `password` log in when the username is not empty. `local_hostname` has no default: EHLO needs the name of the machine that sends, as other servers can look it up. `ca_file` is a PEM file of certificate authorities that replaces the system's. `timeout_ms` is the time for each connection, each reply and each write, and `data_timeout_ms` the time for the reply after the message, which a server may take long to give (RFC 5321 allows 10 minutes). The constants `Smtp.STARTTLS_PORT` (587), `Smtp.IMPLICIT_TLS_PORT` (465), `Smtp.DEFAULT_TIMEOUT_MS` and `Smtp.DEFAULT_DATA_TIMEOUT_MS` hold the defaults.
+Where to connect and as whom. `username` and `password` log in when the username is not empty. `local_hostname` has no default: EHLO needs the name of the machine that sends, as other servers can look it up. `port` defaults to 587, the port of STARTTLS, so `Security.Implicit` needs `port: 465`. A `timeout_ms` or a `data_timeout_ms` of 0 or less is an error. `ca_file` is a PEM file of certificate authorities that replaces the system's. `timeout_ms` is the time for each connection, each reply and each write, and `data_timeout_ms` the time for the reply after the message, which a server may take long to give (RFC 5321 allows 10 minutes). The constants `Smtp.STARTTLS_PORT` (587), `Smtp.IMPLICIT_TLS_PORT` (465), `Smtp.DEFAULT_TIMEOUT_MS` and `Smtp.DEFAULT_DATA_TIMEOUT_MS` hold the defaults.
 
 ### `Smtp.Security`
 
-`Smtp.Security.Starttls` starts in plain text and upgrades with STARTTLS, which the server must offer (port 587). `Smtp.Security.Implicit` is TLS from the first byte (port 465). `Smtp.Security.Plain` never uses TLS and is only for a host on this machine, such as a mail catcher in development: any other host is an error.
+`Smtp.Security.Starttls` starts in plain text and upgrades with STARTTLS, which the server must offer (port 587). `Smtp.Security.Implicit` is TLS from the first byte (port 465: set `port`, since the default is 587). `Smtp.Security.Plain` never uses TLS and is only for a host on this machine, such as a mail catcher in development: any other host is an error.
 
 ### `Smtp.Client`
 
@@ -131,7 +131,7 @@ Sends one message: connects, logs in when the options have a username, sends and
 
 ### `Smtp.connect(options) -> Result[Smtp.Client]`
 
-Opens the connection, reads the greeting, says EHLO, upgrades with STARTTLS (for `Security.Starttls`) and logs in (when `username` is not empty). On an `error` nothing stays open. Use it to send several messages on one connection:
+Opens the connection, reads the greeting, says EHLO, upgrades with STARTTLS (for `Security.Starttls`) and logs in (when `username` is not empty). On an `error` nothing stays open. The `Client` that it gives no longer holds the password. Use it to send several messages on one connection:
 
 ```agentica {mode="check"}
 import Smtp from "pkg/smtp/smtp"
@@ -152,7 +152,7 @@ end
 
 ### `Smtp.send_message(client, message) -> Result[Void]`
 
-Sends a message on the connection: `MAIL FROM`, `RCPT TO` for each recipient, then the message. If the server refuses the sender, a recipient or the message, nothing is delivered, the connection is reset (`RSET`) for the next message and the `error` has the code of the refusal. An error with no code that comes from the dialogue (a timeout, a line that is not a reply) closes the connection, and so does a 421. A bad message, and a connection that is plain to a host that is not this machine (nothing is sent: use `starttls`), leave it as it is.
+Sends a message on the connection: `MAIL FROM`, `RCPT TO` for each recipient, then the message. If the server refuses the sender, a recipient or the message, nothing is delivered, the connection is reset (`RSET`) for the next message and the `error` has the code of the refusal. An error with no code that comes from the dialogue (a timeout, a line that is not a reply) closes the connection, and so does a 421. A bad message leaves it as it is.
 
 ### `Smtp.quit(client) -> Result[Void]`
 
@@ -162,33 +162,13 @@ Says QUIT and closes the connection, even when the server does not answer.
 
 Closes the connection without saying QUIT.
 
-### `Smtp.open(options) -> Result[Smtp.Client]`
-
-Opens a TCP connection (TLS from the start for `Security.Implicit`) and reads the greeting of the server. The client has not said EHLO yet. The host is taken without the spaces around it. `connect` is `open`, `ehlo`, `starttls` and `login`, which are public for a server that needs them in another order.
-
-### `Smtp.ehlo(client) -> Result[Smtp.Client]`
-
-Says EHLO and keeps the features that the server lists (`STARTTLS`, `AUTH PLAIN LOGIN`). The connection is closed by an `error` that is not a refusal (a timeout, a line that is not a reply, a broken connection) and by a 421; it stays open for any other refusal, and for a bad `local_hostname`, which sends nothing.
-
-### `Smtp.starttls(client) -> Result[Smtp.Client]`
-
-Upgrades the connection with STARTTLS, which the server must have offered, and says EHLO again, since what a server offers can change once the connection is private. The client that comes back is the encrypted one, and the one that went in is no longer usable. When STARTTLS is refused or fails, or the EHLO after it does, the connection is closed. The errors that leave it open are the one for a server without STARTTLS (nothing is sent over it), and the one for a connection that is already encrypted.
-
-### `Smtp.login(client, username, password) -> Result[Void]`
-
-Logs in with AUTH PLAIN, or AUTH LOGIN when the server only has that. A server that offers neither, and a login over a connection that is plain (only possible to this machine), are an `error` that sends nothing and leaves the connection open. An `error` for a reply that refuses the login leaves it open too, except a 421; one that is no reply (a timeout, a broken connection) closes it.
-
 ### `Smtp.error_code(message) -> Optional[Int]`
 
 The code of the reply that an `error` of this package tells, or `none` for an error that has no reply (a timeout, a broken connection, a bad message).
 
 ### `Smtp.error_summary(message) -> String`
 
-What of an `error` is safe for a log that many people read: the code and the label of a refusal (`smtp 550: a recipient was refused`), or the first words of an error without a code (`smtp: timed out waiting for the reply to RCPT TO`). It has no server text, no address and no system message. A message that is not valid, whose error names what is wrong with it (such as an address), is summarized as `the message was not valid`.
-
-### `Smtp.loopback?(host) -> Bool`
-
-True for a host on this machine: `localhost`, an address of `127.0.0.0/8` and `::1`. A name that only starts with `127.` is not.
+What of an `error` is safe for a log that many people read: the code and the label of a refusal (`smtp 550: a recipient was refused`), or the first words of an error without a code (`smtp: timed out waiting for the reply to RCPT TO`). It has no server text, no recipient address and no system message. The host of the options may appear in the two errors that name it (a plain connection to a host that is not this machine, and a bad `local_hostname`). A message that is not valid, whose error names what is wrong with it (such as an address), is summarized as `the message was not valid`.
 
 ## Errors
 
@@ -196,4 +176,4 @@ An `error` is a message, not a kind. One from a server that answered starts `smt
 
 ## Tests
 
-The package is checked against `specs/fixtures/smtp_peer.agc`, an SMTP server written in Agentica apart from the code under test, which listens on 127.0.0.1 and a free port and writes the dialogue it saw. The features compare that transcript with the one they expect, for the plain, STARTTLS and implicit TLS connections, both logins, dot-stuffing, refusals, replies of every shape (many lines, long lines, control characters), timeouts and a certificate for another host. The certificates in `specs/fixtures/tls/` are test data made by `make-certs.sh`, and the login of the peer is `ana` with `secret`. The messages are also checked in `test/message_test.agc`.
+The package is checked against `specs/fixtures/smtp_peer.agc`, an SMTP server written in Agentica apart from the code under test, which listens on 127.0.0.1 and a free port and writes the dialogue it saw. It reads the bytes itself, so a line that does not end in CRLF shows in the transcript. The features compare that transcript with the one they expect, for the plain, STARTTLS and implicit TLS connections, both logins, dot-stuffing, refusals, replies of every shape (many lines, long lines, control characters), timeouts and a certificate for another host. The certificates in `specs/fixtures/tls/` are test data made by `make-certs.sh`, and the login of the peer is `ana` with `secret`. The messages are also checked in `test/message_test.agc`.

@@ -1,7 +1,7 @@
 ## The steps of `smtp.feature`: a scenario starts the SMTP peer of `fixtures/smtp_peer.agc` (written without the code
-## under test), and the client of `smtp.agc` runs in the step itself, against the port that the peer reports. The peer writes the dialogue to its
-## stdout, and the steps read it once the connection has ended, so every assertion about what the server saw is an
-## assertion about its transcript.
+## under test), and the client of `smtp.agc` runs in the step itself, against the port that the peer reports. The peer
+## writes the dialogue to its stdout, and the steps read it once the connection has ended, so every assertion about what
+## the server saw is an assertion about its transcript.
 
 import BDD from "std/bdd"
 import Smtp from "../smtp"
@@ -25,15 +25,9 @@ def main() -> Void
     BDD.step("the client connects to the host {string}", &client_host),
     BDD.step("the client makes the date and the message id itself", &client_stamps),
     BDD.step("I send a message from {string} to {string} with the subject {string} and the text:", &send_text),
-    BDD.step(
-      "I send a message from {string} to {string} with the subject {string}, the text {string} and the html {string}",
-      &send_multipart,
-    ),
+    BDD.step("I send a message from {string} to {string} with the subject {string} and bodies:", &send_multipart),
     BDD.step("I send two messages on one connection", &send_two),
     BDD.step("I send a message on a connection that I connect and leave as it is", &send_and_leave),
-    BDD.step("I send a message over a connection that I open, upgrade and log in step by step", &send_by_steps),
-    BDD.step("I send a message after open and EHLO, without STARTTLS", &send_without_starttls),
-    BDD.step("I open the connection, say EHLO, upgrade it and log in, and leave it as it is", &walk_without_closing),
     BDD.step(
       "I connect, find that the client no longer holds the password, and send a message",
       &send_without_password,
@@ -159,8 +153,16 @@ def send_text(ctx: BDD.Context, args: List[String]) -> BDD.Context
 end
 
 def send_multipart(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  message = message_of(ctx, args[0], args[1], args[2], args[3], args[4])
+  bodies = BDD.table(ctx)
+  message = message_of(ctx, args[0], args[1], args[2], body_of(bodies, "text"), body_of(bodies, "html"))
   finish(ctx, Smtp.send(message, options_of(ctx)))
+end
+
+def body_of(rows: List[List[String]], kind: String) -> String
+  found = rows.select do |row| row[0] == kind end
+  return "" if found.empty?
+
+  found[0][1]
 end
 
 # The client that keeps the connection: two messages, one EHLO, one QUIT.
@@ -180,63 +182,6 @@ end
 def send_on_open_connection(options: Smtp.Options, message: Smtp.Message) -> Result[Void]
   client = try Smtp.connect(options)
   Smtp.send_message(client, message)
-end
-
-def send_by_steps(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  message = message_of(ctx, "ana@example.com", "bob@example.com", "Steps", "by hand", "")
-  finish(ctx, by_steps(options_of(ctx), message))
-end
-
-# What `connect` does, with the public steps: the encrypted client of `starttls` is the one to go on with.
-def by_steps(options: Smtp.Options, message: Smtp.Message) -> Result[Void]
-  opened = try Smtp.open(options)
-  said = Smtp.ehlo(opened)
-  if not said.ok?
-    Smtp.close(opened)
-    return error(said.message)
-  end
-
-  upgraded = try Smtp.starttls(said.unwrap!)
-  logged = Smtp.login(upgraded, options.username, options.password)
-  if not logged.ok?
-    Smtp.close(upgraded)
-    return logged
-  end
-
-  sent = Smtp.send_message(upgraded, message)
-  _ = Smtp.quit(upgraded)
-  sent
-end
-
-def send_without_starttls(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  message = message_of(ctx, "ana@example.com", "bob@example.com", "Plain", "no upgrade", "")
-  finish(ctx, skipping_starttls(options_of(ctx), message))
-end
-
-# A caller that forgets `starttls`: the message must not go over the plain connection.
-def skipping_starttls(options: Smtp.Options, message: Smtp.Message) -> Result[Void]
-  opened = try Smtp.open(options)
-  said = Smtp.ehlo(opened)
-  if not said.ok?
-    Smtp.close(opened)
-    return error(said.message)
-  end
-
-  sent = Smtp.send_message(said.unwrap!, message)
-  Smtp.close(opened)
-  sent
-end
-
-def walk_without_closing(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  finish(BDD.set(ctx, LEFT_OPEN, JSON.from(true)), walk(options_of(ctx)))
-end
-
-# Stops at the first error and does not close: what the public steps leave open is for the specs to see.
-def walk(options: Smtp.Options) -> Result[Void]
-  opened = try Smtp.open(options)
-  said = try Smtp.ehlo(opened)
-  upgraded = try Smtp.starttls(said)
-  Smtp.login(upgraded, options.username, options.password)
 end
 
 def send_without_password(ctx: BDD.Context, args: List[String]) -> BDD.Context

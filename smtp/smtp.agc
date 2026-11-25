@@ -1,7 +1,6 @@
 ## An SMTP client that sends the messages of `src/message.agc`. `Smtp.send` is the call for one message: it connects,
 ## sends and quits. For several messages on one connection, `connect` gives a `Client`, `send_message` sends on it as
-## often as needed and `quit` ends it. `open`, `ehlo`, `starttls` and `login` are the steps `connect` runs, for a
-## server that needs them in another order.
+## often as needed and `quit` ends it.
 ##
 ## Every function returns a `Result`. An `error` for a server that answered has the reply code in its message,
 ## `smtp 550: a recipient was refused: mailbox unavailable (ana@example.com)`, and `error_code` reads it back. An error
@@ -40,8 +39,8 @@ end
 ## Where to connect and as whom. `username` and `password` log in when the username is not empty. `local_hostname` is
 ## the name that EHLO gives: the name of the machine that sends, as other servers can look it up, so it has no default.
 ## `ca_file` is a PEM file of certificate authorities that replaces the system's. `timeout_ms` is the time for each
-## connection, each reply and each write, and `data_timeout_ms` the time for the reply after the message. `password`
-## is a secret: never print or log an `Options`.
+## connection, each reply and each write, and `data_timeout_ms` the time for the reply after the message. `port` is
+## the one of STARTTLS: `Security.Implicit` needs `port: 465`. `password` is a secret: never print or log an `Options`.
 struct Options
   host: String
   local_hostname: String
@@ -86,111 +85,11 @@ def connect(options: Options) -> Result[Client]
   setup(opened)
 end
 
-## Opens a TCP connection (TLS from the start for `Security.Implicit`) and reads the greeting of the server. The
-## client has not said EHLO yet. The host is taken without the spaces around it, here and for every later use.
-def open(options: Options) -> Result[Client]
-  host = options.host.strip
-  if options.security == Security.Plain and not loopback?(host)
-    return error("smtp: a plain connection is only allowed to this machine, not to #{host}")
-  end
-
-  return error("smtp: the timeout must be more than 0 milliseconds") if options.timeout_ms <= 0
-
-  stripped = options.with(host: host)
-  socket = try connect_socket(stripped)
-  client = Client(socket: socket, options: stripped, secure: stripped.security == Security.Implicit, features: [])
-  greeting = read_reply(client, "the greeting")
-  if not greeting.ok?
-    close(client)
-    return error(greeting.message)
-  end
-
-  checked = expect(greeting.unwrap!, [CODE_READY], "the server refused the connection")
-  if not checked.ok?
-    close(client)
-    return error(checked.message)
-  end
-
-  ok(client)
-end
-
-## Says EHLO and keeps the features that the server lists (`STARTTLS`, `AUTH PLAIN LOGIN`). The connection is closed
-## by an `error` that is not a refusal (a timeout, a line that is not a reply, a broken connection) and by a 421; it
-## stays open for any other refusal, and for a bad `local_hostname`, which sends nothing.
-def ehlo(client: Client) -> Result[Client]
-  name = client.options.local_hostname
-  if name.empty? or name.include?(" ") or name.bytes.to_a.any? do |byte| byte < 32 or byte > 126 end
-    return error("smtp: the local hostname #{name.inspect} is not a host name")
-  end
-
-  asked = ask(client, "EHLO #{name}", "EHLO", [CODE_OK], "EHLO refused")
-  if not asked.ok?
-    close_when_lost(client, asked.message)
-    return error(asked.message)
-  end
-
-  reply = asked.unwrap!
-  # The first line is the server's greeting, the others are its features.
-  features = reply.lines.drop(1).map do |line| line.strip.upcase end
-  ok(client.with(features: features))
-end
-
-## Upgrades the connection with STARTTLS, which the server must have offered, and says EHLO again, since what a server
-## offers can change once the connection is private. The client that comes back is the encrypted one, and the one
-## that went in is no longer usable. When STARTTLS is refused or fails, or the EHLO after it does, the connection is
-## closed: a caller never has to find a half-upgraded one. The `error`s that leave it open are the one for a server
-## without STARTTLS, which is no reason to give up the connection (but nothing is sent over it either), and the one
-## for a connection that is already encrypted, which nothing was sent over.
-def starttls(client: Client) -> Result[Client]
-  return error("smtp: the connection is already encrypted") if client.secure
-
-  if not offers?(client, "STARTTLS")
-    return error("smtp: the server does not offer STARTTLS, so nothing is sent over a plain connection")
-  end
-
-  upgraded = upgrade(client)
-  if not upgraded.ok?
-    # Closing twice is fine: the upgrade has closed the plain socket and, when its EHLO failed, the encrypted one.
-    close(client)
-  end
-
-  upgraded
-end
-
-## Logs in with AUTH PLAIN, or AUTH LOGIN when the server only has that. A server that offers neither, and a login
-## over a connection that is plain (only possible to this machine), are an `error` that sends nothing and leaves the
-## connection open. An `error` for a reply that refuses the login leaves it open too, except a 421; one that is no
-## reply (a timeout, a broken connection) closes it.
-def login(client: Client, username: String, password: String) -> Result[Void]
-  if not client.secure and not loopback?(client.options.host)
-    return error("smtp: the password is only sent over an encrypted connection")
-  end
-
-  if username.include?(NUL) or password.include?(NUL)
-    return error("smtp: the username and the password must not hold a NUL character")
-  end
-
-  outcome = ok()
-  if offers_auth?(client, "PLAIN")
-    outcome = auth_plain(client, username, password)
-  elsif offers_auth?(client, "LOGIN")
-    outcome = auth_login(client, username, password)
-  else
-    return error("smtp: the server offers no AUTH mechanism that this client has (PLAIN or LOGIN)")
-  end
-
-  if not outcome.ok? and (lost?(outcome.message) or out_of_step?(outcome.message))
-    close(client)
-  end
-
-  outcome
-end
-
 ## Sends a message on the connection: `MAIL FROM`, `RCPT TO` for each recipient, then the message. If the server
 ## refuses the sender, a recipient or the message, nothing is delivered (the others are not sent), the connection is
 ## reset for the next message and the `error` has the code of the refusal. An error without a code that comes from the
 ## dialogue (a timeout, a line that is not a reply) closes the connection, and so does a 421. A bad message, and a
-## connection that is plain to a host that is not this machine (nothing is sent: use `starttls`), leave it as it is.
+## connection that is plain to a host that is not this machine (nothing is sent), leave it as it is.
 def send_message(client: Client, message: Mail.Message) -> Result[Void]
   prepared = try prepare(message)
   deliver(client, prepared)
@@ -224,7 +123,9 @@ end
 
 ## What of an `error` of this module is safe for a log that many people read: the code and the label of a refusal
 ## (`smtp 550: a recipient was refused`), or the first words of an error without a code (`smtp: timed out waiting for
-## the reply to RCPT TO`). It has no server text, no address and no system message. Anything else (a message that is
+## the reply to RCPT TO`). It has no server text, no recipient address and no system message. The host name of the
+## options may appear in the two errors that name it (a plain connection to a host that is not this machine, and a bad
+## `local_hostname`). Anything else (a message that is
 ## not valid, whose error names what is wrong with it, such as an address) is `the message was not valid`.
 def error_summary(message: String) -> String
   parts = message.split(": ")
@@ -233,18 +134,6 @@ def error_summary(message: String) -> String
   return "#{parts[0]}: #{parts[1]}" if message.start_with?("smtp: ") and parts.size > 1
 
   "the message was not valid"
-end
-
-## True for a host on this machine: `localhost`, an address of `127.0.0.0/8` and `::1`. A name that only starts with
-## `127.` is not.
-def loopback?(host: String) -> Bool
-  name = host.strip.downcase
-  return true if name == "localhost" or name == "::1" or name == "[::1]"
-
-  parts = name.split(".")
-  return false if parts.size != 4 or parts[0] != "127"
-
-  parts.all? do |part| octet?(part) end
 end
 
 private
@@ -300,6 +189,120 @@ end
 struct Prepared
   envelope: Mail.Envelope
   data: String
+end
+
+# Opens a TCP connection (TLS from the start for `Security.Implicit`) and reads the greeting of the server. The
+# client has not said EHLO yet. The host is taken without the spaces around it, here and for every later use.
+def open(options: Options) -> Result[Client]
+  host = options.host.strip
+  if options.security == Security.Plain and not loopback?(host)
+    return error("smtp: a plain connection is only allowed to this machine, not to #{host}")
+  end
+
+  return error("smtp: the timeout must be more than 0 milliseconds") if options.timeout_ms <= 0
+
+  return error("smtp: the data timeout must be more than 0 milliseconds") if options.data_timeout_ms <= 0
+
+  stripped = options.with(host: host)
+  socket = try connect_socket(stripped)
+  client = Client(socket: socket, options: stripped, secure: stripped.security == Security.Implicit, features: [])
+  greeting = read_reply(client, "the greeting")
+  if not greeting.ok?
+    close(client)
+    return error(greeting.message)
+  end
+
+  checked = expect(greeting.unwrap!, [CODE_READY], "the server refused the connection")
+  if not checked.ok?
+    close(client)
+    return error(checked.message)
+  end
+
+  ok(client)
+end
+
+# Says EHLO and keeps the features that the server lists (`STARTTLS`, `AUTH PLAIN LOGIN`). The connection is closed
+# by an `error` that is not a refusal (a timeout, a line that is not a reply, a broken connection) and by a 421; it
+# stays open for any other refusal, and for a bad `local_hostname`, which sends nothing.
+def ehlo(client: Client) -> Result[Client]
+  name = client.options.local_hostname
+  if name.empty? or name.include?(" ") or name.bytes.to_a.any? do |byte| byte < 32 or byte > 126 end
+    return error("smtp: the local hostname #{name.inspect} is not a host name")
+  end
+
+  asked = ask(client, "EHLO #{name}", "EHLO", [CODE_OK], "EHLO refused")
+  if not asked.ok?
+    close_when_lost(client, asked.message)
+    return error(asked.message)
+  end
+
+  reply = asked.unwrap!
+  # The first line is the server's greeting, the others are its features.
+  features = reply.lines.drop(1).map do |line| line.strip.upcase end
+  ok(client.with(features: features))
+end
+
+# Upgrades the connection with STARTTLS, which the server must have offered, and says EHLO again, since what a server
+# offers can change once the connection is private. The client that comes back is the encrypted one, and the one
+# that went in is no longer usable. When STARTTLS is refused or fails, or the EHLO after it does, the connection is
+# closed: a caller never has to find a half-upgraded one. The `error`s that leave it open are the one for a server
+# without STARTTLS, which is no reason to give up the connection (but nothing is sent over it either), and the one
+# for a connection that is already encrypted, which nothing was sent over.
+def starttls(client: Client) -> Result[Client]
+  return error("smtp: the connection is already encrypted") if client.secure
+
+  if not offers?(client, "STARTTLS")
+    return error("smtp: the server does not offer STARTTLS, so nothing is sent over a plain connection")
+  end
+
+  upgraded = upgrade(client)
+  if not upgraded.ok?
+    # Closing twice is fine: the upgrade has closed the plain socket and, when its EHLO failed, the encrypted one.
+    close(client)
+  end
+
+  upgraded
+end
+
+# Logs in with AUTH PLAIN, or AUTH LOGIN when the server only has that. A server that offers neither, and a login
+# over a connection that is plain (only possible to this machine), are an `error` that sends nothing and leaves the
+# connection open. An `error` for a reply that refuses the login leaves it open too, except a 421; one that is no
+# reply (a timeout, a broken connection) closes it.
+def login(client: Client, username: String, password: String) -> Result[Void]
+  if not client.secure and not loopback?(client.options.host)
+    return error("smtp: the password is only sent over an encrypted connection")
+  end
+
+  if username.include?(NUL) or password.include?(NUL)
+    return error("smtp: the username and the password must not hold a NUL character")
+  end
+
+  outcome = ok()
+  if offers_auth?(client, "PLAIN")
+    outcome = auth_plain(client, username, password)
+  elsif offers_auth?(client, "LOGIN")
+    outcome = auth_login(client, username, password)
+  else
+    return error("smtp: the server offers no AUTH mechanism that this client has (PLAIN or LOGIN)")
+  end
+
+  if not outcome.ok? and (lost?(outcome.message) or out_of_step?(outcome.message))
+    close(client)
+  end
+
+  outcome
+end
+
+# True for a host on this machine: `localhost`, an address of `127.0.0.0/8` and `::1`. A name that only starts with
+# `127.` is not.
+def loopback?(host: String) -> Bool
+  name = host.strip.downcase
+  return true if name == "localhost" or name == "::1" or name == "[::1]"
+
+  parts = name.split(".")
+  return false if parts.size != 4 or parts[0] != "127"
+
+  parts.all? do |part| octet?(part) end
 end
 
 def octet?(part: String) -> Bool
@@ -410,24 +413,24 @@ end
 
 def auth_plain(client: Client, username: String, password: String) -> Result[Void]
   secret = Base64.strict_encode64("#{NUL}#{username}#{NUL}#{password}".bytes)
-  _ = try ask(client, "AUTH PLAIN #{secret}", "AUTH", [CODE_AUTHENTICATED], AUTH_FAILED)
+  _ = try ask_auth(client, "AUTH PLAIN #{secret}", [CODE_AUTHENTICATED])
   ok()
 end
 
 # The user and the password each answer a 334 challenge.
 def auth_login(client: Client, username: String, password: String) -> Result[Void]
-  _ = try ask(client, "AUTH LOGIN", "AUTH", [CODE_CHALLENGE], AUTH_FAILED)
-  _ = try ask(client, Base64.strict_encode64(username.bytes), "AUTH", [CODE_CHALLENGE], AUTH_FAILED)
-  _ = try ask(client, Base64.strict_encode64(password.bytes), "AUTH", [CODE_AUTHENTICATED], AUTH_FAILED)
+  _ = try ask_auth(client, "AUTH LOGIN", [CODE_CHALLENGE])
+  _ = try ask_auth(client, Base64.strict_encode64(username.bytes), [CODE_CHALLENGE])
+  _ = try ask_auth(client, Base64.strict_encode64(password.bytes), [CODE_AUTHENTICATED])
   ok()
 end
 
 # The transaction of one message. After a refusal the connection gets RSET, so the next message starts clean. A lost
 # dialogue (see `lost?`), or a RSET that is not accepted, closes the connection instead.
 def deliver(client: Client, prepared: Prepared) -> Result[Void]
-  # The message is the thing to keep private: a caller that skipped `starttls` does not send it in the clear.
+  # The message is the thing to keep private: a `Client` that was not made by `connect` does not send it in the clear.
   if not client.secure and not loopback?(client.options.host)
-    return error("smtp: nothing is sent over a plain connection to #{client.options.host}: use STARTTLS first")
+    return error("smtp: nothing is sent over a plain connection to #{client.options.host}: use `connect`")
   end
 
   sent = transact(client, prepared)
@@ -508,6 +511,14 @@ end
 def ask(client: Client, line: String, name: String, accepted: List[Int], refusal: String) -> Result[Reply]
   reply = try command(client, line, name)
   expect(reply, accepted, refusal)
+end
+
+# The errors of the login never hold the text of the server: a hostile one could echo back the secret that it was sent.
+def ask_auth(client: Client, line: String, accepted: List[Int]) -> Result[Reply]
+  reply = try command(client, line, "AUTH")
+  return ok(reply) if accepted.include?(reply.code)
+
+  error("#{ERROR_PREFIX}#{reply.code}: #{AUTH_FAILED}")
 end
 
 def command(client: Client, line: String, name: String) -> Result[Reply]

@@ -111,7 +111,9 @@ Feature: Sending email over SMTP
     Given the SMTP server speaks "plain"
     And the SMTP server is listening
     And the client uses "plain" security
-    When I send a message from "Ana <ana@example.com>" to "bob@example.com" with the subject "Hola señor", the text "Plain hello" and the html "<p>HTML hello</p>"
+    When I send a message from "Ana <ana@example.com>" to "bob@example.com" with the subject "Hola señor" and bodies:
+      | text | Plain hello       |
+      | html | <p>HTML hello</p> |
     Then the send succeeds
     And the server transcript has the line "C: From: Ana <ana@example.com>"
     And the server transcript has the line "C: Subject: =?UTF-8?B?SG9sYSBzZcOxb3I=?="
@@ -193,7 +195,7 @@ Feature: Sending email over SMTP
     And the SMTP server refuses the recipient "eve@example.com"
     And the SMTP server is listening
     And the client uses "plain" security
-    When I send a message from "ana@example.com" to "bob@example.com,eve@example.com" with the subject "Hello" and the text:
+    When I send a message from "ana@a.test" to "bob@example.com,eve@example.com" with the subject "Hello" and the text:
       """
       Hi.
       """
@@ -369,19 +371,6 @@ Feature: Sending email over SMTP
     Then the send fails without a code
     And the server transcript has no line starting with "C: EHLO"
 
-  Scenario: The public steps open, EHLO, STARTTLS, login and send go on with the encrypted client
-    Given the SMTP server speaks "starttls"
-    And the SMTP server offers AUTH "PLAIN"
-    And the SMTP server is listening
-    And the client uses "starttls" security
-    And the client logs in as "ana" with the password "secret"
-    When I send a message over a connection that I open, upgrade and log in step by step
-    Then the send succeeds
-    And the server transcript has the line "C: STARTTLS"
-    And the server transcript has the line "C: AUTH PLAIN AGFuYQBzZWNyZXQ="
-    And the server transcript has the line "C: RCPT TO:<bob@example.com>"
-    And the server transcript has the line "S: 221 bye"
-
   Scenario: The client that connect gives does not keep the password
     Given the SMTP server speaks "starttls"
     And the SMTP server offers AUTH "PLAIN"
@@ -390,16 +379,6 @@ Feature: Sending email over SMTP
     And the client logs in as "ana" with the password "secret"
     When I connect, find that the client no longer holds the password, and send a message
     Then the send succeeds
-
-  Scenario: A message is not sent over a plain connection that the caller did not upgrade
-    Given the SMTP server speaks "starttls"
-    And the SMTP server is listening
-    And the client uses "starttls" security
-    And the client connects to the host "127.1"
-    When I send a message after open and EHLO, without STARTTLS
-    Then the send fails without a code
-    And the error mentions "STARTTLS"
-    And the server transcript has no line starting with "C: MAIL FROM"
 
   Scenario: A reply line that is too long fails the send and closes the connection
     Given the SMTP server speaks "plain"
@@ -459,7 +438,10 @@ Feature: Sending email over SMTP
     And the SMTP server is listening
     And the client uses "starttls" security
     And the client logs in as "ana" with the password "secret"
-    When I open the connection, say EHLO, upgrade it and log in, and leave it as it is
+    When I send a message from "ana@example.com" to "bob@example.com" with the subject "Hello" and the text:
+      """
+      Hi Bob.
+      """
     Then the send fails without a code
     And the server saw the connection close
 
@@ -475,7 +457,10 @@ Feature: Sending email over SMTP
     And the SMTP server is listening
     And the client uses "starttls" security
     And the client logs in as "ana" with the password "secret"
-    When I open the connection, say EHLO, upgrade it and log in, and leave it as it is
+    When I send a message from "ana@example.com" to "bob@example.com" with the subject "Hello" and the text:
+      """
+      Hi Bob.
+      """
     Then the send fails with the code 421
     And the server saw the connection close
 
@@ -484,22 +469,6 @@ Feature: Sending email over SMTP
       | EHLO    |
       | AUTH    |
 
-  Scenario Outline: A refusal of EHLO or of the login that is not a 421 leaves the connection to the caller
-    Given the SMTP server speaks "starttls"
-    And the SMTP server offers AUTH "PLAIN"
-    And the SMTP server answers "<command>" with "<reply>"
-    And the SMTP server is listening
-    And the client uses "starttls" security
-    And the client logs in as "ana" with the password "secret"
-    When I open the connection, say EHLO, upgrade it and log in, and leave it as it is
-    Then the send fails with the code <code>
-    And the server did not see the connection close
-
-    Examples:
-      | command | reply              | code |
-      | EHLO    | 550 not today      | 550  |
-      | AUTH    | 535 not that one   | 535  |
-
   Scenario: A reply to AUTH that is not a refusal and not the one awaited closes the connection
     Given the SMTP server speaks "starttls"
     And the SMTP server offers AUTH "PLAIN"
@@ -507,7 +476,10 @@ Feature: Sending email over SMTP
     And the SMTP server is listening
     And the client uses "starttls" security
     And the client logs in as "ana" with the password "secret"
-    When I open the connection, say EHLO, upgrade it and log in, and leave it as it is
+    When I send a message from "ana@example.com" to "bob@example.com" with the subject "Hello" and the text:
+      """
+      Hi Bob.
+      """
     Then the send fails with the code 250
     And the server saw the connection close
 
@@ -610,3 +582,42 @@ Feature: Sending email over SMTP
     Then the send fails without a code
     And the error mentions "timed out"
     And the server saw the connection close
+
+  Scenario: A server that echoes the login in a refusal does not put it in the error
+    Given the SMTP server speaks "starttls"
+    And the SMTP server offers AUTH "PLAIN"
+    And the SMTP server answers "AUTH" with "535 not accepted: AGFuYQBzZWNyZXQ="
+    And the SMTP server is listening
+    And the client uses "starttls" security
+    And the client logs in as "ana" with the password "secret"
+    When I send a message from "ana@example.com" to "bob@example.com" with the subject "Hello" and the text:
+      """
+      Hi Bob.
+      """
+    Then the send fails with the code 535
+    And the error does not mention "AGFuYQBzZWNyZXQ="
+    And the error does not mention "not accepted"
+
+  Scenario: A time for the end of the message that is not more than zero is refused before any connection
+    Given the client uses "plain" security
+    And the client waits 0 milliseconds for the end of the message
+    When I send a message from "ana@example.com" to "bob@example.com" with the subject "Hello" and the text:
+      """
+      Hi Bob.
+      """
+    Then the send fails without a code
+    And the error mentions "data timeout"
+
+  Scenario: A text with line feeds goes out with CRLF line ends
+    Given the SMTP server speaks "plain"
+    And the SMTP server is listening
+    And the client uses "plain" security
+    When I send a message from "ana@example.com" to "bob@example.com" with the subject "Hello" and the text:
+      """
+      One.
+      Two.
+      """
+    Then the send succeeds
+    And the server transcript has the line "C: One."
+    And the server transcript has the line "C: Two."
+    And the server transcript has no line starting with "C (bare LF)"
