@@ -136,6 +136,19 @@ def error_summary(message: String) -> String
   "the message was not valid"
 end
 
+## True for a host on this machine: `localhost`, `::1` (or `[::1]`) and an address of `127.0.0.0/8` written in full, as
+## `127.0.0.2`. This is the rule that `send` uses for `Security.Plain` and for the password. Nothing else is: `127.1`,
+## `localhost.` and `127.0.0.1.example.com` are not, so a host name that merely starts with `127.` never passes.
+def loopback?(host: String) -> Bool
+  name = host.strip.downcase
+  return true if name == "localhost" or name == "::1" or name == "[::1]"
+
+  parts = name.split(".")
+  return false if parts.size != 4 or parts[0] != "127"
+
+  parts.all? do |part| octet?(part) end
+end
+
 private
 
 # The most lines a reply may have, so that a server cannot keep a client reading.
@@ -291,18 +304,6 @@ def login(client: Client, username: String, password: String) -> Result[Void]
   end
 
   outcome
-end
-
-# True for a host on this machine: `localhost`, an address of `127.0.0.0/8` and `::1`. A name that only starts with
-# `127.` is not.
-def loopback?(host: String) -> Bool
-  name = host.strip.downcase
-  return true if name == "localhost" or name == "::1" or name == "[::1]"
-
-  parts = name.split(".")
-  return false if parts.size != 4 or parts[0] != "127"
-
-  parts.all? do |part| octet?(part) end
 end
 
 def octet?(part: String) -> Bool

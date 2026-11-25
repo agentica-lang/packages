@@ -170,6 +170,26 @@ The code of the reply that an `error` of this package tells, or `none` for an er
 
 What of an `error` is safe for a log that many people read: the code and the label of a refusal (`smtp 550: a recipient was refused`), or the first words of an error without a code (`smtp: timed out waiting for the reply to RCPT TO`). It has no server text, no recipient address and no system message. The host of the options may appear in the two errors that name it (a plain connection to a host that is not this machine, and a bad `local_hostname`). A message that is not valid, whose error names what is wrong with it (such as an address), is summarized as `the message was not valid`.
 
+### `Smtp.loopback?(host) -> Bool`
+
+True for a host on this machine: `localhost`, `::1` (or `[::1]`) and an address of `127.0.0.0/8` written in full, such as `127.0.0.2`. It is the rule that `send` and `connect` apply to `Security.Plain` and before a password goes over a connection that is not encrypted, so an app that checks a setting before it connects can use the same one. Anything else is false, including `127.1`, `localhost.`, `127.0.0.256` and `127.0.0.1.example.com`.
+
+```agentica
+import Smtp from "pkg/smtp/smtp"
+
+def main() -> Void
+  puts(Smtp.loopback?("127.0.0.2"))
+  puts(Smtp.loopback?("127.1"))
+  puts(Smtp.loopback?("127.0.0.1.example.com"))
+end
+```
+
+```output
+true
+false
+false
+```
+
 ## Errors
 
 An `error` is a message, not a kind. One from a server that answered starts `smtp NNN:` with the reply code, then what was refused, then the text of the server: `smtp 550: a recipient was refused: mailbox unavailable (ana@example.com)`. One without a code starts `smtp: ` (a timeout, a connection that broke, a refused setting). One for a message that is not valid names what is wrong with it. Test the code with `error_code`, never with the text of the server.
