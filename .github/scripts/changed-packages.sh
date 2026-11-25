@@ -8,8 +8,9 @@
 #   marks PKG for `--docs` alone, since `make doc-examples` runs its examples (pages.yml builds the pages); any other
 #   file of PKG marks it for everything.
 # - README.md, AGENTS.md, LICENSE, site/, .gitmodules (the docs theme of site/), pages.yml and s3-rustfs.yml (which
-#   runs on its own) at the root mark none, and so do native-prebuilt*.yml, .github/scripts/native-prebuilt* and
-#   .github/native-prebuilt-example/ (native-prebuilt-test.yml runs them).
+#   runs on its own) at the root mark none, and so do tools/catalog.py and its test (the plan job of ci.yml runs
+#   them), native-prebuilt*.yml, .github/scripts/native-prebuilt* and .github/native-prebuilt-example/
+#   (native-prebuilt-test.yml runs them).
 # - Any other file outside a package (Makefile, ci.yml, .github/scripts/, .github/actions/, a shared config) marks all
 #   of them: an unknown file is safer to treat as shared.
 # - A package stands alone (AGENTS.md), so no package depends on another folder of this repo and a change never
@@ -44,6 +45,7 @@ while IFS= read -r -d '' file; do
   fi
   case $file in
     README.md | AGENTS.md | LICENSE | site/* | .gitmodules | .github/workflows/pages.yml) ;;
+    tools/catalog.py | tools/catalog_test.py) ;;
     .github/workflows/s3-rustfs.yml) ;;
     .github/workflows/native-prebuilt*.yml | .github/scripts/native-prebuilt* | .github/native-prebuilt-example/*) ;;
     *) everything=1 ;;

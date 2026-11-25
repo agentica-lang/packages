@@ -1,0 +1,16 @@
+{{- /* The theme's order of the pages under a page, flattened depth-first (the pager reads it), except that the home lists the packages by category, as the sidebar does (catalog-nav.html). */ -}}
+{{- $pages := .Pages.ByWeight -}}
+{{- if .IsHome -}}
+  {{- $nav := partial "catalog-nav.html" -}}
+  {{- $pages = slice -}}
+  {{- range $nav.groups }}{{ $pages = $pages | append .pages }}{{ end -}}
+  {{- $pages = $pages | append $nav.other -}}
+{{- end -}}
+{{- $out := slice -}}
+{{- range $pages -}}
+  {{- $out = $out | append . -}}
+  {{- if .IsSection -}}
+    {{- $out = $out | append (partial "nav-order.html" .) -}}
+  {{- end -}}
+{{- end -}}
+{{- return $out -}}

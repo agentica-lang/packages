@@ -9,6 +9,7 @@ on:
       - 'site/**'
       - '.gitmodules'
       - 'Makefile'
+      - 'tools/catalog.py'
       - '.github/workflows/pages.yml'
   push:
     branches: [main]
@@ -17,6 +18,7 @@ on:
       - 'site/**'
       - '.gitmodules'
       - 'Makefile'
+      - 'tools/catalog.py'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 

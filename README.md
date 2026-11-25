@@ -44,7 +44,7 @@ Each package needs its own Agentica version, written in `PACKAGE/AGENTICA_VERSIO
 
 ## Docs
 
-The docs are at <https://www.agentica-lang.com/packages/>. Each package keeps its pages in its own `PACKAGE/docs/` folder (an `_index.md` at least), and `make site` builds them into one Hugo site in `site/public` (it needs the docs theme, `git submodule update --init`, plus Hugo, Dart Sass and Node; `make site-serve` previews it).
+The docs are at <https://www.agentica-lang.com/packages/>. Each package keeps its pages in its own `PACKAGE/docs/` folder (an `_index.md` at least), and `make site` builds them into one Hugo site in `site/public` (it needs the docs theme, `git submodule update --init`, plus Hugo, Dart Sass and Node; `make site-serve` previews it). The front matter of each `_index.md` holds the `category` (one of the list in `tools/catalog.py`), the `description` and the optional `keywords` of the package, which the sidebar and the table of the home page use; `make catalog` checks them.
 
 ## Prebuilt native modules
 

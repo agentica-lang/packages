@@ -1,6 +1,8 @@
 ---
 title: dock
 description: A TCP server. An accept loop, one task per client that runs your handler, and the clean-up when a client ends or crashes.
+category: Networking
+keywords: [tcp, server]
 ---
 
 `dock` is the part every TCP server writes again. It listens, accepts, runs your handler in a task of its own for each client, and closes the socket when the handler returns, crashes or is stopped. The server never waits for one client. It does not parse a protocol, and it does not do HTTP (that is `std/http`).

@@ -1,6 +1,8 @@
 ---
 title: s3
 description: An S3 client for AWS S3, MinIO and rustfs. SigV4 requests, presigned URLs, objects from memory or from a file, and multipart uploads.
+category: Storage
+keywords: [aws, minio, object-storage, presigned-urls]
 ---
 
 `s3` talks to S3-compatible object storage from an Agentica program: AWS S3, MinIO, rustfs. It signs requests with Signature Version 4 (in the header and in the query of a presigned URL), reads and writes objects from memory, a file or a stream, and runs multipart uploads. It is written in Agentica over `std/http` and the `OpenSSL` builtins, with no C.

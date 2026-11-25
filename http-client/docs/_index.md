@@ -1,6 +1,8 @@
 ---
 title: http-client
 description: An HTTP client with a pool of keep-alive connections per origin, and timeouts for the connect, the response head, the idle body, the whole request and the wait for a connection.
+category: Web and HTTP
+keywords: [http, http2, client, sse]
 ---
 
 `http-client` sends HTTP requests from an Agentica program, in the spirit of Elixir's Req. You make a `Client` once, and each request goes through a pool of keep-alive connections for its origin (scheme, host and port), made with the [pool](https://www.agentica-lang.com/packages/pool/) package. HTTP/1.1 uses `std/http`.

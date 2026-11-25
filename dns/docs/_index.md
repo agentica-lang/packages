@@ -1,6 +1,8 @@
 ---
 title: dns
 description: A DNS client in Agentica that asks the nameservers you choose over TCP, TLS and HTTPS, follows CNAMEs, and reads answers with a bounded codec of RFC 1035.
+category: Networking
+keywords: [dns, doh, resolver]
 ---
 
 `dns` is a DNS client written in Agentica, for programs that must ask a nameserver they choose: a resolver of your own, a private network, a test, or a check that a name answers the same everywhere. `std` has no UDP, so each query goes over TCP (RFC 7766), over TLS (RFC 7858, DoT) or over HTTPS (RFC 8484, DoH).

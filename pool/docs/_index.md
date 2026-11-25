@@ -1,6 +1,8 @@
 ---
 title: pool
 description: A generic pool of resources. A fixed number of long-lived resources, lent to one caller at a time, with a line, a lease, a health tick and a clean close.
+category: Infrastructure
+keywords: [resources, connections]
 ---
 
 `pool` is for any resource that is made once and lent to one caller at a time: a database connection, an HTTP connection, a worker. It has no native library. This is the generic pool that `agentica-db` uses for `DbPool`, with the same import path.

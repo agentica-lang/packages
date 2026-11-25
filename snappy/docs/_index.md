@@ -1,6 +1,8 @@
 ---
 title: snappy
 description: The Snappy raw block format in pure Agentica. Decode a block, refusing every malformed one with an error, and encode a block with a greedy matcher.
+category: Data formats
+keywords: [compression]
 ---
 
 `snappy` reads and writes raw Snappy blocks, the format of [google/snappy](https://github.com/google/snappy/blob/main/format_description.txt) without the framing format. It is the default codec of Parquet, so most datasets on Hugging Face need it to be read. It is pure Agentica and does no I/O: give it the bytes.

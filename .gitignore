@@ -5,3 +5,4 @@ site/public/
 site/resources/
 site/mounts.toml
 .hugo_build.lock
+site/data/catalog.json

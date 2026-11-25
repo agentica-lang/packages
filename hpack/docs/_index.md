@@ -1,6 +1,8 @@
 ---
 title: hpack
 description: An Agentica codec for HTTP/2 header blocks with a stateful HPACK decoder and a stateless encoder.
+category: Web and HTTP
+keywords: [http2, rfc7541, headers]
 ---
 
 `hpack` reads and writes complete header blocks in [RFC 7541](https://www.rfc-editor.org/rfc/rfc7541.html) format. Each field carries its name and value as bytes. Field order, duplicates, and the never-indexed flag survive decoding and re-encoding.
