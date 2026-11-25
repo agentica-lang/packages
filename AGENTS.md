@@ -120,6 +120,11 @@ prop/                property-based testing: prop.agc is the API (check, eq, ass
                      src/seed.agc the seed hashing (pure), src/check.agc the runner and the shrinking, src/laws.agc
                      the law helpers, src/schema.agc `Prop.of`, src/exhaustive.agc the bounded check; test/*_test.agc
                      are the unit tests (the API is plain function calls)
+release/             builds an app into a folder that runs elsewhere (a tool package: `agentica release/cli.agc build|tar|inspect`):
+                     release.agc is the API (build, tar, inspect); src/config.agc the project's agentica.toml and
+                     `[tool.release]` (pure), src/layout.agc the folder, the launcher and the manifest (pure),
+                     src/build.agc the build, src/verify.agc inspect and tar, src/files.agc and src/shell.agc the
+                     files and the programs it runs; specs/ builds specs/fixtures/hello and runs it from another folder
 telemetry/           events for numbers: telemetry.agc is the API (start, stop, execute, enabled?, span, attach, detach,
                      handlers, dropped, flush); conformance.agc the check of an event against the conventions
                      (check); testing.agc the helper for tests (capture, events, stop, session); src/hub.agc the hub (the one actor that writes the routes, starts the actor of each

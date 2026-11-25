@@ -31,6 +31,7 @@ prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.4.2", 
 | `parquet` (`parquet-0.1.0`) | Parquet files in pure Agentica: the schema, the row count, and the columns or rows of a file, with plain, dictionary and RLE pages under Snappy or gzip. A malformed file is a `parquet.malformed` error. [Docs](https://www.agentica-lang.com/packages/parquet/) |
 | `csv` (`csv-0.1.0`) | CSV (RFC 4180) in pure Agentica: rows as lists or maps, a chosen separator, a reader that takes the text in chunks, quoting when writing, and a `csv.malformed` error with its line. [Docs](https://www.agentica-lang.com/packages/csv/) |
 | `image` (`image-0.1.0`) | Images on libvips, generated with native-gen: decode and encode (JPEG, PNG, WebP, TIFF and more), the pixels as one `Bytes` buffer, and resize, crop, flip, rotate, colour conversion and cast. [Docs](https://www.agentica-lang.com/packages/image/) |
+| `release` (planned, no tag yet) | Builds an app into a folder that runs on another machine, as `mix release` does: the `agentica` binary, the compiled program, a launcher and a manifest with the sha256 of every file; `tar` packs it and `inspect` checks it (`release/cli.agc`). [Docs](https://www.agentica-lang.com/packages/release/) |
 | `cache` (planned) | Cache strategies (CLOCK, sampled LRU, TinyLFU) behind the `Cache` facade of `std/cache` |
 
 ## Tags
