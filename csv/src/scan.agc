@@ -74,13 +74,16 @@ def feed(reader: Reader, chunk: String, eof: Bool) -> Result[Feed]
       parts: List[String] = []
       inside = open_count(state)
       while index < last
-        parts = parts.push(lines[index])
+        quotes = 0
         if marks
-          inside = inside + lines[index].split(QUOTE_TEXT).size - 1
+          quotes = lines[index].split(QUOTE_TEXT).size - 1
         end
 
+        break if quotes == 0 and inside % 2 == 0 and !parts.empty?
+
+        parts = parts.push(lines[index])
+        inside = inside + quotes
         index = index + 1
-        break if inside % 2 == 0 and (index >= last or !marks or !lines[index].include?(QUOTE_TEXT))
       end
 
       reaches_end = index >= last
