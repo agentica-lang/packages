@@ -12,14 +12,14 @@ keywords: [http, http2, client, sse]
 The released version needs Agentica 0.35.0. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
-agentica add http-client agentica-lang/packages --tag http-client-0.5.0 --subdir http-client
+agentica add http-client agentica-lang/packages --tag http-client-0.5.1 --subdir http-client
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock` (with its `pool` and `hpack` dependencies):
 
 ```toml
 [dependencies]
-http-client = { git = "https://github.com/agentica-lang/packages", tag = "http-client-0.5.0", subdir = "http-client" }
+http-client = { git = "https://github.com/agentica-lang/packages", tag = "http-client-0.5.1", subdir = "http-client" }
 ```
 
 ## Example
