@@ -11,7 +11,7 @@ The reader is strict, as RFC 4180 is: a quote inside a field that did not start 
 
 ## Install
 
-Needs Agentica 0.37.0. Once the first release is tagged, add it to a project with an `agentica.toml`:
+Needs Agentica 0.37.0. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
 
 ```sh
 agentica add csv https://github.com/agentica-lang/packages --tag csv-0.1.0 --subdir csv
