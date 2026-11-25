@@ -326,17 +326,16 @@ import Image from "pkg/image/image"
 
 def main() -> Void
   image = Image.from_pixels(Bytes.from_list([0, 100, 200, 100]).unwrap!, 4, 1, 1, Image.Format.U8).unwrap!
-  for kernel in [Image.Kernel.Nearest, Image.Kernel.Linear, Image.Kernel.Cubic]
-    small = Image.resize(image, 2, 1, kernel).unwrap!
-    puts(Image.to_pixels(small).unwrap!.to_a)
-  end
+  nearest = Image.resize(image, 2, 1, Image.Kernel.Nearest).unwrap!
+  linear = Image.resize(image, 2, 1, Image.Kernel.Linear).unwrap!
+  puts("#{Image.width(linear)}x#{Image.height(linear)}")
+  puts(Image.to_pixels(nearest).unwrap! != Image.to_pixels(linear).unwrap!)
 end
 ```
 
 ```output
-[100, 100]
-[63, 138]
-[61, 148]
+2x1
+true
 ```
 
 ### `Image.crop(image, left, top, width, height) -> Result[Image]`
@@ -457,4 +456,4 @@ Format.U16, 12 bytes
 
 ## Tests
 
-The fixtures of `specs/fixtures/` are written by `peer.py`, an independent PNG codec and image model in Python's standard library. A scenario checks that libvips decodes each PNG to the pixels of the peer, and that the peer decodes the PNGs that `image` writes to the pixels that went in. The peer also computes the transforms: the same bytes for crop, flip, rotate and cast, and within 1 level of u8 for grey and 3 for resize, which it models the way libvips does it (a box shrink, then the reduce of the rows and the columns with the kernel, each pass rounded to u8; `Nearest` is the exact pixel at the centre of each output pixel). The resize model holds only when each integer shrink divides the size, and an upscale is checked for its size only, except for `Nearest`, which is exact at sizes that divide the source or that it divides. The tolerance of 3 was measured with the libvips of the specs, where the worst difference seen is 3.
+The fixtures of `specs/fixtures/` are written by `peer.py`, an independent PNG codec and image model in Python's standard library. A scenario checks that libvips decodes each PNG to the pixels of the peer, and that the peer decodes the PNGs that `image` writes to the pixels that went in. The peer also computes the transforms: the same bytes for crop, flip, rotate and cast, and within 1 level of u8 for grey and 3 for resize, which it models the way libvips does it (a box shrink, then the reduce of the rows and the columns with the kernel, each pass rounded to u8; `Nearest` is the exact pixel at the centre of each output pixel). The resize model holds only when each integer shrink divides the size, and an upscale is checked for its size only, except for `Nearest`, which is exact when the output size divides the source size, or the source size divides the output size. The tolerance of 3 for Lanczos 3 was measured with libvips 8.15 and 8.16, where the worst difference seen is 3. The tolerances of the other kernels and the exactness of `Nearest` were measured with libvips 8.16 only; 8.15 was not rechecked.

@@ -43,7 +43,7 @@ Feature: Transforms of images
       | 20    | 20     |
 
   # The kernels of libvips with the model of the peer: the same reduce with the kernel in place of Lanczos 3. The tolerance
-  # is the one of Lanczos 3, measured with libvips 8.16.
+  # is the one of Lanczos 3, but measured with libvips 8.16 only (8.15 was not rechecked).
   Scenario Outline: Resize with a kernel is the peer's within 3 levels
     Then the pixels "photo.raw" as 64 by 48 with 3 bands of "U8" under "resize <width> <height> <kernel>" are the peer's within 3
 
@@ -59,8 +59,9 @@ Feature: Transforms of images
       | lanczos2 | 40    | 30     |
       | lanczos3 | 40    | 30     |
 
-  # libvips rounds the positions of nearest to a fixed-point mask: the peer models it only for sizes that divide the
-  # source or that it divides, and then the pixels are the same.
+  # libvips rounds the positions of nearest to a fixed-point mask: the peer models it only when the output size divides
+  # the source size, or the source size divides the output size, and then the pixels are the same (measured with libvips
+  # 8.16 only; 8.15 was not rechecked).
   Scenario Outline: Nearest picks the source pixels
     Then the pixels "photo.raw" as 64 by 48 with 3 bands of "U8" under "resize <width> <height> nearest" are the peer's within 0
 

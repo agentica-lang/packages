@@ -201,7 +201,7 @@ def box(px, width, height, bands, across, down):
 
 def nearest(px, width, height, bands, w, h):
     """The source pixel at the centre of each output pixel. libvips rounds the positions to a fixed-point mask, so
-    this holds only for sizes that divide the source or that it divides."""
+    this holds only when the output size divides the source size, or the source size divides the output size."""
     return [px[(math.floor((y + 0.5) * height / h) * width + math.floor((x + 0.5) * width / w)) * bands + b]
             for y in range(h) for x in range(w) for b in range(bands)]
 
