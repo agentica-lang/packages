@@ -117,7 +117,8 @@ def bare(data: Bytes, pos: Int, separator: Int, line: Int, eof: Bool) -> Result[
   made(data.slice(pos, stop - pos), line, i + 1, true, 1)
 end
 
-# A quoted field: `""` is a quote, and a lone quote closes it. What follows must be a separator, a line break or the end.
+# A quoted field: `""` is a quote, and a lone quote closes it. What follows must be a separator, a line break or
+# the end.
 def quoted(data: Bytes, pos: Int, separator: Int, line: Int, eof: Bool) -> Result[Optional[Field]]
   pieces: List[Bytes] = []
   segment = pos + 1

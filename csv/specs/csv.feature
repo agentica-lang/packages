@@ -1,69 +1,69 @@
 Feature: Reading and writing CSV
-  The fixed cases follow RFC 4180. In a table, a text is written as a JSON string without its outer quotes, so \r, \n and
-  \" stand for a CR, a LF and a quote; the rows are JSON.
+  The fixed cases follow RFC 4180. In a table, {CRLF}, {LF}, {TAB} and {Q} stand for a CRLF, a LF, a tab and a quote;
+  the rows are JSON.
 
   Scenario: Rows, quotes and line breaks are read
     Then csv reads these texts:
       | text                       | rows                              |
-      | a,b\r\nc,d\r\n             | [["a","b"],["c","d"]]             |
-      | a,b\nc,d                   | [["a","b"],["c","d"]]             |
-      | a,,c\r\n                   | [["a","","c"]]                    |
+      | a,b{CRLF}c,d{CRLF}             | [["a","b"],["c","d"]]             |
+      | a,b{LF}c,d                   | [["a","b"],["c","d"]]             |
+      | a,,c{CRLF}                   | [["a","","c"]]                    |
       | a,                         | [["a",""]]                        |
-      | \"a,b\",c                  | [["a,b","c"]]                     |
-      | \"a\"\"b\",c               | [["a\"b","c"]]                    |
-      | \"line 1\r\nline 2\",x\r\n | [["line 1\r\nline 2","x"]]        |
-      | \"\"                       | [[""]]                            |
-      | \r\n                       | [[""]]                            |
-      | é,✓\r\n                    | [["é","✓"]]                       |
+      | {Q}a,b{Q},c                  | [["a,b","c"]]                     |
+      | {Q}a{Q}{Q}b{Q},c               | [["a{Q}b","c"]]                    |
+      | {Q}line 1{CRLF}line 2{Q},x{CRLF} | [["line 1{CRLF}line 2","x"]]        |
+      | {Q}{Q}                       | [[""]]                            |
+      | {CRLF}                       | [[""]]                            |
+      | é,✓{CRLF}                    | [["é","✓"]]                       |
       |                            | []                                |
 
   Scenario: A text that is not CSV is refused with its line
     Then csv refuses these texts as "csv.malformed":
       | text                  | line |
-      | a,\"b\r\n             | 1    |
-      | a\r\nb,\"c\r\nd       | 2    |
-      | \"a\"b                | 1    |
-      | a,b\"c                | 1    |
-      | x\r\n\"a\"\"b\r\ny    | 2    |
+      | a,{Q}b{CRLF}             | 1    |
+      | a{CRLF}b,{Q}c{CRLF}d       | 2    |
+      | {Q}a{Q}b                | 1    |
+      | a,b{Q}c                | 1    |
+      | x{CRLF}{Q}a{Q}{Q}b{CRLF}y    | 2    |
 
   Scenario: Another separator is read and written
     Then csv reads these texts with the separator ";":
       | text            | rows                |
-      | a;b,c\r\n1;2\r\n | [["a","b,c"],["1","2"]] |
-    And csv writes these rows with the separator "\t":
+      | a;b,c{CRLF}1;2{CRLF} | [["a","b,c"],["1","2"]] |
+    And csv writes these rows with the separator "{TAB}":
       | rows                    | text              |
-      | [["a b","c\td"]]        | a b\t\"c\td\"\r\n |
+      | [["a b","c{TAB}d"]]        | a b{TAB}{Q}c{TAB}d{Q}{CRLF} |
 
   Scenario: A bad separator is invalid
     Then csv refuses these separators:
       | separator |
       | ab        |
-      | \"        |
-      | \n        |
+      | {Q}        |
+      | {LF}        |
 
   Scenario: Rows are written with the quotes they need
     Then csv writes these rows:
       | rows                          | text                      |
-      | [["a","b"],["c","d"]]         | a,b\r\nc,d\r\n            |
-      | [["a,b","c\"d","e\nf"]]       | \"a,b\",\"c\"\"d\",\"e\nf\"\r\n |
-      | [[""]]                        | \"\"\r\n                  |
-      | [["",""]]                     | ,\r\n                     |
-      | [["a b"," ","é"]]             | a b, ,é\r\n               |
+      | [["a","b"],["c","d"]]         | a,b{CRLF}c,d{CRLF}            |
+      | [["a,b","c{Q}d","e{LF}f"]]       | {Q}a,b{Q},{Q}c{Q}{Q}d{Q},{Q}e{LF}f{Q}{CRLF} |
+      | [[""]]                        | {Q}{Q}{CRLF}                  |
+      | [["",""]]                     | ,{CRLF}                     |
+      | [["a b"," ","é"]]             | a b, ,é{CRLF}               |
       | []                            |                           |
 
   Scenario: Rows as maps use the header
     Then csv reads these texts as maps:
       | text                                | maps                                              |
-      | name,age\r\nann,31\r\nbob,\r\n       | [{"name":"ann","age":"31"},{"name":"bob","age":""}] |
+      | name,age{CRLF}ann,31{CRLF}bob,{CRLF}       | [{"name":"ann","age":"31"},{"name":"bob","age":""}] |
       |                                     | []                                                |
-      | a\r\n                              | []                                                |
+      | a{CRLF}                              | []                                                |
     And csv refuses these texts as maps:
       | text           | kind          |
-      | a,b\r\n1\r\n    | csv.malformed |
-      | a,a\r\n1,2\r\n  | csv.malformed |
+      | a,b{CRLF}1{CRLF}    | csv.malformed |
+      | a,a{CRLF}1,2{CRLF}  | csv.malformed |
     And csv writes these maps:
       | header   | maps                                                   | text                      |
-      | name,age | [{"age":"31","name":"ann","extra":"x"},{"name":"bob"}] | name,age\r\nann,31\r\nbob,\r\n |
+      | name,age | [{"age":"31","name":"ann","extra":"x"},{"name":"bob"}] | name,age{CRLF}ann,31{CRLF}bob,{CRLF} |
 
   Scenario Outline: The text of a peer table is read and written as Python's csv does
     Then the peer's 30 tables from the seed <seed> with the separator "<separator>" read and write as the peer says

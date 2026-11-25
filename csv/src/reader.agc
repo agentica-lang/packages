@@ -44,9 +44,7 @@ def feed(reader: Reader, chunk: String) -> Result[Feed]
 end
 
 ## The last row, which may have no line break, once the text is over.
-def finish(reader: Reader) -> Result[List[List[String]]]
-  all(reader.rest, reader.separator, reader.line)
-end
+def finish(reader: Reader) -> Result[List[List[String]]] = all(reader.rest, reader.separator, reader.line)
 
 ## Every row of the text.
 def parse(text: String, separator: String) -> Result[List[List[String]]]

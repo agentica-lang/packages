@@ -14,7 +14,10 @@ def main() -> Void
     BDD.step("csv reads these texts as maps:", &reads_maps),
     BDD.step("csv refuses these texts as maps:", &refuses_maps),
     BDD.step("csv writes these maps:", &writes_maps),
-    BDD.step("the peer's {int} tables from the seed {int} with the separator {string} read and write as the peer says", &as_peer_says),
+    BDD.step(
+      "the peer's {int} tables from the seed {int} with the separator {string} read and write as the peer says",
+      &as_peer_says,
+    ),
   ])
 end
 
@@ -25,6 +28,9 @@ PEER_MS = 60_000
 MALFORMED = "csv.malformed"
 INVALID = "csv.invalid"
 
+# The marks of the features: a table cell cannot hold a CR, a tab or a backslash escape.
+MARKS = [["{CRLF}", "\r\n", "\\r\\n"], ["{LF}", "\n", "\\n"], ["{TAB}", "\t", "\\t"], ["{Q}", "\"", "\\\""]]
+
 struct Table
   rows: List[List[String]]
 end
@@ -33,12 +39,31 @@ struct Maps
   rows: List[Map[String, String]]
 end
 
-# A text or a separator as the feature writes it: JSON string content without the outer quotes.
-def unescaped(cell: String) -> String = JSON.string(JSON.parse("\"#{cell}\"").unwrap!).unwrap!
+# A text or a separator as the feature writes it.
+def unescaped(cell: String) -> String
+  text = cell
+  for mark in MARKS
+    text = text.replace(mark[0], mark[1])
+  end
 
-def rows_of(json: String) -> List[List[String]] = JSON.decode("{\"rows\": #{json}}", Table).unwrap!.rows
+  text
+end
 
-def maps_of(json: String) -> List[Map[String, String]] = JSON.decode("{\"rows\": #{json}}", Maps).unwrap!.rows
+# Rows or maps as JSON text: the same marks, as JSON escapes.
+def json_text(cell: String) -> String
+  text = cell
+  for mark in MARKS
+    text = text.replace(mark[0], mark[2])
+  end
+
+  text
+end
+
+def rows_of(json: String) -> List[List[String]] = JSON.decode("{\"rows\": #{json_text(json)}}", Table).unwrap!.rows
+
+def maps_of(json: String) -> List[Map[String, String]]
+  JSON.decode("{\"rows\": #{json_text(json)}}", Maps).unwrap!.rows
+end
 
 def body(ctx: BDD.Context) -> List[List[String]] = BDD.table(ctx).drop(1)
 
@@ -146,8 +171,8 @@ end
 
 def as_peer_says(ctx: BDD.Context, args: List[String]) -> BDD.Context
   separator = unescaped(args[2])
-  lines = run_peer(["#{args[1]}", "#{args[0]}", separator]).split("\n").select { |line| line != "" }
-  checked = BDD.assert(ctx, lines.size == args[0].to_i! * 2, "the peer wrote #{lines.size} lines")
+  lines = run_peer(["#{args[1]}", "#{args[0]}", separator]).split("\n")
+  checked = BDD.assert(ctx, lines.size == args[0].to_i! * 2 + 1, "the peer wrote #{lines.size} lines")
   for index in 0...args[0].to_i!
     text = String.from_bytes(OpenSSL.Digest.hexdecode(lines[index * 2]).unwrap!).unwrap!
     rows = rows_of(lines[index * 2 + 1])
