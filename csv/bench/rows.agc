@@ -1,5 +1,5 @@
-## Rows per second of `Csv.parse` and `Csv.encode` on two generated tables of about 10 MB: one where half the fields are
-## quoted, and one with no quote at all.
+## Rows per second of `Csv.parse` and `Csv.encode` on three generated tables of about 10 MB: one where half the fields
+## are quoted, one with no quote at all, and one where every tenth row has a quoted field.
 ##
 ##   agentica bench/rows.agc [ROWS]
 
@@ -14,6 +14,7 @@ def main() -> Void
 
   measure("quoted", mixed(count))
   measure("plain", plain(count))
+  measure("tenth", tenth(count))
 end
 
 private
@@ -38,10 +39,18 @@ def mixed(count: Int) -> List[List[String]]
   )
 end
 
-def plain(count: Int) -> List[List[String]]
-  (0...count).map(
-    ->(i) { ["id#{i}", "name number #{i}", "a b #{i}", "say #{i}", "plain text of row #{i}", "#{i * 7}"] },
-  )
+def plain(count: Int) -> List[List[String]] = (0...count).map(->(i) { plain_row(i, "a b #{i}") })
+
+def plain_row(i: Int, third: String) -> List[String]
+  ["id#{i}", "name number #{i}", third, "say #{i}", "plain text of row #{i}", "#{i * 7}"]
+end
+
+def tenth(count: Int) -> List[List[String]] = (0...count).map(->(i) { plain_row(i, third(i)) })
+
+def third(i: Int) -> String
+  return "a, b #{i}" if i % 10 == 0
+
+  "a b #{i}"
 end
 
 def per_second(count: Int, ms: Int) -> Int

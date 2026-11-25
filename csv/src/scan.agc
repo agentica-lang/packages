@@ -1,8 +1,7 @@
-## The reader. A text is cut into lines with the native `split`. A complete line with no quote, read between two rows,
-## is cut into fields with `split` too. Every other line goes through the state machine, which goes over the bytes
-## once and keeps what it knows between chunks: the fields of the row in progress, how the field in progress stands, and
-## the bytes of it that are not decided yet. Quote, separator, CR and LF are ASCII, so a field is cut on byte positions
-## and every piece is valid UTF-8 when the text is.
+## The reader: a text is cut into lines with the native `split`, and a complete line with no quote, read between two
+## rows, is cut into fields with `split` too. Every other line goes through the state machine (`run`), which keeps what
+## it knows between chunks. Quote, separator, CR and LF are ASCII, so a field is cut on byte positions and every piece
+## is valid UTF-8 when the text is.
 
 import Errors from "errors"
 
@@ -96,7 +95,7 @@ def feed(reader: Reader, chunk: String, eof: Bool) -> Result[Feed]
       end
 
       done = try run(at_line(state, line), text.bytes, reaches_end and eof)
-      rows = rows + done.rows
+      rows = appended(rows, done.rows)
       state = done.reader
       line = state.line
     end
@@ -104,7 +103,7 @@ def feed(reader: Reader, chunk: String, eof: Bool) -> Result[Feed]
 
   if index == last
     done = try run(at_line(state, line), lines[last].bytes, eof)
-    return ok(Feed(reader: done.reader, rows: rows + done.rows))
+    return ok(Feed(reader: done.reader, rows: appended(rows, done.rows)))
   end
 
   ok(Feed(reader: state, rows: rows))
@@ -259,6 +258,17 @@ QUOTED = 2
 
 # A closing quote has been read: a separator, a line break or the end of the text must follow.
 AFTER = 3
+
+def appended(rows: List[List[String]], more: List[List[String]]) -> List[List[String]]
+  return more if rows.empty?
+
+  out = rows
+  for row in more
+    out = out.push(row)
+  end
+
+  out
+end
 
 # Between two rows, with nothing of a row read.
 def clean?(reader: Reader) -> Bool = reader.mode == START and reader.fields.empty? and reader.pieces.empty?
