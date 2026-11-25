@@ -2,6 +2,10 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+- Send the window update of a streamed HTTP/2 body piece the reader took, also when the reader takes it between the pump's check and its next send; the update was lost, and the peer's window stayed short by that piece.
+
 ## [0.5.0] - 2026-11-21
 
 - Return HTTP/2 streaming errors instead of crashing on a zero-duration task wait.

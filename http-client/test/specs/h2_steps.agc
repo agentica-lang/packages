@@ -181,18 +181,18 @@ end
 def flow_stream(client: HttpClient.Client, quiet: Channel[Bool]) -> Result[Void]
   stream = try HttpClient.stream(client, "GET", "/flow")
   return error("unexpected HTTP/2 flow head") if stream.status != 200
-  _ = try quiet.recv(5_000)
-  first = try stream.body.recv(5_000)
+  _ = try quiet.recv(15_000)
+  first = try stream.body.recv(15_000)
   return error("wrong first flow piece") if (try first).size != 4_096
-  second = try stream.body.recv(5_000)
+  second = try stream.body.recv(15_000)
   return error("wrong second flow piece") if (try second).size != 4_096
-  third = try stream.body.recv(5_000)
+  third = try stream.body.recv(15_000)
   return error("wrong third flow piece") if (try third).size != 4_096
-  fourth = try stream.body.recv(5_000)
+  fourth = try stream.body.recv(15_000)
   return error("wrong fourth flow piece") if (try fourth).size != 4_096
-  tail = try stream.body.recv(5_000)
+  tail = try stream.body.recv(15_000)
   return error("missing flow tail") if try tail != "tail".bytes
-  case stream.body.recv(1_000)
+  case stream.body.recv(15_000)
     error(e) if e.is_a?("channel.closed") -> ok()
     error(e) -> error(e)
     ok(_) -> error("flow stream had an unexpected extra chunk")

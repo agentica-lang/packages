@@ -515,8 +515,11 @@ def deliver_stream(state: Progress, deadline: Int) -> Result[Progress]
 
     case streaming.body.send(piece.body, 0)
       ok(_) ->
-        stream = stream.with(pending: stream.pending.drop(1), inflight_credit: piece.credit)
-        return ok(state.with(stream: stream))
+        # The send fits only once the reader took the previous piece, which may happen after the check above.
+        consumed = try consume(state, stream.inflight_credit, deadline)
+        taken = consumed.stream
+        stream = taken.with(pending: taken.pending.drop(1), inflight_credit: piece.credit)
+        return ok(consumed.with(stream: stream))
       error(_) -> return ok(state.with(stream: stream))
     end
   end
