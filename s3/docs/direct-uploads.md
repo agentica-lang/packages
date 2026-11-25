@@ -82,6 +82,8 @@ A browser sends a preflight `OPTIONS` before a cross-origin `PUT`, and it can re
 
 `aws s3api put-bucket-cors --bucket photos --cors-configuration '{"CORSRules": [...]}'` sets it on AWS S3, MinIO and rustfs.
 
+A reverse proxy in front of the bucket limits the body of a request too: nginx refuses more than 1 MiB with a 413 unless its server block sets `client_max_body_size 0;` (and `proxy_request_buffering off;` so that big parts stream). Set it before you test with a file bigger than that.
+
 ## Downloads
 
 Redirect the browser to a presigned `GET`, and add `response-content-disposition` to the query so that the file downloads with its own name:

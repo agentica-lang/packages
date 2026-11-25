@@ -29,4 +29,4 @@ S3_TEST_ENDPOINT=http://127.0.0.1:9000 S3_TEST_REGION=us-east-1 S3_TEST_BUCKET=p
   S3_TEST_ACCESS_KEY=minioadmin S3_TEST_SECRET_KEY=minioadmin agentica test
 ```
 
-The bucket must exist. The scenarios that need the stand-in (the session token, the virtual host) skip, and the objects that the specs leave stay in the bucket under their `spec-...` prefix.
+The bucket must exist. A server with a self-signed certificate is trusted by pointing `SSL_CERT_FILE` at its certificate. The scenarios that need the stand-in (the session token, the virtual host) skip, and the objects that the specs leave stay in the bucket under their `spec-...` prefix.
