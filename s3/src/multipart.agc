@@ -173,32 +173,32 @@ def send_parts(
   total: Int,
   size: Int,
 ) -> Result[List[Types.Part]]
-  parts: List[Types.Part] = []
-  offset = 0
-  number = 1
-  while offset < total
-    body = try read_part(path, offset, smaller(size, total - offset))
-    parts = parts.push(try upload_part(client, key, id, number, body))
-    offset = offset + body.size
-    number = number + 1
-  end
-
-  ok(parts)
-end
-
-def read_part(path: String, offset: Int, count: Int) -> Result[Bytes]
   File.open(path, "read", 30_000) do |file|
-    try File.seek(file, offset)
-    pieces: List[Bytes] = []
-    left = count
+    parts: List[Types.Part] = []
+    left = total
+    number = 1
     while left > 0
-      piece = try File.read_bytes(file, smaller(READ_BYTES, left), 30_000)
-      return error("s3: #{path} ended before the part did", kind: Types.INVALID) if piece.empty?
-
-      pieces = pieces.push(piece)
-      left = left - piece.size
+      body = try read_part(file, path, smaller(size, left))
+      parts = parts.push(try upload_part(client, key, id, number, body))
+      left = left - body.size
+      number = number + 1
     end
 
-    ok(Bytes.concat(pieces))
+    ok(parts)
   end
+end
+
+# The next `count` bytes of the file: the parts are read in order, so the handle never has to seek.
+def read_part(file: File.Handle, path: String, count: Int) -> Result[Bytes]
+  pieces: List[Bytes] = []
+  left = count
+  while left > 0
+    piece = try File.read_bytes(file, smaller(READ_BYTES, left), 30_000)
+    return error("s3: #{path} ended before the part did", kind: Types.INVALID) if piece.empty?
+
+    pieces = pieces.push(piece)
+    left = left - piece.size
+  end
+
+  ok(Bytes.concat(pieces))
 end

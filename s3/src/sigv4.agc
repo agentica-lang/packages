@@ -116,7 +116,8 @@ end
 def normalized(headers: List[Types.Param]) -> List[Types.Param]
   lowered = headers.map { |h| Types.Param(name: h.name.downcase, value: fold(h.value)) }
   merged: List[Types.Param] = []
-  for header in lowered.sort_by { |h| h.name }
+  ordered = lowered.sort_by { |h| h.name }
+  for header in ordered
     last = merged.length - 1
     if last >= 0 and merged[last].name == header.name
       merged = merged.take(last).push(Types.Param(name: header.name, value: "#{merged[last].value},#{header.value}"))

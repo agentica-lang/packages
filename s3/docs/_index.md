@@ -9,7 +9,7 @@ Its first user is a server that never touches the bytes of a big upload: it hand
 
 ## Install
 
-The released version needs Agentica 0.38.0. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
+The released version needs Agentica 0.35.0. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
 agentica add s3 agentica-lang/packages --tag s3-0.1.0 --subdir s3
