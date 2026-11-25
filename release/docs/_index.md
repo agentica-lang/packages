@@ -1,6 +1,8 @@
 ---
 title: release
-description: Builds an Agentica app into a folder that runs on another machine, as mix release does for Elixir. It holds the agentica binary, the compiled program, a launcher and a manifest with the sha256 of every file.
+description: Builds an app into a folder that runs on another machine, as mix release does. It holds the agentica binary, the compiled program, a launcher and a manifest.
+category: Tooling
+keywords: [release, deploy, tar, launcher]
 ---
 
 `release` builds an app once and ships it. The result is a folder (or a `.tar.gz` of it) with the `agentica` binary, the program compiled to bytecode, a launcher script and a manifest. The machine that runs it needs nothing else: no Agentica install, no sources, no `deps/`, no network.
@@ -11,7 +13,7 @@ It is a tool package, run with `agentica`. It does no change to the `agentica` c
 
 ## Install
 
-Needs Agentica 0.37.0. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
+Needs Agentica 0.39.0. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
 
 ```sh
 agentica add release https://github.com/agentica-lang/packages --tag release-0.1.0 --subdir release
@@ -42,7 +44,7 @@ lib/NAME.agcb             the compiled program
 releases/manifest.json    name, version, agentica version, system, architecture, sha256 of each file
 ```
 
-plus the files and folders of `include`, at the same path as in the project. `bin/NAME` finds its folder from where it is, so the release can be moved or unpacked anywhere, and it sets `RELEASE_ROOT` to that folder for the program to find its `include` files. Its arguments are the program's arguments, and its exit code is the program's.
+plus the files and folders of `include`, at the same path as in the project. `bin/NAME` finds its folder from where it is, so the release can be moved or unpacked anywhere, and it sets `RELEASE_ROOT` to that folder for the program to find its `include` files. Its arguments are the program's arguments, and its exit code is the program's. It uses the shell and nothing else of the target, and it finds the folder from the path it was run by, so run it by that path, not through a link to it.
 
 A release runs on the same system and architecture that built it, with the same glibc rules as the `agentica` binary (glibc 2.28 or later on Linux; not musl).
 
@@ -52,13 +54,13 @@ The name comes from `agentica.toml`. The rest is in `[tool.release]`, a table th
 
 ```toml
 name = "app"
-agentica = "0.37.0"
+agentica = "0.39.0"
 
 [tool.release]
 version = "1.0.0"
 entry = "main.agc"
 include = ["assets", "migrations"]
-agentica = "0.37.0"
+agentica = "0.39.0"
 ```
 
 - `version` is required (or `--version`). The folder is `NAME-VERSION`. Name and version are letters, digits, `.`, `_` and `-`.
@@ -89,14 +91,14 @@ import Release from "pkg/release/release"
 def main() -> Void
   Dir.mkdir("demo-app").unwrap!
   File.write_text("demo-app/agentica.toml", "name = \"demo\"\n[tool.release]\nversion = \"0.1.0\"\n").unwrap!
-  File.write_text("demo-app/main.agc", "def main() -> Void\n  puts(\"hello #{System.args().join(\" \")}\")\nend\n").unwrap!
+  File.write_text("demo-app/main.agc", "def main() -> Void\n  puts(System.args().join(\" \"))\nend\n").unwrap!
   built = Release.build(Release.Options(project: "demo-app", out: "demo-out")).unwrap!
   puts(built.manifest.files.map { |entry| entry.path })
-  child = Process.spawn_captured("#{built.path}/bin/demo", ["world"]).unwrap!
+  child = Process.spawn_captured("#{built.path}/bin/demo", ["hello", "world"]).unwrap!
   puts(Process.output(child, 30000).unwrap!.stdout.strip)
   Process.close(child)
-  Path.remove("demo-app")
-  Path.remove("demo-out")
+  Path.remove("demo-app").unwrap!
+  Path.remove("demo-out").unwrap!
 end
 ```
 

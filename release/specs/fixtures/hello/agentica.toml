@@ -1,5 +1,4 @@
 name = "hello"
-agentica = "0.37.0"
 
 [tool.release]
 version = "1.2.3"

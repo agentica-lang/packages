@@ -1,6 +1,7 @@
 Feature: Releasing an app
   `build` makes a folder with the agentica binary, the compiled program, a launcher and a manifest, that runs from any
-  place with nothing else installed. `tar` packs it and `inspect` checks it against its manifest. The project is the
+  place with nothing else installed: "alone" is a program started with an empty environment (no PATH, so no
+  `agentica`), in a folder of its own, after the project is gone. `tar` packs it and `inspect` checks it against its manifest. The project is the
   copy of `specs/fixtures/hello`: a program that prints the greeting of a file that the release carries, and exits with a
   code. In a table, {NL} stands for a line break and {Q} for a quote.
 
@@ -8,12 +9,13 @@ Feature: Releasing an app
     Given a fresh folder
     And a copy of the project "specs/fixtures/hello" in it
     When the release is built
+    And the project folder is removed
     And the release folder is moved to "elsewhere"
-    Then running "bin/hello" with "a b" prints "hello from the assets (a b)" and exits with 0
-    And running "bin/hello" with "fail" prints "hello from the assets (fail)" and exits with 3
+    Then running "bin/hello" alone with "a b" prints "hello from the assets (a b)" and exits with 0
+    And running "bin/hello" alone with "fail" prints "hello from the assets (fail)" and exits with 3
     And the manifest lists these files:
       | path                |
-      | assets/greeting.txt |
+      | assets/greeting.toml |
       | bin/hello           |
       | erts/agentica       |
       | lib/hello.agcb      |
@@ -29,7 +31,7 @@ Feature: Releasing an app
     Examples:
       | damage  | file                | message                  |
       | changes | lib/hello.agcb      | has another sha256       |
-      | removes | assets/greeting.txt | is missing               |
+      | removes | assets/greeting.toml | is missing               |
       | adds    | extra.txt           | is not in the manifest   |
 
   Scenario: The folder packs as an archive that passes inspect
@@ -66,7 +68,6 @@ Feature: Releasing an app
     When the release is built from this agentica.toml:
       """
       name = "hello"
-      agentica = "0.37.0"
 
       [tool.release]
       version = "1.2.3"

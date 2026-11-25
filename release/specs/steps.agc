@@ -11,7 +11,8 @@ def main() -> Void
     BDD.step("the release is built", &built),
     BDD.step("the release is built from this agentica.toml:", &built_from),
     BDD.step("the release folder is moved to {string}", &moved),
-    BDD.step("running {string} with {string} prints {string} and exits with {int}", &ran),
+    BDD.step("the project folder is removed", &project_removed),
+    BDD.step("running {string} alone with {string} prints {string} and exits with {int}", &ran),
     BDD.step("the manifest lists these files:", &lists),
     BDD.step("the release passes inspect", &inspected),
     BDD.step("the release is damaged: {string} {string}", &damaged),
@@ -117,8 +118,23 @@ def moved(ctx: BDD.Context, args: List[String]) -> BDD.Context
   end
 end
 
+def project_removed(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  done = Path.remove("#{folder_of(ctx)}/project")
+  BDD.assert(ctx, done.ok?, "cannot remove the project: #{done}")
+end
+
 def ran(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  child = Process.spawn_captured("#{root_of(ctx)}/#{args[0]}", [args[1]], Process.Options(timeout_ms: RUN_MS))
+  elsewhere = "#{folder_of(ctx)}/cwd"
+  home = "#{folder_of(ctx)}/home"
+  made = sh(["mkdir", "-p", elsewhere, home])
+  return BDD.assert(ctx, false, made.message) if !made.ok?
+
+  child = Process.spawn_captured(
+    "env",
+    ["-i", "HOME=#{home}", "#{root_of(ctx)}/#{args[0]}", args[1]],
+    Process.Options(chdir: elsewhere, timeout_ms: RUN_MS),
+  )
+
   return BDD.assert(ctx, false, child.message) if !child.ok?
 
   process = child.unwrap!

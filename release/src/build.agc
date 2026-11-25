@@ -27,6 +27,8 @@ def build(options: Options) -> Result[Built]
   project = try Path.resolve(options.project)
   text = try File.read_text(Layout.at(project, "agentica.toml"))
   config = try Config.parse(text, options.version, options.entry)
+  return Errors.invalid("a release has an sh launcher, which Windows does not run yet") if System.os() == "windows"
+
   binary = try located(options.agentica)
   version = try Shell.run(binary, ["--version"], ".")
   running = version.strip

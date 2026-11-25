@@ -1,5 +1,5 @@
 name = "release"
-agentica = "0.37.0"
+agentica = "0.39.0"
 
 # Every bare `end` is followed by an empty line (AGENTS.md).
 [style]
