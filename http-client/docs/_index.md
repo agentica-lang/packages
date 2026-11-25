@@ -1,6 +1,6 @@
 ---
 title: http-client
-description: An HTTP client with a pool of keep-alive connections per origin, and timeouts for the connect, the response head, the idle body, the whole request and the wait for a connection.
+description: An HTTP client with a keep-alive pool per origin, and timeouts for the connect, the head, the idle body, the whole request and the wait for a connection.
 category: Web and HTTP
 keywords: [http, http2, client, sse]
 ---

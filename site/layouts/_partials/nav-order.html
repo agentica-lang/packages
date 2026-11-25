@@ -1,4 +1,4 @@
-{{- /* The theme's order of the pages under a page, flattened depth-first (the pager reads it), except that the home lists the packages by category, as the sidebar does (catalog-nav.html). */ -}}
+{{- /* A copy of the theme's nav-order.html (docs-theme at 1ff8e89): its order of the pages under a page, flattened depth-first (the pager reads it), except that the home lists the packages by category, as the sidebar does (catalog-nav.html). */ -}}
 {{- $pages := .Pages.ByWeight -}}
 {{- if .IsHome -}}
   {{- $nav := partial "catalog-nav.html" -}}

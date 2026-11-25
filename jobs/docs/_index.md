@@ -1,6 +1,6 @@
 ---
 title: jobs
-description: Produce and consume jobs with a swappable backend. A contract with leases, retries and dead jobs, an in-memory backend, a conformance suite that every backend must pass, and a manual clock for tests.
+description: Produce and consume jobs with a swappable backend. Leases, retries and dead jobs, an in-memory backend, a conformance suite and a manual clock for tests.
 category: Infrastructure
 keywords: [queue, background-jobs, retries]
 ---

@@ -1,6 +1,6 @@
 ---
 title: telemetry
-description: Events for numbers, as std/logger is for text. A library says that something happened, and an app attaches handlers to count it, log it or send it away. A call with no handler costs almost nothing, and a handler can never hurt the code that emits.
+description: Events for numbers, as std/logger is for text. A library says that something happened, and an app attaches handlers to count it, log it or send it away.
 category: Infrastructure
 keywords: [metrics, events, observability]
 ---

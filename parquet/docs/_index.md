@@ -1,6 +1,6 @@
 ---
 title: parquet
-description: Reads Parquet files in pure Agentica. The schema, the row count, and the columns or the rows of a file, with plain, dictionary and RLE pages under Snappy or gzip.
+description: Reads Parquet files in pure Agentica. The schema, the row count, and the columns or rows of a file, with plain, dictionary and RLE pages under Snappy or gzip.
 category: Data formats
 keywords: [columnar, snappy]
 ---

@@ -1,6 +1,6 @@
 ---
 title: csv
-description: Reads and writes CSV (RFC 4180) in pure Agentica. Rows as lists or maps, a chosen separator, a reader that takes the text in chunks, and an error with its line for a malformed text.
+description: Reads and writes CSV (RFC 4180) in pure Agentica. Rows as lists or maps, a chosen separator, a reader for chunks of text, and an error with its line.
 category: Data formats
 keywords: [csv, rfc4180]
 ---

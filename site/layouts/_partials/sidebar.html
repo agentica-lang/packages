@@ -1,6 +1,7 @@
-{{- /* The theme's sidebar with the packages grouped by category: one <details> per category, open when the current page is in one of its packages, so the tree stays short and works without JavaScript. The pages that are not a package come after the groups. */ -}}
+{{- /* A copy of the theme's sidebar.html (docs-theme at 1ff8e89) with the packages grouped by category: one <details> per category, open when the current page is in one of its packages, so the tree stays short and works without JavaScript. The pages that are not a package come after the groups. */ -}}
 {{- $current := . -}}
 {{- $nav := partial "catalog-nav.html" -}}
+{{- /* The stylesheet is linked here because the theme's baseof.html has no place for a site's own css, and the groups are on every page. */ -}}
 {{- with resources.Get "css/catalog.css" | resources.Minify | fingerprint }}
 <link rel="stylesheet" href="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}" crossorigin="anonymous">
 {{- end }}
