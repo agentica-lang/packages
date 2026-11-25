@@ -10,9 +10,13 @@ Feature: Credentials
     Examples:
       | setting    | value           | kind                         | status |
       | secret key | not the secret  | s3.signature_does_not_match  | 403    |
-      | access key | AKIDNOBODY      | s3.invalid_access_key_id     | 403    |
       | bucket     | elsewhere       | s3.no_such_bucket            | 404    |
 
+
+  Scenario: An unknown access key is refused
+    Given an S3 server
+    And the client uses the access key "AKIDNOBODY"
+    Then putting "k" is refused as an unknown access key
 
   Scenario: A server that needs a session token
     Given an S3 server that needs the session token "temporary/token"

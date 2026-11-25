@@ -20,7 +20,7 @@ Feature: Multipart uploads
     When I start a multipart upload of "multi/gone.bin"
     And I upload part 1 from the file "part"
     And I abort the upload of "multi/gone.bin"
-    Then the parts of the upload of "multi/gone.bin" fail with "s3.no_such_upload" and status 404
+    Then the upload of "multi/gone.bin" is gone
 
   Scenario: A part under 5 MiB that is not the last one is refused when the upload completes
     Given a file "small" of 1000000 bytes

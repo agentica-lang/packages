@@ -46,7 +46,8 @@ def main() -> Void
     BDD.step("I complete the upload of {string}", &complete_upload),
     BDD.step("completing the upload of {string} fails with {string} and status {int}", &completing_fails),
     BDD.step("I abort the upload of {string}", &abort_upload),
-    BDD.step("the parts of the upload of {string} fail with {string} and status {int}", &listing_fails),
+    BDD.step("the upload of {string} is gone", &upload_is_gone),
+    BDD.step("putting {string} is refused as an unknown access key", &unknown_access_key),
     BDD.step("I upload the file {string} as {string} in parts of {int} bytes", &upload_file),
     BDD.step("the etag of {string} ends with {string}", &etag_ends),
     BDD.step("the peer signs {int} random requests from the seed {int}", &Signing.write_cases),
@@ -306,11 +307,29 @@ def abort_upload(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.assert(ctx, aborted.ok?, "abort failed as #{World.failure_of(aborted)}")
 end
 
-def listing_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
+# S3 says `NoSuchUpload` (404); rustfs says `InvalidPart` (400), so another server only has to refuse.
+def upload_is_gone(ctx: BDD.Context, args: List[String]) -> BDD.Context
   client = World.client_of(ctx)
   listed = S3.list_parts(client, World.key(ctx, args[0]), upload_id(ctx))
   S3.close(client)
-  World.fails_with(ctx, listed, args[1], args[2].to_i!)
+  return World.fails_with(ctx, listed, S3.NO_SUCH_UPLOAD, 404) if not World.external?()
+
+  BDD.assert(ctx, not listed.ok?, "the parts of an aborted upload were listed")
+end
+
+# The stub says `InvalidAccessKeyId` (403) as S3 does; rustfs says 401.
+def unknown_access_key(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  client = World.client_of(ctx)
+  stored = S3.put(client, World.key(ctx, args[0]), "x".bytes)
+  S3.close(client)
+  return World.fails_with(ctx, stored, "s3.invalid_access_key_id", 403) if not World.external?()
+
+  failure = World.failure_of(stored)
+  BDD.assert(
+    ctx,
+    failure.start_with?("s3.") and (failure.end_with?(" 401") or failure.end_with?(" 403")),
+    "failed as #{failure}",
+  )
 end
 
 def upload_file(ctx: BDD.Context, args: List[String]) -> BDD.Context
