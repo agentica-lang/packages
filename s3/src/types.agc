@@ -49,8 +49,9 @@ struct Param
 end
 
 ## What a client does with the network. `timeout_ms` bounds a call whole, `transfer_timeout_ms` the calls that move a
-## file or a stream (`put_file`, `get_file`, `open`), `max_body_bytes` (at most 64 MiB) the answers held in memory. `tls` takes a client context (a private CA, a self-signed certificate), and
-## `connect_to` an IP that every request connects to while the URL keeps its host.
+## file or a stream (`put_file`, `get_file`, `open`), `max_body_bytes` (at most 64 MiB) the answers held in memory.
+## `tls` takes a client context (a private CA, a self-signed certificate), and `connect_to` an IP that every request
+## connects to while the URL keeps its host.
 struct Options
   timeout_ms: Int = 300_000
   transfer_timeout_ms: Int = 3_600_000

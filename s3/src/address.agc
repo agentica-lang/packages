@@ -21,7 +21,7 @@ def target(config: Types.Config, key: String) -> Result[Target]
   return invalid("a key is at most #{Types.MAX_KEY_BYTES} bytes") if key.bytesize > Types.MAX_KEY_BYTES
 
   scheme = config.endpoint.split("://")[0]
-  authority = config.endpoint.split("://")[1]
+  authority = config.endpoint.split("://")[1].downcase
   case config.addressing
     Types.Addressing.Path ->
       path = "/#{Encoding.component(config.bucket)}"

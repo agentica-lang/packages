@@ -38,6 +38,11 @@ Feature: Multipart uploads
     And the etag of "multi/twelve.bin" ends with "-3\""
     And the object "multi/tiny.bin" has the bytes of the file "tiny"
 
+  Scenario: A file whose part fails is aborted, and no part is left
+    Given a file "twelve" of 12000000 bytes
+    Then uploading the file "twelve" as "fail-part-2/twelve.bin" in parts of 5242880 bytes fails with "s3.internal_error" and status 500
+    And the server saw the upload of "fail-part-2/twelve.bin" aborted
+
   Scenario: A browser uploads the parts with presigned URLs
     Given a file "first" of 5242880 bytes
     And a file "last" of 700000 bytes

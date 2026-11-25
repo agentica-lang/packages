@@ -35,7 +35,7 @@ def prepare(
   at: Int,
 ) -> Result[Prepared]
   target = try Address.target(config, key)
-  amz = Encoding.amz_date(at)
+  amz = try Encoding.amz_date(at)
   covered = (
     headers +
     [Types.Param(name: "x-amz-content-sha256", value: payload_hash), Types.Param(name: "x-amz-date", value: amz)]

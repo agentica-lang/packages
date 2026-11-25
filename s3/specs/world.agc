@@ -158,6 +158,10 @@ def fetch(method: String, url: String, body: Bytes) -> HTTP.Response
   response
 end
 
+## Aborts the multipart upload of the scenario when it ends, so that one that the scenario did not complete or abort
+## leaves no parts on an external server (an upload that is gone is not an error here).
+def drop_upload_after(ctx: BDD.Context) -> BDD.Context = BDD.after(ctx, ->(final) { drop_upload(final) })
+
 private
 
 STUB = "specs/fixtures/s3_stub.py"
@@ -186,9 +190,12 @@ def sweep(ctx: BDD.Context) -> Result[Void]
   query = [S3.Param(name: "list-type", value: "2"), S3.Param(name: "prefix", value: text(ctx, "prefix", "none/"))]
   listed = Request.send(client, "GET", "", query, [], "".bytes)
   # A scenario with wrong credentials stored nothing, and cannot list either.
-  return ok() if not listed.ok?
+  if not listed.ok?
+    S3.close(client)
+    return ok()
+  end
 
-  body = try String.from_bytes(listed.unwrap!.body)
+  body = String.from_bytes(listed.unwrap!.body).unwrap_or("")
   for entry in Xml.elements(body, "Contents")
     name = Xml.text(entry, "Key").unwrap_or("")
     if not name.empty?
@@ -196,6 +203,13 @@ def sweep(ctx: BDD.Context) -> Result[Void]
     end
   end
 
+  S3.close(client)
+  ok()
+end
+
+def drop_upload(ctx: BDD.Context) -> Result[Void]
+  client = try S3.client(config_of(ctx), options_of(ctx))
+  _ = S3.abort_multipart(client, text(ctx, "upload_key", ""), text(ctx, "upload", ""))
   S3.close(client)
   ok()
 end

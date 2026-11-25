@@ -84,6 +84,8 @@ def get_file(client: Types.Client, key: String, path: String) -> Result[Types.Ob
   case written
     ok(_) -> nil
     error(e) ->
+      stream.body.close
+      Task.cancel(stream.done)
       _ = Path.remove(hidden)
       return error(e)
   end
@@ -140,7 +142,7 @@ end
 # The task that reads the file, since a file belongs to the task that opened it; it ends the body by closing
 # the channel.
 def feed(path: String, pieces: Channel[Bytes]) -> Result[Void]
-  File.open(path, "read", 30_000) do |file|
+  fed: Result[Void] = File.open(path, "read", 30_000) do |file|
     while true
       chunk = try File.read_bytes(file, FILE_PIECE_BYTES, 30_000)
       break if chunk.empty?
@@ -148,9 +150,11 @@ def feed(path: String, pieces: Channel[Bytes]) -> Result[Void]
       try pieces.send(chunk, PIECE_MS)
     end
 
-    pieces.close
     ok()
   end
+
+  pieces.close
+  fed
 end
 
 def copy(stream: HTTP.Stream, path: String) -> Result[Void]
@@ -161,7 +165,6 @@ def copy(stream: HTTP.Stream, path: String) -> Result[Void]
         error(e) ->
           break if e.is_a?("channel.closed")
 
-          Task.cancel(stream.done)
           return error(e)
       end
     end

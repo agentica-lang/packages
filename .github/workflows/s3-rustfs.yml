@@ -45,16 +45,24 @@ jobs:
           version: ${{ env.AGENTICA_VERSION }}
           sha256: ${{ env.AGENTICA_SHA256 }}
 
-      # The server on port 9000 with one set of credentials, and the bucket the specs use (curl signs with SigV4).
+      # The server on loopback port 9000 with one set of dummy credentials (not a secret: the server lives for this job
+      # only), and the bucket the specs use (curl signs with SigV4). The data folder stays in the container: a bind mount
+      # of the runner's folder is refused by the user that rustfs runs as. The image is pinned by digest.
       - name: Start rustfs
         run: |
-          docker run -d --name rustfs -p 9000:9000 \
+          docker run -d --name rustfs -p 127.0.0.1:9000:9000 \
             -e RUSTFS_ACCESS_KEY="$ACCESS_KEY" -e RUSTFS_SECRET_KEY="$SECRET_KEY" \
-            -v "$RUNNER_TEMP/rustfs-data:/data" rustfs/rustfs:1.0.6
+            rustfs/rustfs:1.0.6@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a
+          ready=false
           for _ in $(seq 1 60); do
-            if curl -s -o /dev/null http://127.0.0.1:9000/; then break; fi
+            if curl -s -o /dev/null http://127.0.0.1:9000/; then ready=true; break; fi
             sleep 1
           done
+          if [ "$ready" != true ]; then
+            echo "rustfs did not answer in 60 seconds" >&2
+            docker logs rustfs >&2
+            exit 1
+          fi
           curl -sS --fail-with-body --aws-sigv4 "aws:amz:us-east-1:s3" --user "$ACCESS_KEY:$SECRET_KEY" \
             -X PUT "http://127.0.0.1:9000/$BUCKET"
 

@@ -74,12 +74,11 @@ end
 
 ```signature
 S3.Config(endpoint: String, region: String, access_key: String, secret_key: String, bucket: String, session_token: String = "", addressing: S3.Addressing = S3.Addressing.Path)
-S3.Addressing: Path, Virtual
 S3.Options(timeout_ms: Int = 300000, transfer_timeout_ms: Int = 3600000, max_body_bytes: Int = 16777216, tls: Optional[TLS.Context] = none, connect_to: String = "")
 ```
 
 - `endpoint` is the URL of the service with no path: `https://s3.eu-west-1.amazonaws.com`, `http://127.0.0.1:9000`. The presigned URLs are signed for that host, so it must be the address that the browser will use, not an address of your LAN.
-- `Path` addressing writes `https://host/bucket/key`, which every server accepts and the only one that works with an IP address. `Virtual` writes `https://bucket.host/key`, which AWS S3 prefers. The default port of the scheme is dropped from the signed `Host`, as clients send it.
+- `addressing` is `S3.Addressing.Path` or `S3.Addressing.Virtual`. `Path` addressing writes `https://host/bucket/key`, which every server accepts and the only one that works with an IP address. `Virtual` writes `https://bucket.host/key`, which AWS S3 prefers. The default port of the scheme is dropped from the signed `Host`, as clients send it.
 - `session_token` is for temporary credentials (STS).
 - A `Config` holds the secret key: do not log it.
 - `Options.timeout_ms` bounds a call whole and `transfer_timeout_ms` the calls that move a file or a stream. `max_body_bytes` (at most 64 MiB) is the largest answer that `get` keeps in memory. `tls` takes the context of a private CA or a self-signed certificate, and `connect_to` an IP that every request connects to, while the URL keeps its host (`Virtual` addressing on a local server, or a split-horizon name).
@@ -121,7 +120,7 @@ end
 
 ### `S3.get_range(client, key, first, last) -> Result[S3.Object]`
 
-Reads the bytes `first` to `last`, both included. `last` of -1 reads to the end. A `first` at or past the end is an `error` of the kind `s3.invalid_range`.
+Reads the bytes `first` to `last`, both included. `last` of -1 reads to the end. The `size` of the `info` is the number of bytes that came back, not the size of the object (`head` has that). A `first` at or past the end is an `error` of the kind `s3.invalid_range`.
 
 ### `S3.get_file(client, key, path) -> Result[S3.ObjectInfo]`
 

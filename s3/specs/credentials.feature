@@ -24,3 +24,8 @@ Feature: Credentials
     Then the object "k" reads as "signed with a token"
     When the client uses the session token "wrong"
     Then reading "k" fails with "s3.invalid_token" and status 403
+
+  Scenario: A presigned URL carries the session token
+    Given an S3 server that needs the session token "temporary/token"
+    When I put "k" with the text "signed with a token"
+    Then fetching a presigned URL for "k" gives "signed with a token"

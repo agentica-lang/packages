@@ -32,11 +32,15 @@ private
 
 # What a streamed call keeps of an answer: the XML of an error, or the little that a `PUT` answers.
 ANSWER_BYTES = 1_048_576
+# The longest wait for the next bytes of a body or of an upload: S3 and the servers like it send or take a piece in
+# seconds, so a stalled transfer ends here and not after `transfer_timeout_ms`.
+READ_TIMEOUT_MS = 120_000
 
 def http_options(options: Types.Options, timeout_ms: Int, max_body_bytes: Int) -> HTTP.ClientOptions
   HTTP.ClientOptions(
     timeout_ms: timeout_ms,
     max_body_bytes: max_body_bytes,
+    read_timeout_ms: READ_TIMEOUT_MS,
     tls: options.tls,
     connect_to: options.connect_to,
   )

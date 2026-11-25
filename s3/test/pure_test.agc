@@ -37,7 +37,8 @@ def test_the_encoding_keeps_unreserved_characters_and_encodes_the_rest() -> Resu
 end
 
 def test_the_time_is_written_as_sigv4_does() -> Result[Void]
-  Test.eq(Encoding.amz_date(1_369_353_600), "20130524T000000Z")
+  try Test.eq(Encoding.amz_date(1_369_353_600).unwrap!, "20130524T000000Z")
+  Test.eq(Encoding.amz_date(9_000_000_000_000_000_000).ok?, false)
 end
 
 def test_path_style_and_virtual_host_addressing() -> Result[Void]
@@ -48,7 +49,10 @@ def test_path_style_and_virtual_host_addressing() -> Result[Void]
   virtual = Address.target(config("https://s3.example.com:443", "photos", Types.Addressing.Virtual), "a b/c").unwrap!
   try Test.eq(virtual.origin, "https://photos.s3.example.com:443")
   try Test.eq(virtual.host, "photos.s3.example.com")
-  Test.eq(virtual.path, "/a%20b/c")
+  try Test.eq(virtual.path, "/a%20b/c")
+  # std/http sends the Host in lower case, so the signed one is too.
+  shouting = Address.target(path_style("https://S3.Example.COM:9000"), "k").unwrap!
+  Test.eq(shouting.host, "s3.example.com:9000")
 end
 
 def test_a_config_or_a_key_that_s3_would_refuse_is_refused_before_a_request() -> Result[Void]

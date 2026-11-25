@@ -144,6 +144,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raise S3Error(400, "InvalidRequest", "missing x-amz-content-sha256")
         self.check_scope(access, date, region, service, term, amz_date)
         names = signed.split(";")
+        self.require_signed(names, sorted(k.lower() for k in self.headers.keys() if k.lower().startswith("x-amz-")))
         headers = "".join(f"{n}:{' '.join(self.headers.get(n, '').split())}\n" for n in names)
         canonical = "\n".join([self.command, encode(unquote(raw_path), True), canonical_query(pairs), headers, signed, payload])
         self.check_signature(canonical, amz_date, date, region, signature)
@@ -164,12 +165,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if datetime.datetime.now(datetime.timezone.utc) > issued + datetime.timedelta(seconds=lifetime):
             raise S3Error(403, "AccessDenied", "Request has expired")
         signed = query["X-Amz-SignedHeaders"]
+        self.require_signed(signed.split(";"), [])
         headers = "".join(f"{n}:{' '.join(self.headers.get(n, '').split())}\n" for n in signed.split(";"))
         rest = [p for p in pairs if p[0] != "X-Amz-Signature"]
         canonical = "\n".join([self.command, encode(unquote(raw_path), True), canonical_query(rest), headers, signed,
                                "UNSIGNED-PAYLOAD"])
         self.check_signature(canonical, amz_date, date, region, query["X-Amz-Signature"])
         self.payload_hash = "UNSIGNED-PAYLOAD"
+
+    def require_signed(self, names, amz_headers):
+        """S3 refuses a request that leaves `host` or an `x-amz-*` header out of SignedHeaders."""
+        missing = [n for n in ["host"] + amz_headers if n not in names]
+        if missing:
+            raise S3Error(403, "AccessDenied", "SignedHeaders lacks " + ",".join(missing))
 
     def check_scope(self, access, date, region, service, term, amz_date):
         if access != ARGS.access_key:
@@ -336,6 +344,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         number = int(query.get("partNumber", "0"))
         if not 1 <= number <= 10000:
             raise S3Error(400, "InvalidArgument", "Part number must be an integer between 1 and 10000, inclusive")
+        if key.startswith("fail-part-2/") and number == 2:
+            raise S3Error(500, "InternalError", "We encountered an internal error. Please try again.")
         path = os.path.join(found["dir"], str(number))
         etag, size = self.body_to_file(path)
         with LOCK:

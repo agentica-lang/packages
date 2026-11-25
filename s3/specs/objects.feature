@@ -26,6 +26,12 @@ Feature: Objects
     Then the files "big.bin" and "down.bin" have the same bytes
     And the files "big.bin" and "streamed.bin" have the same bytes
 
+  Scenario: A download that fails leaves the file where it was
+    Given a file "keep.txt" that holds "the old text"
+    Then downloading "not/there" into the file "keep.txt" fails with "s3.no_such_key" and status 404
+    And the file "keep.txt" still holds "the old text"
+    And the folder holds only the files "keep.txt"
+
   Scenario: A bucket reached as a virtual host
     Given the client addresses the bucket as a virtual host
     When I put "vh/k" with the text "by host"

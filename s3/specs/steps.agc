@@ -50,6 +50,16 @@ def main() -> Void
     BDD.step("putting {string} is refused as an unknown access key", &unknown_access_key),
     BDD.step("I upload the file {string} as {string} in parts of {int} bytes", &upload_file),
     BDD.step("the etag of {string} ends with {string}", &etag_ends),
+    BDD.step("a file {string} that holds {string}", &file_holds_given),
+    BDD.step("downloading {string} into the file {string} fails with {string} and status {int}", &download_fails),
+    BDD.step("the file {string} still holds {string}", &file_holds),
+    BDD.step("the folder holds only the files {string}", &folder_holds),
+    BDD.step(
+      "uploading the file {string} as {string} in parts of {int} bytes fails with {string} and status {int}",
+      &upload_fails,
+    ),
+    BDD.step("the server saw the upload of {string} aborted", &saw_abort),
+    BDD.step("fetching a presigned URL for {string} gives {string}", &presigned_plain),
     BDD.step("the peer signs {int} random requests from the seed {int}", &Signing.write_cases),
     BDD.step("the package signs every one as the peer does", &Signing.agree),
   ])
@@ -69,7 +79,12 @@ def uses_secret(ctx: BDD.Context, args: List[String]) -> BDD.Context = World.set
 
 def uses_access(ctx: BDD.Context, args: List[String]) -> BDD.Context = World.set_text(ctx, "access_key", args[0])
 
-def uses_bucket(ctx: BDD.Context, args: List[String]) -> BDD.Context = World.set_text(ctx, "bucket", args[0])
+# Another bucket of a real server is not for the specs to touch (its key may be limited to one bucket).
+def uses_bucket(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  return World.skip_external(ctx, "the bucket of another server is not ours to ask for") if World.external?()
+
+  World.set_text(ctx, "bucket", args[0])
+end
 
 def uses_token(ctx: BDD.Context, args: List[String]) -> BDD.Context = World.set_text(ctx, "session_token", args[0])
 
@@ -244,7 +259,7 @@ def start_upload(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.assert(ctx, id.ok?, "create failed as #{World.failure_of(id)}")
   parts: List[S3.Part] = []
   started = World.set_text(World.set_text(ctx, "upload", id.unwrap!), "upload_key", World.key(ctx, args[0]))
-  BDD.set(started, "parts", JSON.from(parts))
+  BDD.set(World.drop_upload_after(started), "parts", JSON.from(parts))
 end
 
 def key_of(ctx: BDD.Context) -> String = World.text(ctx, "upload_key", "")
@@ -339,6 +354,58 @@ def upload_file(ctx: BDD.Context, args: List[String]) -> BDD.Context
   S3.close(client)
   BDD.assert(ctx, info.ok?, "upload_file failed as #{World.failure_of(info)}")
   World.set_text(ctx, "etag", info.unwrap!.etag)
+end
+
+def file_holds_given(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  File.write_text(World.file_path(ctx, args[0]), args[1]).unwrap!
+  ctx
+end
+
+def download_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  client = World.client_of(ctx)
+  info = S3.get_file(client, World.key(ctx, args[0]), World.file_path(ctx, args[1]))
+  S3.close(client)
+  World.fails_with(ctx, info, args[2], args[3].to_i!)
+end
+
+def file_holds(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  held = File.read_text(World.file_path(ctx, args[0])).unwrap_or("")
+  BDD.assert(ctx, held == args[1], "the file holds #{held.inspect}")
+end
+
+def folder_holds(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  listed: List[String] = Dir.list(text_dir(ctx)).unwrap_or([])
+  names = listed.sort.join(",")
+  BDD.assert(ctx, names == args[0], "the folder holds #{names}")
+end
+
+def text_dir(ctx: BDD.Context) -> String = World.text(ctx, "dir", "")
+
+# The stub answers 500 for the second part of a key under `fail-part-2/`; another server has no such door.
+def upload_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  return World.skip_external(ctx, "the failing part is a door of the stub") if World.external?()
+
+  client = World.client_of(ctx)
+  options = S3.UploadOptions(part_size: args[2].to_i!)
+  info = S3.upload_file(client, World.key(ctx, args[1]), World.file_path(ctx, args[0]), options)
+  S3.close(client)
+  World.fails_with(ctx, info, args[3], args[4].to_i!)
+end
+
+# The stub lists the requests it saw; an abort is a `DELETE` with the id of the upload.
+def saw_abort(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  return ctx if World.external?()
+
+  seen = String.from_bytes(World.fetch("GET", "#{World.config_of(ctx).endpoint}/__stub/requests", "".bytes).body)
+  lines = seen.unwrap_or("").split("\n")
+  aborted = lines.any? { |l| l.start_with?("DELETE") and l.include?("uploadId=") and l.include?(args[0]) }
+  BDD.assert(ctx, aborted, "no abort of #{args[0]} in #{seen.unwrap_or("")}")
+end
+
+def presigned_plain(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  response = World.fetch("GET", presigned_url(ctx, args[0], S3.Presign()), "".bytes)
+  seen = "#{response.status} #{String.from_bytes(response.body).unwrap_or("")}"
+  BDD.assert(ctx, seen == "200 #{args[1]}", "the fetch gave #{seen}")
 end
 
 def etag_ends(ctx: BDD.Context, args: List[String]) -> BDD.Context

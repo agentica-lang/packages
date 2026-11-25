@@ -1,5 +1,7 @@
 ## The pure text of SigV4: percent-encoding, hex and the two forms of a date.
 
+import Failure from "failure"
+
 ## Encodes a query name or value, or one path segment: everything but `A-Z a-z 0-9 - . _ ~` becomes `%XX` in capitals.
 def component(text: String) -> String
   encoded = Bytes.build do |out|
@@ -18,8 +20,14 @@ end
 ## Encodes a path: each segment as `component`, the slashes kept.
 def path(text: String) -> String = text.split("/").map { |segment| component(segment) }.join("/")
 
-## The date of a time as SigV4 writes it in `X-Amz-Date`: `20130524T000000Z`.
-def amz_date(seconds: Int) -> String = Time.at(seconds).unwrap!.strftime("%Y%m%dT%H%M%SZ")
+## The date of a time as SigV4 writes it in `X-Amz-Date`: `20130524T000000Z`. A time that cannot be written is an `error`
+## of the kind `s3.invalid`.
+def amz_date(seconds: Int) -> Result[String]
+  time = Time.at(seconds)
+  return Failure.invalid("the time #{seconds} cannot be written as a date") if not time.ok?
+
+  ok(time.unwrap!.strftime("%Y%m%dT%H%M%SZ"))
+end
 
 ## The first eight characters of an `X-Amz-Date`: the day of the credential scope.
 def day_of(amz: String) -> String = amz.slice(0, 8)

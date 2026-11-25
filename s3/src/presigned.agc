@@ -18,6 +18,7 @@ def url(config: Types.Config, method: String, key: String, options: Types.Presig
 
   target = try Address.target(config, key)
   at = options.at.unwrap_or(Time.now().to_i)
+  amz = try Encoding.amz_date(at)
   query = Sigv4.presign(
     Request.scope_of(config),
     method,
@@ -26,7 +27,7 @@ def url(config: Types.Config, method: String, key: String, options: Types.Presig
     options.query,
     options.headers,
     options.expires_s,
-    Encoding.amz_date(at),
+    amz,
   )
 
   ok("#{target.origin}#{target.path}?#{query}")
