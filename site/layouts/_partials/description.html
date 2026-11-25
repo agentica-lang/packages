@@ -1,0 +1,14 @@
+{{- /* The theme's description.html (docs-theme at 1ff8e89), except that a category page, which has no front matter, says what it lists. */ -}}
+{{- if and (eq .Kind "term") (not .Description) -}}
+  {{- return (printf "The Agentica packages in the %s category." .Title) -}}
+{{- end -}}
+{{- $text := .Description -}}
+{{- if and (not $text) .IsHome }}{{ $text = site.Params.description }}{{ end -}}
+{{- if not $text -}}
+  {{- $text = .Summary | plainify | htmlUnescape | replaceRE `\s+` " " | strings.TrimSpace -}}
+  {{- if gt (strings.RuneCount $text) 160 -}}
+    {{- $text = printf "%s…" (substr $text 0 160 | replaceRE `\s+\S*$` "" | replaceRE `[\s,;:.(—–-]+$` "") -}}
+  {{- end -}}
+{{- end -}}
+{{- $text = $text | default site.Params.description | plainify | htmlUnescape | strings.TrimSpace -}}
+{{- return $text -}}

@@ -12,9 +12,10 @@
     {{- range $nav.groups }}
     {{- $open := false }}
     {{- range .pages }}{{ if and $current.Section (eq .Section $current.Section) }}{{ $open = true }}{{ end }}{{ end }}
+    {{- $name := .name }}
     <li class="nav-group">
       <details{{ if $open }} open{{ end }}>
-        <summary>{{ .name }} <span class="nav-count">{{ len .pages }}</span></summary>
+        <summary><a href="{{ (partial "category-page.html" .name).RelPermalink }}"{{ if and (eq $current.Kind "term") (eq $current.Title $name) }} aria-current="page"{{ end }}>{{ .name }}</a> <span class="nav-count">{{ len .pages }}</span></summary>
         <ul>
           {{- range .pages }}
           {{ partial "sidebar-item.html" (dict "page" . "current" $current) }}

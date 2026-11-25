@@ -1,0 +1,14 @@
+{{- /* A copy of the theme's breadcrumb-pages.html (docs-theme at 1ff8e89) with the category of a package in the path: Home > Category > package, and Home > Category on a category page. The breadcrumbs and the BreadcrumbList of the structured data both read it. */ -}}
+{{- $pages := .Ancestors.Reverse | append . -}}
+{{- if eq .Kind "term" -}}
+  {{- $pages = slice site.Home . -}}
+{{- else if not .IsHome -}}
+  {{- with .FirstSection.Params.category -}}
+    {{- with partial "category-page.html" . -}}
+      {{- $pages = slice site.Home . -}}
+      {{- range $.Ancestors.Reverse }}{{ if not (or .IsHome (eq . $.FirstSection.Parent)) }}{{ $pages = $pages | append . }}{{ end }}{{ end -}}
+      {{- $pages = $pages | append $ -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- return $pages -}}
