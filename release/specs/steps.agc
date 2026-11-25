@@ -24,6 +24,9 @@ def main() -> Void
     BDD.step("a file {string} beside the project", &beside),
     BDD.step("the project has a link {string} to {string}", &linking),
     BDD.step("the project has the dependency {string} with this agentica.toml:", &dependency),
+    BDD.step("the project has the path dependency {string} at {string} with this agentica.toml:", &path_dependency),
+    BDD.step("the folder {string} of deps has this agentica.toml:", &folder_of_deps),
+    BDD.step("the project is in a workspace with the member {string} that has this agentica.toml:", &workspace_member),
     BDD.step("the lock names the package {string} that is not installed", &locked),
     BDD.step("building fails as {string} saying {string}", &again_fails),
     BDD.step(
@@ -43,7 +46,10 @@ def main() -> Void
     BDD.step("the archive passes inspect", &archive_inspected),
     BDD.step("building again fails as {string} saying {string}", &again_fails),
     BDD.step("a project with each of these agentica.toml is refused:", &refused),
-    BDD.step("the release lists the system library {string} and {string} and {string}", &libraries),
+    BDD.step(
+      "the release lists the system library {string} on linux, {string} on macos and {string} on windows",
+      &libraries,
+    ),
   ])
 end
 
@@ -114,9 +120,11 @@ def built_from(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   end
 end
 
+# Only the library of the system that runs the specs is listed.
 def libraries(ctx: BDD.Context, args: List[String]) -> BDD.Context
   found = BDD.get(ctx, LIBRARIES).unwrap!
-  BDD.assert(ctx, JSON.encode(found) == JSON.encode(args.sort), "the release lists #{JSON.encode(found)}")
+  wanted = {"linux": args[0], "macos": args[1], "windows": args[2]}
+  BDD.assert(ctx, JSON.encode(found) == JSON.encode([wanted[System.os()]]), "the release lists #{JSON.encode(found)}")
 end
 
 def moved(ctx: BDD.Context, args: List[String]) -> BDD.Context
@@ -265,7 +273,7 @@ def again_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
 end
 
 def packing_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  case Release.tar(root_of(ctx))
+  case Release.tar("#{root_of(ctx)}/")
     ok(_) -> BDD.assert(ctx, false, "the second tar passed")
     error(e) -> BDD.assert(ctx, e.kind == args[0] and e.message.include?(args[1]), "gave #{e.kind}: #{e.message}")
   end
@@ -286,18 +294,50 @@ def linking(ctx: BDD.Context, args: List[String]) -> BDD.Context
 end
 
 def dependency(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  folder = "#{folder_of(ctx)}/project/deps/#{args[0]}"
-  made = sh(["mkdir", "-p", folder])
+  made = write_manifest(ctx, "#{folder_of(ctx)}/project/deps/#{args[0]}")
   return BDD.assert(ctx, false, made.message) if !made.ok?
 
-  written = File.write_text("#{folder}/agentica.toml", BDD.doc_string(ctx))
-  return BDD.assert(ctx, false, written.message) if !written.ok?
-
-  locked(ctx, args)
+  locked_as(ctx, "name = \"#{args[0]}\"\n")
 end
 
-def locked(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  lock = "version = 1\n\n[[package]]\nname = \"#{args[0]}\"\n"
+def folder_of_deps(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  made = write_manifest(ctx, "#{folder_of(ctx)}/project/deps/#{args[0]}")
+  BDD.assert(ctx, made.ok?, "cannot write the manifest: #{made}")
+end
+
+def path_dependency(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  made = write_manifest(ctx, "#{folder_of(ctx)}/project/#{args[1]}")
+  return BDD.assert(ctx, false, made.message) if !made.ok?
+
+  locked_as(ctx, "name = \"#{args[0]}\"\npath = \"#{args[1]}\"\n")
+end
+
+# A workspace in the folder above the project, with one member; the lock names the workspace (no folder of its own)
+# and the member.
+def workspace_member(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  workspace = "[workspace]\nrepository = \"https://example.invalid/r\"\nmembers = [\"#{args[0]}\"]\n"
+  written = File.write_text("#{folder_of(ctx)}/agentica.toml", workspace)
+  return BDD.assert(ctx, false, written.message) if !written.ok?
+
+  made = write_manifest(ctx, "#{folder_of(ctx)}/#{args[0]}")
+  return BDD.assert(ctx, false, made.message) if !made.ok?
+
+  members = (
+    "name = \"ws\"\nworkspace = true\n\n[[package]]\nname = \"#{args[0]}\"\nworkspace = true\nsubdir = \"#{args[0]}\"\n"
+  )
+
+  locked_as(ctx, members)
+end
+
+def write_manifest(ctx: BDD.Context, folder: String) -> Result[Void]
+  try sh(["mkdir", "-p", folder])
+  File.write_text("#{folder}/agentica.toml", BDD.doc_string(ctx))
+end
+
+def locked(ctx: BDD.Context, args: List[String]) -> BDD.Context = locked_as(ctx, "name = \"#{args[0]}\"\n")
+
+def locked_as(ctx: BDD.Context, entry: String) -> BDD.Context
+  lock = "version = 1\n\n[[package]]\n#{entry}"
   BDD.assert(ctx, File.write_text("#{folder_of(ctx)}/project/agentica.lock", lock).ok?, "cannot write the lock")
 end
 
@@ -366,7 +406,10 @@ end
 # `cli.agc` run as a user runs it, in the fresh folder: the exit code, and for an error one line on stderr.
 def commands(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   checked = ctx
-  cli = Path.resolve("cli.agc").unwrap!
+  resolved = Path.resolve("cli.agc")
+  return BDD.assert(ctx, false, resolved.message) if !resolved.ok?
+
+  cli = resolved.unwrap!
   for row in BDD.table(ctx).drop(1)
     child = Process.spawn_captured(
       "agentica",
@@ -380,6 +423,8 @@ def commands(ctx: BDD.Context, _args: List[String]) -> BDD.Context
     out = Process.output(process, RUN_MS)
     code = Process.wait(process, RUN_MS)
     Process.close(process)
+    return BDD.assert(checked, false, "#{row[0]} gave #{out}") if !out.ok?
+
     shown = out.unwrap!.stdout + out.unwrap!.stderr
     lines = out.unwrap!.stderr.strip.split("\n").size
     clean = code == ok(row[1].to_i!) and shown.include?(row[2])

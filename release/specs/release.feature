@@ -118,11 +118,72 @@ Feature: Releasing an app
       """
     Then building fails as "release.invalid" saying "deps/dep/agentica.toml"
 
+  Scenario: A dependency of a namespace is read from its own folder of deps
+    Given a fresh folder
+    And a copy of the project "specs/fixtures/hello" in it
+    And the project has the dependency "ns/sub" with this agentica.toml:
+      """
+      name = "sub"
+
+      [native.x]
+      linux = { system = "libx.so", extra = 1 }
+      """
+    Then building fails as "release.invalid" saying "deps/ns/sub/agentica.toml"
+
+  Scenario: A dependency by path is read from its folder, inside the project or not
+    Given a fresh folder
+    And a copy of the project "specs/fixtures/hello" in it
+    And the project has the path dependency "dep" at "libs/dep" with this agentica.toml:
+      """
+      name = "dep"
+
+      [native.x]
+      macos = { file = "native/libx.dylib" }
+      """
+    Then building fails as "release.invalid" saying "libs/dep/agentica.toml"
+
+  Scenario: A dependency by path outside the project is read too
+    Given a fresh folder
+    And a copy of the project "specs/fixtures/hello" in it
+    And the project has the path dependency "dep" at "../shared/dep" with this agentica.toml:
+      """
+      name = "dep"
+
+      [native.x]
+      build = { sources = ["native/x.c"] }
+      """
+    Then building fails as "release.invalid" saying "shared/dep/agentica.toml"
+
+  Scenario: A member of the workspace of the project is read from the workspace
+    Given a fresh folder
+    And a copy of the project "specs/fixtures/hello" in it
+    And the project is in a workspace with the member "member" that has this agentica.toml:
+      """
+      name = "member"
+
+      [native.x]
+      linux = "libx.so"
+      """
+    Then building fails as "release.invalid" saying "dependency member"
+
   Scenario: A package of the lock that is not installed is refused
     Given a fresh folder
     And a copy of the project "specs/fixtures/hello" in it
     And the lock names the package "dep" that is not installed
-    Then building fails as "release.invalid" saying "deps/dep is missing"
+    Then building fails as "release.invalid" saying "deps/dep"
+
+  Scenario: A folder of deps that the lock does not name is not read
+    Given a fresh folder
+    And a copy of the project "specs/fixtures/hello" in it
+    And the folder "stale" of deps has this agentica.toml:
+      """
+      name = "stale"
+
+      [native.x]
+      linux = { file = "native/libx.so" }
+      """
+    When the release is built
+    Then the release passes inspect
 
   Scenario: A library found by name is listed for the target
     Given a fresh folder
@@ -140,7 +201,7 @@ Feature: Releasing an app
       macos = { system = "libm.dylib" }
       windows = { system = "m.dll" }
       """
-    Then the release lists the system library "libm.so.6" and "libm.dylib" and "m.dll"
+    Then the release lists the system library "libm.so.6" on linux, "libm.dylib" on macos and "m.dll" on windows
 
   Scenario: The command line builds, packs and inspects
     Given a fresh folder
@@ -151,5 +212,5 @@ Feature: Releasing an app
       | build project --out out                     | 1    | exists already   |
       | tar out/hello-1.2.3                         | 0    | release: wrote   |
       | inspect out/hello-1.2.3                     | 0    | files match      |
-      | inspect out/missing                         | 1    | has no releases/manifest.json |
+      | inspect out/missing                         | 1    | is not there |
       | frobnicate                                  | 2    | usage            |

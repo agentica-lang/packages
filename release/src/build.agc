@@ -4,6 +4,7 @@ import Config from "config"
 import Errors from "errors"
 import Files from "files"
 import Layout from "layout"
+import Names from "names"
 import Natives from "natives"
 import Shell from "shell"
 import Toml from "std/toml"
@@ -30,8 +31,9 @@ def build(options: Options) -> Result[Built]
 
   project = try Path.real(options.project)
   text = try File.read_text(Layout.at(project, "agentica.toml"))
-  config = try Config.parse(text, options.entry)
-  libraries = config.system_libraries + try dependency_libraries(project)
+  os = System.os()
+  config = try Config.parse(text, options.entry, os)
+  libraries = config.system_libraries + try dependency_libraries(project, os)
   try Files.program(project, config.entry)
   for path in config.include
     try Files.confined(project, path)
@@ -46,7 +48,8 @@ def build(options: Options) -> Result[Built]
     return Errors.invalid("#{path} exists already; remove it or choose another --out") if File.lstat(path).ok?
   end
 
-  try Shell.run("mkdir", ["-p", partial], ".")
+  _ = try Shell.run("mkdir", ["-p", out], ".")
+  _ = try Shell.run("mkdir", [partial], ".")
   assembled = assemble(project, partial, config, binary, running)
   case assembled
     error(e) ->
@@ -61,10 +64,18 @@ def build(options: Options) -> Result[Built]
     return Errors.failed("cannot rename #{partial} to #{root}: #{renamed.message}")
   end
 
-  ok(Built(path: root, manifest: assembled.unwrap!, system_libraries: libraries.sort))
+  ok(Built(path: root, manifest: assembled.unwrap!, system_libraries: libraries.uniq.sort))
 end
 
 private
+
+# One package of `agentica.lock`: where its `agentica.toml` is depends on how it is locked.
+struct Locked
+  name: String
+  path: String
+  workspace: Bool
+  subdir: String
+end
 
 def located(given: String) -> Result[String]
   return Shell.find_agentica() if given.empty?
@@ -72,53 +83,101 @@ def located(given: String) -> Result[String]
   Path.resolve(given)
 end
 
-# The natives of the packages in deps/: the ones of the lock must be there, and every manifest there is checked.
-def dependency_libraries(project: String) -> Result[List[String]]
-  deps = Layout.at(project, "deps")
-  wanted = try locked(project)
-  present: List[String] = []
-  if File.lstat(deps).ok?
-    present = try Dir.list(deps)
-  end
-
-  for name in wanted
-    if !present.include?(name)
-      return Errors.invalid("deps/#{name} is missing; run `agentica install` so its native modules can be checked")
-    end
-  end
-
+# The natives of the locked packages (the ones of `deps/` and the folders that the lock names), read from each
+# `agentica.toml`. A `deps/` folder that the lock does not name is not read.
+def dependency_libraries(project: String, os: String) -> Result[List[String]]
   libraries: List[String] = []
-  for name in present
-    manifest = Layout.at(deps, "#{name}/agentica.toml")
-    if File.stat(manifest).ok?
-      doc = Toml.parse(try File.read_text(manifest))
-      return Errors.invalid("deps/#{name}/agentica.toml: #{doc.message}") if !doc.ok?
+  for locked in try locks(project)
+    folder = try manifest_folder(project, locked)
+    if folder.some?
+      path = Layout.at(folder.unwrap!, "agentica.toml")
+      owner = "dependency #{locked.name} (#{path})"
+      text = File.read_text(path)
+      return Errors.invalid("#{owner} is missing; run `agentica install`") if !text.ok?
 
-      libraries = libraries + try Natives.libraries(doc.unwrap!, "deps/#{name}/agentica.toml")
+      doc = Toml.parse(text.unwrap!)
+      return Errors.invalid("#{owner}: #{doc.message}") if !doc.ok?
+
+      libraries = libraries + try Natives.libraries(doc.unwrap!, owner, os)
     end
   end
 
   ok(libraries)
 end
 
-def locked(project: String) -> Result[List[String]]
+# The folder of the package, or none when it has no folder of its own: a `path` package is in its folder; a member
+# of the workspace of the project is in the workspace; the workspace itself has no folder (its members have); the
+# others are in `deps/NAME`.
+def manifest_folder(project: String, locked: Locked) -> Result[Optional[String]]
+  try Names.inside("lock name", locked.name)
+  if !locked.path.empty?
+    return ok(some(Layout.at(project, locked.path))) if !locked.path.start_with?("/")
+
+    return ok(some(locked.path))
+  end
+
+  if locked.workspace
+    return ok(none) if locked.subdir.empty?
+
+    try Names.inside("lock subdir", locked.subdir)
+    root = workspace_root(project)
+    return Errors.invalid("#{locked.name} is a workspace member but no workspace is above the project") if !root.some?
+
+    return ok(some(Layout.at(root.unwrap!, locked.subdir)))
+  end
+
+  ok(some(Layout.at(Layout.at(project, "deps"), locked.name)))
+end
+
+# The nearest folder above the project (or the project) whose `agentica.toml` has a `[workspace]` table.
+def workspace_root(dir: String) -> Optional[String]
+  text = File.read_text(Layout.at(dir, "agentica.toml"))
+  if text.ok?
+    doc = Toml.parse(text.unwrap!)
+    return some(dir) if doc.ok? and Toml.get(doc.unwrap!, "workspace").ok?
+  end
+
+  return none if dir == "/"
+
+  parts = dir.split("/")
+  parent = parts.take(parts.size - 1).join("/")
+  if parent.empty?
+    parent = "/"
+  end
+
+  workspace_root(parent)
+end
+
+def locks(project: String) -> Result[List[Locked]]
   path = Layout.at(project, "agentica.lock")
   return ok([]) if !File.lstat(path).ok?
 
   doc = Toml.parse(try File.read_text(path))
   return Errors.invalid("agentica.lock: #{doc.message}") if !doc.ok?
 
-  names: List[String] = []
+  found: List[Locked] = []
   case Toml.get(doc.unwrap!, "package")
     ok(Toml.Value.Array(items)) ->
       for item in items
         case item
           Toml.Value.Table(fields) ->
-            case fields.get("name")
-              some(Toml.Value.Str(name)) -> names = names.push(name)
-              _ -> return Errors.invalid("agentica.lock has a package with no name")
+            name = text_of(fields.get("name"))
+            return Errors.invalid("agentica.lock has a package with no name") if name.empty?
+
+            workspace = false
+            case fields.get("workspace")
+              some(Toml.Value.Bool(flag)) -> workspace = flag
+              _ -> nil
             end
 
+            found = found.push(
+              Locked(
+                name: name,
+                path: text_of(fields.get("path")),
+                workspace: workspace,
+                subdir: text_of(fields.get("subdir")),
+              ),
+            )
           _ -> return Errors.invalid("agentica.lock has a package that is not a table")
         end
       end
@@ -126,7 +185,14 @@ def locked(project: String) -> Result[List[String]]
     _ -> nil
   end
 
-  ok(names)
+  ok(found)
+end
+
+def text_of(value: Optional[Toml.Value]) -> String
+  case value
+    some(Toml.Value.Str(text)) -> text
+    _ -> ""
+  end
 end
 
 def assemble(

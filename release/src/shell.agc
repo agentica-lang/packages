@@ -17,6 +17,21 @@ def run(command: String, args: List[String], dir: String, env: Map[String, Strin
   ok(done.stdout)
 end
 
+## Runs `command` with its standard output in the file `out` (no limit on its size) and its standard error in
+## `out.err`, which a failure quotes.
+def run_to_file(command: String, args: List[String], out: String) -> Result[Void]
+  child = try Process.spawn(command, args, Process.Options(out: out, err: "#{out}.err", timeout_ms: RUN_MS))
+  code = Process.wait(child, RUN_MS)
+  Process.close(child)
+  status = try code
+  if status != 0
+    said = File.read_text("#{out}.err").unwrap_or("")
+    return Errors.failed("#{command} #{args.join(" ")} exited with #{status}: #{said.strip}")
+  end
+
+  ok()
+end
+
 ## The `agentica` that PATH finds, as an absolute path.
 def find_agentica() -> Result[String]
   found = run("sh", ["-c", "command -v agentica"], ".")

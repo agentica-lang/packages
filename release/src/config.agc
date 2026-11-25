@@ -7,20 +7,19 @@ import Natives from "natives"
 import Toml from "std/toml"
 
 ## `name` and `version` make the folder `NAME-VERSION`; `entry` is the program; `include` are files or folders of the
-## project copied into the release; `agentica` is the oldest version the project needs (empty: any); `system_libraries`
-## are the native libraries found by name on the target.
+## project copied into the release; `system_libraries` are the native libraries that the system `os` finds by name on
+## the target.
 struct Config
   name: String
   version: String
   entry: String
   include: List[String]
-  agentica: String
   system_libraries: List[String]
 end
 
-## The config of the manifest text. `entry` (from the command line) wins over the `entry` of `[tool.release]` when it
-## is not empty.
-def parse(text: String, entry: String) -> Result[Config]
+## The config of the manifest text for the system `os`. `entry` (from the command line) wins over the `entry` of
+## `[tool.release]` when it is not empty.
+def parse(text: String, entry: String, os: String) -> Result[Config]
   parsed = Toml.parse(text)
   return Errors.invalid("agentica.toml: #{parsed.message}") if !parsed.ok?
 
@@ -38,17 +37,8 @@ def parse(text: String, entry: String) -> Result[Config]
   return Errors.invalid("entry #{program.inspect} is not an .agc file") if !program.end_with?(".agc")
 
   include = try paths_at(doc)
-  libraries = try Natives.libraries(doc, "agentica.toml")
-  ok(
-    Config(
-      name: name,
-      version: version,
-      entry: program,
-      include: include,
-      agentica: text_at(doc, "agentica").unwrap_or(""),
-      system_libraries: libraries,
-    ),
-  )
+  libraries = try Natives.libraries(doc, "agentica.toml", os)
+  ok(Config(name: name, version: version, entry: program, include: include, system_libraries: libraries))
 end
 
 private

@@ -11,8 +11,8 @@ import Shell from "shell"
 ## purpose: whoever changes a file can change the manifest too, so the hash of the archive itself belongs somewhere
 ## else.
 def inspect(path: String) -> Result[Layout.Manifest]
-  source = try Path.resolve(path)
-  return folder_checked(source) if !source.end_with?(".tar.gz")
+  source = try located(path)
+  return folder_checked(source) if (try File.stat(source)).kind == "directory"
 
   scratch = (try Shell.run("mktemp", ["-d"], ".")).strip
   checked = unpacked(source, scratch)
@@ -23,18 +23,28 @@ end
 ## The `NAME-VERSION-OS-ARCH.tar.gz` of a release folder, written beside it. The folder is checked first, and an
 ## archive that exists is not replaced.
 def tar(path: String) -> Result[String]
-  root = try Path.resolve(path)
+  root = try located(path)
   manifest = try folder_checked(root)
   parts = root.split("/")
   parent = parts.take(parts.size - 1).join("/")
   archive = Layout.at(parent, Layout.archive(manifest))
-  return Errors.invalid("#{archive} exists already; remove it first") if File.lstat(archive).ok?
+  partial = "#{archive}.partial"
+  for taken in [archive, partial]
+    return Errors.invalid("#{taken} exists already; remove it first") if File.lstat(taken).ok?
+  end
 
-  # COPYFILE_DISABLE keeps the `._` files of macOS tar out of the archive, which `inspect` would find extra.
-  packed = Shell.run("tar", ["-czf", archive, "-C", parent, parts.last], ".", {"COPYFILE_DISABLE": "1"})
+  # COPYFILE_DISABLE keeps the `._` files of macOS tar out of the archive, which `inspect` would find extra. `./NAME`
+  # cannot be read as an option of tar.
+  packed = Shell.run("tar", ["-czf", partial, "-C", parent, "./#{parts.last}"], ".", {"COPYFILE_DISABLE": "1"})
   if !packed.ok?
-    _ = Path.remove(archive)
+    _ = Path.remove(partial)
     return error(packed.message, kind: "release.failed")
+  end
+
+  renamed = Path.rename(partial, archive)
+  if !renamed.ok?
+    _ = Path.remove(partial)
+    return Errors.failed("cannot rename #{partial} to #{archive}: #{renamed.message}")
   end
 
   ok(archive)
@@ -42,28 +52,48 @@ end
 
 private
 
+# The real path of a folder or an archive, as `Path.real` gives it (a link, a trailing `/` and `..` are followed).
+def located(path: String) -> Result[String]
+  real = Path.real(path)
+  return Errors.invalid("#{path} is not there") if !real.ok?
+
+  ok(real.unwrap!)
+end
+
 # The system `tar`, which reads what `std/archive` reads but also writes, so that one program makes and opens the
 # archive. The names and kinds are checked before anything is unpacked: a name that leaves the folder, a link or a
 # device is not a release.
 def unpacked(archive: String, scratch: String) -> Result[Layout.Manifest]
-  names = (try Shell.run("tar", ["-tzf", archive], ".")).split("\n")
-  for name in names
+  names = Layout.at(scratch, "names.txt")
+  kinds = Layout.at(scratch, "kinds.txt")
+  into = Layout.at(scratch, "unpacked")
+  try Shell.run_to_file("tar", ["-tzf", archive], names)
+  try Shell.run_to_file("tar", ["-tvzf", archive], kinds)
+  try listed(archive, names, kinds)
+  _ = try Shell.run("mkdir", [into], ".")
+  _ = try Shell.run("tar", ["-xzf", archive, "--no-same-owner", "--no-same-permissions", "-C", into], ".")
+  folders = try Dir.list(into)
+  return Errors.corrupt("#{archive} must hold one folder, not #{folders.size} entries") if folders.size != 1
+
+  folder_checked(Layout.at(into, folders[0]))
+end
+
+# The lists are read line by line, whatever their size.
+def listed(archive: String, names: String, kinds: String) -> Result[Void]
+  try File.each_line(names) do |name|
     unsafe = name.start_with?("/") or name.split("/").any? { |part| part == ".." }
     return Errors.corrupt("#{archive} holds the name #{name.inspect}, which leaves the folder") if unsafe
+
+    ok()
   end
 
-  kinds = (try Shell.run("tar", ["-tvzf", archive], ".")).split("\n")
-  for line in kinds
+  File.each_line(kinds) do |line|
     if !line.empty? and !line.start_with?("-") and !line.start_with?("d")
       return Errors.corrupt("#{archive} holds a link or a special file: #{line.inspect}")
     end
+
+    ok()
   end
-
-  _ = try Shell.run("tar", ["-xzf", archive, "--no-same-owner", "--no-same-permissions", "-C", scratch], ".")
-  folders = try Dir.list(scratch)
-  return Errors.corrupt("#{archive} must hold one folder, not #{folders.size} entries") if folders.size != 1
-
-  folder_checked(Layout.at(scratch, folders[0]))
 end
 
 def folder_checked(root: String) -> Result[Layout.Manifest]
