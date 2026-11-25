@@ -10,7 +10,7 @@ def main() -> Void
     BDD.step("I hash {string} twice", &hash_twice),
     BDD.step("the golden digest {string}", &golden),
     BDD.step("I ask what is wrong with {int} copies of {string}", &ask_problem),
-    BDD.step("I check against nobody", &check_nobody),
+    BDD.step("I time a hash and a check against nobody", &time_nobody),
     BDD.step("the digest starts with {string}", &digest_starts),
     BDD.step("the digest does not contain {string}", &digest_lacks),
     BDD.step("the password {string} verifies against the digest", &verifies),
@@ -25,8 +25,11 @@ def main() -> Void
     BDD.step("the answer mentions {string}", &answer_mentions),
     BDD.step("the answer is empty", &answer_empty),
     BDD.step("hashing {int} copies of {string} is an error", &hashing_is_error),
-    BDD.step("verifying {int} copies of {string} against the digest is false", &long_verify_is_false),
-    BDD.step("it took at least {int} milliseconds", &took_at_least),
+    BDD.step(
+      "verifying {int} copies of {string} against the digest {string} is false in under {int} milliseconds",
+      &long_verify_is_false,
+    ),
+    BDD.step("the check against nobody took at least half of the time of the hash", &nobody_took_half),
   ])
 end
 
@@ -39,7 +42,8 @@ DIGEST = "digest"
 DIGEST_TWO = "digest_two"
 GOLDEN_PASSWORD = "golden_password"
 ANSWER = "answer"
-ELAPSED = "elapsed_ms"
+HASH_MS = "hash_ms"
+NOBODY_MS = "nobody_ms"
 
 struct Vector
   name: String
@@ -70,12 +74,16 @@ def ask_problem(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.set(ctx, ANSWER, JSON.from(Password.problem(text)))
 end
 
-# Only the lower bound is checked: a clock that is slow cannot make a check that is too quick pass, and the work of
-# 64 MiB of scrypt is far over it.
-def check_nobody(ctx: BDD.Context, args: List[String]) -> BDD.Context
+# The check against nobody must do the work of a hash, so it is timed against one: a check that skipped the work (the
+# result is ignored, so a version that dropped the call would pass every other test) takes a fraction of it.
+def time_nobody(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  started = Time.now_ms()
+  Password.hash("a password to time").unwrap!
+  hashed = Time.now_ms() - started
   started = Time.now_ms()
   Password.verify_nobody()
-  BDD.set(ctx, ELAPSED, JSON.from(Time.now_ms() - started))
+  nobody = Time.now_ms() - started
+  BDD.set(BDD.set(ctx, HASH_MS, JSON.from(hashed)), NOBODY_MS, JSON.from(nobody))
 end
 
 def digest_starts(ctx: BDD.Context, args: List[String]) -> BDD.Context
@@ -156,14 +164,18 @@ def hashing_is_error(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.assert(ctx, not hashed.ok?, "hash gave a digest")
 end
 
+# A digest that would take seconds if it were hashed, so that a quick answer shows that nothing was.
 def long_verify_is_false(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  verdict = Password.verify(List.repeat(args[1], args[0].to_i!).join(""), text_of(ctx, DIGEST))
-  BDD.assert(ctx, verdict == ok(false), "verify gave #{verdict}")
+  started = Time.now_ms()
+  verdict = Password.verify(List.repeat(args[1], args[0].to_i!).join(""), args[2])
+  took = Time.now_ms() - started
+  BDD.assert(ctx, verdict == ok(false) and took < args[3].to_i!, "verify gave #{verdict} after #{took} ms")
 end
 
-def took_at_least(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  took = JSON.int(BDD.get(ctx, ELAPSED).unwrap!).unwrap!
-  BDD.assert(ctx, took >= args[0].to_i!, "the check took #{took} ms")
+def nobody_took_half(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  hashed = JSON.int(BDD.get(ctx, HASH_MS).unwrap!).unwrap!
+  nobody = JSON.int(BDD.get(ctx, NOBODY_MS).unwrap!).unwrap!
+  BDD.assert(ctx, nobody * 2 >= hashed, "the check against nobody took #{nobody} ms and the hash #{hashed} ms")
 end
 
 def text_of(ctx: BDD.Context, name: String) -> String = JSON.string(BDD.get(ctx, name).unwrap!).unwrap!

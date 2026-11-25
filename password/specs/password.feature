@@ -38,26 +38,41 @@ Feature: Hashing and checking passwords
       | correct horse battery     | correct horse batterz    |
       | contraseña ñandú 日本     | contraseña ñandú 日本!   |
 
-  Scenario Outline: A digest that is not one of the package is an error, not a verdict on the password
+  Scenario Outline: A digest that is not one of the package, or that asks for too much, is an error and not a verdict
     Then verifying against the digest "<digest>" is an error
 
     Examples:
-      | digest                                           |
-      |                                                  |
-      | plain                                            |
-      | $2a$12$abcdefghijklmnopqrstuuabcdefghijklmnopqrstuvwxyz01234 |
-      | bcrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AA==   |
-      | scrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==        |
-      | scrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AA==$x |
-      | scrypt$x$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AA==       |
-      | scrypt$65536$0$2$AAAAAAAAAAAAAAAAAAAAAA==$AA==   |
-      | scrypt$65536$8$2$not base64$AA==                 |
-      | scrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==$!!     |
-      | scrypt$65536$8$2$$AA==                           |
-      | scrypt$3$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AA==       |
+      | digest                                                                                                                                                 |
+      |                                                                                                                                                        |
+      | plain                                                                                                                                                  |
+      | $2a$12$abcdefghijklmnopqrstuuabcdefghijklmnopqrstuvwxyz01234                                                                                           |
+      | bcrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                 |
+      | scrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==                                                                                                              |
+      | scrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=$x                                                               |
+      | scrypt$x$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                     |
+      | scrypt$+65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                |
+      | scrypt$065536$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                |
+      | scrypt$3$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                     |
+      | scrypt$512$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                   |
+      | scrypt$1000$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                  |
+      | scrypt$65536$0$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                 |
+      | scrypt$65536$+8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                |
+      | scrypt$65536$08$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                |
+      | scrypt$65536$33$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                |
+      | scrypt$65536$8$17$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                |
+      | scrypt$1048576$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                               |
+      | scrypt$4294967296$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                            |
+      | scrypt$9223372036854775807$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                   |
+      | scrypt$65536$8$2$not base64$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                               |
+      | scrypt$65536$8$2$$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                                         |
+      | scrypt$65536$8$2$AAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                                                                             |
+      | scrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= |
+      | scrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==$!!                                                                                                           |
+      | scrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==$                                                                                                             |
+      | scrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AA==                                                                                                         |
+      | scrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAA                                                                                         |
+      | scrypt$65536$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=                     |
 
-  Scenario: A cost that asks for too much memory is an error, and no memory is taken
-    Then verifying against the digest "scrypt$4294967296$8$2$AAAAAAAAAAAAAAAAAAAAAA==$AA==" is an error
 
   Scenario Outline: A new password needs 8 characters and at most 256 bytes
     When I ask what is wrong with <count> copies of "<text>"
@@ -66,6 +81,7 @@ Feature: Hashing and checking passwords
     Examples:
       | count | text | outcome                    |
       | 7     | x    | mentions "at least 8"      |
+      | 7     | é    | mentions "at least 8"      |
       | 8     | x    | is empty                   |
       | 256   | x    | is empty                   |
       | 257   | x    | mentions "at most 256"     |
@@ -73,10 +89,9 @@ Feature: Hashing and checking passwords
       | 129   | é    | mentions "at most 256"     |
 
   Scenario: A password of more than 256 bytes is not hashed, and verifies nothing
-    Given the golden digest "a lower cost"
     Then hashing 257 copies of "x" is an error
-    And verifying 257 copies of "x" against the digest is false
+    And verifying 257 copies of "x" against the digest "scrypt$131072$8$16$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" is false in under 100 milliseconds
 
-  Scenario: Checking against nobody costs the work of a hash
-    When I check against nobody
-    Then it took at least 20 milliseconds
+  Scenario: Checking against nobody costs about the work of a hash
+    When I time a hash and a check against nobody
+    Then the check against nobody took at least half of the time of the hash

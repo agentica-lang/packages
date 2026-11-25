@@ -47,19 +47,23 @@ false
 
 ## The digest
 
-A digest is one text, `scrypt$N$r$p$salt$key`, with the salt and the key in base64. `N`, `r` and `p` are the cost that made it, so `verify` reads the cost from the digest: the cost of new passwords can be raised later and the old digests still verify. New digests use N of 65536, r of 8 and p of 2 (OWASP's setting, 64 MiB of memory and a few tenths of a second for each hash), a 16 byte salt and a 32 byte key. The format is the one of Python's `hashlib.scrypt` with the same parameters; the specs check that on both sides.
+A digest is one text, `scrypt$N$r$p$salt$key`, with the salt and the key in base64. The key derivation is standard scrypt (RFC 7914); the text format is this package's own. `N`, `r` and `p` are the cost that made it, so `verify` reads the cost from the digest: the cost of new passwords can be raised later and the old digests still verify. New digests use N of 65536, r of 8 and p of 2 (OWASP's setting, 64 MiB of memory for each hash), a 16 byte salt and a 32 byte key.
+
+`verify` bounds the digest it reads, since a digest comes from a store that may be damaged or written by someone else: the memory of the work (`128 * r * (N + p + 2)` bytes) is at most 256 MiB, `r` is at most 32 and `p` at most 16, `N` is a power of 2 from 1024, the salt has 8 to 64 bytes and the key 16 to 64, and the numbers are written in plain decimal (`8`, not `08` or `+8`). A digest outside that is an `error` that names the field. This is also the limit of raising the cost: a cost whose memory is over 256 MiB, such as `N` of 1048576 with `r` of 8, makes digests that `verify` refuses.
 
 A hash takes 64 MiB while it runs. An app that signs many people in at once should bound how many hashes run together.
+
+A password is hashed as it is given, as UTF-8 bytes: there is no Unicode normalization, so the same text written with composed and with decomposed characters is two passwords.
 
 ## API
 
 ### `Password.hash(password) -> Result[String]`
 
-The digest of `password` with a new random salt. It never holds the password. A password of more than `Password.MAX_BYTES` bytes is an `error`.
+The digest of `password` with a new random salt. It never holds the password. A password of more than `Password.MAX_BYTES` bytes is an `error`. It does not call `problem`: an app that takes a new password checks it first.
 
 ### `Password.verify(password, digest) -> Result[Bool]`
 
-Whether `password` made `digest`. The keys are compared in constant time. A wrong password is `ok(false)`, and so is a password of more than `Password.MAX_BYTES` bytes, with no hashing. A digest that is not of this form (another scheme, a missing field, a number or base64 that is not one) is an `error`, and so is a digest whose cost the system refuses (not a power of 2, or too much memory): that says nothing about the password, so an app should log it and treat the sign-in as failed. The error never holds the digest.
+Whether `password` made `digest`. The keys are compared in constant time. A wrong password is `ok(false)`, and so is a password of more than `Password.MAX_BYTES` bytes, with no hashing. A digest that is not of this form, or that is out of the bounds above, is an `error`: that says nothing about the password, so an app should log it, call `verify_nobody` and then treat the sign-in as failed, so that a missing or damaged digest costs the same time as a wrong password. The error never holds the digest.
 
 ```agentica
 import Password from "pkg/password/password"
@@ -98,13 +102,16 @@ true
 
 ### `Password.verify_nobody() -> Void`
 
-Does the work of `hash` for a password that nobody has. A sign-in calls it for an email that no user has, so that the time of the answer is the same for a user that exists and one that does not:
+Does the work of `hash` for a password that nobody has. A sign-in calls it for an email that no user has, and for a digest that `verify` refused, so that the time of the answer is the same for a user that exists and one that does not. A digest made with another cost takes the time of its own cost and not the time of `verify_nobody`, so an app that has raised its cost can tell the old digests apart by time; it can accept that, or hash the password again at the next sign-in.
 
 ```agentica {mode="check"}
 import Password from "pkg/password/password"
 
 def check(stored: Optional[String], password: String) -> Bool
-  return Password.verify(password, stored.unwrap!).unwrap_or(false) if stored.some?
+  if stored.some?
+    verdict = Password.verify(password, stored.unwrap!)
+    return verdict.unwrap! if verdict.ok?
+  end
 
   Password.verify_nobody()
   false
