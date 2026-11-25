@@ -14,14 +14,14 @@ It sends. It keeps no queue and does not retry: an app that must not lose mail p
 The released version needs Agentica 0.35.0. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
-agentica add smtp agentica-lang/packages --tag smtp-0.1.0 --subdir smtp
+agentica add smtp agentica-lang/packages --tag smtp-0.2.0 --subdir smtp
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-smtp = { git = "https://github.com/agentica-lang/packages", tag = "smtp-0.1.0", subdir = "smtp" }
+smtp = { git = "https://github.com/agentica-lang/packages", tag = "smtp-0.2.0", subdir = "smtp" }
 ```
 
 ## Example
