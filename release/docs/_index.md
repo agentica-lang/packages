@@ -72,6 +72,14 @@ include = ["assets", "migrations"]
 
 A native library that the manifest stores by its path on the build machine does not travel, so a project with `[native.NAME]` entries of `file` or `build` is refused (`release.invalid`) until Agentica can move them ([agentica-lang/agentica#1753](https://github.com/agentica-lang/agentica/issues/1753)). Only one shape is allowed: a `linux`, `macos` or `windows` table with `system = "libNAME.so"`, a library found by name, or a list of candidates (`system = ["libNAME.5.dylib", "/opt/lib/libNAME.dylib"]`). `build` lists the libraries of the system that builds (a list as `a or b`), and the target must have one. Any other shape is refused too, so a form that a later Agentica adds is not shipped by accident. The same check runs on the `agentica.toml` of each package of `agentica.lock`: the folder `deps/NAME` (`deps/NS/SUB` for a namespaced name), the folder of a `path` package (inside the project or not), and the member folder of the workspace above the project for a locked workspace member (the workspace itself has no folder). A package of the lock whose folder is missing is an error (run `agentica install`); a `deps/` folder that the lock does not name is not read.
 
+## The target machine
+
+The `agentica` binary of an official release links libgc, OpenSSL, zlib and libuv statically. It needs glibc 2.28 or later and does not run on musl (Alpine).
+
+A system library that a package loads by name (`system = "libsqlite3.so.0"`, `libpq.so.5`) must be installed on the target.
+
+`agentica compile` under `--sandbox` or a `--deny-*` flag refuses native modules (`PKG-NATIVE-BUILD`), so build a release outside the sandbox.
+
 ## Archives
 
 `tar` writes `NAME-VERSION-OS-ARCH.tar.gz.partial` beside the folder with the system `tar` (`std/archive` reads archives and does not write them), and renames it when it is whole; it does not replace an archive that exists. The folder can be given as a link or with a trailing `/`. The archive is not reproducible: it holds the times and the modes of the files, and the umask of the machine that unpacks it applies. `inspect` of an archive lists it first and refuses a name that leaves the folder, a link or a special file, then unpacks it in a temporary folder without the owner or the permissions of the archive, and removes it. The lists go to files and are read line by line, but the unpacking has no size limit: `inspect` assumes an archive that is not hostile in size.
