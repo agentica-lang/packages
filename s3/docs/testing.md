@@ -15,7 +15,7 @@ weight: 3
 `specs/fixtures/s3_stub.py` is an S3 server of Python's standard library for tests. It checks the signature of every request (header or query, with an expiry) with code of its own, and serves one bucket: `PUT`, `GET` with `Range`, `HEAD`, `DELETE`, and the multipart calls, with the XML errors of S3 (`NoSuchKey`, `SignatureDoesNotMatch`, `EntityTooSmall`, ...). It answers CORS preflights too.
 
 ```sh
-python3 -I s3_stub.py --bucket photos --access-key AKIDEXAMPLE --secret-key SECRET [--region us-east-1] [--session-token T]
+python3 -I s3_stub.py --bucket photos --access-key fake-access-key --secret-key fake-secret-key [--region us-east-1] [--session-token T]
 ```
 
 It prints `port N` on its first line and serves until it is stopped; objects live in files of a temporary folder that it removes when it gets SIGTERM. `GET /__stub/requests` lists what it saw, one line per request. An app can start it from a step (`Process.spawn_captured`) and point its `S3.Config` at `http://127.0.0.1:PORT`. It is a test double, not a storage: it keeps nothing after it stops.
@@ -26,7 +26,7 @@ Set these variables and the same specs run against MinIO, rustfs or AWS S3, in k
 
 ```sh
 S3_TEST_ENDPOINT=http://127.0.0.1:9000 S3_TEST_REGION=us-east-1 S3_TEST_BUCKET=photos \
-  S3_TEST_ACCESS_KEY=minioadmin S3_TEST_SECRET_KEY=minioadmin agentica test
+  S3_TEST_ACCESS_KEY=fake-access-key S3_TEST_SECRET_KEY=fake-secret-key agentica test
 ```
 
 The bucket must exist. A server with a self-signed certificate is trusted by pointing `SSL_CERT_FILE` at its certificate. The scenarios that need the stand-in (the session token, the virtual host, the failing part, a bucket that is not ours) skip. Each scenario works under a prefix `spec-...` and deletes what it left there (and aborts its multipart upload) when it ends.

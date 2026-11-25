@@ -33,18 +33,20 @@ def main() -> Void
   config = S3.Config(
     endpoint: "https://s3.example.com",
     region: "us-east-1",
-    access_key: "AKIAIOSFODNN7EXAMPLE",
-    secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    access_key: "fake-access-key",
+    secret_key: "fake-secret-key",
     bucket: "photos",
   )
 
   options = S3.Presign(expires_s: 300, at: some(1_369_353_600))
-  puts(S3.presign_get(config, "2026/cat.jpg", options).unwrap!)
+  url = S3.presign_get(config, "2026/cat.jpg", options).unwrap!
+  # The signature depends on the secret key, so the example shows its place only.
+  puts("#{url.split("&X-Amz-Signature=")[0]}&X-Amz-Signature=<signature>")
 end
 ```
 
 ```output
-https://s3.example.com/photos/2026/cat.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20130524T000000Z&X-Amz-Expires=300&X-Amz-SignedHeaders=host&X-Amz-Signature=c8b69fee58f10dcd9a437077c3fc3bb34692e6677eb71372a27af5f098901a62
+https://s3.example.com/photos/2026/cat.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=fake-access-key%2F20130524%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20130524T000000Z&X-Amz-Expires=300&X-Amz-SignedHeaders=host&X-Amz-Signature=<signature>
 ```
 
 The same `Config` makes a client, which sends the requests that need credentials:
@@ -56,8 +58,8 @@ def main() -> Void
   config = S3.Config(
     endpoint: "http://127.0.0.1:9000",
     region: "us-east-1",
-    access_key: "minioadmin",
-    secret_key: "minioadmin",
+    access_key: "fake-access-key",
+    secret_key: "fake-secret-key",
     bucket: "photos",
   )
 
@@ -146,7 +148,7 @@ A URL for a `GET`. `S3.Presign` has `expires_s` (900 by default, from 1 to 60480
 import S3 from "pkg/s3/s3"
 
 def main() -> Void
-  config = S3.Config(endpoint: "http://127.0.0.1:9000", region: "us-east-1", access_key: "AK", secret_key: "SK", bucket: "photos")
+  config = S3.Config(endpoint: "http://127.0.0.1:9000", region: "us-east-1", access_key: "fake-access-key", secret_key: "fake-secret-key", bucket: "photos")
   query = [S3.Param(name: "response-content-disposition", value: "attachment; filename=\"cat.jpg\"")]
   url = S3.presign_get(config, "cat.jpg", S3.Presign(query: query, at: some(0))).unwrap!
   puts(url.split("&")[0])

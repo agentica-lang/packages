@@ -8,8 +8,8 @@ import Request from "../src/request"
 import Xml from "../src/xml"
 
 BUCKET = "photos"
-ACCESS_KEY = "AKIDEXAMPLE"
-SECRET_KEY = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
+ACCESS_KEY = "fake-access-key"
+SECRET_KEY = "fake-secret-key"
 REGION = "us-east-1"
 
 ## Starts `fixtures/s3_stub.py` for the scenario and remembers its port. A process belongs to the task that opens it, so

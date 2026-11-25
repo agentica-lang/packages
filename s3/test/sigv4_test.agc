@@ -4,6 +4,8 @@ import Types from "../src/types"
 
 private
 
+# The access keys here are the ones that the AWS documentation publishes for its examples (not credentials of anything;
+# the vectors cannot be had with other keys).
 # The examples of "Signature Calculations for the Authorization Header" and "Authenticating Requests: Using Query
 # Parameters" of the S3 documentation (examplebucket, 2013-05-24), and get-vanilla of the AWS Signature Version 4 test
 # suite.
