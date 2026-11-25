@@ -1,0 +1,25 @@
+{{- /* The packages by category, in the order of the data file (tools/catalog.py writes site/data/catalog.json). Returns a dict: `groups`, a list of {name, pages} (the package sections of one category, only the categories that have packages), and `other`, the pages of the home that are not a package (native-prebuilt.md). The sidebar and the pager (nav-order.html) both read it, so they agree. */ -}}
+{{- $catalog := hugo.Data.catalog -}}
+{{- if not $catalog -}}
+  {{- errorf "site/data/catalog.json is missing: `make site` writes it with tools/catalog.py" -}}
+{{- end -}}
+{{- $groups := slice -}}
+{{- $names := slice -}}
+{{- range $catalog.categories -}}
+  {{- $category := . -}}
+  {{- $pages := slice -}}
+  {{- range where $catalog.packages "category" $category -}}
+    {{- $names = $names | append .name -}}
+    {{- $pages = $pages | append (site.GetPage (printf "/%s" .name)) -}}
+  {{- end -}}
+  {{- if $pages -}}
+    {{- $groups = $groups | append (dict "name" $category "pages" $pages) -}}
+  {{- end -}}
+{{- end -}}
+{{- $other := slice -}}
+{{- range site.Home.Pages.ByWeight -}}
+  {{- if not (in $names .Section) -}}
+    {{- $other = $other | append . -}}
+  {{- end -}}
+{{- end -}}
+{{- return (dict "groups" $groups "other" $other) -}}

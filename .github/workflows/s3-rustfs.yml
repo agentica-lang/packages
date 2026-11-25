@@ -1,0 +1,81 @@
+name: S3 on rustfs
+
+# The specs of the s3 package on a real S3 server (rustfs, the server of the first user of the package), next to the
+# stand-in of Python's standard library that ci.yml runs them on: the same features, with S3_TEST_* pointing at the
+# server (s3/docs/testing.md). Only a change of the package, of this file or of main starts it.
+on:
+  pull_request:
+    paths:
+      - 's3/**'
+      - '.github/workflows/s3-rustfs.yml'
+  push:
+    branches: [main]
+    paths:
+      - 's3/**'
+      - '.github/workflows/s3-rustfs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  rustfs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ACCESS_KEY: rustfsci
+      SECRET_KEY: rustfsci-secret-key
+      BUCKET: photos
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Read the Agentica version of s3
+        run: |
+          read -r version sha256 rest < s3/AGENTICA_VERSION
+          echo "AGENTICA_VERSION=$version" >> "$GITHUB_ENV"
+          echo "AGENTICA_SHA256=$sha256" >> "$GITHUB_ENV"
+
+      - name: Install the Agentica release of s3
+        uses: agentica-lang/setup-agentica@v1
+        with:
+          version: ${{ env.AGENTICA_VERSION }}
+          sha256: ${{ env.AGENTICA_SHA256 }}
+
+      # The server on loopback port 9000 with one set of dummy credentials (not a secret: the server lives for this job
+      # only), and the bucket the specs use (curl signs with SigV4). The data folder stays in the container: a bind mount
+      # of the runner's folder is refused by the user that rustfs runs as. The image is pinned by digest.
+      - name: Start rustfs
+        run: |
+          docker run -d --name rustfs -p 127.0.0.1:9000:9000 \
+            -e RUSTFS_ACCESS_KEY="$ACCESS_KEY" -e RUSTFS_SECRET_KEY="$SECRET_KEY" \
+            rustfs/rustfs:1.0.6@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a
+          ready=false
+          for _ in $(seq 1 60); do
+            if curl -s -o /dev/null http://127.0.0.1:9000/; then ready=true; break; fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            echo "rustfs did not answer in 60 seconds" >&2
+            docker logs rustfs >&2
+            exit 1
+          fi
+          curl -sS --fail-with-body --aws-sigv4 "aws:amz:us-east-1:s3" --user "$ACCESS_KEY:$SECRET_KEY" \
+            -X PUT "http://127.0.0.1:9000/$BUCKET"
+
+      - name: Test
+        working-directory: s3
+        env:
+          S3_TEST_ENDPOINT: http://127.0.0.1:9000
+          S3_TEST_REGION: us-east-1
+          S3_TEST_BUCKET: ${{ env.BUCKET }}
+          S3_TEST_ACCESS_KEY: ${{ env.ACCESS_KEY }}
+          S3_TEST_SECRET_KEY: ${{ env.SECRET_KEY }}
+        run: agentica test --jobs 2 specs/objects.feature specs/credentials.feature specs/presigned.feature specs/multipart.feature
+
+      - name: Server log
+        if: failure()
+        run: docker logs rustfs | tail -100

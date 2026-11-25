@@ -44,6 +44,11 @@ jobs:
           # The history of the base branch, for the diff of a pull request.
           fetch-depth: 0
 
+      # Every package needs a category from the list and a description in the front matter of its docs/_index.md
+      # (the header of tools/catalog.py), whatever the pull request changes; it also runs the tests of that check.
+      - name: Check the catalog data of the packages
+        run: make catalog
+
       - name: Find the changed packages and their versions
         id: groups
         env:

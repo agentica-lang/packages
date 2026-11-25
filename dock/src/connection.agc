@@ -10,11 +10,13 @@ end
 
 ## Starts the writer, runs the handler, then lets the writer finish what is queued and closes the socket. A crash or
 ## a cancel skips that: the writer is a task of this one, so it ends with it, and the supervisor closes the socket
-## when the monitor tells it the task ended (the socket is owned by the supervisor, see server.agc).
+## when the monitor tells it the task ended (the socket is owned by the supervisor, see server.agc). The writer is
+## linked to this task: if it crashes, this task ends with the same diagnostic at once, instead of staying in the
+## handler's receive until the client leaves. A return or a cancel of the writer does not end this task.
 def run(link: Link) -> Void
   case link.conn.inside
     ClientParts.Parts(socket, _, outbox) ->
-      writer = Task.spawn(&Outbox.run, Outbox.Pipe(socket: socket, outbox: outbox))
+      writer = Task.spawn_link(&Outbox.run, Outbox.Pipe(socket: socket, outbox: outbox))
       link.handler(link.conn)
       if Outbox.handed_over?(outbox)
         # Another task owns the connection now. The writer ends at `close`, a drop, a failed send or a read that saw

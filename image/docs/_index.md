@@ -1,6 +1,8 @@
 ---
 title: image
 description: "Images on libvips: decode, encode, and the pixels as one Bytes buffer, with no value per pixel."
+category: Data formats
+keywords: [native, libvips, png, jpeg, webp]
 ---
 
 `image` loads and saves images (JPEG, PNG, WebP, TIFF and the rest that your libvips has) and hands their pixels to other code as one `Bytes` buffer, interleaved and in the byte order of the machine. It is a [libvips](https://www.libvips.org/) binding made with [native-gen](https://www.agentica-lang.com/packages/native-gen/): the C module is built on the first run.
@@ -10,14 +12,14 @@ description: "Images on libvips: decode, encode, and the pixels as one Bytes buf
 Needs Agentica 0.35.0, a C compiler and libvips (see [Requirements](#requirements)). Add it with its prefixed tag, in a project with an `agentica.toml`:
 
 ```sh
-agentica add image https://github.com/agentica-lang/packages --tag image-0.1.0 --subdir image
+agentica add image https://github.com/agentica-lang/packages --tag image-0.2.0 --subdir image
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-image = { git = "https://github.com/agentica-lang/packages", tag = "image-0.1.0", subdir = "image" }
+image = { git = "https://github.com/agentica-lang/packages", tag = "image-0.2.0", subdir = "image" }
 ```
 
 A function that takes an image takes it first, so a chain reads well with `|>`. Each entry says what the function does and when it fails; the rules that hold for all of them are in [Memory and lifetime](#memory-and-lifetime), [Untrusted input](#untrusted-input) and [Requirements](#requirements). The examples below make their image with `from_pixels`: a grey image of 3 by 2 pixels, `1 2 3` on the first row and `4 5 6` on the second.
@@ -93,6 +95,22 @@ end
 
 ```output
 Space.Grey
+```
+
+### `Image.Kernel`
+
+`Nearest`, `Linear`, `Cubic` (Catmull-Rom), `Lanczos2` or `Lanczos3`: the kernel that `resize` interpolates with.
+
+```agentica
+import Image from "pkg/image/image"
+
+def main() -> Void
+  puts(Image.Kernel.Cubic)
+end
+```
+
+```output
+Kernel.Cubic
 ```
 
 ## Reading and writing
@@ -283,9 +301,9 @@ Format.U8
 
 A transform returns a new image and leaves its source as it was. It is lazy: see [Memory and lifetime](#memory-and-lifetime).
 
-### `Image.resize(image, width, height) -> Result[Image]`
+### `Image.resize(image, width, height, kernel = Image.Kernel.Lanczos3) -> Result[Image]`
 
-Scales the image to `width` by `height` with the Lanczos 3 kernel of libvips, down or up; keep the ratio yourself. A size that is not positive, a side of more than 10000000 pixels, or more than 268435456 pixels in all (pixels, not bytes) is an error. An alpha band is not premultiplied, so the edge next to a transparent pixel may get a colour fringe.
+Scales the image to `width` by `height` with `kernel`, down or up; keep the ratio yourself. The default is Lanczos 3, the kernel of libvips, so a call with no kernel gives what it gave before `kernel` existed. A size that is not positive, a side of more than 10000000 pixels, or more than 268435456 pixels in all (pixels, not bytes) is an error. An alpha band is not premultiplied, so the edge next to a transparent pixel may get a colour fringe.
 
 ```agentica
 import Image from "pkg/image/image"
@@ -299,6 +317,25 @@ end
 
 ```output
 2x1
+```
+
+Pick the kernel of the model that your pixels are compared with: `Image.Kernel.Linear` and `Image.Kernel.Cubic` are the kernels of the bilinear and bicubic filters of Pillow. libvips shrinks by whole factors before it reduces, so the pixels are close to Pillow's, not equal.
+
+```agentica
+import Image from "pkg/image/image"
+
+def main() -> Void
+  image = Image.from_pixels(Bytes.from_list([0, 100, 200, 100]).unwrap!, 4, 1, 1, Image.Format.U8).unwrap!
+  nearest = Image.resize(image, 2, 1, Image.Kernel.Nearest).unwrap!
+  linear = Image.resize(image, 2, 1, Image.Kernel.Linear).unwrap!
+  puts("#{Image.width(linear)}x#{Image.height(linear)}")
+  puts(Image.to_pixels(nearest).unwrap! != Image.to_pixels(linear).unwrap!)
+end
+```
+
+```output
+2x1
+true
 ```
 
 ### `Image.crop(image, left, top, width, height) -> Result[Image]`
@@ -419,4 +456,4 @@ Format.U16, 12 bytes
 
 ## Tests
 
-The fixtures of `specs/fixtures/` are written by `peer.py`, an independent PNG codec and image model in Python's standard library. A scenario checks that libvips decodes each PNG to the pixels of the peer, and that the peer decodes the PNGs that `image` writes to the pixels that went in. The peer also computes the transforms: the same bytes for crop, flip, rotate and cast, and within 1 level of u8 for grey and 3 for resize, which it models the way libvips does it (a box shrink, then the Lanczos 3 reduce of the rows and the columns, each pass rounded to u8). The resize model holds only when each integer shrink divides the size, and an upscale is checked for its size only. The tolerance of 3 was measured with the libvips of the specs, where the worst difference seen is 3.
+The fixtures of `specs/fixtures/` are written by `peer.py`, an independent PNG codec and image model in Python's standard library. A scenario checks that libvips decodes each PNG to the pixels of the peer, and that the peer decodes the PNGs that `image` writes to the pixels that went in. The peer also computes the transforms: the same bytes for crop, flip, rotate and cast, and within 1 level of u8 for grey and 3 for resize, which it models the way libvips does it (a box shrink, then the reduce of the rows and the columns with the kernel, each pass rounded to u8; `Nearest` is the exact pixel at the centre of each output pixel). The resize model holds only when each integer shrink divides the size, and an upscale is checked for its size only, except for `Nearest`, which is exact when the output size divides the source size, or the source size divides the output size. The tolerance of 3 for Lanczos 3 was measured with libvips 8.15 and 8.16, where the worst difference seen is 3. The tolerances of the other kernels and the exactness of `Nearest` were measured with libvips 8.16 only; 8.15 was not rechecked.

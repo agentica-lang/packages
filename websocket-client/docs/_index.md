@@ -1,6 +1,8 @@
 ---
 title: websocket-client
 description: A WebSocket client (RFC 6455) over std TCP and TLS. Connect to ws:// and wss://, send and receive text and binary messages, and close cleanly.
+category: Web and HTTP
+keywords: [websocket, rfc6455, client]
 ---
 
 `websocket-client` opens a WebSocket from an Agentica program. It does the HTTP/1.1 upgrade, checks the answer of the server, masks every frame it sends, joins fragments, answers pings, and runs the close handshake. A server that breaks the rules gets a close frame with the right code, and the caller gets an `error`, never a crash.

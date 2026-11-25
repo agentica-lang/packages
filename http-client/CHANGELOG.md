@@ -2,6 +2,10 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1] - 2026-11-25
+
+- Fix a lost HTTP/2 window update when the reader takes a streamed body piece while the next one is being queued.
+
 ## [0.5.0] - 2026-11-21
 
 - Return HTTP/2 streaming errors instead of crashing on a zero-duration task wait.

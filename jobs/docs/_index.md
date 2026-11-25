@@ -1,6 +1,8 @@
 ---
 title: jobs
-description: Produce and consume jobs with a swappable backend. A contract with leases, retries and dead jobs, an in-memory backend, a conformance suite that every backend must pass, and a manual clock for tests.
+description: Produce and consume jobs with a swappable backend. Leases, retries and dead jobs, an in-memory backend, a conformance suite and a manual clock for tests.
+category: Infrastructure
+keywords: [queue, background-jobs, retries]
 ---
 
 `jobs` is for work that runs later, or somewhere else: send an email, post a webhook, delete a room. A producer adds a job to a queue; a consumer fetches it, runs it and says it is done. The backend that keeps the queue is a value you pass around, so an app can use the memory backend in its tests and another backend elsewhere, with the same code.

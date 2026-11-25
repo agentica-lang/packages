@@ -1,6 +1,8 @@
 ---
 title: http-client
-description: An HTTP client with a pool of keep-alive connections per origin, and timeouts for the connect, the response head, the idle body, the whole request and the wait for a connection.
+description: An HTTP client with a keep-alive pool per origin, and timeouts for the connect, the head, the idle body, the whole request and the wait for a connection.
+category: Web and HTTP
+keywords: [http, http2, client, sse]
 ---
 
 `http-client` sends HTTP requests from an Agentica program, in the spirit of Elixir's Req. You make a `Client` once, and each request goes through a pool of keep-alive connections for its origin (scheme, host and port), made with the [pool](https://www.agentica-lang.com/packages/pool/) package. HTTP/1.1 uses `std/http`.
@@ -10,14 +12,14 @@ description: An HTTP client with a pool of keep-alive connections per origin, an
 The released version needs Agentica 0.35.0. Add it in a project with an `agentica.toml`, with its prefixed tag and its folder as `--subdir`:
 
 ```sh
-agentica add http-client agentica-lang/packages --tag http-client-0.5.0 --subdir http-client
+agentica add http-client agentica-lang/packages --tag http-client-0.5.1 --subdir http-client
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock` (with its `pool` and `hpack` dependencies):
 
 ```toml
 [dependencies]
-http-client = { git = "https://github.com/agentica-lang/packages", tag = "http-client-0.5.0", subdir = "http-client" }
+http-client = { git = "https://github.com/agentica-lang/packages", tag = "http-client-0.5.1", subdir = "http-client" }
 ```
 
 ## Example

@@ -11,16 +11,19 @@ Makefile             install, check, fmt-check, test and doc-examples, each run 
                      agentica.toml, on the Agentica version of that folder; site
 tools/               doc_examples.agc: runs the `agentica` blocks of the docs (the rules are in its header);
                      fixtures/doc_examples: a page where it must fail; agentica-for.sh: the binary of a package's
-                     Agentica version (the rules are in its header)
+                     Agentica version (the rules are in its header); catalog.py: the check of the category and the
+                     description of each package, and the data file of the site (the rules are in its header);
+                     catalog_test.py: its test
 .github/workflows/   ci.yml: the changed packages grouped by Agentica version, one job per version that installs that
                      release and runs the five targets; pages.yml: the site (pinned Hugo and Dart Sass);
                      native-prebuilt.yml: the reusable workflow that builds a package's native module on the five
                      targets and uploads its prebuilt files (site/content/native-prebuilt.md), which
                      native-prebuilt-test.yml runs with dry-run on .github/native-prebuilt-example
 .github/scripts/     changed-packages.sh: which packages a list of changed files marks (the rules are in its header)
-site/                the Hugo site: hugo.toml, content/_index.md (the home), layouts/ (overrides: the home's list of
-                     packages, and links written as files that fail when missing); the look, the layouts and the
-                     highlighter come from themes/docs-theme (the submodule agentica-lang/docs-theme)
+site/                the Hugo site: hugo.toml, content/_index.md (the home), layouts/ (overrides: the catalog table of
+                     the home, the sidebar and the pager grouped by category, and links written as files that fail
+                     when missing), assets/ (the css of the groups and the table, the js of its filter); the look,
+                     the layouts and the highlighter come from themes/docs-theme (the submodule agentica-lang/docs-theme)
 PACKAGE/             one package: AGENTICA_VERSION, agentica.toml, agentica.lock (when it has dependencies), src/,
                      specs/, test/, docs/
 bond-channels/       Action Cable for Bond: channels.agc is the API (mount, hub, broadcast, stats); src/protocol.agc the frames
@@ -49,10 +52,12 @@ http-client/         an HTTP/1.1 client: http_client.agc is the API (new, reques
                      that reads requests by hand and writes the answers of a script: slow heads, stalls, closes, and
                      which connection served each); test/ the unit tests (URL, addresses, retry policy, redirects, link,
                      a client's checks) and a reuse test (many requests on one connection, no task left after close)
-image/               images on libvips (a native module made with native-gen): image.agc is the API and the extern
-                     block (load, from_bytes, from_pixels, save, to_bytes, to_pixels, resize, crop, flip, rotate,
-                     colourspace, cast, width, height, bands, pixel_format); native/image.c the C side,
-                     native/image_native.h the header native-gen makes from the block (a spec checks it is current);
+image/               images on libvips (a native module made with native-gen): image.agc is the API (it re-exports
+                     src/libvips.agc, which has the extern block and its types, and defines `resize`, whose `kernel`
+                     has a default that a native function cannot have); the block has load, from_bytes, from_pixels,
+                     save, to_bytes, to_pixels, resize, crop, flip, rotate, colourspace, cast, width, height, bands,
+                     pixel_format; native/image.c the C side, native/image_native.h the header native-gen makes from
+                     the block (a spec checks it is current);
                      specs/ has the features, whose fixtures are written by specs/fixtures/peer.py (an independent PNG
                      codec and model of the transforms on Python's standard library, which also decodes what the
                      module writes)
@@ -125,6 +130,15 @@ release/             builds an app into a folder that runs elsewhere (a tool pac
                      `[tool.release]` (pure), src/layout.agc the folder, the launcher and the manifest (pure),
                      src/build.agc the build, src/verify.agc inspect and tar, src/files.agc and src/shell.agc the
                      files and the programs it runs; specs/ builds specs/fixtures/hello and runs it from another folder
+s3/                  an S3 client (AWS S3, MinIO, rustfs): s3.agc is the API (client, close, put, put_file, get, get_range,
+                     get_file, open, head, delete, the presign_* functions, the multipart calls, upload_file); src/sigv4.agc
+                     the signing (pure), src/encoding.agc the percent-encoding and dates (pure), src/address.agc the URL, host and
+                     path of a key and the checks of a Config (pure), src/xml.agc and src/failure.agc the answers' XML and the
+                     errors (pure), src/request.agc the signed requests, src/objects.agc, src/multipart.agc, src/presigned.agc and
+                     src/service.agc the calls; test/ has the unit tests (test/sigv4_test.agc has the AWS vectors); specs/ has
+                     the features, whose peers are fixtures/s3_stub.py (an S3 server on Python's standard library that checks
+                     every signature; with S3_TEST_ENDPOINT the specs run on a real server instead) and fixtures/sigv4_peer.py
+                     (an independent signer that writes random requests: the differential check of specs/signing.feature)
 telemetry/           events for numbers: telemetry.agc is the API (start, stop, execute, enabled?, span, attach, detach,
                      handlers, dropped, flush); conformance.agc the check of an event against the conventions
                      (check); testing.agc the helper for tests (capture, events, stop, session); src/hub.agc the hub (the one actor that writes the routes, starts the actor of each
@@ -178,7 +192,8 @@ yaml/                a YAML 1.2 parser: yaml.agc is the API (parse, parse_all, O
   sibling folder. Two packages that need one piece of code get it from a dependency, not by copy.
 - Each package needs at least one source file in `src/` and a spec in `specs/` (or a unit test in `test/`): `agentica
   check` and `agentica test` fail on a folder with no `.agc` file or nothing to run, and the Makefile stops there.
-  A package that is one native `extern module` block (`image`) has no `src/`: its API file is the block.
+  A package that is one native `extern module` block has no `src/`, unless it needs a default in a signature (a native
+  function has none): `image` keeps the block in `src/libvips.agc` and re-exports it from `image.agc`.
 - A dependency is pinned by tag (or by commit) and keeps the local name of the apps that use it, at the same tag:
   two sources for one name in a tree is `PKG-SOURCE-CONFLICT`. A bump of Bond is a package release first, then the
   app.
@@ -190,9 +205,10 @@ yaml/                a YAML 1.2 parser: yaml.agc is the API (parse, parse_all, O
   only) is for a protocol or format that must agree with an independent implementation, such as a wire codec
   (dns's `dns_peer.py`); a model of a package's own logic is Agentica.
 - Each package keeps its docs in its own `PACKAGE/docs/`, as Markdown with a front matter (`title`, `description`,
-  `weight` to order a page): `_index.md` is the package page (what it is, the `agentica add` command with `--subdir` and
-  the prefixed tag and the `agentica.toml` line it writes, a short example, the API), and each other `.md` is a page of
-  it. `make site` mounts each `docs/` as `/PACKAGE/`, so a new package adds its docs with that folder alone, and no file
+  `weight` to order a page; `_index.md` also has `category` and, optionally, `keywords: [a, b]` on one line):
+  `_index.md` is the package page (what it is, the `agentica add` command with `--subdir` and the prefixed tag and
+  the `agentica.toml` line it writes, a short example, the API), and each other `.md` is a page of it. `make site`
+  mounts each `docs/` as `/PACKAGE/`, so a new package adds its docs with that folder alone, and no file
   of `site/` changes. Link to a page as `[text](page.md)`; a broken link fails the build. Examples in the docs must run
   (an `agentica` code block is colored with the Agentica grammar): `make doc-examples` runs each block with `def main`
   and compares its stdout with an `output` block right after it (a `text` block is never compared), checks the others,
@@ -200,6 +216,15 @@ yaml/                a YAML 1.2 parser: yaml.agc is the API (parse, parse_all, O
   blocks are still fragments; a new example is a whole file with its `output`. The rules are in the header of
   `tools/doc_examples.agc`, and `make doc-examples-test` checks the tool on its fixture. Site prose: one line per
   paragraph or list item, simple words.
+- A package has one `category` in the front matter of its `docs/_index.md`, from the list in `tools/catalog.py` (Web
+  and HTTP, Networking, Data formats, Storage, Infrastructure, Tooling), and a one-line `description` of at most 160 characters: the sidebar groups
+  the packages by category and the home has a table of them (the latest tag comes from the git tags, the Agentica
+  version from `AGENTICA_VERSION`). The category is by what the package is for, not how it is built. The front matter
+  holds it because `agentica.toml` rejects an unknown key on every Agentica release the packages use. `make catalog`
+  checks it (CI, in the `plan` job) and `make site` writes `site/data/catalog.json` from it; a new category is one edit
+  of the list.
+- `site/layouts/_partials/sidebar.html` and `nav-order.html` are copies of the theme's partials (commit `1ff8e89` of
+  `docs-theme`) with the grouping added: on a theme bump, diff both against the theme's and carry the change over.
 - The API of a package page has one entry per public function, as Elixir's HexDocs do: a heading with the signature,
   one to three short sentences on what it does and when it fails, and almost always a small `agentica` example with
   its `output`. Types and enums get an entry each too. A rule that holds for many functions (resource lifetime,
