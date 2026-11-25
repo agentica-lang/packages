@@ -1,10 +1,29 @@
 import Prop from "pkg/prop/prop"
 import Csv from "../csv"
+import Scan from "../src/scan"
 
 private
 
 SAMPLE = "a,\"b\r\nb\",c\r\n\"d\"\"e\",,f\nlast,\"\""
 ACCENTED = "é,\"✓\r\n✓\",ü\r\n\"\"\"é\",x"
+SEPARATORS = [",", ";", "\t"]
+LINES = [
+  "a",
+  "b",
+  ",",
+  ",",
+  "\n",
+  "\n",
+  "\r\n",
+  "\"",
+  "\"\"",
+  "\"x,y\"",
+  "é",
+  ";",
+  "\t",
+  "\r",
+  String.from_code(65279),
+]
 PIECES = ["a", "", " ", ",", "\"", "\n", "\r\n", "\r", "é", ";"]
 
 def must(condition: Bool, text: String) -> Result[Void]
@@ -43,8 +62,10 @@ end
 
 def by_chars(text: String) -> List[String] = (0...text.length).map(->(index) { text.at(index) })
 
-def read_chunks(chunks: List[String]) -> Result[List[List[String]]]
-  state = try Csv.reader()
+def read_chunks(chunks: List[String]) -> Result[List[List[String]]] = read_with(",", chunks)
+
+def read_with(separator: String, chunks: List[String]) -> Result[List[List[String]]]
+  state = try Csv.reader(separator)
   rows: List[List[String]] = []
   for chunk in chunks
     fed = try Csv.feed(state, chunk)
@@ -122,5 +143,108 @@ def test_any_text_is_read_or_refused_as_malformed() -> Result[Void]
       ok(_) -> ok()
       error(e) -> must(e.kind == "csv.malformed", "gave #{e.kind}")
     end
+  end
+end
+
+# Plain lines, a line whose only quote is in its last field, a quoted line break, CRLF and LF, and a last line with no
+# break, written with the given separator.
+def mixed_text(separator: String) -> String
+  [
+    "a#{separator}b#{separator}c\r\n",
+    "d#{separator}e#{separator}f\n",
+    "g#{separator}h#{separator}\"i#{separator}j\"\r\n",
+    "\"k\nl\"#{separator}m#{separator}n\n",
+    "o#{separator}p#{separator}q",
+  ].join("")
+end
+
+def mixed_rows(separator: String) -> List[List[String]]
+  [["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i#{separator}j"], ["k\nl", "m", "n"], ["o", "p", "q"]]
+end
+
+def test_plain_and_quoted_lines_cut_at_any_byte_read_the_same_with_each_separator() -> Result[Void]
+  for separator in [",", ";", "\t"]
+    text = mixed_text(separator)
+    expected = mixed_rows(separator)
+    whole = try Csv.parse(text, separator)
+    try must(whole == expected, "#{separator} read #{whole}")
+    for cut in 0...(text.bytes.size + 1)
+      state = try Csv.reader(separator)
+      first = try Csv.feed(state, head(text, cut))
+      second = try Csv.feed(first.reader, tail(text, cut))
+      last = try Csv.finish(second.reader)
+      rows = first.rows + second.rows + last
+      try must(rows == expected, "#{separator} cut at #{cut} read #{rows}")
+    end
+  end
+
+  ok()
+end
+
+def message(text: String) -> String
+  case Csv.parse(text)
+    ok(_) -> "read"
+    error(e) -> e.message
+  end
+end
+
+def test_the_line_of_an_error_counts_the_plain_lines_before_it() -> Result[Void]
+  cases = [["a,b\nc,d\r\ne,\"f", "line 3"], ["a\r\nb\nc\"d", "line 3"], ["a\nb,\"c\r\nd\"\r\ne\"f\"g", "line 4"]]
+  for pair in cases
+    try must(message(pair[0]).include?(pair[1]), "#{pair[0]} gave #{message(pair[0])}")
+  end
+
+  ok()
+end
+
+def test_a_doubled_quote_cut_between_its_two_quotes_is_one_quote() -> Result[Void]
+  rows = try read_chunks(["x,\"a\"", "\"b\"\r\ny,z\n"])
+  try must(rows == [["x", "a\"b"], ["y", "z"]], "read #{rows}")
+  closing = try read_chunks(["x,\"a\"", "\ny,z\n"])
+  must(closing == [["x", "a"], ["y", "z"]], "read #{closing}")
+end
+
+def machine(text: String, separator: Int) -> String
+  case Scan.run(Scan.start(separator), text.bytes, true)
+    ok(done) -> "ok #{done.rows}"
+    error(e) -> "#{e.kind} #{e.message}"
+  end
+end
+
+def chunks_of(text: String, sizes: List[Int]) -> List[String]
+  chars = by_chars(text)
+  pieces: List[String] = []
+  start = 0
+  turn = 0
+  while start < chars.size
+    size = sizes[turn % sizes.size]
+    pieces = pieces.push(chars.drop(start).take(size).join(""))
+    start = start + size
+    turn = turn + 1
+  end
+
+  pieces
+end
+
+def unmarked(text: String) -> String
+  return text.slice(1, text.length - 1) if text.start_with?(String.from_code(65279))
+
+  text
+end
+
+# The state machine alone over the whole text is the model of the reader, which sends the plain lines elsewhere. A size
+# of 0 gives an empty chunk.
+def test_the_reader_gives_what_the_state_machine_gives_however_the_text_is_cut() -> Result[Void]
+  texts = Prop.map(Prop.list(Prop.one_of(LINES), 24), ->(parts) { parts.join("") })
+  cuts = Prop.map(Prop.list(Prop.int(0, 7), 4), ->(sizes) { sizes + [3] })
+  Prop.check(Prop.pair(Prop.pair(texts, cuts), Prop.one_of(SEPARATORS)), Prop.Config(runs: 300)) do |drawn|
+    text = drawn.first.first
+    sizes = drawn.first.second
+    separator = drawn.second
+    expected = machine(unmarked(text), separator.bytes[0])
+    whole = outcome(Csv.parse(text, separator))
+    try must(whole == expected, "whole text: #{whole} against #{expected}")
+    chunked = outcome(read_with(separator, chunks_of(text, sizes)))
+    must(chunked == expected, "cuts #{sizes}: #{chunked} against #{expected}")
   end
 end
