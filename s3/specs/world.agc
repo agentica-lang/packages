@@ -4,6 +4,8 @@
 import BDD from "std/bdd"
 import HTTP from "std/http"
 import S3 from "../s3"
+import Request from "../src/request"
+import Xml from "../src/xml"
 
 BUCKET = "photos"
 ACCESS_KEY = "AKIDEXAMPLE"
@@ -174,7 +176,28 @@ def use_external(ctx: BDD.Context) -> BDD.Context
     armed = set_text(armed, pair[0], System.env(pair[1]).unwrap_or(""))
   end
 
-  armed
+  BDD.after(armed, ->(final) { sweep(final) })
+end
+
+## Deletes what the scenario left under its prefix on the external server (the listing is the one page of 1000 keys,
+## which a scenario never fills).
+def sweep(ctx: BDD.Context) -> Result[Void]
+  client = try S3.client(config_of(ctx), options_of(ctx))
+  query = [S3.Param(name: "list-type", value: "2"), S3.Param(name: "prefix", value: text(ctx, "prefix", "none/"))]
+  listed = Request.send(client, "GET", "", query, [], "".bytes)
+  # A scenario with wrong credentials stored nothing, and cannot list either.
+  return ok() if not listed.ok?
+
+  body = try String.from_bytes(listed.unwrap!.body)
+  for entry in Xml.elements(body, "Contents")
+    name = Xml.text(entry, "Key").unwrap_or("")
+    if not name.empty?
+      _ = S3.delete(client, name)
+    end
+  end
+
+  S3.close(client)
+  ok()
 end
 
 def stop(stub: Process) -> Result[Void]
