@@ -1,7 +1,35 @@
-{{- /* Added by the theme's home page under its text: the list of the packages (the sections). */ -}}
-<h2>Packages</h2>
-<ul class="pages">
-  {{- range .Sections.ByTitle }}
-  <li><a href="{{ .RelPermalink }}">{{ .LinkTitle }}</a>{{ with .Description }} <span>{{ . }}</span>{{ end }}</li>
-  {{- end }}
-</ul>
+{{- /* Added by the theme's home page under its text: the catalog of the packages, from site/data/catalog.json (tools/catalog.py). The filter needs JavaScript, so the form is hidden until catalog.js shows it; without it the whole table shows. */ -}}
+{{- $catalog := hugo.Data.catalog -}}
+<h2 id="catalog">Packages</h2>
+<form class="catalog-filter" hidden>
+  <label>Search <input type="search" name="q" placeholder="Name, description or keyword" autocomplete="off"></label>
+  <label>Category
+    <select name="category">
+      <option value="">All categories</option>
+      {{- range $catalog.categories }}
+      <option>{{ . }}</option>
+      {{- end }}
+    </select>
+  </label>
+  <span class="catalog-count" role="status"></span>
+</form>
+<table class="catalog">
+  <thead>
+    <tr><th scope="col">Package</th><th scope="col">Category</th><th scope="col">What it is</th><th scope="col">Latest tag</th><th scope="col">Needs Agentica</th></tr>
+  </thead>
+  <tbody>
+    {{- range $catalog.packages }}
+    {{- $page := site.GetPage (printf "/%s" .name) }}
+    <tr data-category="{{ .category }}" data-search="{{ lower (printf "%s %s %s" .name .description (delimit .keywords " ")) }}">
+      <td><a href="{{ $page.RelPermalink }}">{{ .name }}</a></td>
+      <td>{{ .category }}</td>
+      <td>{{ .description }}</td>
+      <td>{{ with .tag }}<a href="{{ site.Params.repo }}/releases/tag/{{ . }}"><code>{{ . }}</code></a>{{ else }}not released{{ end }}</td>
+      <td>{{ .agentica }}</td>
+    </tr>
+    {{- end }}
+  </tbody>
+</table>
+{{- with resources.Get "js/catalog.js" | js.Build (dict "minify" true "targetPath" "js/catalog.js") | fingerprint }}
+<script src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}" crossorigin="anonymous" defer></script>
+{{- end }}

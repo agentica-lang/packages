@@ -1,6 +1,8 @@
 ---
 title: native-gen
 description: The C header of an extern module block. Write plain C functions with C types; the wrappers, argument checks and module tables are generated from the .agc.
+category: Tooling
+keywords: [native, c, rust, codegen]
 ---
 
 `native-gen` reads the `extern module` block of an `.agc` file and writes a C header for it. The C author writes plain functions with C types; the header has their prototypes, and the wrappers that check the arguments and the function and type tables of the module. The `.agc` is the one source: every signature and shape comes from `std/analysis`, the same text that the VM compares with the tables when it loads the module.

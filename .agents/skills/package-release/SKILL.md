@@ -38,6 +38,8 @@ Keep a Changelog), repo clean and on `main`.
     `FILE` must contain the nonempty version section from `git show TAG:PACKAGE/CHANGELOG.md`, not `Unreleased`.
     Do not create an empty release or automate publication on tag push. Leave old gaps alone unless asked; then
     publish at most the latest stable tag per requested package.
+    The latest-tag column of the site's home table reads the git tags at build time, so after the tag push run
+    `gh workflow run pages.yml` (it rebuilds and deploys main).
 11. If asked to clean up, delete the merged local release branch with `git branch -d`.
 
 ## Auth and boundaries

@@ -1,6 +1,8 @@
 ---
 title: bond-channels
 description: Action Cable channels for Bond apps. One WebSocket per tab at /cable, channels and a pub/sub hub.
+category: Web and HTTP
+keywords: [websocket, action-cable, turbo, bond]
 ---
 
 `bond-channels` adds an Action Cable WebSocket (the `actioncable-v1-json` protocol) to a [Bond](https://github.com/agentica-lang/bond) app. The browser opens one WebSocket per tab. It subscribes to channels, and the app sends to the subscribers of a topic with a broadcast, from an HTTP handler or from a channel.

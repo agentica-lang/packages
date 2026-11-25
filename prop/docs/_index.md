@@ -1,6 +1,8 @@
 ---
 title: prop
 description: Property-based testing. State a law, check it on many generated inputs, and get the smallest input that breaks it.
+category: Tooling
+keywords: [testing, property-based, shrinking]
 ---
 
 `prop` checks a law on many generated inputs. When the law fails, it shrinks the input to the smallest one that still fails and reports it with the seed, so the run can be replayed. It is pure Agentica and runs inside `agentica test`.

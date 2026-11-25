@@ -11,7 +11,7 @@ JOBS ?= 4
 EACH_PACKAGE = for p in $(PACKAGES); do a=$$($(AGENTICA_FOR) $$p); ( export PATH="$${a%/*}:$$PATH"; \
 	echo "== $$p ($$(agentica --version))";
 
-.PHONY: help install check fmt-check test doc-examples doc-examples-test site site-mounts site-serve site-tools
+.PHONY: help install check fmt-check test doc-examples doc-examples-test catalog site site-catalog site-mounts site-serve site-tools
 
 help:
 	@echo "install    fetch the packages of each agentica.lock into deps/, and the test data of specs/fetch-suite.sh"
@@ -20,6 +20,7 @@ help:
 	@echo "test       run the features of specs/ and the tests of test/ of each package"
 	@echo "doc-examples run the agentica code blocks of the docs/ of each package (tools/doc_examples.agc)"
 	@echo "doc-examples-test check that tools/doc_examples.agc fails on its fixture (doc-examples runs it first)"
+	@echo "catalog    check that each package has a category and a description (tools/catalog.py), and the check itself"
 	@echo "site       build the documentation site into site/public (the docs/ folder of each package)"
 	@echo "site-serve serve the site on localhost for a preview"
 
@@ -70,6 +71,12 @@ doc-examples-test:
 		fi; echo "doc-examples-test ($$($$a --version)): ok"; \
 	done
 
+# The category, the keywords and the description of each package are in the front matter of its docs/_index.md (the
+# rules and the reason are in the header of tools/catalog.py); CI runs this in the plan job.
+catalog:
+	python3 -I tools/catalog.py
+	python3 -I tools/catalog_test.py
+
 # The documentation site (Hugo): the look, the layouts and the highlighter come from the docs theme, the submodule
 # site/themes/docs-theme; the pages are the docs/ folder of each package. The theme's styles need Dart Sass.
 HUGO ?= hugo
@@ -87,6 +94,10 @@ site-mounts:
 		printf '[[module.mounts]]\n  source = "../%s"\n  target = "content/%s"\n\n' "$$d" "$${d%/docs}"; \
 	done; } > site/mounts.toml
 
+# The data of the home page's table and of the sidebar groups; it fails when a package has no category.
+site-catalog:
+	python3 -I tools/catalog.py --out site/data/catalog.json
+
 # The theme and Dart Sass must be there before Hugo runs.
 site-tools:
 	@test -e $(THEME)/hugo.toml || { echo "The site needs its theme: git submodule update --init $(THEME)" >&2; exit 1; }
@@ -99,10 +110,10 @@ $(THEME)/highlight/node_modules: $(THEME)/highlight/package.json $(THEME)/highli
 
 # --panicOnWarning: a link to a page that does not exist fails the build. --strict: the docs have agentica and
 # signature blocks; --allow-unused-classes: their code does not use every color class of the grammar.
-site: site-tools site-mounts $(THEME)/highlight/node_modules
+site: site-tools site-catalog site-mounts $(THEME)/highlight/node_modules
 	$(HUGO) $(HUGO_CONFIG) --cleanDestinationDir --panicOnWarning $(HUGO_FLAGS)
 	node $(THEME)/highlight/highlight.mjs --strict --allow-unused-classes site/public
 
 # Agentica blocks stay plain here: the highlighter runs in `make site`.
-site-serve: site-tools site-mounts
+site-serve: site-tools site-catalog site-mounts
 	$(HUGO) server $(HUGO_CONFIG)
