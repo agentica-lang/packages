@@ -18,6 +18,32 @@ def hashed(root: String, paths: List[String]) -> Result[List[Layout.Entry]]
   ok(entries)
 end
 
+## `path` of the project is there, is not a link, and is really below the project once the links of its folders are
+## followed. `project` is the real path of the project.
+def confined(project: String, path: String) -> Result[Void]
+  from = Layout.at(project, path)
+  info = File.lstat(from)
+  return Errors.invalid("#{path.inspect} is not in the project") if !info.ok?
+  return Errors.invalid("#{path.inspect} is a link, and a release holds no links") if info.unwrap!.kind == "link"
+
+  real = Path.real(from)
+  return Errors.invalid("#{path.inspect} is not in the project: #{real.message}") if !real.ok?
+  if !real.unwrap!.start_with?("#{project}/")
+    return Errors.invalid("#{path.inspect} leaves the project through a link")
+  end
+
+  ok()
+end
+
+## `path` of the project is a regular file.
+def program(project: String, path: String) -> Result[Void]
+  try confined(project, path)
+  kind = (try File.lstat(Layout.at(project, path))).kind
+  return Errors.invalid("#{path.inspect} is a #{kind}, not a file") if kind != "file"
+
+  ok()
+end
+
 private
 
 def below(root: String, rel: String) -> Result[List[String]]

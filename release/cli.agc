@@ -49,9 +49,8 @@ def build_options(args: List[String]) -> Result[Release.Options]
     "Builds the release folder OUT/NAME-VERSION of a project: the agentica binary, the compiled program and a launcher.",
     [],
     [
-      Opt(name: "out", short: "o", help: "the folder that gets NAME-VERSION (default: _release)"),
+      Opt(name: "out", help: "the folder that gets NAME-VERSION (default: _release)"),
       Opt(name: "agentica", help: "the agentica binary to compile with and to ship (default: the one on PATH)"),
-      Opt(name: "version", help: "the version of the release (default: version of [tool.release])"),
       Opt(name: "entry", help: "the program to compile (default: entry of [tool.release], else main.agc)"),
     ],
     "[PROJECT]",
@@ -68,7 +67,6 @@ def build_options(args: List[String]) -> Result[Release.Options]
       project: project,
       out: OP.optional_string(p, "out").unwrap_or("_release"),
       agentica: OP.optional_string(p, "agentica").unwrap_or(""),
-      version: OP.optional_string(p, "version").unwrap_or(""),
       entry: OP.optional_string(p, "entry").unwrap_or(""),
     ),
   )

@@ -37,12 +37,14 @@ def launcher_path(name: String) -> String = "bin/#{name}"
 
 ## The script of `bin/NAME`: it finds the root of the release from its own place (with the shell alone, so no program
 ## of the target is needed), tells the program where it is in `RELEASE_ROOT`, and runs the program with the binary of
-## the release and the arguments it was given.
+## the release and the arguments it was given. Run through a link it would find another folder, so it stops there.
 def launcher(name: String) -> String
   [
     "#!/bin/sh",
+    "unset CDPATH",
     "case $0 in */*) HERE=${0%/*} ;; *) HERE=. ;; esac",
     "ROOT=$(cd \"$HERE/..\" && pwd -P) || exit 1",
+    "[ -x \"$ROOT/#{binary_path()}\" ] || { echo \"#{name}: run it by its own path, not through a link\" >&2; exit 1; }",
     "RELEASE_ROOT=$ROOT",
     "export RELEASE_ROOT",
     "exec \"$ROOT/#{binary_path()}\" run -- \"$ROOT/#{program_path(name)}\" \"$@\"",

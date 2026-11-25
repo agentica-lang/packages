@@ -127,9 +127,11 @@ prop/                property-based testing: prop.agc is the API (check, eq, ass
                      are the unit tests (the API is plain function calls)
 release/             builds an app into a folder that runs elsewhere (a tool package: `agentica release/cli.agc build|tar|inspect`):
                      release.agc is the API (build, tar, inspect); src/config.agc the project's agentica.toml and
-                     `[tool.release]` (pure), src/layout.agc the folder, the launcher and the manifest (pure),
-                     src/build.agc the build, src/verify.agc inspect and tar, src/files.agc and src/shell.agc the
-                     files and the programs it runs; specs/ builds specs/fixtures/hello and runs it from another folder
+                     `[tool.release]`, src/natives.agc the native libraries that may travel, src/names.agc the rules
+                     for a name and a path, src/layout.agc the folder, the launcher and the manifest (all pure),
+                     src/build.agc the build (in a `.partial` folder, renamed when whole), src/verify.agc inspect and
+                     tar, src/files.agc and src/shell.agc the files and the programs it runs; specs/ builds
+                     specs/fixtures/hello and runs it alone from another folder; cli.agc is run by one scenario
 s3/                  an S3 client (AWS S3, MinIO, rustfs): s3.agc is the API (client, close, put, put_file, get, get_range,
                      get_file, open, head, delete, the presign_* functions, the multipart calls, upload_file); src/sigv4.agc
                      the signing (pure), src/encoding.agc the percent-encoding and dates (pure), src/address.agc the URL, host and
