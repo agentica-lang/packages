@@ -31,7 +31,7 @@ prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.4.2", 
 | `parquet` (`parquet-0.1.0`) | Parquet files in pure Agentica: the schema, the row count, and the columns or rows of a file, with plain, dictionary and RLE pages under Snappy or gzip. A malformed file is a `parquet.malformed` error. [Docs](https://www.agentica-lang.com/packages/parquet/) |
 | `s3` (`s3-0.1.0`) | An S3 client for AWS S3, MinIO and rustfs in Agentica: Signature Version 4 requests, presigned URLs for direct uploads and downloads, objects from memory, a file or a stream, and multipart uploads, with the S3 error code as the error kind (`s3/s3`). [Docs](https://www.agentica-lang.com/packages/s3/) |
 | `csv` (`csv-0.1.0`) | CSV (RFC 4180) in pure Agentica: rows as lists or maps, a chosen separator, a reader that takes the text in chunks, quoting when writing, and a `csv.malformed` error with its line. [Docs](https://www.agentica-lang.com/packages/csv/) |
-| `image` (`image-0.1.0`) | Images on libvips, generated with native-gen: decode and encode (JPEG, PNG, WebP, TIFF and more), the pixels as one `Bytes` buffer, and resize, crop, flip, rotate, colour conversion and cast. [Docs](https://www.agentica-lang.com/packages/image/) |
+| `image` (`image-0.2.0`) | Images on libvips, generated with native-gen: decode and encode (JPEG, PNG, WebP, TIFF and more), the pixels as one `Bytes` buffer, and resize (with a chosen kernel), crop, flip, rotate, colour conversion and cast. [Docs](https://www.agentica-lang.com/packages/image/) |
 | `cache` (planned) | Cache strategies (CLOCK, sampled LRU, TinyLFU) behind the `Cache` facade of `std/cache` |
 
 ## Tags

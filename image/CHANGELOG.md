@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-11-25
 
 - Add the optional `kernel` of `resize`, the enum `Kernel` (`Nearest`, `Linear`, `Cubic`, `Lanczos2`, `Lanczos3`); the default is `Lanczos3`, so a call with no kernel gives the pixels it gave before.
 
