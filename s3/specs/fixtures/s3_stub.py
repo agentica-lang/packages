@@ -155,7 +155,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         access, date, region, service, term = query["X-Amz-Credential"].split("/")
         amz_date = query["X-Amz-Date"]
         self.check_scope(access, date, region, service, term, amz_date)
-        if "X-Amz-Security-Token" in query and query["X-Amz-Security-Token"] != ARGS.session_token:
+        if ARGS.session_token and query.get("X-Amz-Security-Token") != ARGS.session_token:
             raise S3Error(403, "InvalidToken", "The provided token is malformed or otherwise invalid.")
         issued = datetime.datetime.strptime(amz_date, "%Y%m%dT%H%M%SZ").replace(tzinfo=datetime.timezone.utc)
         lifetime = int(query["X-Amz-Expires"])
@@ -176,7 +176,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raise S3Error(403, "InvalidAccessKeyId", "The AWS Access Key Id you provided does not exist in our records.")
         if (region, service, term) != (ARGS.region, "s3", "aws4_request") or not amz_date.startswith(date):
             raise S3Error(403, "AuthorizationHeaderMalformed", "the credential scope is wrong")
-        if ARGS.session_token and self.headers.get("x-amz-security-token", ARGS.session_token) != ARGS.session_token:
+        if ARGS.session_token and self.headers.get("x-amz-security-token", "") != ARGS.session_token \
+                and "X-Amz-Signature" not in dict(parse_qsl(self.path.partition("?")[2], keep_blank_values=True)):
             raise S3Error(403, "InvalidToken", "The provided token is malformed or otherwise invalid.")
 
     def check_signature(self, canonical, amz_date, date, region, signature):
