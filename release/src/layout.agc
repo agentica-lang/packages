@@ -29,7 +29,7 @@ def archive(manifest: Manifest) -> String
   "#{folder(manifest.name, manifest.version)}-#{manifest.os}-#{manifest.arch}.tar.gz"
 end
 
-def binary_path() -> String = "erts/agentica"
+def binary_path() -> String = "runtime/agentica"
 
 def program_path(name: String) -> String = "lib/#{name}.agcb"
 

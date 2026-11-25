@@ -39,7 +39,7 @@ agentica deps/release/cli.agc inspect _release/app-1.0.0-linux-x86_64.tar.gz
 
 ```text
 bin/NAME                  the launcher
-erts/agentica             the binary
+runtime/agentica          the binary
 lib/NAME.agcb             the compiled program
 releases/manifest.json    name, version, agentica version, system, architecture, sha256 of each file
 ```
@@ -64,7 +64,7 @@ include = ["assets", "migrations"]
 
 - `version` is required. The folder is `NAME-VERSION`. Name and version are letters, digits, `.`, `_` and `-`.
 - `entry` is the program to compile, `main.agc` by default.
-- `include` lists files or folders of the project to copy into the release. A path is relative, with no `.` or `..`, none is inside another, and the first folder is not `bin`, `erts`, `lib` or `releases`. A link is refused, as is a path that leaves the project through one.
+- `include` lists files or folders of the project to copy into the release. A path is relative, with no `.` or `..`, none is inside another, and the first folder is not `bin`, `runtime`, `lib` or `releases`. A link is refused, as is a path that leaves the project through one.
 - `name` here overrides the name of the manifest.
 - `agentica` (top level, the oldest Agentica the project needs) is checked by `agentica compile`, as it is for any program.
 
@@ -110,7 +110,7 @@ end
 ```
 
 ```output
-["bin/demo", "erts/agentica", "lib/demo.agcb"]
+["bin/demo", "lib/demo.agcb", "runtime/agentica"]
 hello world
 ```
 

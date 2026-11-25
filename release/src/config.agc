@@ -44,7 +44,7 @@ end
 private
 
 # The folders that the release makes itself.
-RESERVED = ["bin", "erts", "lib", "releases"]
+RESERVED = ["bin", "runtime", "lib", "releases"]
 
 def text_at(doc: Toml.Value, path: String) -> Optional[String]
   case Toml.get(doc, path)
