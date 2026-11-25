@@ -8,7 +8,11 @@ baseURL = "https://www.agentica-lang.com/packages/"
 locale = "en"
 title = "Agentica packages"
 theme = "docs-theme"
-disableKinds = ["taxonomy", "term", "rss"]
+disableKinds = ["taxonomy", "rss"]
+
+# The `category` of each package page makes one page per category, at /category/<slug>/ (layouts/term.html).
+[taxonomies]
+  category = "category"
 # The last commit of each page dates it in the sitemap (needs the whole history: fetch-depth 0 in pages.yml).
 enableGitInfo = true
 

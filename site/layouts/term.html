@@ -1,0 +1,14 @@
+{{ define "main" }}
+<article class="content">
+  {{- partial "breadcrumbs.html" . }}
+  <div class="page-head"><h1>{{ .Title }}</h1></div>
+  {{ .Content }}
+  <ul class="pages">
+    {{- $name := .Title }}
+    {{- range where hugo.Data.catalog.packages "category" $name }}
+    {{- $page := site.GetPage (printf "/%s" .name) }}
+    <li><a href="{{ $page.RelPermalink }}">{{ .name }}</a> <span>{{ .description }}</span></li>
+    {{- end }}
+  </ul>
+</article>
+{{ end }}

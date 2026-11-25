@@ -21,8 +21,10 @@ tools/               doc_examples.agc: runs the `agentica` blocks of the docs (t
                      native-prebuilt-test.yml runs with dry-run on .github/native-prebuilt-example
 .github/scripts/     changed-packages.sh: which packages a list of changed files marks (the rules are in its header)
 site/                the Hugo site: hugo.toml, content/_index.md (the home), layouts/ (overrides: the catalog table of
-                     the home, the sidebar and the pager grouped by category, and links written as files that fail
-                     when missing), assets/ (the css of the groups and the table, the js of its filter); the look,
+                     the home, the sidebar and the pager grouped by category, the category pages at /category/<slug>/
+                     with the breadcrumbs Home > Category > package, and links written as files that fail
+                     when missing; text above a category's list: site/content/category/<slug>/_index.md, with a
+                     `description` of at most 160 characters), assets/ (the css of the groups and the table, the js of its filter); the look,
                      the layouts and the highlighter come from themes/docs-theme (the submodule agentica-lang/docs-theme)
 PACKAGE/             one package: AGENTICA_VERSION, agentica.toml, agentica.lock (when it has dependencies), src/,
                      specs/, test/, docs/

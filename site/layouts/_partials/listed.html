@@ -1,0 +1,9 @@
+{{- /* A copy of the theme's listed.html (docs-theme at 1ff8e89), except that a category page (kind term) is listed too: it has no text, and its packages are its children. */ -}}
+{{- $listed := false -}}
+{{- if and .Permalink (in (slice "home" "section" "page" "term") .Kind) (not (partial "noindex.html" .)) (eq (partial "canonical.html" .) .Permalink) -}}
+  {{- $listed = or .IsHome (eq .Kind "page") (strings.TrimSpace .Content) -}}
+  {{- range .Pages -}}
+    {{- if and (not $listed) (partial "listed.html" .) }}{{ $listed = true }}{{ end -}}
+  {{- end -}}
+{{- end -}}
+{{- return $listed -}}
