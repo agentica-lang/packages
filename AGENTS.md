@@ -52,10 +52,12 @@ http-client/         an HTTP/1.1 client: http_client.agc is the API (new, reques
                      that reads requests by hand and writes the answers of a script: slow heads, stalls, closes, and
                      which connection served each); test/ the unit tests (URL, addresses, retry policy, redirects, link,
                      a client's checks) and a reuse test (many requests on one connection, no task left after close)
-image/               images on libvips (a native module made with native-gen): image.agc is the API and the extern
-                     block (load, from_bytes, from_pixels, save, to_bytes, to_pixels, resize, crop, flip, rotate,
-                     colourspace, cast, width, height, bands, pixel_format); native/image.c the C side,
-                     native/image_native.h the header native-gen makes from the block (a spec checks it is current);
+image/               images on libvips (a native module made with native-gen): image.agc is the API (it re-exports
+                     src/libvips.agc, which has the extern block and its types, and defines `resize`, whose `kernel`
+                     has a default that a native function cannot have); the block has load, from_bytes, from_pixels,
+                     save, to_bytes, to_pixels, resize, crop, flip, rotate, colourspace, cast, width, height, bands,
+                     pixel_format; native/image.c the C side, native/image_native.h the header native-gen makes from
+                     the block (a spec checks it is current);
                      specs/ has the features, whose fixtures are written by specs/fixtures/peer.py (an independent PNG
                      codec and model of the transforms on Python's standard library, which also decodes what the
                      module writes)
@@ -185,7 +187,8 @@ yaml/                a YAML 1.2 parser: yaml.agc is the API (parse, parse_all, O
   sibling folder. Two packages that need one piece of code get it from a dependency, not by copy.
 - Each package needs at least one source file in `src/` and a spec in `specs/` (or a unit test in `test/`): `agentica
   check` and `agentica test` fail on a folder with no `.agc` file or nothing to run, and the Makefile stops there.
-  A package that is one native `extern module` block (`image`) has no `src/`: its API file is the block.
+  A package that is one native `extern module` block has no `src/`, unless it needs a default in a signature (a native
+  function has none): `image` keeps the block in `src/libvips.agc` and re-exports it from `image.agc`.
 - A dependency is pinned by tag (or by commit) and keeps the local name of the apps that use it, at the same tag:
   two sources for one name in a tree is `PKG-SOURCE-CONFLICT`. A bump of Bond is a package release first, then the
   app.

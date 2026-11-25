@@ -1,9 +1,9 @@
 Feature: Transforms of images
   A transform gives the pixels that an independent model in specs/fixtures/peer.py gives: the same bytes for crop,
   flip, rotate, cast and srgb, and for grey and resize a stated tolerance in levels of u8. libvips converts to grey
-  through the luminance of linear light, and resizes with the Lanczos 3 kernel: a box shrink by the whole part of half
-  the shrink on each side when that is 2 or more, then the reduce of each side (the rows first), each pass rounded to u8,
-  which the peer models alike.
+  through the luminance of linear light, and resizes with a kernel (Lanczos 3 by default): a box shrink by the whole
+  part of half the shrink on each side when that is 2 or more, then the reduce of each side (the rows first), each pass
+  rounded to u8, which the peer models alike.
   The source image is closed before the pixels are read, since a result keeps what it needs. The resize model is
   exact only when each integer shrink divides the size, so the scenarios use sizes that it does; the tolerance of 3
   levels was measured with libvips 8.15 and 8.16, where the worst difference seen is 3 (no margin).
@@ -41,6 +41,38 @@ Feature: Transforms of images
       | 8     | 48     |
       | 64    | 7      |
       | 20    | 20     |
+
+  # The kernels of libvips with the model of the peer: the same reduce with the kernel in place of Lanczos 3. The tolerance
+  # is the one of Lanczos 3, but measured with libvips 8.16 only (8.15 was not rechecked).
+  Scenario Outline: Resize with a kernel is the peer's within 3 levels
+    Then the pixels "photo.raw" as 64 by 48 with 3 bands of "U8" under "resize <width> <height> <kernel>" are the peer's within 3
+
+    Examples:
+      | kernel   | width | height |
+      | linear   | 32    | 24     |
+      | linear   | 40    | 30     |
+      | linear   | 17    | 13     |
+      | cubic    | 32    | 24     |
+      | cubic    | 40    | 30     |
+      | cubic    | 17    | 13     |
+      | lanczos2 | 32    | 24     |
+      | lanczos2 | 40    | 30     |
+      | lanczos3 | 40    | 30     |
+
+  # libvips rounds the positions of nearest to a fixed-point mask: the peer models it only when the output size divides
+  # the source size, or the source size divides the output size, and then the pixels are the same (measured with libvips
+  # 8.16 only; 8.15 was not rechecked).
+  Scenario Outline: Nearest picks the source pixels
+    Then the pixels "photo.raw" as 64 by 48 with 3 bands of "U8" under "resize <width> <height> nearest" are the peer's within 0
+
+    Examples:
+      | width | height |
+      | 32    | 24     |
+      | 16    | 12     |
+      | 128   | 96     |
+
+  Scenario: Each kernel gives its own pixels
+    Then the pixels "photo.raw" as 64 by 48 with 3 bands of "U8" resized to 40 by 30 differ by kernel
 
   # libvips enlarges with an interpolation that the peer does not model: only the size is compared.
   Scenario: Resize enlarges

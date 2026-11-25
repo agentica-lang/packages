@@ -47,6 +47,8 @@ enum { MULTIBAND = 0, B_W = 1, SRGB = 22, RGB16 = 25, GREY16 = 26 };
 /* The largest side of an image (VIPS_MAX_COORD): a larger one makes libvips print a GLib critical and fail. */
 #define MAX_SIDE ((int64_t)10000000)
 #define SIDE_MESSAGE "the width and the height must be at most 10000000"
+/* The VipsKernel of each image_Kernel_tag, in the order of the enum. */
+static const int vips_kernels[] = {0 /* NEAREST */, 1 /* LINEAR */, 2 /* CUBIC */, 4 /* LANCZOS2 */, 5 /* LANCZOS3 */};
 enum { HORIZONTAL, VERTICAL };
 enum { D0, D90, D180, D270 };
 
@@ -215,7 +217,8 @@ an_term image_to_pixels(an_env *env, struct image_Image_state *image) {
 }
 
 /* The operations are lazy: the result holds the image it came from, and the pixels are made when they are read. */
-an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width, int64_t height) {
+an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width, int64_t height,
+                     image_Kernel kernel) {
   VipsImage *in = image->vips;
   if (width < 1 || height < 1) return refuse(env, "the width and the height must be positive");
   if (width > MAX_SIDE || height > MAX_SIDE) return refuse(env, SIDE_MESSAGE);
@@ -223,7 +226,9 @@ an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width
   VipsImage *out;
   double horizontal = (double)width / vips_image_get_width(in);
   double vertical = (double)height / vips_image_get_height(in);
-  if (vips_resize(in, &out, horizontal, "vscale", vertical, NULL) != 0) return fail(env, "cannot resize the image");
+  if (vips_resize(in, &out, horizontal, "vscale", vertical, "kernel", vips_kernels[kernel.tag], NULL) != 0) {
+    return fail(env, "cannot resize the image");
+  }
   if (vips_image_get_width(out) != width || vips_image_get_height(out) != height) {
     g_object_unref(out);
     return refuse(env, "cannot resize the image to that size");

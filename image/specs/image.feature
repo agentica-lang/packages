@@ -95,7 +95,7 @@ Feature: Images on libvips
     Then a failed decode leaves no message behind
 
   Scenario: The committed header is the one the block gives
-    Given the program argument "../image.agc"
+    Given the program argument "../src/libvips.agc"
     And the program argument "--output"
     And the program argument "../native/image_native.h"
     And the program argument "--check"
