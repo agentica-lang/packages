@@ -17,8 +17,8 @@ Feature: Releasing an app
       | path                  |
       | assets/greeting.toml  |
       | bin/hello             |
-      | erts/agentica         |
       | lib/hello.agcb        |
+      | runtime/agentica      |
 
   Scenario: The launcher stops when it is run through a link
     Given a fresh folder
@@ -40,7 +40,7 @@ Feature: Releasing an app
       | removes     | assets/greeting.toml | is missing                    |
       | adds        | extra.txt            | is not in the manifest        |
       | locks       | bin/hello            | is not executable             |
-      | locks       | erts/agentica        | is not executable             |
+      | locks       | runtime/agentica     | is not executable             |
       | lists       | ../x                 | must be a path inside         |
 
   Scenario: The folder packs as an archive that passes inspect

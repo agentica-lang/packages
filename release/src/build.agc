@@ -204,7 +204,7 @@ def assemble(
 ) -> Result[Layout.Manifest]
   try Shell.run(
     "mkdir",
-    ["-p", Layout.at(root, "bin"), Layout.at(root, "erts"), Layout.at(root, "lib"), Layout.at(root, "releases")],
+    ["-p", Layout.at(root, "bin"), Layout.at(root, "runtime"), Layout.at(root, "lib"), Layout.at(root, "releases")],
     ".",
   )
 
