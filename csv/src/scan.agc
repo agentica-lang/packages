@@ -10,6 +10,7 @@ struct Reader
   fields: List[String]
   mode: Int
   pieces: List[Bytes]
+  # One byte (a quote or a CR) at the end of the last chunk whose meaning depends on the next one.
   edge: Bytes
   line: Int
   breaks: Int
@@ -156,7 +157,7 @@ def feed(reader: Reader, chunk: Bytes, eof: Bool) -> Result[Feed]
       rows = rows.push(fields.push(""))
       fields = []
     end
-  elsif mode == BARE or (mode == QUOTED and edge.size == 0)
+  elsif (mode == BARE or (mode == QUOTED and edge.size == 0)) and seg < data.size
     pieces = pieces.push(data.slice(seg, data.size - seg))
   end
 

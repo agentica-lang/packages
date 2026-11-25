@@ -49,6 +49,8 @@ end
 2: Lima
 ```
 
+The rows per second of `parse` and `encode` on a generated table of about 10 MB can be measured with `agentica bench/rows.agc` in the `csv` folder.
+
 ## API
 
 ### `Csv.parse(text: String, separator: String = ",") -> Result[List[List[String]]]`
@@ -75,7 +77,7 @@ csv.malformed: csv: the quote opened at line 1 is never closed
 
 ### `Csv.parse_maps(text: String, separator: String = ",") -> Result[List[Map[String, String]]]`
 
-The rows after the first as maps from the names in the first row. A row of another width than the header, or a name that appears twice in it, is a `csv.malformed` error that names the row. A blank line is skipped when the header has more than one column, as Python's DictReader does. A text with no rows gives an empty list.
+The rows after the first as maps from the names in the first row. A row of another width than the header, or a name that appears twice in it, is a `csv.malformed` error that names the row. A blank line is skipped when the header has more than one column, as Python's DictReader does; a quoted empty line (`""`) is skipped too, where DictReader keeps it, since the rows do not tell the two apart. A text with no rows gives an empty list.
 
 ```agentica
 import Csv from "pkg/csv/csv"

@@ -81,6 +81,30 @@ def test_a_row_of_twenty_thousand_fields_is_read() -> Result[Void]
   must(rows.size == 1 and rows[0].size == 20000, "read #{rows.size} rows")
 end
 
+def outcome(result: Result[List[List[String]]]) -> String
+  case result
+    ok(rows) -> "ok #{rows}"
+    error(e) -> "#{e.kind} #{e.message}"
+  end
+end
+
+def test_chunks_of_one_character_give_the_rows_or_the_error_of_the_whole_text() -> Result[Void]
+  texts = Prop.map(Prop.list(Prop.one_of(PIECES), 12), ->(parts) { parts.join("") })
+  Prop.check(texts, Prop.Config(runs: 200)) do |text|
+    chunked = outcome(read_chunks(by_chars(text)))
+    whole = outcome(Csv.parse(text))
+    must(chunked == whole, "#{chunked} against #{whole}")
+  end
+end
+
+def test_a_mark_after_an_empty_chunk_is_dropped_and_one_after_text_is_kept() -> Result[Void]
+  mark = String.from_code(65279)
+  dropped = try read_chunks(["", mark + "a,b"])
+  kept = try read_chunks(["a,", mark + "b"])
+  try must(dropped == [["a", "b"]], "read #{dropped}")
+  must(kept == [["a", mark + "b"]], "read #{kept}")
+end
+
 def field() -> Prop.Gen[String] = Prop.map(Prop.list(Prop.one_of(PIECES), 5), ->(parts) { parts.join("") })
 
 def table() -> Prop.Gen[List[List[String]]] = Prop.list(Prop.non_empty_list(field(), 4), 6)
