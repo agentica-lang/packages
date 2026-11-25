@@ -114,6 +114,10 @@ dns/                 a DNS client: dns.agc is the API (resolver, query, addresse
                      against fixtures/dns_tcp_peer.agc (answers the hex bytes of a script, over TCP or, with TLS_CERT and
                      TLS_KEY, over TLS), specs/doh.feature against fixtures/doh_peer.agc (an HTTPS server with a script
                      by path; ca.pem signed server.pem for dns.test, key server.key, made for the specs only)
+password/            password hashing: password.agc is the API (hash, verify, problem, verify_nobody, MIN_LENGTH, MAX_BYTES; scrypt
+                     through OpenSSL.KDF.scrypt), src/digest.agc the text `scrypt$N$r$p$salt$key` (write and parse, pure); test/
+                     has the round trip of the digest; specs/ has the features, whose peer is fixtures/scrypt_peer.py (Python's
+                     scrypt, standard library only: it makes fixtures/golden.json, and says whether a digest of the package matches)
 pool/                a generic pool of resources: pool.agc is the API (start, with, close, timeout?) and the caller's
                      side (the ticket, the body in the caller or in a task of its own); src/owner.agc the owner task
                      (the line, the workers' states, the health tick, the close), src/keeper.agc the task of one

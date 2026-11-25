@@ -1,0 +1,27 @@
+[
+  {
+    "name": "default cost",
+    "password": "correct horse battery",
+    "digest": "scrypt$65536$8$2$AQIDBAUGBwgJCgsMDQ4PEA==$MyC3od17v739xjjesGsDoYKt19rFi5JuhJHj+xQ942Q="
+  },
+  {
+    "name": "a lower cost",
+    "password": "another long password",
+    "digest": "scrypt$1024$8$2$AQIDBAUGBwgJCgsMDQ4PEA==$k6UaLA1ch6VFTNpUo+rxtZz9UjXZ5kX/WzWpBpW+qS4="
+  },
+  {
+    "name": "other block size and lanes",
+    "password": "correct horse battery",
+    "digest": "scrypt$4096$4$1$AQIDBAUGBwgJCgsMDQ4PEA==$YRUbJRxL9P63j66rgoVI0CZoMu+ridUMIZuVpA5Q6wc="
+  },
+  {
+    "name": "a longer key",
+    "password": "correct horse battery",
+    "digest": "scrypt$1024$8$2$AQIDBAUGBwgJCgsMDQ4PEA==$pZbpIUhAt2tHA4So5S6/Wye1rULr6cOCthkDUmZM+aird/nyKjvOtpgGZKuXcayDcZv9qVD7LhBdizEcVEBp5Q=="
+  },
+  {
+    "name": "not ASCII",
+    "password": "contraseña ñandú 日本",
+    "digest": "scrypt$1024$8$2$AQIDBAUGBwgJCgsMDQ4PEA==$+8cG2bd+2t2UcW0++9gZtn5bfG9+Ldlj8nnpgfnnd3g="
+  }
+]
