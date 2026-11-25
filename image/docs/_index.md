@@ -97,6 +97,22 @@ end
 Space.Grey
 ```
 
+### `Image.Kernel`
+
+`Nearest`, `Linear`, `Cubic` (Catmull-Rom), `Lanczos2` or `Lanczos3`: the kernel that `resize` interpolates with.
+
+```agentica
+import Image from "pkg/image/image"
+
+def main() -> Void
+  puts(Image.Kernel.Cubic)
+end
+```
+
+```output
+Kernel.Cubic
+```
+
 ## Reading and writing
 
 ### `Image.load(path) -> Result[Image]`
@@ -285,9 +301,9 @@ Format.U8
 
 A transform returns a new image and leaves its source as it was. It is lazy: see [Memory and lifetime](#memory-and-lifetime).
 
-### `Image.resize(image, width, height) -> Result[Image]`
+### `Image.resize(image, width, height, kernel = Image.Kernel.Lanczos3) -> Result[Image]`
 
-Scales the image to `width` by `height` with the Lanczos 3 kernel of libvips, down or up; keep the ratio yourself. A size that is not positive, a side of more than 10000000 pixels, or more than 268435456 pixels in all (pixels, not bytes) is an error. An alpha band is not premultiplied, so the edge next to a transparent pixel may get a colour fringe.
+Scales the image to `width` by `height` with `kernel`, down or up; keep the ratio yourself. The default is Lanczos 3, the kernel of libvips, so a call with no kernel gives what it gave before `kernel` existed. A size that is not positive, a side of more than 10000000 pixels, or more than 268435456 pixels in all (pixels, not bytes) is an error. An alpha band is not premultiplied, so the edge next to a transparent pixel may get a colour fringe.
 
 ```agentica
 import Image from "pkg/image/image"
@@ -301,6 +317,26 @@ end
 
 ```output
 2x1
+```
+
+Pick the kernel of the model that your pixels are compared with: `Image.Kernel.Linear` and `Image.Kernel.Cubic` are the kernels of the bilinear and bicubic filters of Pillow. libvips shrinks by whole factors before it reduces, so the pixels are close to Pillow's, not equal.
+
+```agentica
+import Image from "pkg/image/image"
+
+def main() -> Void
+  image = Image.from_pixels(Bytes.from_list([0, 100, 200, 100]).unwrap!, 4, 1, 1, Image.Format.U8).unwrap!
+  for kernel in [Image.Kernel.Nearest, Image.Kernel.Linear, Image.Kernel.Cubic]
+    small = Image.resize(image, 2, 1, kernel).unwrap!
+    puts(Image.to_pixels(small).unwrap!.to_a)
+  end
+end
+```
+
+```output
+[100, 100]
+[63, 138]
+[61, 148]
 ```
 
 ### `Image.crop(image, left, top, width, height) -> Result[Image]`
@@ -421,4 +457,4 @@ Format.U16, 12 bytes
 
 ## Tests
 
-The fixtures of `specs/fixtures/` are written by `peer.py`, an independent PNG codec and image model in Python's standard library. A scenario checks that libvips decodes each PNG to the pixels of the peer, and that the peer decodes the PNGs that `image` writes to the pixels that went in. The peer also computes the transforms: the same bytes for crop, flip, rotate and cast, and within 1 level of u8 for grey and 3 for resize, which it models the way libvips does it (a box shrink, then the Lanczos 3 reduce of the rows and the columns, each pass rounded to u8). The resize model holds only when each integer shrink divides the size, and an upscale is checked for its size only. The tolerance of 3 was measured with the libvips of the specs, where the worst difference seen is 3.
+The fixtures of `specs/fixtures/` are written by `peer.py`, an independent PNG codec and image model in Python's standard library. A scenario checks that libvips decodes each PNG to the pixels of the peer, and that the peer decodes the PNGs that `image` writes to the pixels that went in. The peer also computes the transforms: the same bytes for crop, flip, rotate and cast, and within 1 level of u8 for grey and 3 for resize, which it models the way libvips does it (a box shrink, then the reduce of the rows and the columns with the kernel, each pass rounded to u8; `Nearest` is the exact pixel at the centre of each output pixel). The resize model holds only when each integer shrink divides the size, and an upscale is checked for its size only, except for `Nearest`, which is exact at sizes that divide the source or that it divides. The tolerance of 3 was measured with the libvips of the specs, where the worst difference seen is 3.

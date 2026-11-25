@@ -28,6 +28,10 @@ def main() -> Void
       "{int} tasks resize an image of {string} repeated to {int} by {int} down to {int} by {int}",
       &parallel_resize,
     ),
+    BDD.step(
+      "the pixels {string} as {int} by {int} with {int} bands of {string} resized to {int} by {int} differ by kernel",
+      &kernels,
+    ),
     BDD.step("a failed decode leaves no message behind", &clean_error),
     BDD.step("a resize to {int} by {int} is accepted", &accepted),
     BDD.step("{int} tasks decode {string} to the pixels of {string}", &parallel),
@@ -135,10 +139,27 @@ def apply_transform(img: Image.Image, words: List[String]) -> Result[Image.Image
     "crop" -> Image.crop(img, words[1].to_i!, words[2].to_i!, words[3].to_i!, words[4].to_i!)
     "flip" -> Image.flip(img, direction_of(words[1]))
     "rotate" -> Image.rotate(img, words[1].to_i!)
-    "resize" -> Image.resize(img, words[1].to_i!, words[2].to_i!)
+    "resize" -> resize_with(img, words)
     "grey" -> Image.colourspace(img, Image.Space.Grey)
     "srgb" -> Image.colourspace(img, Image.Space.Srgb)
     _ -> Image.cast(img, format_of(words[1].upcase))
+  end
+end
+
+# `resize 32 24` is the default kernel, `resize 32 24 cubic` names one.
+def resize_with(img: Image.Image, words: List[String]) -> Result[Image.Image]
+  return Image.resize(img, words[1].to_i!, words[2].to_i!) if words.size == 3
+
+  Image.resize(img, words[1].to_i!, words[2].to_i!, kernel_of(words[3]))
+end
+
+def kernel_of(name: String) -> Image.Kernel
+  case name
+    "nearest" -> Image.Kernel.Nearest
+    "linear" -> Image.Kernel.Linear
+    "cubic" -> Image.Kernel.Cubic
+    "lanczos2" -> Image.Kernel.Lanczos2
+    _ -> Image.Kernel.Lanczos3
   end
 end
 
@@ -182,6 +203,22 @@ def turned_back(ctx: BDD.Context, args: List[String]) -> BDD.Context
   Native.close(first)
   Native.close(middle)
   BDD.assert(ctx, Image.to_pixels(last).unwrap! == read(args[0]), "the chain gave other pixels")
+end
+
+# Each of the five kernels gives its own pixels, and a resize with no kernel is the one with Lanczos 3.
+def kernels(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  img = from_raw(args)
+  width = args[5].to_i!
+  height = args[6].to_i!
+  by_kernel = ["nearest", "linear", "cubic", "lanczos2", "lanczos3"].map do |name|
+    Image.to_pixels(Image.resize(img, width, height, kernel_of(name)).unwrap!).unwrap!
+  end
+
+  default = Image.to_pixels(Image.resize(img, width, height).unwrap!).unwrap!
+  return BDD.assert(ctx, false, "the default is not Lanczos 3") if default != by_kernel[4]
+
+  distinct = by_kernel.uniq.size
+  BDD.assert(ctx, distinct == 5, "#{distinct} of the 5 kernels gave different pixels")
 end
 
 # Each task makes, resizes and reads an image of its own, a large one so that libvips works on several tiles at once;

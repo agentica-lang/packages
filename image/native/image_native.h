@@ -1,4 +1,4 @@
-/* The C side of `extern module "image"` in image.agc, made by native-gen.
+/* The C side of `extern module "image"` in libvips.agc, made by native-gen.
    Do not edit it: change the .agc and make it again. */
 #ifndef IMAGE_NATIVE_H
 #define IMAGE_NATIVE_H
@@ -31,10 +31,13 @@ typedef struct {
 #endif
 
 /* The rows of the type table: the TYPE of an_struct, an_enum and their getters. */
-enum { IMAGE_TYPE_Format = 0, IMAGE_TYPE_Direction = 1, IMAGE_TYPE_Space = 2 };
+enum { IMAGE_TYPE_Format = 0, IMAGE_TYPE_Kernel = 1, IMAGE_TYPE_Direction = 2, IMAGE_TYPE_Space = 3 };
 
 /* The variants of Format, in declared order: the tag of its C value. */
 typedef enum { IMAGE_Format_U8 = 0, IMAGE_Format_I8 = 1, IMAGE_Format_U16 = 2, IMAGE_Format_I16 = 3, IMAGE_Format_U32 = 4, IMAGE_Format_I32 = 5, IMAGE_Format_F32 = 6, IMAGE_Format_F64 = 7, IMAGE_Format_Complex = 8 } image_Format_tag;
+
+/* The variants of Kernel, in declared order: the tag of its C value. */
+typedef enum { IMAGE_Kernel_Nearest = 0, IMAGE_Kernel_Linear = 1, IMAGE_Kernel_Cubic = 2, IMAGE_Kernel_Lanczos2 = 3, IMAGE_Kernel_Lanczos3 = 4 } image_Kernel_tag;
 
 /* The variants of Direction, in declared order: the tag of its C value. */
 typedef enum { IMAGE_Direction_Horizontal = 0, IMAGE_Direction_Vertical = 1 } image_Direction_tag;
@@ -77,6 +80,11 @@ an_term image_Format_I32(an_env *env);
 an_term image_Format_F32(an_env *env);
 an_term image_Format_F64(an_env *env);
 an_term image_Format_Complex(an_env *env);
+
+typedef struct {
+  image_Kernel_tag tag;
+} image_Kernel;
+bool image_Kernel_get(an_env *env, an_term t, image_Kernel *out);
 
 typedef struct {
   image_Direction_tag tag;
@@ -122,8 +130,8 @@ an_term image_to_bytes(an_env *env, struct image_Image_state *image, ng_str suff
 /* The pixels, interleaved, in the format of the image and the byte order of this machine. */
 an_term image_to_pixels(an_env *env, struct image_Image_state *image);
 
-/* The image scaled to `width` by `height` with the Lanczos 3 kernel of libvips; the aspect ratio is yours to keep. */
-an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width, int64_t height);
+/* The image scaled to `width` by `height` with `kernel`; the aspect ratio is yours to keep. */
+an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width, int64_t height, image_Kernel kernel);
 
 /* The `width` by `height` area whose top left pixel is at `left`, `top`; an area outside the image is an error. */
 an_term image_crop(an_env *env, struct image_Image_state *image, int64_t left, int64_t top, int64_t width, int64_t height);
@@ -354,6 +362,30 @@ an_term image_Format_Complex(an_env *env) {
   return an_enum(env, IMAGE_TYPE_Format, IMAGE_Format_Complex, NULL);
 }
 
+static bool image_native_get_Kernel(an_env *env, an_term t, image_Kernel *out, ng_fail *fail) {
+  uint32_t variant;
+  if (!an_get_variant(env, t, IMAGE_TYPE_Kernel, &variant)) return ng_expected(fail, "Kernel");
+  out->tag = (image_Kernel_tag)variant;
+  switch (out->tag) {
+    case IMAGE_Kernel_Nearest:
+      return true;
+    case IMAGE_Kernel_Linear:
+      return true;
+    case IMAGE_Kernel_Cubic:
+      return true;
+    case IMAGE_Kernel_Lanczos2:
+      return true;
+    case IMAGE_Kernel_Lanczos3:
+      return true;
+  }
+  return ng_expected(fail, "Kernel");
+}
+
+bool image_Kernel_get(an_env *env, an_term t, image_Kernel *out) {
+  ng_fail fail;
+  return image_native_get_Kernel(env, t, out, &fail) || ng_raise(env, "", "Kernel", &fail);
+}
+
 static bool image_native_get_Direction(an_env *env, an_term t, image_Direction *out, ng_fail *fail) {
   uint32_t variant;
   if (!an_get_variant(env, t, IMAGE_TYPE_Direction, &variant)) return ng_expected(fail, "Direction");
@@ -459,13 +491,16 @@ static an_term image_native_to_pixels(an_env *env, int argc, const an_term *argv
 
 static an_term image_native_resize(an_env *env, int argc, const an_term *argv) {
   (void)argc;
+  ng_fail fail;
   struct image_Image_state *a0 = image_Image_get(env, argv[0]);
   if (!a0) return an_badarg(env, 0);
   int64_t a1;
   if (!an_get_int(env, argv[1], &a1)) return an_badarg(env, 1);
   int64_t a2;
   if (!an_get_int(env, argv[2], &a2)) return an_badarg(env, 2);
-  return image_resize(env, a0, a1, a2);
+  image_Kernel a3;
+  if (!image_native_get_Kernel(env, argv[3], &a3, &fail)) return ng_fail_argument(env, &fail, "Kernel", 3);
+  return image_resize(env, a0, a1, a2, a3);
 }
 
 static an_term image_native_crop(an_env *env, int argc, const an_term *argv) {
@@ -557,7 +592,7 @@ static const an_function image_native_functions[] = {
   {"save", "(Image, String) -> Result[Void]", image_native_save, AN_DIRTY},
   {"to_bytes", "(Image, String) -> Result[Bytes]", image_native_to_bytes, AN_DIRTY},
   {"to_pixels", "(Image) -> Result[Bytes]", image_native_to_pixels, AN_DIRTY},
-  {"resize", "(Image, Int, Int) -> Result[Image]", image_native_resize, AN_SHORT},
+  {"resize", "(Image, Int, Int, Kernel) -> Result[Image]", image_native_resize, AN_SHORT},
   {"crop", "(Image, Int, Int, Int, Int) -> Result[Image]", image_native_crop, AN_SHORT},
   {"flip", "(Image, Direction) -> Result[Image]", image_native_flip, AN_SHORT},
   {"rotate", "(Image, Int) -> Result[Image]", image_native_rotate, AN_SHORT},
@@ -571,6 +606,7 @@ static const an_function image_native_functions[] = {
 
 static const an_type image_native_types[] = {
   {"Format", AN_ENUM, "U8 | I8 | U16 | I16 | U32 | I32 | F32 | F64 | Complex"},
+  {"Kernel", AN_ENUM, "Nearest | Linear | Cubic | Lanczos2 | Lanczos3"},
   {"Direction", AN_ENUM, "Horizontal | Vertical"},
   {"Space", AN_ENUM, "Srgb | Grey"},
 };
@@ -581,5 +617,5 @@ static const an_type image_native_types[] = {
   static const an_resource_type image_native_resources[] = { \
     {"Image", sizeof(struct image_Image_state), IMAGE_Image_FREE}, \
   }; \
-  AN_MODULE_TABLES("image", image_native_functions, 16, image_native_types, 3, image_native_resources, 1, LOAD)
+  AN_MODULE_TABLES("image", image_native_functions, 16, image_native_types, 4, image_native_resources, 1, LOAD)
 #endif

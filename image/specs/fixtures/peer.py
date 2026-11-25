@@ -6,7 +6,7 @@
   peer.py apply OP IN OUT WIDTH HEIGHT BANDS [ARG...]
                               the expected pixels of a transform of raw pixels, and prints "WIDTH HEIGHT BANDS"
                               of the result. For u8 samples: crop LEFT TOP W H, flip h|v, rotate DEGREES
-                              clockwise, resize W H, grey. For grey (and alpha) of u8 or u16: srgb [BYTES PER
+                              clockwise, resize W H [KERNEL], grey. For grey (and alpha) of u8 or u16: srgb [BYTES PER
                               SAMPLE]. For any raw samples: cast FROM TO (u8, u16, i16 or f32)
 
 The scanlines of the PNGs use every filter type, so the decoder of libvips is checked on each.
@@ -140,25 +140,47 @@ def rotate(px, width, height, bands, degrees):
     return px, width, height
 
 
-def lanczos3(x):
+def lanczos(a, x):
     if x == 0:
         return 1.0
-    if abs(x) >= 3:
+    if abs(x) >= a:
         return 0.0
-    return 3 * math.sin(math.pi * x) * math.sin(math.pi * x / 3) / (math.pi * x) ** 2
+    return a * math.sin(math.pi * x) * math.sin(math.pi * x / a) / (math.pi * x) ** 2
 
 
-def weights(size_in, size_out):
-    """For each output index, the first input index and the normalised Lanczos 3 weights; the kernel widens by the
-    shrink factor, as libvips does when it reduces."""
+def linear(x):
+    return max(0.0, 1 - abs(x))
+
+
+def cubic(x):
+    """Catmull-Rom, the cubic of libvips."""
+    x = abs(x)
+    if x < 1:
+        return 1.5 * x ** 3 - 2.5 * x ** 2 + 1
+    return -0.5 * x ** 3 + 2.5 * x ** 2 - 4 * x + 2 if x < 2 else 0.0
+
+
+# The interpolating kernels of resize: the half width of each, and its function.
+KERNELS = {
+    "linear": (1, linear),
+    "cubic": (2, cubic),
+    "lanczos2": (2, lambda x: lanczos(2, x)),
+    "lanczos3": (3, lambda x: lanczos(3, x)),
+}
+
+
+def weights(size_in, size_out, kernel):
+    """For each output index, the input indices and the normalised weights of the kernel; it widens by the shrink
+    factor, as libvips does when it reduces."""
+    support, function = KERNELS[kernel]
     scale = size_in / size_out
     stretch = max(scale, 1.0)
     rows = []
     for o in range(size_out):
         center = (o + 0.5) * scale - 0.5
-        first = math.floor(center - 3 * stretch) + 1
-        last = math.ceil(center + 3 * stretch) - 1
-        taps = [(max(0, min(size_in - 1, i)), lanczos3((i - center) / stretch)) for i in range(first, last + 1)]
+        first = math.floor(center - support * stretch) + 1
+        last = math.ceil(center + support * stretch) - 1
+        taps = [(max(0, min(size_in - 1, i)), function((i - center) / stretch)) for i in range(first, last + 1)]
         total = sum(w for _, w in taps)
         rows.append([(i, w / total) for i, w in taps])
     return rows
@@ -177,13 +199,22 @@ def box(px, width, height, bands, across, down):
     return out, width // across, height // down
 
 
-def resize(px, width, height, bands, w, h):
-    """The resize of libvips (Lanczos 3), the way it does it: an integer shrink by a box mean while the shrink is at
-    least twice the gap of 2 (a block per output pixel on each side), then the Lanczos 3 reduce, the rows before the
-    columns, each pass rounded and clamped to u8."""
+def nearest(px, width, height, bands, w, h):
+    """The source pixel at the centre of each output pixel. libvips rounds the positions to a fixed-point mask, so
+    this holds only for sizes that divide the source or that it divides."""
+    return [px[(math.floor((y + 0.5) * height / h) * width + math.floor((x + 0.5) * width / w)) * bands + b]
+            for y in range(h) for x in range(w) for b in range(bands)]
+
+
+def resize(px, width, height, bands, w, h, kernel="lanczos3"):
+    """The resize of libvips, the way it does it: an integer shrink by a box mean while the shrink is at
+    least twice the gap of 2 (a block per output pixel on each side), then the reduce with the kernel, the rows
+    before the columns, each pass rounded and clamped to u8."""
+    if kernel == "nearest":
+        return nearest(px, width, height, bands, w, h)
     px, width, height = box(px, width, height, bands, max(1, width // w // 2), max(1, height // h // 2))
-    down = weights(height, h)
-    across = weights(width, w)
+    down = weights(height, h, kernel)
+    across = weights(width, w, kernel)
 
     def quantise(v):
         return max(0, min(255, int(v + 0.5)))
@@ -242,7 +273,7 @@ def apply(op, args):
             shape = (w, h, bands)
         elif op == "resize":
             w, h = int(rest[0]), int(rest[1])
-            out, shape = resize(px, width, height, bands, w, h), (w, h, bands)
+            out, shape = resize(px, width, height, bands, w, h, *rest[2:]), (w, h, bands)
         elif op == "grey":
             out, shape = grey(px, bands), (width, height, bands - 2 if bands > 2 else 1)
         elif op == "srgb":
