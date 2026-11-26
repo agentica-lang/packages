@@ -4,11 +4,12 @@
   pip install --target DIR --only-binary :all: --require-hashes -r specs/fixtures/pillow-requirements.txt
   python3 -I specs/fixtures/pillow.py DIR specs/fixtures/pillow_resize.json
 
-DIR holds the Pillow of pillow-requirements.txt: the wheel pillow-11.3.0-cp313-cp313-manylinux_2_27_x86_64.
-manylinux_2_28_x86_64.whl, the one its sha256 is for (pip checks it; another platform needs the hash of its wheel).
-This program checks the version. CI does not run it: it reads the committed file, one case per line. The inputs are a step edge (the minimal case of issue 266) and
-a small image of blocks, enlarged and shrunk by a different factor on each axis, with Pillow's BILINEAR and BICUBIC,
-which are the Linear and Cubic kernels.
+DIR holds the Pillow of pillow-requirements.txt, the wheel
+pillow-11.3.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl, the one its sha256 is for (pip checks it;
+another platform needs the hash of its wheel). This program checks the version. CI does not run it: it reads the
+committed file, one case per line. The inputs are the step edge (the minimal case of issue 266), blocks, discs and an
+RGBA strip, enlarged and shrunk by a different factor on each axis, with Pillow's BILINEAR and BICUBIC, which are the
+Linear and Cubic kernels.
 """
 import json
 import sys

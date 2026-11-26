@@ -303,7 +303,7 @@ A transform returns a new image and leaves its source as it was. It is lazy: see
 
 ### `Image.resize(image, width, height, kernel = Image.Kernel.Lanczos3) -> Result[Image]`
 
-Scales the image to `width` by `height` with `kernel`, down or up; keep the ratio yourself. The default is Lanczos 3, the kernel of libvips, so a call with no kernel gives what it gave before `kernel` existed. A size that is not positive, a side of more than 10000000 pixels, or more than 268435456 pixels in all (pixels, not bytes) is an error. A shrink does not premultiply the alpha band, so the edge next to a transparent pixel may get a colour fringe; an enlarge does, and keeps the colour.
+Scales the image to `width` by `height` with `kernel`, down or up; keep the ratio yourself. The default is Lanczos 3, the kernel of libvips, so a call with no kernel gives what it gave before `kernel` existed. A size that is not positive, a side of more than 10000000 pixels, or more than 268435456 pixels in all (pixels, not bytes) is an error. A shrink does not premultiply the alpha band, so the edge next to a transparent pixel may get a colour fringe; an enlarge does, and keeps the colour (with one axis of each, the shrunk axis is not premultiplied).
 
 ```agentica
 import Image from "pkg/image/image"

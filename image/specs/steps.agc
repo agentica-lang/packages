@@ -274,9 +274,8 @@ def against_pillow(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.assert(ctx, cases.size > 0 and too_far.empty?, "#{cases.size} sizes, too far: #{too_far.join(", ")}")
 end
 
-# libvips enlarges with Lanczos 2 and Lanczos 3 as with Cubic (it has no wider interpolator for an enlarge), so
-# the three
-# give the same pixels; Pillow's LANCZOS is another filter.
+# libvips enlarges with Lanczos 2 and Lanczos 3 as with Cubic (it has no wider interpolator for an enlarge), so the
+# three give the same pixels; Pillow's LANCZOS is another filter.
 def lanczos_enlarge(ctx: BDD.Context, args: List[String]) -> BDD.Context
   img = from_raw(args)
   width = args[5].to_i!
@@ -288,8 +287,9 @@ def lanczos_enlarge(ctx: BDD.Context, args: List[String]) -> BDD.Context
   BDD.assert(ctx, pixels[0] == pixels[1] and pixels[0] == pixels[2], "Lanczos 2 or 3 enlarges other than Cubic")
 end
 
-# An enlarge keeps the colour of a pixel that is next to a transparent one (the alpha band is premultiplied inside, as
-# for a shrink it is not): the middle of an opaque red pixel and a transparent blue one is red with half the alpha.
+# An enlarge keeps the colour of a pixel that is next to a transparent one (an enlarge premultiplies the alpha band
+# inside, a shrink does not): pixel 2 of the 6, a third of the way from an opaque red pixel to a transparent blue one,
+# is red with alpha 170 (two thirds).
 def alpha_enlarge(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   img = Image.from_pixels(Bytes.from_list([255, 0, 0, 255, 0, 0, 255, 0]).unwrap!, 2, 1, 4, Image.Format.U8).unwrap!
   pixels = Image.to_pixels(Image.resize(img, 6, 1, Image.Kernel.Linear).unwrap!).unwrap!
