@@ -4,6 +4,27 @@
 import BDD from "std/bdd"
 import Image from "../image"
 
+struct GoldenInput
+  width: Int
+  height: Int
+  bands: Int
+  hex: String
+end
+
+struct GoldenCase
+  input: String
+  kernel: String
+  kind: String
+  width: Int
+  height: Int
+  hex: String
+end
+
+struct Golden
+  inputs: Map[String, GoldenInput]
+  cases: List[GoldenCase]
+end
+
 private
 
 FIXTURES = "specs/fixtures"
@@ -32,6 +53,15 @@ def main() -> Void
       "the pixels {string} as {int} by {int} with {int} bands of {string} resized to {int} by {int} differ by kernel",
       &kernels,
     ),
+    BDD.step(
+      "the {string} {string} resizes of the {string} image in the Pillow golden are within {int} levels of Pillow's",
+      &against_pillow,
+    ),
+    BDD.step(
+      "the pixels {string} as {int} by {int} with {int} bands of {string} enlarged to {int} by {int} are the same for Cubic, Lanczos 2 and Lanczos 3",
+      &lanczos_enlarge,
+    ),
+    BDD.step("an enlarge keeps the colour of a pixel that is next to a transparent one", &alpha_enlarge),
     BDD.step("a failed decode leaves no message behind", &clean_error),
     BDD.step("a resize to {int} by {int} is accepted", &accepted),
     BDD.step("{int} tasks decode {string} to the pixels of {string}", &parallel),
@@ -219,6 +249,52 @@ def kernels(ctx: BDD.Context, args: List[String]) -> BDD.Context
 
   distinct = by_kernel.uniq.size
   BDD.assert(ctx, distinct == 5, "#{distinct} of the 5 kernels gave different pixels")
+end
+
+# The resizes of one input and kernel in pillow_resize.json (written by pillow.py) against what Pillow made: the golden
+# holds each input and each size, so the enlarges and the shrinks of every factor on each axis are checked. A failure
+# lists each size that is too far, with its distance.
+def against_pillow(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  golden = JSON.decode(String.from_bytes(read("pillow_resize.json")).unwrap!, Golden).unwrap!
+  source = golden.inputs[args[2]]
+  pixels = OpenSSL.Digest.hexdecode(source.hex).unwrap!
+  cases = golden.cases.select(->(c) { c.input == args[2] and c.kernel == args[0] and c.kind == args[1] })
+  limit = args[3].to_i!
+  too_far: List[String] = []
+  for c in cases
+    img = Image.from_pixels(pixels, source.width, source.height, source.bands, Image.Format.U8).unwrap!
+    result = Image.resize(img, c.width, c.height, kernel_of(c.kernel)).unwrap!
+    Native.close(img)
+    gap = difference(Image.to_pixels(result).unwrap!, OpenSSL.Digest.hexdecode(c.hex).unwrap!)
+    if gap > limit
+      too_far = too_far.push("#{c.width}x#{c.height}: #{gap}")
+    end
+  end
+
+  BDD.assert(ctx, cases.size > 0 and too_far.empty?, "#{cases.size} sizes, too far: #{too_far.join(", ")}")
+end
+
+# libvips enlarges with Lanczos 2 and Lanczos 3 as with Cubic (it has no wider interpolator for an enlarge), so the
+# three give the same pixels; Pillow's LANCZOS is another filter.
+def lanczos_enlarge(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  img = from_raw(args)
+  width = args[5].to_i!
+  height = args[6].to_i!
+  pixels = ["cubic", "lanczos2", "lanczos3"].map do |name|
+    Image.to_pixels(Image.resize(img, width, height, kernel_of(name)).unwrap!).unwrap!
+  end
+
+  BDD.assert(ctx, pixels[0] == pixels[1] and pixels[0] == pixels[2], "Lanczos 2 or 3 enlarges other than Cubic")
+end
+
+# An enlarge keeps the colour of a pixel that is next to a transparent one (an enlarge premultiplies the alpha band
+# inside, a shrink does not): pixel 2 of the 6, a third of the way from an opaque red pixel to a transparent blue one,
+# is red with alpha 170 (two thirds).
+def alpha_enlarge(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  img = Image.from_pixels(Bytes.from_list([255, 0, 0, 255, 0, 0, 255, 0]).unwrap!, 2, 1, 4, Image.Format.U8).unwrap!
+  pixels = Image.to_pixels(Image.resize(img, 6, 1, Image.Kernel.Linear).unwrap!).unwrap!
+  middle = pixels.drop(8).take(4).to_a
+  BDD.assert(ctx, middle == [255, 0, 0, 170], "the pixel next to a transparent one is #{middle}")
 end
 
 # Each task makes, resizes and reads an image of its own, a large one so that libvips works on several tiles at once;
