@@ -6,7 +6,8 @@ Feature: Transforms of images
   rounded to u8, which the peer models alike.
   The source image is closed before the pixels are read, since a result keeps what it needs. The resize model is
   exact only when each integer shrink divides the size, so the scenarios use sizes that it does; the tolerance of 3
-  levels was measured with libvips 8.15 and 8.16, where the worst difference seen is 3 (no margin).
+  levels was measured with libvips 8.15 and 8.16, where the worst difference seen is 3 (no margin). An enlarge is not in
+  that model: Pillow's pixels are, in a golden.
 
   Scenario Outline: Crop, flip and rotate move pixels exactly
     Then the pixels "<raw>" as <width> by <height> with <bands> bands of "U8" under "<transform>" are the peer's within 0
@@ -71,12 +72,33 @@ Feature: Transforms of images
       | 16    | 12     |
       | 128   | 96     |
 
+  # pillow_resize.json is what Pillow 11.3.0 resizes (specs/fixtures/pillow.py writes it): a step edge, small images of
+  # blocks and of discs, each enlarged or shrunk by a different factor on each axis. An enlarge puts the centre of an
+  # output pixel at (x + 0.5) / scale - 0.5 of the input, as Pillow does, so a step edge is exact. The rest of the gap is
+  # the border (libvips repeats the edge pixel, Pillow drops the taps outside and normalises the others) and the rounding
+  # of each. The levels are the largest gap measured with libvips 8.16.1; a shrink has the gap it had before the golden.
+  Scenario Outline: Resize is within <levels> levels of Pillow's
+    Then the "<kernel>" "<kind>" resizes of the "<image>" image in the Pillow golden are within <levels> levels of Pillow's
+
+    Examples:
+      | kernel | kind    | image  | levels |
+      | linear | enlarge | step   | 0      |
+      | linear | enlarge | blocks | 1      |
+      | linear | shrink  | blocks | 3      |
+      | linear | mixed   | blocks | 2      |
+      | linear | enlarge | discs  | 1      |
+      | linear | shrink  | discs  | 9      |
+      | linear | mixed   | discs  | 8      |
+      | cubic  | enlarge | step   | 0      |
+      | cubic  | enlarge | blocks | 2      |
+      | cubic  | shrink  | blocks | 3      |
+      | cubic  | mixed   | blocks | 3      |
+      | cubic  | enlarge | discs  | 4      |
+      | cubic  | shrink  | discs  | 5      |
+      | cubic  | mixed   | discs  | 5      |
+
   Scenario: Each kernel gives its own pixels
     Then the pixels "photo.raw" as 64 by 48 with 3 bands of "U8" resized to 40 by 30 differ by kernel
-
-  # libvips enlarges with an interpolation that the peer does not model: only the size is compared.
-  Scenario: Resize enlarges
-    Then the pixels "rgb.raw" as 16 by 12 with 3 bands of "U8" under "resize 40 30" are the peer's within 255
 
   Scenario Outline: Colour conversions
     Then the pixels "<raw>" as <width> by <height> with <bands> bands of "U8" under "<transform>" are the peer's within <levels>

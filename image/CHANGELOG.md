@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Fix `resize` when it enlarges with `Linear`, `Cubic`, `Lanczos2` or `Lanczos3`: the centre of an output pixel is now at `(x + 0.5) / scale - 0.5` of the input, as Pillow, OpenCV and Hugging Face place it, where it was a fraction of an input pixel off (a step edge enlarged 2 times started one output pixel late). The pixels of an enlarged image change; a shrink and `Nearest` do not.
+
 ## [0.2.0] - 2026-11-25
 
 - Add the optional `kernel` of `resize`, the enum `Kernel` (`Nearest`, `Linear`, `Cubic`, `Lanczos2`, `Lanczos3`); the default is `Lanczos3`, so a call with no kernel gives the pixels it gave before.

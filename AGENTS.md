@@ -62,7 +62,8 @@ image/               images on libvips (a native module made with native-gen): i
                      the block (a spec checks it is current);
                      specs/ has the features, whose fixtures are written by specs/fixtures/peer.py (an independent PNG
                      codec and model of the transforms on Python's standard library, which also decodes what the
-                     module writes)
+                     module writes), and pillow.py there writes pillow_resize.json, what Pillow 11.3.0 resizes
+                     (installed with the hash of pillow-requirements.txt; CI reads the committed file)
 jobs/                jobs to produce and consume, with the backend swappable: jobs.agc is the API (the `Backend`
                      record, enqueue, fetch, ack, nack, extend, counts, close, discard, json, decode, memory, drain,
                      manual_clock), conformance.agc the suite that every backend passes (run_all),
