@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-11-26
 
 - Fix `resize` when it enlarges with `Linear`, `Cubic`, `Lanczos2` or `Lanczos3`: the centre of an output pixel is now at `(x + 0.5) / scale - 0.5` of the input, as Pillow, OpenCV and Hugging Face place it, where it was a fraction of an input pixel off (a step edge enlarged 2 times started one output pixel late). `Lanczos2` and `Lanczos3` enlarge as `Cubic`, as before. The pixels of an enlarged image change; a shrink and `Nearest` do not.
 
