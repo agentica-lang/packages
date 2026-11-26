@@ -15,6 +15,8 @@ Modes (the first argument):
                       dictionary indexes, repeated strings) at levels 1, 3 and 9: the frame and the SHA-256 of the data.
   arrow SEED COUNT     one line per frame written as Arrow writes a page (one segment, the content size and no
                       checksum): the frame, the SHA-256 of the data and its size.
+  checked SEED COUNT   one line per frame of words with a checksum, a few hundred bytes long (a compressed block with
+                      Huffman literals and sequences): the frame in hex and the SHA-256 of its data.
   version              the version of the `zstd` command line.
   multi SEED COUNT    the same lines for several frames that follow each other, with skippable frames between some
                       of them: the data is the content of every frame, one after the other.
@@ -223,6 +225,13 @@ def run_hand_made(seed, count):
     print(f"{frame.hex()}\t{digest(data)}")
 
 
+def run_checked(seed, count):
+    rng = random.Random(seed)
+    for _ in range(count):
+        data = make_input(rng, "words")[:1500]
+        print(f"{compress(rng, data, ['-3', '--check']).hex()}\t{digest(data)}")
+
+
 def run_valid(seed, count):
     rng = random.Random(seed)
     for i in range(count):
@@ -283,6 +292,8 @@ def main(argv):
         run_columnar(int(argv[2]), int(argv[3]))
     elif mode == "arrow":
         run_arrow(int(argv[2]), int(argv[3]))
+    elif mode == "checked":
+        run_checked(int(argv[2]), int(argv[3]))
     elif mode == "version":
         print(subprocess.run(["zstd", "--version"], capture_output=True, check=True).stdout.decode().strip())
     elif mode == "multi":

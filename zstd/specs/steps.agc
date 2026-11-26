@@ -7,8 +7,6 @@ import BDD from "std/bdd"
 
 def main() -> Void
   BDD.run([
-    BDD.step("the codec reads these frames:", &reads_fixed),
-    BDD.step("the codec refuses these frames:", &refuses_fixed),
     BDD.step("the peer writes {int} frames from the seed {int}", &valid_frames),
     BDD.step("the peer writes {int} multi-frame inputs from the seed {int}", &multi_frames),
     BDD.step("the peer writes {int} damaged frames from the seed {int}", &damaged_frames),
@@ -19,8 +17,9 @@ def main() -> Void
     BDD.step("the codec reads every frame as the peer says", &reads_as_peer_says),
     BDD.step("the codec refuses what the peer refuses and reads what the peer reads", &agrees_on_damaged),
     BDD.step("the peer writes {int} hand-made frames from the seed {int}", &hand_made_frames),
-    BDD.step("the frame {string} cut at every length", &cut_everywhere),
-    BDD.step("the frame {string} with every bit flipped in turn", &flipped_everywhere),
+    BDD.step("the peer writes {int} frames with a checksum from the seed {int}", &checked_frames),
+    BDD.step("the codec refuses the frame cut at every length", &cut_everywhere),
+    BDD.step("the codec gives the data or an error for the frame with every bit flipped in turn", &flipped_everywhere),
   ])
 end
 
@@ -120,33 +119,6 @@ def decode_requests(frames: List[String], limits: List[String]) -> List[String]
   answers
 end
 
-def reads_fixed(ctx: BDD.Context, _args: List[String]) -> BDD.Context
-  rows = BDD.table(ctx).drop(1)
-  answers = decode_requests(rows.map { |row| row[0] }, rows.map { |_| "#{LIMIT}" })
-  return BDD.assert(ctx, false, "the driver answered #{answers.size} of #{rows.size}") if answers.size != rows.size
-
-  for i in 0...rows.size
-    expected = "ok\t#{hex_of(OpenSSL.Digest.sha256(bytes_of(rows[i][1])))}"
-    return BDD.assert(ctx, false, "#{rows[i][0]} gave #{answers[i]}") if answers[i] != expected
-  end
-
-  BDD.assert(ctx, rows.size > 0, "no frames to check")
-end
-
-def refuses_fixed(ctx: BDD.Context, _args: List[String]) -> BDD.Context
-  rows = BDD.table(ctx).drop(1)
-  answers = decode_requests(rows.map { |row| row[0] }, rows.map { |row| row[1] })
-  return BDD.assert(ctx, false, "the driver answered #{answers.size} of #{rows.size}") if answers.size != rows.size
-
-  for i in 0...rows.size
-    if answers[i].split("\t").take(2) != ["error", rows[i][2]]
-      return BDD.assert(ctx, false, "#{rows[i][0]} gave #{answers[i]}")
-    end
-  end
-
-  BDD.assert(ctx, rows.size > 0, "no frames to check")
-end
-
 def reads_as_peer_says(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   rows = lines_of(ctx).map { |line| line.split("\t") }
   answers = decode_requests(rows.map { |row| row[0] }, rows.map { |_| "#{LIMIT}" })
@@ -195,21 +167,24 @@ def agrees_on_damaged(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   BDD.assert(ctx, same > 0 and refused > 0, "#{same} read, #{refused} refused, #{stricter} stricter")
 end
 
+def checked_frames(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  keep_lines(ctx, "checked", args[1].to_i!, args[0].to_i!)
+end
+
 # Every cut of the frame is an error of the malformed kind.
-def cut_everywhere(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  answers = drive(["cuts\t#{args[0]}"])
+def cut_everywhere(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  answers = drive(lines_of(ctx).map { |line| "cuts\t#{line.split("\t")[0]}" })
   BDD.assert(ctx, answers == ["ok=0 kinds=#{MALFORMED}"], "the cuts gave #{answers}")
 end
 
 # A frame with a checksum gives back its data or an error for each flipped bit; it never gives other data.
-def flipped_everywhere(ctx: BDD.Context, args: List[String]) -> BDD.Context
-  frame = args[0].split(":")[0]
-  data = args[0].split(":")[1]
-  answers = drive(["flips\t#{frame}\t#{data}"])
+def flipped_everywhere(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  row = lines_of(ctx)[0].split("\t")
+  answers = drive(["flips\t#{row[0]}\t#{row[1]}"])
   return BDD.assert(ctx, false, "the driver answered #{answers}") if answers.size != 1
 
   fields = answers[0].split(" ")
-  bits = (frame.length / 2) * 8
+  bits = (row[0].length / 2) * 8
   refused = fields[2].replace("refused=", "").to_i!
   same = fields[0].replace("same=", "").to_i!
   ok_other = fields[1] == "other=0"
@@ -219,14 +194,6 @@ def flipped_everywhere(ctx: BDD.Context, args: List[String]) -> BDD.Context
     "the flips gave #{answers[0]} of #{bits}",
   )
 end
-
-def bytes_of(text: String) -> Bytes
-  return "".bytes if text == "-"
-
-  OpenSSL.Digest.hexdecode(text).unwrap!
-end
-
-def hex_of(data: Bytes) -> String = OpenSSL.Digest.hexencode(data)
 
 def shown(text: String) -> String
   return text if text.length <= 60
