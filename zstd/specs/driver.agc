@@ -3,8 +3,8 @@
 ##
 ##   decode MAX FRAME_HEX    ->  `ok SHA256_OF_DATA_HEX` or `error KIND MESSAGE`
 ##   cuts FRAME_HEX          ->  the frame cut at every length below its own: `ok=N kinds=KIND,...`
-##   flips FRAME_HEX DATA    ->  the frame with each of its bits flipped, one at a time: how many gave DATA (hex),
-##                               other data or an error, and the kinds of the errors
+##   flips FRAME_HEX SHA256  ->  the frame with each of its bits flipped, one at a time: how many gave the data with that
+##                               SHA-256 (hex), other data or an error, and the kinds of the errors
 
 import Zstd from "../zstd"
 
@@ -26,12 +26,14 @@ def answer(parts: List[String]) -> String
 
   return cuts(bytes_of(parts[1])) if parts[0] == "cuts"
 
-  flips(bytes_of(parts[1]), bytes_of(parts[2]))
+  flips(bytes_of(parts[1]), parts[2])
 end
+
+def digest_of(data: Bytes) -> String = OpenSSL.Digest.hexencode(OpenSSL.Digest.sha256(data))
 
 def outcome(decoded: Result[Bytes]) -> String
   case decoded
-    ok(data) -> "ok\t#{OpenSSL.Digest.hexencode(OpenSSL.Digest.sha256(data))}"
+    ok(data) -> "ok\t#{digest_of(data)}"
     error(e) -> "error\t#{e.kind}\t#{e.message}"
   end
 end
@@ -49,7 +51,7 @@ def cuts(frame: Bytes) -> String
   "ok=#{accepted} kinds=#{kinds.to_a.sort.join(",")}"
 end
 
-def flips(frame: Bytes, data: Bytes) -> String
+def flips(frame: Bytes, digest: String) -> String
   same = 0
   other = 0
   refused = 0
@@ -59,7 +61,7 @@ def flips(frame: Bytes, data: Bytes) -> String
       flipped = frame.take(i) + Bytes.from_list([frame[i].bit_xor(1.shift_left(bit))]).unwrap! + frame.drop(i + 1)
       case Zstd.decompress(flipped, LIMIT)
         ok(back) ->
-          if back == data
+          if digest_of(back) == digest
             same += 1
           else
             other += 1
