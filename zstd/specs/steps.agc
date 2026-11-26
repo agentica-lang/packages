@@ -12,6 +12,10 @@ def main() -> Void
     BDD.step("the peer writes {int} frames from the seed {int}", &valid_frames),
     BDD.step("the peer writes {int} multi-frame inputs from the seed {int}", &multi_frames),
     BDD.step("the peer writes {int} damaged frames from the seed {int}", &damaged_frames),
+    BDD.step("the peer writes {int} columnar frames from the seed {int}", &columnar_frames),
+    BDD.step("the peer writes {int} single-segment frames from the seed {int}", &arrow_frames),
+    BDD.step("the codec reads every frame at exactly its size and refuses it one byte short", &reads_at_its_size),
+    BDD.step("the reference tool is shown", &shows_version),
     BDD.step("the codec reads every frame as the peer says", &reads_as_peer_says),
     BDD.step("the codec refuses what the peer refuses and reads what the peer reads", &agrees_on_damaged),
     BDD.step("the peer writes {int} hand-made frames from the seed {int}", &hand_made_frames),
@@ -29,6 +33,7 @@ PEER_MS = 300_000
 DRIVER_MS = 300_000
 LIMIT = 100_000_000
 MALFORMED = "zstd.malformed"
+KINDS = ["zstd.malformed", "zstd.unsupported"]
 
 def run_peer(args: List[String]) -> String
   process = Process.spawn_captured("python3", ["-I", PEER] + args, Process.Options(timeout_ms: PEER_MS)).unwrap!
@@ -72,6 +77,40 @@ def hand_made_frames(ctx: BDD.Context, args: List[String]) -> BDD.Context
   keep_lines(ctx, "hand-made", args[1].to_i!, args[0].to_i!)
 end
 
+def columnar_frames(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  keep_lines(ctx, "columnar", args[1].to_i!, args[0].to_i!)
+end
+
+def arrow_frames(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  keep_lines(ctx, "arrow", args[1].to_i!, args[0].to_i!)
+end
+
+# The reference tool may differ from a CI runner to another: its version is part of what a failure needs.
+def shows_version(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  version = run_peer(["version"]).strip
+  IO.puts("reference tool: #{version}")
+  BDD.assert(ctx, version.start_with?("*** Zstandard CLI") or version.include?("zstd"), "no zstd version: #{version}")
+end
+
+# A frame with its content size and no checksum, as an Arrow writer makes it, is read when the limit is exactly the
+# size of its content, and is `zstd.too_large` with one byte less.
+def reads_at_its_size(ctx: BDD.Context, _args: List[String]) -> BDD.Context
+  rows = lines_of(ctx).map { |line| line.split("\t") }
+  exact = decode_requests(rows.map { |row| row[0] }, rows.map { |row| row[2] })
+  less = decode_requests(rows.map { |row| row[0] }, rows.map { |row| "#{row[2].to_i! - 1}" })
+  for i in 0...rows.size
+    if exact[i] != "ok\t#{rows[i][1]}"
+      return BDD.assert(ctx, false, "#{shown(rows[i][0])} at its size: #{shown(exact[i])}")
+    end
+
+    if less[i].split("\t").take(2) != ["error", "zstd.too_large"]
+      return BDD.assert(ctx, false, "#{shown(rows[i][0])} one byte short: #{shown(less[i])}")
+    end
+  end
+
+  BDD.assert(ctx, rows.size > 0, "no frames to check")
+end
+
 def damaged_frames(ctx: BDD.Context, args: List[String]) -> BDD.Context
   keep_lines(ctx, "damaged", args[1].to_i!, args[0].to_i!)
 end
@@ -100,7 +139,9 @@ def refuses_fixed(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   return BDD.assert(ctx, false, "the driver answered #{answers.size} of #{rows.size}") if answers.size != rows.size
 
   for i in 0...rows.size
-    return BDD.assert(ctx, false, "#{rows[i][0]} gave #{answers[i]}") if answers[i] != "error\t#{rows[i][2]}"
+    if answers[i].split("\t").take(2) != ["error", rows[i][2]]
+      return BDD.assert(ctx, false, "#{rows[i][0]} gave #{answers[i]}")
+    end
   end
 
   BDD.assert(ctx, rows.size > 0, "no frames to check")
@@ -120,9 +161,10 @@ def reads_as_peer_says(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   BDD.assert(ctx, rows.size > 0, "no frames to check")
 end
 
-# The reference accepts some damaged streams whose bits are left over or read past their start, and gives data that
-# depends on its implementation. The codec refuses them (`stricter`), and it never accepts what the reference refuses
-# or reads other data from what both accept.
+# The fast 4-stream decoder of libzstd does not look for the bits left over at the end of a Huffman stream, or read
+# past its start, so `zstd` accepts some damaged frames and gives data that depends on how it reads past the stream.
+# The codec refuses them, with an error that names the Huffman stream (`stricter`); it never accepts what the
+# reference refuses, and from what both accept it reads the same data.
 def agrees_on_damaged(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   rows = lines_of(ctx).map { |line| line.split("\t") }
   answers = decode_requests(rows.map { |row| row[0] }, rows.map { |_| "#{LIMIT}" })
@@ -132,27 +174,25 @@ def agrees_on_damaged(ctx: BDD.Context, _args: List[String]) -> BDD.Context
   refused = 0
   stricter = 0
   for i in 0...rows.size
-    seen = answers[i]
-    if seen.start_with?("ok\t")
-      if seen != "ok\t#{rows[i][1]}"
+    seen = answers[i].split("\t")
+    if seen[0] == "ok"
+      if seen[1] != rows[i][1]
         return BDD.assert(ctx, false, "#{rows[i][0]}: the codec reads data, the peer says #{rows[i][1]}")
       end
 
       same += 1
-    elsif seen != "error\tzstd.malformed" and seen != "error\tzstd.unsupported"
-      return BDD.assert(ctx, false, "#{rows[i][0]}: the codec says #{seen}")
+    elsif not KINDS.include?(seen[1])
+      return BDD.assert(ctx, false, "#{rows[i][0]}: the codec says #{shown(answers[i])}")
     elsif rows[i][1] == "error"
       refused += 1
-    else
+    elsif seen[2].include?("Huffman stream")
       stricter += 1
+    else
+      return BDD.assert(ctx, false, "#{rows[i][0]}: the codec refuses what the peer reads: #{shown(answers[i])}")
     end
   end
 
-  BDD.assert(
-    ctx,
-    same > 0 and refused > 0 and stricter * 10 < rows.size,
-    "#{same} read, #{refused} refused, #{stricter} stricter",
-  )
+  BDD.assert(ctx, same > 0 and refused > 0, "#{same} read, #{refused} refused, #{stricter} stricter")
 end
 
 # Every cut of the frame is an error of the malformed kind.

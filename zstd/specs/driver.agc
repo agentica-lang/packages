@@ -1,7 +1,7 @@
 ## The program under test of the specs: it decodes the requests that it reads, one per line, in a process of its own,
 ## where the step budget of a scenario does not count.
 ##
-##   decode MAX FRAME_HEX    ->  `ok SHA256_OF_DATA_HEX` or `error KIND`
+##   decode MAX FRAME_HEX    ->  `ok SHA256_OF_DATA_HEX` or `error KIND MESSAGE`
 ##   cuts FRAME_HEX          ->  the frame cut at every length below its own: `ok=N kinds=KIND,...`
 ##   flips FRAME_HEX DATA    ->  the frame with each of its bits flipped, one at a time: how many gave DATA (hex),
 ##                               other data or an error, and the kinds of the errors
@@ -32,7 +32,7 @@ end
 def outcome(decoded: Result[Bytes]) -> String
   case decoded
     ok(data) -> "ok\t#{OpenSSL.Digest.hexencode(OpenSSL.Digest.sha256(data))}"
-    error(e) -> "error\t#{e.kind}"
+    error(e) -> "error\t#{e.kind}\t#{e.message}"
   end
 end
 

@@ -122,7 +122,7 @@ def build(counts: List[Int], accuracy: Int) -> Result[Table]
     symbol = symbols[u]
     state = following[symbol]
     following = following.set(symbol, state + 1)
-    bits = accuracy - Bits.highbit(state)
+    bits = accuracy - Bits.HIGH_BITS[state]
     base = state.shift_left(bits) - size
     entries = entries.push(symbol + bits.shift_left(8) + base.shift_left(16))
   end

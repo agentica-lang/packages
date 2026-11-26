@@ -11,6 +11,11 @@ Modes (the first argument):
   hand-made SEED 0    five frames written by hand: sequences whose tables are one repeated symbol, with raw and RLE
                       literals, a count of 20, 200 and 32600 sequences (the three forms of the count), and one frame
                       of repeated offsets with no literals.
+  columnar SEED COUNT  one line per frame of 1 to 3 MB of a column as a Parquet writer lays it out (int64 runs, float64,
+                      dictionary indexes, repeated strings) at levels 1, 3 and 9: the frame and the SHA-256 of the data.
+  arrow SEED COUNT     one line per frame written as Arrow writes a page (one segment, the content size and no
+                      checksum): the frame, the SHA-256 of the data and its size.
+  version              the version of the `zstd` command line.
   multi SEED COUNT    the same lines for several frames that follow each other, with skippable frames between some
                       of them: the data is the content of every frame, one after the other.
   damaged SEED COUNT  one line per damaged frame (cut, a bit flipped, a byte changed, bytes added): the frame in hex,
@@ -19,6 +24,7 @@ Modes (the first argument):
 
 import hashlib
 import random
+import struct
 import subprocess
 import sys
 import tempfile
@@ -156,6 +162,58 @@ def hand_made_repeat(rng, count):
     return frame, bytes(out)
 
 
+COLUMNS = ("int64 runs", "float64", "dictionary indexes", "repeated strings")
+
+
+def columnar(rng, kind):
+    """A column as a Parquet writer lays it out, between 1 and 3 MB."""
+    if kind == "int64 runs":
+        value, out = rng.randrange(1 << 40), bytearray()
+        while len(out) < rng.randint(1_000_000, 3_000_000):
+            value += rng.choice((0, 0, 1, 1, 2, 7))
+            out += struct.pack("<q", value) * rng.randint(1, 200)
+        return bytes(out)
+    if kind == "float64":
+        prices = [round(rng.uniform(0, 500), 2) for _ in range(rng.randint(20, 120))]
+        out = bytearray()
+        while len(out) < rng.randint(1_000_000, 3_000_000):
+            out += struct.pack("<d", rng.choice(prices)) * rng.randint(1, 12)
+        return bytes(out)
+    if kind == "dictionary indexes":
+        out, index = bytearray(), 0
+        while len(out) < rng.randint(1_000_000, 3_000_000):
+            index = rng.randrange(40) if rng.random() < 0.04 else index
+            out.append(index)
+        return bytes(out)
+    words = [bytes(rng.choices(b"abcdefghijklmnopqrstuvwxyz", k=rng.randint(3, 14))) for _ in range(30)]
+    rows = [b"".join(struct.pack("<I", len(w)) + w for w in rng.choices(words, k=rng.randint(1, 4))) for _ in range(40)]
+    out = bytearray()
+    while len(out) < rng.randint(1_000_000, 3_000_000):
+        out += rng.choice(rows)
+    return bytes(out)
+
+
+def run_columnar(seed, count):
+    rng = random.Random(seed)
+    for i in range(count):
+        data = columnar(rng, COLUMNS[(seed + i) % len(COLUMNS)])
+        level = ("-1", "-3", "-9")[(seed * 7 + i) % 3]
+        print(f"{compress(rng, data, [level]).hex()}\t{digest(data)}")
+
+
+def run_arrow(seed, count):
+    """What Arrow writes for a page: one segment, the content size in the header and no checksum."""
+    rng = random.Random(seed)
+    for i in range(count):
+        data = columnar(rng, COLUMNS[i % len(COLUMNS)])[: rng.randint(2_000, 60_000)]
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "page"
+            path.write_bytes(data)
+            frame = subprocess.run(["zstd", "-q", "-c", "-3", "--no-check", str(path)], capture_output=True, check=True).stdout
+        assert frame[4] & 0x24 == 0x20, "not a single segment frame with no checksum"
+        print(f"{frame.hex()}\t{digest(data)}\t{len(data)}")
+
+
 def run_hand_made(seed, count):
     rng = random.Random(seed)
     for sequences, rle in ((20, False), (200, False), (200, True), (32600, True)):
@@ -221,6 +279,12 @@ def main(argv):
         run_valid(int(argv[2]), int(argv[3]))
     elif mode == "hand-made":
         run_hand_made(int(argv[2]), int(argv[3]))
+    elif mode == "columnar":
+        run_columnar(int(argv[2]), int(argv[3]))
+    elif mode == "arrow":
+        run_arrow(int(argv[2]), int(argv[3]))
+    elif mode == "version":
+        print(subprocess.run(["zstd", "--version"], capture_output=True, check=True).stdout.decode().strip())
     elif mode == "multi":
         run_multi(int(argv[2]), int(argv[3]))
     elif mode == "damaged":

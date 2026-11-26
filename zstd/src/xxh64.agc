@@ -69,6 +69,7 @@ struct Factor
 end
 
 # The sum and the product of two 64-bit values, wrapped: `Int` stops at overflow, so each works on pieces that fit.
+# `Int.wrapping_add` and `Int.wrapping_mul` (agentica #984, after Agentica 0.37.0) replace both, and the limbs.
 def add(a: Int, b: Int) -> Int
   low = a.bit_and(LOW32) + b.bit_and(LOW32)
   high = a.shift_right_unsigned(32) + b.shift_right_unsigned(32) + low.shift_right(32)

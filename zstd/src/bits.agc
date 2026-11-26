@@ -3,6 +3,9 @@
 ## `MASKS[n]` is the `n` low bits set, for `n` up to 32.
 MASKS = (0...33).map { |n| 1.shift_left(n) - 1 }
 
+## `HIGH_BITS[n]` is the index of the highest bit of `n`, for `n` below 1024.
+HIGH_BITS = (0...1024).map { |n| (0...11).select { |k| n.shift_right(k) > 0 }.size - 1 }
+
 ## The `width` bytes at `pos` as a little-endian integer; the caller checked that they are in `data`.
 def read_le(data: Bytes, pos: Int, width: Int) -> Int
   value = 0

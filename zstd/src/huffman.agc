@@ -51,7 +51,7 @@ end
 
 ## Decodes `count` literals from the bytes `start` up to `stop`: one stream, or four when `four` is set.
 def decode(table: Table, data: Bytes, start: Int, stop: Int, count: Int, four: Bool) -> Result[Bytes]
-  return from_values(try decode_stream(table, data, start, stop, count)) if not four
+  return from_values(try decode_stream(table, data, start, stop, count, [])) if not four
   return Errors.malformed("truncated Huffman jump table") if stop - start < 10
 
   first = Bits.read_le(data, start, 2)
@@ -65,14 +65,13 @@ def decode(table: Table, data: Bytes, start: Int, stop: Int, count: Int, four: B
   return Errors.malformed("too few literals for four streams") if last < 0
 
   from = start + 6
-  a = try decode_stream(table, data, from, from + first, segment)
+  values = try decode_stream(table, data, from, from + first, segment, [])
   from = from + first
-  b = try decode_stream(table, data, from, from + second, segment)
+  values = try decode_stream(table, data, from, from + second, segment, values)
   from = from + second
-  c = try decode_stream(table, data, from, from + third, segment)
+  values = try decode_stream(table, data, from, from + third, segment, values)
   from = from + third
-  d = try decode_stream(table, data, from, stop, last)
-  from_values(a + b + c + d)
+  from_values(try decode_stream(table, data, from, stop, last, values))
 end
 
 private
@@ -150,13 +149,11 @@ def build(listed: List[Int]) -> Result[Table]
 
   weights = listed.push(Bits.highbit(rest) + 1)
   entries: List[Int] = []
-  for w in 1..top
-    width = top + 1 - w
-    run = 1.shift_left(w - 1)
-    for symbol in 0...weights.size
-      if weights[symbol] == w
-        entries = entries + List.repeat(symbol + width.shift_left(8), run)
-      end
+  ordered = (0...weights.size).to_a.sort_by { |symbol| weights[symbol] }
+  for symbol in ordered
+    w = weights[symbol]
+    if w > 0
+      entries = entries + List.repeat(symbol + (top + 1 - w).shift_left(8), 1.shift_left(w - 1))
     end
   end
 
@@ -165,10 +162,11 @@ end
 
 # The stream is read from its last byte: the bits under the highest set bit of that byte come first, most
 # significant first. `acc` holds `avail` bits not used yet, with older bits above them that the masks cut off, and
-# the zeros that follow the first byte count in `padded`: the stream is used up exactly when no real bit is left. The
-# reference decoder accepts a stream with bits left over, or one read past its start, and gives data that depends on
-# its implementation; this one refuses both.
-def decode_stream(table: Table, data: Bytes, first: Int, stop: Int, count: Int) -> Result[List[Int]]
+# the zeros that follow the first byte count in `padded`: the stream is used up exactly when no real bit is left. A
+# stream with bits left over, or read past its start, is refused, as the scalar decoder of libzstd does (its fast
+# 4-stream decoder skips that check). The refill is written out in the loop: a function cannot change `acc`, `avail`
+# and `pos` of its caller.
+def decode_stream(table: Table, data: Bytes, first: Int, stop: Int, count: Int, before: List[Int]) -> Result[List[Int]]
   return Errors.malformed("an empty Huffman stream") if stop <= first
 
   last = data[stop - 1]
@@ -181,7 +179,7 @@ def decode_stream(table: Table, data: Bytes, first: Int, stop: Int, count: Int) 
   entries = table.entries
   max_bits = table.max_bits
   mask = Bits.MASKS[max_bits]
-  out: List[Int] = []
+  out = before
   for _ in 0...count
     if avail < max_bits
       while avail < 56

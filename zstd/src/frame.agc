@@ -8,7 +8,7 @@ import State from "state"
 import Xxh64 from "xxh64"
 
 ## Decodes every frame of `data` and joins their content. A skippable frame adds nothing.
-def decode(data: Bytes, max_size: Int) -> Result[Bytes]
+def decode(data: Bytes, max_bytes: Int, verify: Bool) -> Result[Bytes]
   return Errors.malformed("no frame in an empty input") if data.empty?
 
   parts: List[Bytes] = []
@@ -19,7 +19,7 @@ def decode(data: Bytes, max_size: Int) -> Result[Bytes]
 
     magic = Bits.read_le(data, pos, 4)
     if magic == MAGIC
-      frame = try read_frame(data, pos + 4, max_size - total)
+      frame = try read_frame(data, pos + 4, max_bytes - total, verify)
       parts = parts.push(frame.content)
       total = total + frame.content.size
       pos = frame.next
@@ -34,6 +34,8 @@ def decode(data: Bytes, max_size: Int) -> Result[Bytes]
       return Errors.malformed("no frame magic at byte #{pos}")
     end
   end
+
+  return ok(parts[0]) if parts.size == 1
 
   ok(Bytes.concat(parts))
 end
@@ -114,7 +116,7 @@ def read_header(data: Bytes, start: Int) -> Result[Header]
   ok(Header(window: window, content_size: content_size, checksum: descriptor.bit_and(4) != 0, next: pos + size_bytes))
 end
 
-def read_frame(data: Bytes, start: Int, room: Int) -> Result[Frame]
+def read_frame(data: Bytes, start: Int, room: Int, verify: Bool) -> Result[Frame]
   header = try read_header(data, start)
   if header.content_size > room
     return Errors.too_large("the frame says it holds #{header.content_size} bytes, over the limit")
@@ -135,46 +137,73 @@ def read_frame(data: Bytes, start: Int, room: Int) -> Result[Frame]
     size = word.shift_right(3)
     pos = pos + 3
     return Errors.malformed("a block of the reserved type at byte #{pos - 3}") if kind == 3
-
     return Errors.malformed("a block of #{size} bytes over #{limits.block_max}") if size > limits.block_max
 
-    if kind == 0
-      return Errors.malformed("truncated raw block at byte #{pos}") if size > data.size - pos
-      return Errors.too_large("the content is over the limit") if state.history.produced + size > room
-
-      state = state.with(history: History.append(state.history, data.slice(pos, size)))
-      pos = pos + size
-    elsif kind == 1
-      return Errors.malformed("truncated RLE block at byte #{pos}") if pos >= data.size
-      return Errors.too_large("the content is over the limit") if state.history.produced + size > room
-
-      state = state.with(history: History.append(state.history, History.repeat(data.slice(pos, 1), size)))
-      pos = pos + 1
-    else
-      return Errors.malformed("truncated block at byte #{pos}") if size > data.size - pos
-
-      state = try Block.decode(state, data.slice(pos, size), limits)
-      return Errors.too_large("the content is over the limit") if state.history.produced > room
-
-      pos = pos + size
+    state = case kind
+      0 -> try raw_block(state, data, pos, size, room)
+      1 -> try rle_block(state, data, pos, size, room)
+      _ -> try compressed_block(state, data, pos, size, room, limits)
     end
+
+    pos = pos + block_length(kind, size)
   end
 
   content = History.output(state.history)
+  pos = try read_trailer(data, pos, header, content, verify)
+  ok(Frame(content: content, next: pos))
+end
+
+def raw_block(state: State.State, data: Bytes, pos: Int, size: Int, room: Int) -> Result[State.State]
+  return Errors.malformed("truncated raw block at byte #{pos}") if size > data.size - pos
+  return Errors.too_large("the content is over the limit") if state.history.produced + size > room
+
+  ok(state.with(history: History.append(state.history, data.slice(pos, size))))
+end
+
+def rle_block(state: State.State, data: Bytes, pos: Int, size: Int, room: Int) -> Result[State.State]
+  return Errors.malformed("truncated RLE block at byte #{pos}") if pos >= data.size
+  return Errors.too_large("the content is over the limit") if state.history.produced + size > room
+
+  ok(state.with(history: History.append(state.history, History.repeat(data.slice(pos, 1), size))))
+end
+
+def compressed_block(
+  state: State.State,
+  data: Bytes,
+  pos: Int,
+  size: Int,
+  room: Int,
+  limits: State.Limits,
+) -> Result[State.State]
+  return Errors.malformed("truncated block at byte #{pos}") if size > data.size - pos
+
+  after = try Block.decode(state, data.slice(pos, size), limits)
+  return Errors.too_large("the content is over the limit") if after.history.produced > room
+
+  ok(after)
+end
+
+# An RLE block holds one byte, whatever its size says.
+def block_length(kind: Int, size: Int) -> Int
+  return 1 if kind == 1
+
+  size
+end
+
+# The size and the checksum that follow the last block, and the byte after them.
+def read_trailer(data: Bytes, pos: Int, header: Header, content: Bytes, verify: Bool) -> Result[Int]
   if header.content_size >= 0 and content.size != header.content_size
     return Errors.malformed("the frame says #{header.content_size} bytes and holds #{content.size}")
   end
 
-  if header.checksum
-    return Errors.malformed("truncated checksum at byte #{pos}") if data.size - pos < 4
-    if Bits.read_le(data, pos, 4) != Xxh64.hash(content).bit_and(0xFFFFFFFF)
-      return Errors.malformed("the checksum of the content does not match")
-    end
+  return ok(pos) if not header.checksum
+  return Errors.malformed("truncated checksum at byte #{pos}") if data.size - pos < 4
 
-    pos = pos + 4
+  if verify and Bits.read_le(data, pos, 4) != Xxh64.hash(content).bit_and(0xFFFFFFFF)
+    return Errors.malformed("the checksum of the content does not match")
   end
 
-  ok(Frame(content: content, next: pos))
+  ok(pos + 4)
 end
 
 def min_of(a: Int, b: Int) -> Int

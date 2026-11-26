@@ -50,7 +50,7 @@ def output(history: History) -> Bytes = Bytes.concat(history.chunks.push(history
 
 private
 
-CHUNK = 4096
+CHUNK = 512
 
 def window(history: History, start: Int, length: Int) -> Bytes
   chunks = history.chunks

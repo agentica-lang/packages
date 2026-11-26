@@ -121,7 +121,8 @@ def load(mode: Int, kind: Kind, block: Bytes, pos: Int, previous: Optional[Fse.T
 end
 
 # The bits are read from the last byte of the block backwards, as in `Huffman.decode_stream`, with `acc` and `avail`
-# for the bits not used yet. A sequence reads at most 47 bits for its offset and match length and 42 for the rest, so
+# for the bits not used yet; the refills are written out in the loop, since a function cannot change the `acc`, `avail`
+# and `pos` of its caller. A sequence reads at most 47 bits for its offset and match length and 42 for the rest, so
 # it refills (up to 56 bits) when fewer are left than it needs.
 def execute(state: State.State, plan: Plan, literals: Bytes, block: Bytes, limits: State.Limits) -> Result[State.State]
   stop = block.size
@@ -260,17 +261,26 @@ def execute(state: State.State, plan: Plan, literals: Bytes, block: Bytes, limit
       return Errors.malformed("a block that writes over #{block_max} bytes")
     end
 
-    if literal_length > 0
-      history = History.append(history, literals.slice(used, literal_length))
-      used = used + literal_length
-      produced = produced + literal_length
+    if offset > produced + literal_length
+      return Errors.malformed("offset #{offset} over the #{produced + literal_length} bytes written")
     end
 
-    return Errors.malformed("offset #{offset} over the #{produced} bytes written") if offset > produced
     return Errors.malformed("offset #{offset} over the window #{window}") if offset > window
 
-    history = History.append(history, History.match(history, offset, match_length))
-    produced = produced + match_length
+    if literal_length > 0 and offset >= literal_length + match_length
+      # The match lies before the literals: one append for both.
+      piece = History.match(history, offset - literal_length, match_length)
+      history = History.append(history, literals.slice(used, literal_length) + piece)
+    else
+      if literal_length > 0
+        history = History.append(history, literals.slice(used, literal_length))
+      end
+
+      history = History.append(history, History.match(history, offset, match_length))
+    end
+
+    used = used + literal_length
+    produced = produced + literal_length + match_length
   end
 
   return Errors.malformed("the sequence bits do not end with the last sequence") if pos >= first or avail != padded

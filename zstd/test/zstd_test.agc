@@ -1,6 +1,10 @@
+import Zstd from "../zstd"
 import Xxh64 from "../src/xxh64"
 
 private
+
+# A frame with a checksum, made by `zstd`: the text "a", then the 4 bytes of the checksum.
+FRAME = "28b52ffd0458090000615b6e8ca9"
 
 # The bytes (i * 7 + 3) % 256 for i below size.
 def sample(size: Int) -> Bytes = Bytes.from_list((0...size).map { |i| (i * 7 + 3) % 256 }).unwrap!
@@ -27,4 +31,20 @@ def test_xxh64_of_samples_matches_zstd() -> Result[Void]
   try Test.eq(low(sample(45)), 0x897C4B41)
   try Test.eq(low(sample(100)), 0x170FE531)
   Test.eq(low(sample(257)), 0xE4F822FA)
+end
+
+def frame_bytes(hex: String) -> Bytes = OpenSSL.Digest.hexdecode(hex).unwrap!
+
+def test_a_wrong_checksum_is_refused_unless_verify_is_false() -> Result[Void]
+  wrong = frame_bytes("28b52ffd0458090000615b6e8caa")
+  try Test.eq(Zstd.decompress(frame_bytes(FRAME), 10), ok("a".bytes))
+  try Test.eq(Zstd.decompress(wrong, 10).ok?, false)
+  Test.eq(Zstd.decompress(wrong, 10, false), ok("a".bytes))
+end
+
+def test_verify_false_still_needs_the_checksum_bytes() -> Result[Void]
+  cut = frame_bytes("28b52ffd0458090000615b6e8c")
+  try Test.eq(Zstd.decompress(cut, 10, false).ok?, false)
+  try Test.eq(Zstd.decompress(frame_bytes(FRAME), 0, false).ok?, false)
+  Test.eq(Zstd.decompress(frame_bytes(FRAME), 1), ok("a".bytes))
 end
