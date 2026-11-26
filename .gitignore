@@ -7,3 +7,4 @@ site/mounts.toml
 .hugo_build.lock
 site/data/catalog.json
 site/assets/jsconfig.json
+__pycache__/
