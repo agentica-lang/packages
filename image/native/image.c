@@ -8,6 +8,9 @@
 /* The few libvips and glib calls of the module, declared here: vips.h needs the include paths of glib, which a
    `build` table cannot give. Their ABI is stable. */
 typedef struct _VipsImage VipsImage;
+typedef struct _VipsInterpolate VipsInterpolate;
+typedef struct _VipsArea VipsArea;
+typedef struct _VipsArrayInt VipsArrayInt;
 extern int vips_init(const char *argv0);
 extern char *vips_error_buffer_copy(void);
 extern int vips_version(int flag);
@@ -21,9 +24,9 @@ extern VipsImage *vips_image_copy_memory(VipsImage *image);
 extern int vips_copy(VipsImage *in, VipsImage **out, ...);
 extern int vips_resize(VipsImage *in, VipsImage **out, double scale, ...);
 extern int vips_affine(VipsImage *in, VipsImage **out, double a, double b, double c, double d, ...);
-extern void *vips_interpolate_new(const char *nickname);
-extern void *vips_array_int_newv(int n, ...);
-extern void vips_area_unref(void *area);
+extern VipsInterpolate *vips_interpolate_new(const char *nickname);
+extern VipsArrayInt *vips_array_int_newv(int n, ...);
+extern void vips_area_unref(VipsArea *area);
 extern int vips_extract_area(VipsImage *in, VipsImage **out, int left, int top, int width, int height, ...);
 /* An enum without a negative member is an unsigned int. */
 extern int vips_flip(VipsImage *in, VipsImage **out, unsigned direction, ...);
@@ -53,8 +56,9 @@ enum { MULTIBAND = 0, B_W = 1, SRGB = 22, RGB16 = 25, GREY16 = 26 };
 #define SIDE_MESSAGE "the width and the height must be at most 10000000"
 /* The VipsKernel of each image_Kernel_tag, in the order of the enum. */
 static const int vips_kernels[] = {0 /* NEAREST */, 1 /* LINEAR */, 2 /* CUBIC */, 4 /* LANCZOS2 */, 5 /* LANCZOS3 */};
-/* The interpolator of an enlarge for each image_Kernel_tag: the one libvips picks in vips_resize, whose own enlarge puts
-   the centre of an output pixel a bit away from where Pillow, OpenCV and Hugging Face put it. */
+/* The interpolator of an enlarge for each image_Kernel_tag: the one libvips picks in vips_resize (Lanczos enlarges as
+   Cubic), whose own enlarge puts the centre of an output pixel a bit away from where Pillow, OpenCV and Hugging Face put
+   it. Nearest never gets here: its entry is there to keep the index. */
 static const char *const enlarge_interpolators[] = {"nearest", "bilinear", "bicubic", "bicubic", "bicubic"};
 enum { EXTEND_COPY = 1 };
 enum { HORIZONTAL, VERTICAL };
@@ -228,7 +232,7 @@ an_term image_to_pixels(an_env *env, struct image_Image_state *image) {
 static double centre_shift(double scale) { return scale > 1 ? 0.5 * (1 - 1 / scale) : 0; }
 
 /* An enlarge on one axis or both: the axis that shrinks goes first, through vips_resize, and then an affine puts every
-   output pixel centre where Pillow's resize does. */
+   output pixel centre where Pillow's resize does. 0 is done, -1 a libvips error and 1 a size other than the target. */
 static int enlarge(VipsImage *in, VipsImage **out, int64_t width, int64_t height, double horizontal, double vertical,
                    int kernel) {
   VipsImage *shrunk = in;
@@ -237,16 +241,21 @@ static int enlarge(VipsImage *in, VipsImage **out, int64_t width, int64_t height
                     vips_kernels[kernel], NULL) != 0) {
       return -1;
     }
+    if ((horizontal < 1 && vips_image_get_width(shrunk) != width) ||
+        (vertical < 1 && vips_image_get_height(shrunk) != height)) {
+      g_object_unref(shrunk);
+      return 1;
+    }
   }
-  void *interpolator = vips_interpolate_new(enlarge_interpolators[kernel]);
-  void *area = vips_array_int_newv(4, 0, 0, (int)width, (int)height);
+  VipsInterpolate *interpolator = vips_interpolate_new(enlarge_interpolators[kernel]);
+  VipsArrayInt *area = vips_array_int_newv(4, 0, 0, (int)width, (int)height);
   int status = -1;
   if (interpolator && area) {
     status = vips_affine(shrunk, out, horizontal > 1 ? horizontal : 1, 0.0, 0.0, vertical > 1 ? vertical : 1,
                          "interpolate", interpolator, "oarea", area, "idx", centre_shift(horizontal), "idy",
                          centre_shift(vertical), "extend", EXTEND_COPY, NULL);
   }
-  if (area) vips_area_unref(area);
+  if (area) vips_area_unref((VipsArea *)area);
   if (interpolator) g_object_unref(interpolator);
   if (shrunk != in) g_object_unref(shrunk);
   return status;
@@ -262,13 +271,14 @@ an_term image_resize(an_env *env, struct image_Image_state *image, int64_t width
   VipsImage *out;
   double horizontal = (double)width / vips_image_get_width(in);
   double vertical = (double)height / vips_image_get_height(in);
-  int status;
+  int status; /* vips_resize gives 0 or -1 */
   if ((horizontal > 1 || vertical > 1) && kernel.tag != IMAGE_Kernel_Nearest) {
     status = enlarge(in, &out, width, height, horizontal, vertical, kernel.tag);
   } else {
     status = vips_resize(in, &out, horizontal, "vscale", vertical, "kernel", vips_kernels[kernel.tag], NULL);
   }
-  if (status != 0) return fail(env, "cannot resize the image");
+  if (status < 0) return fail(env, "cannot resize the image");
+  if (status > 0) return refuse(env, "cannot resize the image to that size");
   if (vips_image_get_width(out) != width || vips_image_get_height(out) != height) {
     g_object_unref(out);
     return refuse(env, "cannot resize the image to that size");

@@ -87,6 +87,7 @@ Feature: Transforms of images
       | linear | shrink  | blocks | 3      |
       | linear | mixed   | blocks | 2      |
       | linear | enlarge | discs  | 1      |
+      | linear | enlarge | alpha  | 4      |
       | linear | shrink  | discs  | 9      |
       | linear | mixed   | discs  | 8      |
       | cubic  | enlarge | step   | 0      |
@@ -96,6 +97,12 @@ Feature: Transforms of images
       | cubic  | enlarge | discs  | 4      |
       | cubic  | shrink  | discs  | 5      |
       | cubic  | mixed   | discs  | 5      |
+
+  Scenario: Lanczos enlarges as Cubic
+    Then the pixels "rgb.raw" as 16 by 12 with 3 bands of "U8" enlarged to 40 by 30 are the same for Cubic, Lanczos 2 and Lanczos 3
+
+  Scenario: An enlarge keeps the colour next to a transparent pixel
+    Then an enlarge keeps the colour of a pixel that is next to a transparent one
 
   Scenario: Each kernel gives its own pixels
     Then the pixels "photo.raw" as 64 by 48 with 3 bands of "U8" resized to 40 by 30 differ by kernel

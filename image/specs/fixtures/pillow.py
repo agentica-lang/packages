@@ -4,8 +4,9 @@
   pip install --target DIR --only-binary :all: --require-hashes -r specs/fixtures/pillow-requirements.txt
   python3 -I specs/fixtures/pillow.py DIR specs/fixtures/pillow_resize.json
 
-DIR holds the Pillow of pillow-requirements.txt (pip checks the sha256 of the wheel, and this program the version).
-CI does not run it: it reads the committed file. The inputs are a step edge (the minimal case of issue 266) and
+DIR holds the Pillow of pillow-requirements.txt: the wheel pillow-11.3.0-cp313-cp313-manylinux_2_27_x86_64.
+manylinux_2_28_x86_64.whl, the one its sha256 is for (pip checks it; another platform needs the hash of its wheel).
+This program checks the version. CI does not run it: it reads the committed file, one case per line. The inputs are a step edge (the minimal case of issue 266) and
 a small image of blocks, enlarged and shrunk by a different factor on each axis, with Pillow's BILINEAR and BICUBIC,
 which are the Linear and Cubic kernels.
 """
@@ -37,9 +38,21 @@ def discs(width, height, bands):
     return bytes(sample(x, y, b) for y in range(height) for x in range(width) for b in range(bands))
 
 
-INPUTS = {"step": STEP, "blocks": (12, 10, 3, blocks(12, 10, 3)), "discs": (24, 16, 3, discs(24, 16, 3))}
+def alpha():
+    """Opaque red, a column that fades, then transparent blue: the colour of a pixel next to a transparent one."""
+    columns = [(255, 0, 0, 255)] * 2 + [(200, 40, 0, 255), (100, 20, 120, 128)] + [(0, 0, 255, 0)] * 2
+    return bytes(v for _ in range(4) for column in columns for v in column)
+
+
+INPUTS = {
+    "step": STEP,
+    "blocks": (12, 10, 3, blocks(12, 10, 3)),
+    "discs": (24, 16, 3, discs(24, 16, 3)),
+    "alpha": (6, 4, 4, alpha()),
+}
 SIZES = {
     "step": [(16, 8)],
+    "alpha": [(12, 8), (9, 6)],
     "blocks": [(w, h) for h in (5, 10, 15, 25) for w in (6, 12, 18, 30)],
     "discs": [(12, 16), (24, 8), (36, 16), (24, 24), (48, 40), (36, 8), (12, 24), (16, 12)],
 }
@@ -61,16 +74,19 @@ def main():
     inputs, cases = {}, []
     for name, (width, height, bands, data) in INPUTS.items():
         inputs[name] = {"width": width, "height": height, "bands": bands, "hex": data.hex()}
-        mode = {1: "L", 3: "RGB"}[bands]
+        mode = {1: "L", 3: "RGB", 4: "RGBA"}[bands]
         for kernel, filter_name in KERNELS.items():
+            if name == "alpha" and kernel != "linear":
+                continue  # a cubic overshoot gives a pixel an alpha of about 0, whose colour is of no meaning
             for w, h in SIZES[name]:
                 source = Image.frombytes(mode, (width, height), data)
                 out = source.resize((w, h), getattr(Image, filter_name))
                 cases.append({"input": name, "kernel": kernel, "kind": kind(width, height, w, h), "width": w, "height": h,
                               "hex": out.tobytes().hex()})
     with open(target, "w") as f:
-        json.dump({"pillow": PINNED, "inputs": inputs, "cases": cases}, f, separators=(",", ":"))
-        f.write("\n")
+        f.write('{"pillow":%s,\n"inputs":%s,\n"cases":[\n' % (json.dumps(PINNED), json.dumps(inputs, separators=(",", ":"))))
+        f.write(",\n".join(json.dumps(case, separators=(",", ":")) for case in cases))
+        f.write("\n]}\n")
 
 
 main()

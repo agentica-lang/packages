@@ -218,6 +218,8 @@ yaml/                a YAML 1.2 parser: yaml.agc is the API (parse, parse_all, O
 - Tests, models and peers are written in Agentica. A peer in another language (Python or Node, standard library
   only) is for a protocol or format that must agree with an independent implementation, such as a wire codec
   (dns's `dns_peer.py`); a model of a package's own logic is Agentica.
+  A golden generator may use one pinned library (installed by hash, its version asserted) when CI reads the committed
+  output and never runs it (image's `pillow.py`).
 - Each package keeps its docs in its own `PACKAGE/docs/`, as Markdown with a front matter (`title`, `description`,
   `weight` to order a page; `_index.md` also has `category` and, optionally, `keywords: [a, b]` on one line):
   `_index.md` is the package page (what it is, the `agentica add` command with `--subdir` and the prefixed tag and
