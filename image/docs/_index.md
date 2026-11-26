@@ -12,14 +12,14 @@ keywords: [native, libvips, png, jpeg, webp]
 Needs Agentica 0.35.0, a C compiler and libvips (see [Requirements](#requirements)). Add it with its prefixed tag, in a project with an `agentica.toml`:
 
 ```sh
-agentica add image https://github.com/agentica-lang/packages --tag image-0.2.0 --subdir image
+agentica add image https://github.com/agentica-lang/packages --tag image-0.3.0 --subdir image
 ```
 
 That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
 
 ```toml
 [dependencies]
-image = { git = "https://github.com/agentica-lang/packages", tag = "image-0.2.0", subdir = "image" }
+image = { git = "https://github.com/agentica-lang/packages", tag = "image-0.3.0", subdir = "image" }
 ```
 
 A function that takes an image takes it first, so a chain reads well with `|>`. Each entry says what the function does and when it fails; the rules that hold for all of them are in [Memory and lifetime](#memory-and-lifetime), [Untrusted input](#untrusted-input) and [Requirements](#requirements). The examples below make their image with `from_pixels`: a grey image of 3 by 2 pixels, `1 2 3` on the first row and `4 5 6` on the second.
