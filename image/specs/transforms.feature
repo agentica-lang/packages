@@ -76,7 +76,7 @@ Feature: Transforms of images
   # blocks and of discs, each enlarged or shrunk by a different factor on each axis. An enlarge puts the centre of an
   # output pixel at (x + 0.5) / scale - 0.5 of the input, as Pillow does, so a step edge is exact. The rest of the gap is
   # the border (libvips repeats the edge pixel, Pillow drops the taps outside and normalises the others) and the rounding
-  # of each. The levels are the largest gap measured with libvips 8.16.1; a shrink has the gap it had before the golden.
+  # of each. The levels are the largest gap measured with libvips 8.16.1, which CI's 8.18.0 also keeps; a shrink has the gap it had before the golden.
   Scenario Outline: Resize is within <levels> levels of Pillow's
     Then the "<kernel>" "<kind>" resizes of the "<image>" image in the Pillow golden are within <levels> levels of Pillow's
 
