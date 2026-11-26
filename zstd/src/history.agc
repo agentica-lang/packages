@@ -12,8 +12,6 @@ def empty() -> History = History(chunks: [], tail: "".bytes, produced: 0)
 
 ## The history with `piece` written after it.
 def append(history: History, piece: Bytes) -> History
-  return history if piece.empty?
-
   tail = history.tail + piece
   chunks = history.chunks
   if tail.size >= CHUNK

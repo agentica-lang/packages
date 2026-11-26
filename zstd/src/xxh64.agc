@@ -17,10 +17,10 @@ def hash(data: Bytes) -> Int
     v3 = 0
     v4 = 0 - PRIME1
     while pos + 32 <= size
-      v1 = round(v1, word(data, pos))
-      v2 = round(v2, word(data, pos + 8))
-      v3 = round(v3, word(data, pos + 16))
-      v4 = round(v4, word(data, pos + 24))
+      v1 = lane(v1, data, pos)
+      v2 = lane(v2, data, pos + 8)
+      v3 = lane(v3, data, pos + 16)
+      v4 = lane(v4, data, pos + 24)
       pos = pos + 32
     end
 
@@ -33,54 +33,72 @@ def hash(data: Bytes) -> Int
 
   h = add(h, size)
   while pos + 8 <= size
-    h = add(mul(rotl(h.bit_xor(round(0, word(data, pos))), 27), PRIME1), PRIME4)
+    h = add(mul(rotl(h.bit_xor(lane(0, data, pos)), 27), FACTOR1), PRIME4)
     pos = pos + 8
   end
 
   if pos + 4 <= size
-    h = add(mul(rotl(h.bit_xor(mul(half(data, pos), PRIME1)), 23), PRIME2), PRIME3)
+    h = add(mul(rotl(h.bit_xor(mul(half(data, pos), FACTOR1)), 23), FACTOR2), PRIME3)
     pos = pos + 4
   end
 
   while pos < size
-    h = mul(rotl(h.bit_xor(mul(data[pos], PRIME5)), 11), PRIME1)
+    h = mul(rotl(h.bit_xor(mul(data[pos], FACTOR5)), 11), FACTOR1)
     pos = pos + 1
   end
 
-  h = mul(h.bit_xor(h.shift_right_unsigned(33)), PRIME2)
-  h = mul(h.bit_xor(h.shift_right_unsigned(29)), PRIME3)
+  h = mul(h.bit_xor(h.shift_right_unsigned(33)), FACTOR2)
+  h = mul(h.bit_xor(h.shift_right_unsigned(29)), FACTOR3)
   h.bit_xor(h.shift_right_unsigned(32))
 end
 
 private
 
-# The sum and the product of two 64-bit values, wrapped: `Int` stops at overflow, so each works on pieces that fit.
-def add(a: Int, b: Int) -> Int
-  low = a.bit_and(0xFFFFFFFF) + b.bit_and(0xFFFFFFFF)
-  high = a.shift_right_unsigned(32) + b.shift_right_unsigned(32) + low.shift_right(32)
-  high.bit_and(0xFFFFFFFF).shift_left(32).bit_or(low.bit_and(0xFFFFFFFF))
+LIMB = 0x3FFFFF
+LOW32 = 0xFFFFFFFF
+FACTOR1 = Factor(low: 2869895, middle: 2541079, high: 648055)
+FACTOR2 = Factor(low: 1370959, middle: 3732639, high: 797482)
+FACTOR3 = Factor(low: 3635705, middle: 2016888, high: 91494)
+FACTOR5 = Factor(low: 1468357, middle: 2931801, high: 163150)
+
+# A prime as three limbs of 22 bits, for `mul`.
+struct Factor
+  low: Int
+  middle: Int
+  high: Int
 end
 
-def mul(a: Int, b: Int) -> Int
-  a0 = a.bit_and(0xFFFF)
-  a1 = a.shift_right(16).bit_and(0xFFFF)
-  a2 = a.shift_right(32).bit_and(0xFFFF)
-  a3 = a.shift_right_unsigned(48)
-  b0 = b.bit_and(0xFFFF)
-  b1 = b.shift_right(16).bit_and(0xFFFF)
-  b2 = b.shift_right(32).bit_and(0xFFFF)
-  b3 = b.shift_right_unsigned(48)
-  low = a0 * b0 + (a0 * b1 + a1 * b0).shift_left(16)
-  upper = a0 * b2 + a1 * b1 + a2 * b0 + (a0 * b3 + a1 * b2 + a2 * b1 + a3 * b0).shift_left(16)
-  high = low.shift_right(32) + upper
-  high.bit_and(0xFFFFFFFF).shift_left(32).bit_or(low.bit_and(0xFFFFFFFF))
+# The sum and the product of two 64-bit values, wrapped: `Int` stops at overflow, so each works on pieces that fit.
+def add(a: Int, b: Int) -> Int
+  low = a.bit_and(LOW32) + b.bit_and(LOW32)
+  high = a.shift_right_unsigned(32) + b.shift_right_unsigned(32) + low.shift_right(32)
+  high.bit_and(LOW32).shift_left(32).bit_or(low.bit_and(LOW32))
+end
+
+# The low 64 bits of `a` times a prime. The limbs of 22 bits make products of 44 bits; the terms that weigh 2^66 and
+# more are gone, and the others are added in two halves of 32 bits.
+def mul(a: Int, b: Factor) -> Int
+  a0 = a.bit_and(LIMB)
+  a1 = a.shift_right(22).bit_and(LIMB)
+  a2 = a.shift_right_unsigned(44)
+  first = a0 * b.low
+  second = a0 * b.middle + a1 * b.low
+  third = a0 * b.high + a1 * b.middle + a2 * b.low
+  low = first.bit_and(LOW32) + second.shift_left(22).bit_and(LOW32)
+  high = first.shift_right(32) + second.shift_right(10) + third.shift_left(12) + low.shift_right(32)
+  high.bit_and(LOW32).shift_left(32).bit_or(low.bit_and(LOW32))
 end
 
 def rotl(x: Int, r: Int) -> Int = x.shift_left(r).bit_or(x.shift_right_unsigned(64 - r))
 
-def round(acc: Int, input: Int) -> Int = mul(rotl(add(acc, mul(input, PRIME2)), 31), PRIME1)
+def lane(acc: Int, data: Bytes, pos: Int) -> Int
+  low = data[pos + 3].shift_left(24).bit_or(data[pos + 2].shift_left(16)).bit_or(data[pos + 1].shift_left(8))
+  high = data[pos + 7].shift_left(24).bit_or(data[pos + 6].shift_left(16)).bit_or(data[pos + 5].shift_left(8))
+  input = high.bit_or(data[pos + 4]).shift_left(32).bit_or(low.bit_or(data[pos]))
+  mul(rotl(add(acc, mul(input, FACTOR2)), 31), FACTOR1)
+end
 
-def merge(acc: Int, lane: Int) -> Int = add(mul(acc.bit_xor(round(0, lane)), PRIME1), PRIME4)
+def merge(acc: Int, v: Int) -> Int = add(mul(acc.bit_xor(mul(rotl(mul(v, FACTOR2), 31), FACTOR1)), FACTOR1), PRIME4)
 
 def half(data: Bytes, pos: Int) -> Int
   (
@@ -91,5 +109,3 @@ def half(data: Bytes, pos: Int) -> Int
       .bit_or(data[pos])
   )
 end
-
-def word(data: Bytes, pos: Int) -> Int = half(data, pos + 4).shift_left(32).bit_or(half(data, pos))

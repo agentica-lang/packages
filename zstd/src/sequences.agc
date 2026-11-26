@@ -121,8 +121,8 @@ def load(mode: Int, kind: Kind, block: Bytes, pos: Int, previous: Optional[Fse.T
 end
 
 # The bits are read from the last byte of the block backwards, as in `Huffman.decode_stream`, with `acc` and `avail`
-# for the bits not used yet. Each sequence refills twice: its offset and match length need at most 47 bits and the
-# rest at most 42, and `acc` holds 56 and more.
+# for the bits not used yet. A sequence reads at most 47 bits for its offset and match length and 42 for the rest, so
+# it refills (up to 56 bits) when fewer are left than it needs.
 def execute(state: State.State, plan: Plan, literals: Bytes, block: Bytes, limits: State.Limits) -> Result[State.State]
   stop = block.size
   first = plan.first
@@ -156,21 +156,28 @@ def execute(state: State.State, plan: Plan, literals: Bytes, block: Bytes, limit
   ml_entries = plan.match_lengths.entries
   history = state.history
   base = history.produced
+  produced = base
+  block_max = limits.block_max
+  window = limits.window
+  total = plan.count
+  masks = Bits.MASKS
   rep1 = state.rep1
   rep2 = state.rep2
   rep3 = state.rep3
   used = 0
-  for i in 0...plan.count
-    while avail < 56
-      if pos >= first
-        acc = acc.shift_left(8).bit_or(block[pos])
-        pos = pos - 1
-      else
-        acc = acc.shift_left(8)
-        padded = padded + 8
+  for i in 0...total
+    if avail < 47
+      while avail < 56
+        if pos >= first
+          acc = acc.shift_left(8).bit_or(block[pos])
+          pos = pos - 1
+          avail = avail + 8
+        else
+          acc = acc.shift_left(8)
+          padded = padded + 8
+          avail = avail + 8
+        end
       end
-
-      avail = avail + 8
     end
 
     ll_entry = ll_entries[ll_state]
@@ -180,35 +187,37 @@ def execute(state: State.State, plan: Plan, literals: Bytes, block: Bytes, limit
     of_code = of_entry.bit_and(255)
     ml_code = ml_entry.bit_and(255)
     avail = avail - of_code
-    of_value = 1.shift_left(of_code) + acc.shift_right(avail).bit_and(Bits.MASKS[of_code])
+    of_value = 1.shift_left(of_code) + acc.shift_right(avail).bit_and(masks[of_code])
     width = MATCH_LENGTH_BITS[ml_code]
     avail = avail - width
-    match_length = MATCH_LENGTH_BASES[ml_code] + acc.shift_right(avail).bit_and(Bits.MASKS[width])
-    while avail < 56
-      if pos >= first
-        acc = acc.shift_left(8).bit_or(block[pos])
-        pos = pos - 1
-      else
-        acc = acc.shift_left(8)
-        padded = padded + 8
+    match_length = MATCH_LENGTH_BASES[ml_code] + acc.shift_right(avail).bit_and(masks[width])
+    if avail < 42
+      while avail < 56
+        if pos >= first
+          acc = acc.shift_left(8).bit_or(block[pos])
+          pos = pos - 1
+          avail = avail + 8
+        else
+          acc = acc.shift_left(8)
+          padded = padded + 8
+          avail = avail + 8
+        end
       end
-
-      avail = avail + 8
     end
 
     width = LITERAL_LENGTH_BITS[ll_code]
     avail = avail - width
-    literal_length = LITERAL_LENGTH_BASES[ll_code] + acc.shift_right(avail).bit_and(Bits.MASKS[width])
-    if i + 1 < plan.count
+    literal_length = LITERAL_LENGTH_BASES[ll_code] + acc.shift_right(avail).bit_and(masks[width])
+    if i + 1 < total
       width = ll_entry.shift_right(8).bit_and(255)
       avail = avail - width
-      ll_state = ll_entry.shift_right(16) + acc.shift_right(avail).bit_and(Bits.MASKS[width])
+      ll_state = ll_entry.shift_right(16) + acc.shift_right(avail).bit_and(masks[width])
       width = ml_entry.shift_right(8).bit_and(255)
       avail = avail - width
-      ml_state = ml_entry.shift_right(16) + acc.shift_right(avail).bit_and(Bits.MASKS[width])
+      ml_state = ml_entry.shift_right(16) + acc.shift_right(avail).bit_and(masks[width])
       width = of_entry.shift_right(8).bit_and(255)
       avail = avail - width
-      of_state = of_entry.shift_right(16) + acc.shift_right(avail).bit_and(Bits.MASKS[width])
+      of_state = of_entry.shift_right(16) + acc.shift_right(avail).bit_and(masks[width])
     end
 
     offset = of_value - 3
@@ -247,19 +256,21 @@ def execute(state: State.State, plan: Plan, literals: Bytes, block: Bytes, limit
       return Errors.malformed("#{literal_length} literals, #{literals.size - used} left")
     end
 
-    if history.produced - base + literal_length + match_length > limits.block_max
-      return Errors.malformed("a block that writes over #{limits.block_max} bytes")
+    if produced - base + literal_length + match_length > block_max
+      return Errors.malformed("a block that writes over #{block_max} bytes")
     end
 
     if literal_length > 0
       history = History.append(history, literals.slice(used, literal_length))
       used = used + literal_length
+      produced = produced + literal_length
     end
 
-    return Errors.malformed("offset #{offset} over the #{history.produced} bytes written") if offset > history.produced
-    return Errors.malformed("offset #{offset} over the window #{limits.window}") if offset > limits.window
+    return Errors.malformed("offset #{offset} over the #{produced} bytes written") if offset > produced
+    return Errors.malformed("offset #{offset} over the window #{window}") if offset > window
 
     history = History.append(history, History.match(history, offset, match_length))
+    produced = produced + match_length
   end
 
   return Errors.malformed("the sequence bits do not end with the last sequence") if pos >= first or avail != padded
