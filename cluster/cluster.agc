@@ -22,9 +22,10 @@ export Types.Node
 ## A bad option is a `cluster.argument` error. Plain TCP is only for this machine unless `insecure_plaintext` is set.
 def start(options: Types.Options) -> Result[Types.Node]
   endpoints = try Check.check(options)
-  actor = Actor.start(Members.behaviour(options))
+  pending: ATS[String, Int] = ATS.new()
+  actor = Actor.start(Members.behaviour(options, pending))
   ready: Channel[Result[Int]] = Channel.new(1)
-  config = Members.config(options, actor.address)
+  config = Members.config(options, actor.address, pending)
   accept = Listener.Accept(config: config, host: options.host, port: options.port, ready: ready)
   acceptor = Task.spawn(&Listener.run, accept)
   case ready.recv(options.connect_ms)
@@ -39,6 +40,7 @@ def port(node: Types.Node) -> Int = node.port
 ## The names of the peers that are connected now, in order.
 def nodes(node: Types.Node) -> List[String]
   names: Result[List[String]] = Actor.call(node.actor.address, ASK_MS, ->(reply) { Types.Msg.Names(reply) })
+  # A node that is stopped has no peers.
   names.unwrap_or([])
 end
 
@@ -46,6 +48,7 @@ end
 ## not.
 def refused(node: Types.Node) -> Int
   count: Result[Int] = Actor.call(node.actor.address, ASK_MS, ->(reply) { Types.Msg.Refusals(reply) })
+  # A node that is stopped refused nothing more.
   count.unwrap_or(0)
 end
 
@@ -55,12 +58,14 @@ end
 def connect(node: Types.Node, address: String) -> Result[String]
   endpoint = try Check.endpoint(address, node.insecure_plaintext)
   reply: Channel[Result[String]] = Channel.new(1)
-  try Actor.cast(node.actor.address, Types.Msg.Dial(endpoint, reply))
-  answer = try reply.recv(node.connect_ms + ASK_MS)
-  answer
+  case Actor.cast(node.actor.address, Types.Msg.Dial(endpoint, reply))
+    error(_) -> error("cluster: the node is stopped", kind: Types.CLOSED)
+    ok(_) -> answer_of(reply, node.connect_ms)
+  end
 end
 
-## Stops the node: the listener, the links and the actor.
+## Stops the node: the listener, the links, the connections that are being dialed and the actor. It waits at most
+## `timeout_ms` for the actor to end, and gives the error of `std/actor` if it does not.
 def stop(node: Types.Node, timeout_ms: Int) -> Result[Void]
   Task.cancel(node.acceptor)
   Actor.stop(node.actor, timeout_ms)
@@ -69,6 +74,14 @@ end
 private
 
 ASK_MS = 5000
+
+# The dial always answers (an error too) within `connect_ms`; the wait is a little longer, for the actor to pass it on.
+def answer_of(reply: Channel[Result[String]], connect_ms: Int) -> Result[String]
+  case reply.recv(connect_ms + ASK_MS)
+    ok(answer) -> answer
+    error(_) -> error("cluster: no answer in time", kind: Types.UNREACHABLE)
+  end
+end
 
 def up(
   options: Types.Options,

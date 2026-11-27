@@ -19,6 +19,9 @@ UNREACHABLE = "cluster.unreachable"
 ## The connection ended or went quiet before the handshake did.
 CLOSED = "cluster.closed"
 
+## The key of the table that counts the connections in their handshake.
+PENDING = "pending"
+
 ## A frame is longer than the limit of the connection.
 TOO_LARGE = "cluster.too_large"
 
@@ -53,7 +56,7 @@ enum Message
   Ignored(Int)
 end
 
-## A peer read apart: `host:port`, or `name@host:port` when the name of the node is known (src/address.agc).
+## A peer read apart: `host:port`, or `name@host:port` when the name of the node is known (src/endpoint.agc).
 struct Endpoint
   host: String
   port: Int
@@ -62,7 +65,8 @@ end
 
 ## What a node needs to start. `cookie` is the shared secret (16 bytes at least). `peers` are the `host:port` of the
 ## nodes to connect to. Plain TCP is only allowed on this machine unless `insecure_plaintext` is true. `connect_ms` is
-## the time that a connection has to finish its handshake.
+## the time that a connection has to finish its handshake, and `max_pending` how many connections may be in their
+## handshake at once: a new one over that is closed at once.
 struct Options
   name: String
   cookie: String
@@ -70,6 +74,7 @@ struct Options
   port: Int = 0
   peers: List[String] = []
   connect_ms: Int = 5000
+  max_pending: Int = 128
   max_frame_bytes: Int = 1_048_576
   insecure_plaintext: Bool = false
 end
@@ -78,32 +83,46 @@ end
 struct Peer
   name: String
   dialer: String
+  endpoint: String
   link: TaskRef
 end
 
 ## What the actor of a node hears. `Linked` is a connection that passed the handshake, and its channel gets whether the
-## node keeps it. `Dial` opens a connection in a task of the node and answers on its channel with the name of the peer.
+## node keeps it. `Dial` opens a connection in a task of the node and answers on its channel with the name of the peer:
+## a second `Dial` of an address that is linked or being dialed waits for the same answer. `Dialed` is that answer,
+## from the task that dialed, for the address that it dialed.
 enum Msg
   Linked(Peer, Channel[Bool])
   Closed(String, Int)
   Dial(Endpoint, Channel[Result[String]])
+  Dialed(String, Result[String])
   Refused
   Names(Channel[List[String]])
   Refusals(Channel[Int])
 end
 
-## The state of the actor of a node: the peers by name, and how many handshakes it refused.
+## A connection that is being dialed: its task, and the callers that wait for the answer.
+struct Dialing
+  task: Task[Void]
+  waiters: List[Channel[Result[String]]]
+end
+
+## The state of the actor of a node: the peers by name, the addresses being dialed, and how many handshakes it refused.
 struct State
   config: Config
   peers: Map[String, Peer]
+  dialing: Map[String, Dialing]
   refused: Int
 end
 
-## What the tasks of a node share: its name, the cookie and the limits.
+## What the tasks of a node share: its name, the cookie, the limits, and the table that counts the connections in their
+## handshake (`pending`).
 struct Config
   name: String
   cookie: Bytes
   connect_ms: Int
+  max_pending: Int
+  pending: ATS[String, Int]
   max_frame_bytes: Int
   node: Address[Msg]
 end

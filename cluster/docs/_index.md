@@ -1,6 +1,6 @@
 ---
 title: cluster
-description: Connect Agentica nodes on one host or on several, with a shared cookie, and send messages to named mailboxes. This release has the wire format.
+description: Connect Agentica nodes on one host or on several, with a shared cookie, and send messages to named mailboxes (in progress).
 category: Networking
 keywords: [cluster, node, distributed, cookie, cbor]
 ---
@@ -17,7 +17,7 @@ The design is decided in [agentica#1834](https://github.com/agentica-lang/agenti
 
 ## Status
 
-Not released yet. The package grows one piece at a time, and `cluster-0.1.0` comes when a node can send to a mailbox and report `node_down`. Today a node can start, connect to the nodes of its list, prove the cookie and know its [peers](protocol.md).
+Not released yet. The package grows one piece at a time, and `cluster-0.1.0` comes when a node can send to a mailbox and report `node_down`. Today a node can start, connect to the nodes of its list, prove the cookie and know its [peers](protocol.md). It does not retry yet: a peer that is down when the node starts is not dialed again, and a link that is lost is not dialed again (reconnecting comes with the heartbeats).
 
 ## Example
 
@@ -46,11 +46,11 @@ alpha
 
 ### Cluster.start(options: Cluster.Options) -> Result[Cluster.Node]
 
-Starts a node: it listens on `host` and `port` and dials each of `peers` in the background. `Options` has `name` (a lowercase letter, then up to 62 lowercase letters, digits, `_` or `-`), `cookie` (16 bytes or more), `host` (`127.0.0.1`), `port` (0: the system picks one), `peers` (a list of `host:port` or `name@host:port`), `connect_ms` (5000: the time that a connection has for its handshake), `max_frame_bytes` (1 MiB) and `insecure_plaintext` (false). Plain TCP is only for this machine: a `host` or a peer that is not on it is `cluster.argument` unless `insecure_plaintext` is true, and then the network must be one that you trust (the frames have no encryption). A peer written `name@host:port` must answer under that name.
+Starts a node: it listens on `host` and `port` and dials each of `peers` in the background. `Options` has `name` (a lowercase letter, then up to 62 lowercase letters, digits, `_` or `-`), `cookie` (16 bytes or more), `host` (`127.0.0.1`), `port` (0: the system picks one), `peers` (a list of `host:port` or `name@host:port`), `connect_ms` (5000, at most 600000: the time that a dial has to connect and shake hands, and that a connection that comes in has for its handshake), `max_pending` (128: how many connections may be in their handshake at once; a new one over that is closed at once), `max_frame_bytes` (1 MiB) and `insecure_plaintext` (false). Plain TCP is only for this machine: a `host` or a peer that is not on it is `cluster.argument` unless `insecure_plaintext` is true, and then the network must be one that you trust (the frames have no encryption). A peer written `name@host:port` must answer under that name. A peer listed twice is dialed once. `localhost` is loopback because the hosts file of the machine says so: a name that the hosts file changes is as trusted as the file.
 
 ### Cluster.connect(node: Cluster.Node, address: String) -> Result[String]
 
-Connects to `host:port` or `name@host:port` and waits for the handshake. It gives the name of the peer, or an error: `cluster.unreachable`, `cluster.refused`, `cluster.closed` or `cluster.protocol`. A node that is already connected to that peer keeps one link.
+Connects to `host:port` or `name@host:port` and waits for the handshake. It gives the name of the peer, or an error: `cluster.unreachable`, `cluster.refused`, `cluster.closed` or `cluster.protocol`. A node that is already connected to that address, or is dialing it, answers with the name of the peer and makes no second connection.
 
 ### Cluster.nodes(node: Cluster.Node) -> List[String]
 
@@ -66,7 +66,7 @@ How many handshakes the node refused: a peer that did not know the cookie, or th
 
 ### Cluster.stop(node: Cluster.Node, timeout_ms: Int) -> Result[Void]
 
-Stops the listener, the links and the actor of the node.
+Stops the listener, the links, the connections that are being dialed and the actor of the node. It waits at most `timeout_ms` for the actor to end, and gives the error of `std/actor` if it does not.
 
 ## Two nodes that connect at the same moment
 

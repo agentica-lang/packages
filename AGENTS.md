@@ -102,9 +102,9 @@ native-gen/          the C header of an `extern module` block: cli.agc is the co
                      struct of 26 fields; the features need cc and c++
 cluster/             Agentica nodes that connect with a shared cookie (planned: mailboxes, node_down): cluster.agc is the API
                      (start, connect, nodes, port, refused, stop, the error kinds), src/members.agc the actor of a node
-                     (its peers, which of two links stays), src/listener.agc the accept loop, src/link.agc one connection
+                     (its peers, the dials in flight, which of two links stays), src/listener.agc the accept loop (with the cap of handshakes), src/link.agc one connection
                      (the handshake as client or server, then the reading), src/check.agc the checks of the options (plain TCP
-                     only on this machine), src/address.agc `host:port` (pure), src/wire.agc the preamble and the frames (pure),
+                     only on this machine), src/endpoint.agc `host:port` (pure), src/wire.agc the preamble and the frames (pure),
                      src/handshake.agc the proofs of the cookie handshake (pure), src/names.agc the rules for node and
                      mailbox names, src/types.agc the kinds, the limits and the messages; test/ has the unit tests of the
                      frames, the proofs and the addresses (the bytes and the HMAC values written by hand); specs/ has

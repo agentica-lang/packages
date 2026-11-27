@@ -1,23 +1,24 @@
 ## The program under test of nodes.feature: it holds the nodes, runs the requests of `nodes_protocol.agc` that the
-## steps send (one JSON line in, one reply line out), and answers `ok` or why not. Every node of a scenario lives here, as
-## the nodes of a cluster would in their own processes, on 127.0.0.1 with a port that the system picks.
+## steps send (one JSON line in, one reply line out), and answers `ok` or why not. Every node of a scenario lives here,
+## as the nodes of a cluster would in their own processes, on 127.0.0.1 with a port that the system picks.
 
 import Binary from "std/binary"
 import Cluster from "../cluster"
 import Protocol from "nodes_protocol"
-import {Connect, Peers, Refusals, Request, Spec, Stranger, Visit} from "nodes_protocol"
+import {Connect, Flood, HoleVisit, Peers, Refusals, Request, Spec, Stranger, Visit} from "nodes_protocol"
 import Types from "../src/types"
 import Wire from "../src/wire"
 
 def main() -> Void
   nodes: Map[String, Cluster.Node] = {}
+  holes: ATS[String, Int] = ATS.new()
   line = IO.gets
   while line.ok?
     reply = Protocol.OK
     case JSON.decode(line.unwrap_or(""), Request)
       error(e) -> reply = "bad request: #{e.message}"
       ok(request) ->
-        handled = act(nodes, request)
+        handled = act(nodes, holes, request)
         nodes = handled.nodes
         reply = handled.reply
     end
@@ -31,6 +32,8 @@ end
 private
 
 POLL_MS = 20
+SETTLE_MS = 300
+HOLE_ACCEPT_MS = 1000
 # A read that ends this close to the deadline timed out; one that ends before it was a connection that ended.
 TIMEOUT_SLACK_MS = 100
 STOP_MS = 2000
@@ -54,7 +57,7 @@ def done(nodes: Map[String, Cluster.Node]) -> Handled = Handled(nodes: nodes, re
 
 def failed(nodes: Map[String, Cluster.Node], reply: String) -> Handled = Handled(nodes: nodes, reply: reply)
 
-def act(nodes: Map[String, Cluster.Node], request: Request) -> Handled
+def act(nodes: Map[String, Cluster.Node], holes: ATS[String, Int], request: Request) -> Handled
   case request
     Request.Start(spec) -> start(nodes, spec)
     Request.StartFails(spec, kind) -> start_fails(nodes, spec, kind)
@@ -64,6 +67,12 @@ def act(nodes: Map[String, Cluster.Node], request: Request) -> Handled
     Request.Refusals(refusals) -> failed_or_done(nodes, expect_refusals(nodes, refusals))
     Request.Stop(name) -> stop(nodes, name)
     Request.Visit(visit) -> failed_or_done(nodes, visited(nodes, visit))
+    Request.Hole(name) -> failed_or_done(nodes, open_hole(holes, name))
+    Request.ConnectHole(visit) -> failed_or_done(nodes, connect_hole(nodes, holes, visit))
+    Request.ConnectLater(visit) -> failed_or_done(nodes, connect_later(nodes, holes, visit))
+    Request.ConnectTwice(from, to) -> failed_or_done(nodes, connect_twice(nodes, from, to))
+    Request.StopWithin(name, within_ms) -> failed_or_done(nodes, stop_within(nodes, name, within_ms))
+    Request.Flood(flood) -> failed_or_done(nodes, flooded(nodes, flood))
   end
 end
 
@@ -78,6 +87,7 @@ def options_of(nodes: Map[String, Cluster.Node], spec: Spec) -> Cluster.Options
     host: spec.host,
     peers: spec.dials.map { |name| address_of(nodes, name, spec.named) } + spec.addresses,
     connect_ms: spec.connect_ms,
+    max_pending: spec.max_pending,
   )
 end
 
@@ -267,4 +277,99 @@ def closed_within(socket: TCP.Socket, bytes: Bytes, within_ms: Int) -> String
   return Protocol.OK if not open
 
   "the node did not close the connection within #{within_ms} ms"
+end
+
+# A listener that accepts connections and never says a word, as a node that hangs. The task that accepts owns the
+# sockets, so they stay open for the run.
+def open_hole(holes: ATS[String, Int], name: String) -> String
+  case TCP.listen(LISTEN_HOST, 0)
+    error(e) -> "the hole did not open: #{e.message}"
+    ok(listener) ->
+      holes.put(name, TCP.local_port(listener))
+      _ = Task.spawn(&swallow, listener)
+      Protocol.OK
+  end
+end
+
+def swallow(listener: TCP.Listener) -> Void
+  while true
+    _ = TCP.accept(listener, HOLE_ACCEPT_MS)
+  end
+end
+
+def hole_address(holes: ATS[String, Int], name: String) -> String = "127.0.0.1:#{holes.get(name).unwrap_or(0)}"
+
+def connect_hole(nodes: Map[String, Cluster.Node], holes: ATS[String, Int], visit: HoleVisit) -> String
+  started = Time.monotonic_ms()
+  outcome = verdict(Cluster.connect(nodes[visit.from], hole_address(holes, visit.hole)), visit.kind)
+  elapsed = Time.monotonic_ms() - started
+  return outcome if outcome != Protocol.OK
+  if elapsed > visit.within_ms
+    return "the connection took #{elapsed} ms, and it should take #{visit.within_ms} at most"
+  end
+
+  Protocol.OK
+end
+
+# The connection starts and the step goes on; the node is told to stop while it is still waiting.
+def connect_later(nodes: Map[String, Cluster.Node], holes: ATS[String, Int], visit: HoleVisit) -> String
+  _ = Task.spawn(&connect_side, Side(node: nodes[visit.from], address: hole_address(holes, visit.hole)))
+  Task.sleep(SETTLE_MS)
+  Protocol.OK
+end
+
+# Two callers connect to the same address at once: both get the name of the peer, and there is one link.
+def connect_twice(nodes: Map[String, Cluster.Node], from: String, to: String) -> String
+  address = address_of(nodes, to, false)
+  first = Task.spawn(&connect_side, Side(node: nodes[from], address: address))
+  second = Task.spawn(&connect_side, Side(node: nodes[from], address: address))
+  from_first = verdict(Task.await(first), "")
+  from_second = verdict(Task.await(second), "")
+  return from_first if from_first != Protocol.OK
+
+  from_second
+end
+
+def stop_within(nodes: Map[String, Cluster.Node], name: String, within_ms: Int) -> String
+  started = Time.monotonic_ms()
+  stopped = Cluster.stop(nodes[name], STOP_MS)
+  elapsed = Time.monotonic_ms() - started
+  return "stop failed: #{stopped}" if not stopped.ok?
+  return "stop took #{elapsed} ms, and it should take #{within_ms} at most" if elapsed > within_ms
+
+  Protocol.OK
+end
+
+# The strangers say nothing. A node that accepts one writes its preamble at once, so a socket that reads nothing
+# but the
+# end of the connection was closed by the node.
+def flooded(nodes: Map[String, Cluster.Node], flood: Flood) -> String
+  port = Cluster.port(nodes[flood.node])
+  sockets: List[TCP.Socket] = []
+  for _ in 1..flood.count
+    sockets = sockets.push(TCP.connect(LISTEN_HOST, port, PREAMBLE_MS).unwrap!)
+  end
+
+  Task.sleep(SETTLE_MS)
+  closed = 0
+  for socket in sockets
+    if closed_by_node?(socket)
+      closed += 1
+    end
+  end
+
+  for socket in sockets
+    TCP.close(socket)
+  end
+
+  return "#{closed} connections were closed, and it should be #{flood.closed}" if closed != flood.closed
+
+  Protocol.OK
+end
+
+def closed_by_node?(socket: TCP.Socket) -> Bool
+  case TCP.recv_bytes(socket, 1, SETTLE_MS)
+    ok(got) -> got.empty?
+    error(_) -> false
+  end
 end

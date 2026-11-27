@@ -16,6 +16,7 @@ struct Spec
   named: Bool = false
   host: String = "127.0.0.1"
   connect_ms: Int = 5000
+  max_pending: Int = 128
 end
 
 ## One node connects to another and the answer must be `ok` (`kind` is `""`) or an error of that kind. `as_name` is a
@@ -62,6 +63,21 @@ struct Visit
   within_ms: Int
 end
 
+## A connection that a node makes to a hole (a listener that accepts and never answers), and the time it may take.
+struct HoleVisit
+  from: String
+  hole: String
+  kind: String = ""
+  within_ms: Int = 0
+end
+
+## `count` strangers connect to a node and say nothing: `closed` of them must be closed at once, the others left alone.
+struct Flood
+  node: String
+  count: Int
+  closed: Int
+end
+
 enum Request
   Start(Spec)
   StartFails(Spec, String)
@@ -71,4 +87,10 @@ enum Request
   Refusals(Refusals)
   Stop(String)
   Visit(Visit)
+  Hole(String)
+  ConnectHole(HoleVisit)
+  ConnectLater(HoleVisit)
+  ConnectTwice(String, String)
+  StopWithin(String, Int)
+  Flood(Flood)
 end

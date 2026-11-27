@@ -3,7 +3,7 @@
 
 import BDD from "std/bdd"
 import Protocol from "nodes_protocol"
-import {Connect, Peers, Refusals, Request, Spec, Stranger, Visit} from "nodes_protocol"
+import {Connect, Flood, HoleVisit, Peers, Refusals, Request, Spec, Stranger, Visit} from "nodes_protocol"
 
 def steps() -> List[BDD.Step]
   [
@@ -11,6 +11,13 @@ def steps() -> List[BDD.Step]
     BDD.step("the node {string} starts with the cookie {string} and dials {string}", &starts_dialing),
     BDD.step("the node {string} starts with the cookie {string} and dials {string} by its name", &starts_naming),
     BDD.step("the node {string} starts with the cookie {string} and a deadline of {int} ms", &starts_with_deadline),
+    BDD.step("the node {string} starts with the cookie {string} and at most {int} handshakes at once", &starts_capped),
+    BDD.step("a hole {string} accepts connections and never answers", &hole),
+    BDD.step("{string} connects to the hole {string} and it fails with {string} within {int} ms", &connect_hole),
+    BDD.step("{string} starts connecting to the hole {string}", &connect_later),
+    BDD.step("{string} connects to the node {string} twice at the same moment", &connect_twice),
+    BDD.step("the node {string} stops within {int} ms", &stops_within),
+    BDD.step("{int} strangers connect to {string} and say nothing, and {int} of them are closed at once", &flood),
     BDD.step(
       "starting the node {string} on the host {string} with the cookie {string} fails with {string}",
       &fails_host,
@@ -149,4 +156,31 @@ end
 
 def stranger_wrong(ctx: BDD.Context, args: List[String]) -> BDD.Context
   send(ctx, Request.Visit(Visit(node: args[0], stranger: Stranger.WrongProof, within_ms: CLOSE_MS)))
+end
+
+def starts_capped(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.Start(Spec(name: args[0], cookie: args[1], max_pending: args[2].to_i!)))
+end
+
+def hole(ctx: BDD.Context, args: List[String]) -> BDD.Context = send(ctx, Request.Hole(args[0]))
+
+def connect_hole(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  visit = HoleVisit(from: args[0], hole: args[1], kind: args[2], within_ms: args[3].to_i!)
+  send(ctx, Request.ConnectHole(visit))
+end
+
+def connect_later(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.ConnectLater(HoleVisit(from: args[0], hole: args[1])))
+end
+
+def connect_twice(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.ConnectTwice(args[0], args[1]))
+end
+
+def stops_within(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.StopWithin(args[0], args[1].to_i!))
+end
+
+def flood(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.Flood(Flood(node: args[1], count: args[0].to_i!, closed: args[2].to_i!)))
 end

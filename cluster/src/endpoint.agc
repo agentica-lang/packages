@@ -3,6 +3,9 @@
 import Names from "names"
 import Types from "types"
 
+## The address as a key of the dials: `host:port`.
+def key(endpoint: Types.Endpoint) -> String = "#{endpoint.host}:#{endpoint.port}"
+
 ## Reads `host:port` or `name@host:port`. The port is 1 to 65535, and a name has the form of a node name.
 def parse(text: String) -> Result[Types.Endpoint]
   at = text.split("@")
@@ -30,6 +33,7 @@ private
 
 MAX_PORT = 65_535
 MAX_OCTET = 255
+DIGITS = "0".code.."9".code
 
 def parse_host(text: String, node: String) -> Result[Types.Endpoint]
   parts = text.split(":")
@@ -52,8 +56,8 @@ def unbracket(host: String) -> String
 end
 
 def octet?(part: String) -> Bool
-  case part.to_i
-    ok(n) -> n >= 0 and n <= MAX_OCTET and not part.empty? and part.length <= 3
-    error(_) -> false
-  end
+  return false if part.empty? or part.length > 3
+  return false if not part.bytes.to_a.all? { |b| DIGITS.include?(b) }
+
+  part.to_i.unwrap_or(MAX_OCTET + 1) <= MAX_OCTET
 end

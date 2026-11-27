@@ -5,15 +5,16 @@
 ## welcome, the whole handshake has a deadline, and a node that fails it is disconnected with no frame said.
 
 import Actor from "std/actor"
+import Endpoint from "endpoint"
 import Handshake from "handshake"
 import Types from "types"
 import Wire from "wire"
 
-## What a task that dials needs: where to connect, and the channel that gets the name of the peer, or why not.
+## What a task that dials needs: the configuration of the node and where to connect. The task tells the node what came
+## of it, which answers the callers that wait.
 struct Dial
   config: Types.Config
   endpoint: Types.Endpoint
-  reply: Channel[Result[String]]
 end
 
 ## What a task that accepts gets: the socket (which it owns) and the configuration of the node.
@@ -22,13 +23,15 @@ struct Served
   socket: TCP.Socket
 end
 
-## Dials, shakes hands as the client and, once the node keeps the link, reads it until it ends.
+## Dials, shakes hands as the client and, once the node keeps the link, reads it until it ends. The connect and the
+## handshake share one deadline, `connect_ms` from the start.
 def dial(args: Dial) -> Void
   config = args.config
   endpoint = args.endpoint
+  deadline = Time.monotonic_ms() + config.connect_ms
   case TCP.connect(endpoint.host, endpoint.port, config.connect_ms)
     error(_) -> fail(args, error("cluster: no node answers at the address", kind: Types.UNREACHABLE))
-    ok(socket) -> run_client(args, socket)
+    ok(socket) -> run_client(args, socket, deadline)
   end
 end
 
@@ -36,7 +39,9 @@ end
 def serve(served: Served) -> Void
   config = served.config
   socket = served.socket
-  case server_handshake(config, socket, Time.monotonic_ms() + config.connect_ms)
+  result = server_handshake(config, socket, Time.monotonic_ms() + config.connect_ms)
+  _ = config.pending.add(Types.PENDING, -1)
+  case result
     error(e) -> refuse(config, socket, e)
     ok(peer) -> run_link(config, socket, peer)
   end
@@ -49,7 +54,7 @@ PREAMBLE_BYTES = 6
 HEADER_BYTES = 4
 
 def fail(args: Dial, result: Result[String]) -> Void
-  _ = args.reply.send(result, 0)
+  _ = Actor.cast(args.config.node, Types.Msg.Dialed(Endpoint.key(args.endpoint), result))
   if kind_of(result) == Types.REFUSED
     _ = Actor.cast(args.config.node, Types.Msg.Refused)
   end
@@ -62,17 +67,16 @@ def kind_of(result: Result[String]) -> String
   end
 end
 
-def run_client(args: Dial, socket: TCP.Socket) -> Void
+def run_client(args: Dial, socket: TCP.Socket, deadline: Int) -> Void
   config = args.config
-  deadline = Time.monotonic_ms() + config.connect_ms
-  case client_handshake(config, socket, args.endpoint.node, deadline)
+  case client_handshake(config, socket, args.endpoint, deadline)
     error(e) ->
       TCP.close(socket)
       fail(args, error(e.message, kind: e.kind))
 
     ok(peer) ->
       kept = register(config, peer)
-      _ = args.reply.send(ok(peer.name), 0)
+      _ = Actor.cast(config.node, Types.Msg.Dialed(Endpoint.key(args.endpoint), ok(peer.name)))
       if kept
         keep_reading(config, socket, peer)
       else
@@ -114,6 +118,7 @@ def register(config: Types.Config, peer: Types.Peer) -> Bool
   end
 end
 
+# After the welcome a link is only read: a bye ends it and any other frame is ignored, until the frames have a use.
 def keep_reading(config: Types.Config, socket: TCP.Socket, peer: Types.Peer) -> Void
   reading = true
   while reading
@@ -130,14 +135,19 @@ end
 
 # The client dialed a node, maybe by its name (`expected`): with a name, the transcript uses it and never the name in
 # the challenge, so a node that answers under another name fails the proof.
-def client_handshake(config: Types.Config, socket: TCP.Socket, expected: String, deadline: Int) -> Result[Types.Peer]
+def client_handshake(
+  config: Types.Config,
+  socket: TCP.Socket,
+  endpoint: Types.Endpoint,
+  deadline: Int,
+) -> Result[Types.Peer]
   nonce = Handshake.fresh_nonce()
   hello = try Wire.encode(Types.Message.Hello(config.name, nonce))
   try send(socket, Wire.preamble() + hello, deadline)
   try Wire.check_preamble(try read_exact(socket, PREAMBLE_BYTES, deadline))
   case try read_message(socket, Types.PRE_AUTH_MAX_FRAME_BYTES, deadline)
     Types.Message.Challenge(server, server_nonce, server_proof) ->
-      name = expected
+      name = endpoint.node
       if name.empty?
         name = server
       end
@@ -146,7 +156,7 @@ def client_handshake(config: Types.Config, socket: TCP.Socket, expected: String,
       proof = try Handshake.answer(config.cookie, session, server_proof)
       try send(socket, try Wire.encode(proof), deadline)
       try expect_welcome(socket, deadline)
-      ok(Types.Peer(name: name, dialer: config.name, link: Task.current()))
+      ok(Types.Peer(name: name, dialer: config.name, endpoint: Endpoint.key(endpoint), link: Task.current()))
     _ -> out_of_order()
   end
 end
@@ -162,7 +172,7 @@ def server_handshake(config: Types.Config, socket: TCP.Socket, deadline: Int) ->
         Types.Message.Proof(proof) ->
           welcome = try Handshake.accept(config.cookie, session, proof)
           try send(socket, try Wire.encode(welcome), deadline)
-          ok(Types.Peer(name: client, dialer: client, link: Task.current()))
+          ok(Types.Peer(name: client, dialer: client, endpoint: "", link: Task.current()))
         _ -> out_of_order()
       end
 

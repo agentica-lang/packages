@@ -67,11 +67,37 @@ Feature: Nodes that share a cookie connect
     And "alpha" still has the peers "beta" 500 ms later
     And "beta" still has the peers "alpha" 500 ms later
 
-  Scenario: A node that stopped is not reachable
+  Scenario: A peer that stops is forgotten
     Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"
     And the node "beta" starts with the cookie "the-cookie-of-the-cluster"
+    When "alpha" connects to the node "beta"
+    Then "alpha" has the peers "beta" within 5000 ms
     When the node "beta" stops
-    Then "alpha" has the peers "" within 500 ms
+    Then "alpha" has the peers "" within 3000 ms
+
+  Scenario: Dialing an address twice at the same moment makes one link
+    Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"
+    And the node "beta" starts with the cookie "the-cookie-of-the-cluster"
+    When "alpha" connects to the node "beta" twice at the same moment
+    Then "alpha" has the peers "beta" within 5000 ms
+    And "beta" has the peers "alpha" within 5000 ms
+    And "alpha" still has the peers "beta" 500 ms later
+    And "beta" still has the peers "alpha" 500 ms later
+
+  Scenario: A node that never answers is given up on when the deadline passes
+    Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster" and a deadline of 1000 ms
+    And a hole "hole" accepts connections and never answers
+    Then "alpha" connects to the hole "hole" and it fails with "cluster.closed" within 2500 ms
+
+  Scenario: Stopping a node ends the connections that it is dialing
+    Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"
+    And a hole "hole" accepts connections and never answers
+    When "alpha" starts connecting to the hole "hole"
+    Then the node "alpha" stops within 1500 ms
+
+  Scenario: A node closes the connections over its cap of handshakes at once
+    Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster" and at most 2 handshakes at once
+    Then 5 strangers connect to "alpha" and say nothing, and 3 of them are closed at once
 
   Scenario: A node does not listen on a public address with plain TCP
     Then starting the node "alpha" on the host "0.0.0.0" with the cookie "the-cookie-of-the-cluster" fails with "cluster.argument"
