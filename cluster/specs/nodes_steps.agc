@@ -58,7 +58,7 @@ def steps() -> List[BDD.Step]
     ),
     BDD.step("the node {string} starts again on the port of its first run with the cookie {string}", &starts_again),
     BDD.step(
-      "the node {string} starts with the cookie {string} and finds nodes at {string}, port of {string}, every {int} ms",
+      "the node {string} starts with the cookie {string} and finds nodes at {string}, port of {string}, each {int} ms",
       &starts_discovering,
     ),
     BDD.step("starting the node {string} that finds the nodes at {string} fails with {string}", &fails_discover),

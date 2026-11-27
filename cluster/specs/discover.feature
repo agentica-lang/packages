@@ -4,20 +4,20 @@ Feature: Finding the nodes of a cluster by a name
 
   Scenario: A node finds another one by the name of its host
     Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"
-    And the node "beta" starts with the cookie "the-cookie-of-the-cluster" and finds nodes at "localhost", port of "alpha", every 200 ms
+    And the node "beta" starts with the cookie "the-cookie-of-the-cluster" and finds nodes at "localhost", port of "alpha", each 200 ms
     Then "beta" has the peers "alpha" within 5000 ms
     And "alpha" has the peers "beta" within 5000 ms
 
   Scenario: A node that is linked is not dialed again for each lookup
     Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"
-    And the node "beta" starts with the cookie "the-cookie-of-the-cluster" and finds nodes at "localhost", port of "alpha", every 100 ms
+    And the node "beta" starts with the cookie "the-cookie-of-the-cluster" and finds nodes at "localhost", port of "alpha", each 100 ms
     And "beta" has the peers "alpha" within 5000 ms
     Then "beta" still has the peers "alpha" 1000 ms later
     And "alpha" has refused 0 handshakes
 
   Scenario: A node that was down is found when it comes back
     Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"
-    And the node "beta" starts with the cookie "the-cookie-of-the-cluster" and finds nodes at "localhost", port of "alpha", every 200 ms
+    And the node "beta" starts with the cookie "the-cookie-of-the-cluster" and finds nodes at "localhost", port of "alpha", each 200 ms
     And "beta" has the peers "alpha" within 5000 ms
     When the node "alpha" stops
     And the node "alpha" starts again on the port of its first run with the cookie "the-cookie-of-the-cluster"
