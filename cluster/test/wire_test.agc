@@ -105,3 +105,46 @@ def test_a_frame_with_bytes_after_it_or_cut_short_is_refused() -> Result[Void]
   try Test.eq(kind_of(Wire.read(frame.take(frame.size - 1), Types.MAX_FRAME_BYTES)), Types.PROTOCOL)
   Test.eq(kind_of(Wire.read(frame.take(3), Types.MAX_FRAME_BYTES)), Types.PROTOCOL)
 end
+
+def test_a_key_that_the_reader_does_not_know_is_ignored() -> Result[Void]
+  try Test.eq(try Wire.decode(bytes_of("06a1617801")), Types.Message.Ping)
+  # A field that is added later, in a mail: a key "x" with a text.
+  mail = "05" + "a3" + "676d61696c626f78" + "646a6f6273" + "64626f6479" + "40" + "6178" + "6161"
+  Test.eq(try Wire.decode(bytes_of(mail)), Types.Message.Mail("jobs", "".bytes))
+end
+
+def test_hostile_cbor_is_a_protocol_error_and_never_halts() -> Result[Void]
+  nested = (1..20_000).map { |_| "81" }.join("") + "00"
+  mailbox = "676d61696c626f78" + "646a6f6273"
+  hostile = [
+    # cut inside the body
+    "05a2",
+    "08a1",
+    "08a166726561736f6e",
+    # a length far over the bytes that follow, as text and as bytes
+    "08a166726561736f6e7bffffffffffffffff",
+    "08a166726561736f6e7affffffff",
+    "05a2" + mailbox + "64626f64795affffffff",
+    "08a166726561736f6e5b7fffffffffffffff",
+    # indefinite lengths
+    "06bfff",
+    "089f",
+    "08a166726561736f6e7f6161ff",
+    # nesting past the limit, in a key that the reader ignores
+    "05a3" + mailbox + "64626f6479" + "40" + "6178" + nested,
+    # a text that is not UTF-8
+    "05a2" + "676d61696c626f78" + "61ff" + "64626f6479" + "40",
+    # a key twice
+    "08a266726561736f6e6066726561736f6e60",
+    # a tag, a float, a map where a text goes
+    "08a166726561736f6ec060",
+    "08a166726561736f6efb3ff0000000000000",
+    "08a166726561736f6ea0",
+  ]
+
+  for payload in hostile
+    try Test.eq(kind_of(Wire.decode(bytes_of(payload))), Types.PROTOCOL)
+  end
+
+  ok()
+end

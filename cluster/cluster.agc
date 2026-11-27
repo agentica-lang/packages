@@ -5,5 +5,3 @@ import Types from "src/types"
 
 export Types.PROTOCOL
 export Types.TOO_LARGE
-export Types.MAX_FRAME_BYTES
-export Types.MAX_MAILBOX_BYTES

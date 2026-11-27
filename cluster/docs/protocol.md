@@ -15,6 +15,8 @@ The length is big-endian, and it counts the kind and the body, not itself. It is
 
 The body is the [CBOR](https://www.rfc-editor.org/rfc/rfc8949) of a struct, as `Term.encode` writes it: a map from the name of the field to its value, with the shortest head of each item. A key that the reader does not know is ignored, and a field that is missing is an error, so a field is only ever added with a new kind.
 
+The format evolves by the major byte of the preamble and by new kinds from 64 to 127, which an older node skips.
+
 ## Kinds
 
 | Kind | Name | Body |
