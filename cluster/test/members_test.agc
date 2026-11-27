@@ -4,6 +4,8 @@ import Types from "../src/types"
 
 private
 
+SETTLE_MS = 100
+
 # A node, and a listener that accepts and never answers, so that a dial of it waits. The node is called zeta, so that a
 # link dialed by beta replaces one that zeta dialed.
 struct Fixture
@@ -25,7 +27,10 @@ end
 # Stopping the node cancels its links and its dials, so no task outlives the test.
 def finish(fix: Fixture) -> Result[Void]
   TCP.close_listener(fix.listener)
-  Actor.stop(fix.actor, 2000)
+  stopped = Actor.stop(fix.actor, 2000)
+  # A cancelled task ends on its next turn.
+  Task.sleep(SETTLE_MS)
+  stopped
 end
 
 def idle(back: Channel[TaskRef]) -> Void
