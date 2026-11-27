@@ -140,6 +140,7 @@ def options_of(nodes: Map[String, Cluster.Node], spec: Spec) -> Cluster.Options
     port: port_of(nodes, spec),
     discover: discover_of(nodes, spec),
     discover_ms: spec.discover_ms,
+    insecure_plaintext: spec.insecure,
     max_frame_bytes: spec.max_frame_bytes,
   )
 end

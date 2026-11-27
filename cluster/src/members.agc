@@ -191,7 +191,18 @@ end
 def forget(state: Types.State, peer: Types.Peer, id: Int) -> Types.State
   return state if peer.link.id != id
 
-  down(retry_all(state.with(peers: state.peers.delete(peer.name)), peer.name), peer.name)
+  gone = retry_all(state.with(peers: state.peers.delete(peer.name)), peer.name)
+  down(unfound_all(gone, peer.name), peer.name)
+end
+
+# The addresses of a peer that the name gave are forgotten when its last link ends.
+def unfound_all(state: Types.State, name: String) -> Types.State
+  current = state
+  for key in addresses_of(state, name)
+    current = unfound(current, key)
+  end
+
+  current
 end
 
 def up(state: Types.State, name: String) -> Types.State = told(state, Types.Event.NodeUp(name))
@@ -289,7 +300,7 @@ end
 def retried(state: Types.State, key: String, result: Result[String]) -> Types.State
   case result
     ok(name) -> named(state, key, name)
-    error(_) -> retry(state, key)
+    error(_) -> unfound(retry(state, key), key)
   end
 end
 
@@ -369,11 +380,20 @@ def discover(state: Types.State, endpoint: Types.Endpoint) -> Types.State
 end
 
 # An address that the name gave. It is dialed unless its peer is known and linked, or it is being dialed: a dial of an
-# address that answers makes the peer known, so a linked peer costs no new connection each time.
+# address that answers makes the peer known, so a linked peer costs no new connection each time. An address of the
+# list is dialed as it is written there, with the name that it must answer under.
 def found(state: Types.State, endpoint: Types.Endpoint) -> Types.State
   key = Endpoint.key(endpoint)
   listed = state.with(found: state.found.put(key, endpoint))
   return listed if state.peers.has_key?(state.names.get(key).unwrap_or(""))
 
-  dial(listed, endpoint, quiet_reply())
+  dial(listed, state.kept.get(key).unwrap_or(endpoint), quiet_reply())
+end
+
+# What the name gave and nothing links is forgotten, so that the addresses of nodes that come and go (a new one at each
+# start) do not pile up.
+def unfound(state: Types.State, key: String) -> Types.State
+  return state if state.kept.has_key?(key) or state.peers.has_key?(state.names.get(key).unwrap_or(""))
+
+  state.with(found: state.found.delete(key), names: state.names.delete(key))
 end

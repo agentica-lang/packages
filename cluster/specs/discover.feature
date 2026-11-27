@@ -8,12 +8,17 @@ Feature: Finding the nodes of a cluster by a name
     Then "beta" has the peers "alpha" within 5000 ms
     And "alpha" has the peers "beta" within 5000 ms
 
-  Scenario: A node that is linked is not dialed again for each lookup
+  Scenario: A node that is linked is not dialed again in the 10 lookups of a second
     Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"
     And the node "beta" starts with the cookie "the-cookie-of-the-cluster" and finds nodes at "localhost", port of "alpha", each 100 ms
     And "beta" has the peers "alpha" within 5000 ms
     Then "beta" still has the peers "alpha" 1000 ms later
     And "alpha" has refused 0 handshakes
+
+  Scenario: A name that no machine has finds nobody, and the node goes on
+    Given the node "beta" starts with the cookie "the-cookie-of-the-cluster" and finds the name "nothing.invalid:7000" on a trusted network, each 100 ms
+    Then "beta" still has the peers "" 400 ms later
+    And the node "beta" stops within 2000 ms
 
   Scenario: A node that was down is found when it comes back
     Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"

@@ -23,6 +23,7 @@ struct Spec
   discover: String = ""
   discover_port_of: String = ""
   discover_ms: Int = 10_000
+  insecure: Bool = false
   again: Bool = false
   max_frame_bytes: Int = 1_048_572
 end
