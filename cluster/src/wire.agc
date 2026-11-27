@@ -149,7 +149,7 @@ def proof_payload(proof: Bytes) -> Result[Bytes]
 end
 
 def check_hello(node: String, nonce: Bytes) -> Result[Void]
-  return protocol("a node name or a nonce is not valid") if not Names.peer?(node, nonce)
+  return protocol("the node name or the nonce is not valid") if not Names.peer?(node, nonce)
 
   ok()
 end

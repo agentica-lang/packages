@@ -42,8 +42,8 @@ def fresh_nonce() -> Bytes = OpenSSL.Random.random_bytes(Types.NONCE_BYTES)
 ## a node by its name passes that name as `server`, never the one in the challenge, so a node that answers under
 ## another name fails the proof.
 def session(client: String, server: String, client_nonce: Bytes, server_nonce: Bytes) -> Result[Session]
-  return protocol("a node name is not valid") if not Names.peer?(client, client_nonce)
-  return protocol("a node name is not valid") if not Names.peer?(server, server_nonce)
+  return protocol("the node name or the nonce is not valid") if not Names.peer?(client, client_nonce)
+  return protocol("the node name or the nonce is not valid") if not Names.peer?(server, server_nonce)
   return protocol("the two nonces are the same") if client_nonce == server_nonce
   return refused("a node cannot connect to a node with its own name") if client == server
 

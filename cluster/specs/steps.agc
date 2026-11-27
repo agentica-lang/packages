@@ -5,12 +5,14 @@
 import BDD from "std/bdd"
 import Binary from "std/binary"
 import HandshakeSteps from "handshake_steps"
+import NodesSteps from "nodes_steps"
 import Types from "../src/types"
 import Wire from "../src/wire"
 
 def main() -> Void
   BDD.run(
     HandshakeSteps.steps() +
+    NodesSteps.steps() +
     [
       BDD.step("a node writes the message {string}", &writes_message),
       BDD.step("another node reads {string}", &reads_message),
