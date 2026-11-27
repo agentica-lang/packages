@@ -93,7 +93,7 @@ NODE_NAME=node3 NODE_PORT=7103 PEERS=node1@127.0.0.1:7101,node2@127.0.0.1:7102 a
 
 Stop `node2` with Ctrl-C: the other two print `node_down node2`. Start it again with the same line: they print `node_up node2`, because each node dials the peers of its list again until they answer. A fourth node with another `CLUSTER_COOKIE` is refused by the nodes that it dials, and prints how many handshakes were refused.
 
-`examples/docker-compose.yml` starts the same three nodes on one network, and a `stranger` with another cookie (`docker compose -f examples/docker-compose.yml up --build`; then `stop node2` and `start node2` to see the events). The compose file and its `examples/Dockerfile` are for people trying the package; the tests do not use them, and the file was written without running Docker.
+`examples/docker-compose.yml` starts the same three nodes on one network, and a `stranger` with another cookie (`docker compose -f examples/docker-compose.yml up --build`; then `stop node2` and `start node2` to see the events). The compose file and its `examples/Dockerfile` are for people trying the package; the tests do not use them, and they were written without running Docker. The cookie in the compose file (`CLUSTER_COOKIE`, with a default) is an example in plain text: set your own, a random secret such as `openssl rand -hex 32`, before you use it for anything else. The image runs as a user that is not root, and checks the archive of Agentica against its sha256.
 
 ## API
 
