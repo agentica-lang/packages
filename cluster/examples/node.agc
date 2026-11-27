@@ -116,6 +116,7 @@ def listen(node: Cluster.Node, notes: Channel[Note], settings: Settings) -> Void
     case notes.recv(TICK_MS)
       ok(Note.Event(Cluster.Event.NodeUp(peer))) -> puts("#{settings.name}: node_up #{peer}")
       ok(Note.Event(Cluster.Event.NodeDown(peer))) -> puts("#{settings.name}: node_down #{peer}")
+      ok(Note.Event(Cluster.Event.NodeLeft(peer))) -> puts("#{settings.name}: node_left #{peer}")
       ok(Note.Mail(delivery)) -> puts("#{settings.name}: #{describe(delivery)}")
       error(_) -> nil
     end

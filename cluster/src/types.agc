@@ -26,6 +26,9 @@ DIALS = "dials"
 ## The key of the table that counts the messages that the node dropped.
 DROPPED = "dropped"
 
+## The reason of the `bye` of a node that leaves the cluster on purpose (`Cluster.leave`).
+LEAVE = "leave"
+
 ## The peer is not connected now: it never was, or its link ended.
 NOT_CONNECTED = "cluster.not_connected"
 
@@ -111,6 +114,7 @@ struct Options
   peers: List[String] = []
   discover: String = ""
   discover_ms: Int = 10_000
+  left_ms: Int = 60_000
   connect_ms: Int = 5000
   heartbeat_ms: Int = 1000
   reconnect_ms: Int = 500
@@ -125,6 +129,7 @@ end
 enum Event
   NodeUp(String)
   NodeDown(String)
+  NodeLeft(String)
 end
 
 ## A node that connected and proved the cookie: the link of its connection, `dialer` is the side that opened it.
@@ -152,6 +157,8 @@ end
 enum Msg
   Linked(Peer, Channel[Bool])
   Closed(String, Int)
+  Left(String, Int)
+  Depart(Channel[Bool])
   Dial(Endpoint, Channel[Result[String]])
   Dialed(String, Result[String])
   Refused
@@ -191,7 +198,8 @@ end
 ## until `reconnect_max_ms`, and starts over when a link is kept) and `timers` are the waits that are running. `own`
 ## are the addresses where a dial reached this very node, with the time (`Time.monotonic_ms`) until which they are left
 ## alone. `groups` are the memberships of this node and `version` counts their changes; `remote` has what each peer
-## said of its own, until its link ends, and `senders` the writer of each link.
+## said of its own, until its link ends, and `senders` the writer of each link. `left` are the addresses of the peers that
+## left, with the time until which discovery leaves them alone.
 struct State
   config: Config
   peers: Map[String, Peer]
@@ -207,6 +215,8 @@ struct State
   version: Int
   remote: Map[String, Remote]
   senders: Map[String, Sender]
+  leaving: Bool
+  left: Map[String, Int]
   delays: Map[String, Int]
   timers: Map[String, Task[Void]]
   refused: Int
@@ -220,6 +230,7 @@ struct Config
   connect_ms: Int
   heartbeat_ms: Int
   discover_ms: Int
+  left_ms: Int
   reconnect_ms: Int
   reconnect_max_ms: Int
   max_pending: Int

@@ -162,6 +162,7 @@ enum Request
   Peers(Peers)
   Refusals(Refusals)
   Stop(String)
+  Depart(String)
   Visit(Visit)
   Hole(String)
   ConnectHole(HoleVisit)
