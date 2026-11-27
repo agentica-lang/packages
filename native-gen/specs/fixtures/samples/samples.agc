@@ -11,11 +11,17 @@ extern module "samples"
   ## Calls the wrapper of `energy` with a List[Int] in its argument: the call fails at
   ## `argument 1: List[Float32].0: expected Float32`.
   def misread_argument() -> Float
+  ## Calls the wrapper of `reversed` with a List[Int] as its second row: the call fails at
+  ## `argument 1: List[Float32].0: expected Float32`, the argument its row inherits.
+  def misread_nested_argument() -> Float
 end
 
 def main() -> Void
-  if System.args().join(" ") == "misread_argument"
+  call = System.args().join(" ")
+  if call == "misread_argument"
     puts(misread_argument())
+  elsif call == "misread_nested_argument"
+    puts(misread_nested_argument())
   else
     samples: List[Float32] = [1.5, 2.0, 0.5]
     rows: List[List[Float32]] = [[1.0, 2.0, 3.0], [], [4.0]]

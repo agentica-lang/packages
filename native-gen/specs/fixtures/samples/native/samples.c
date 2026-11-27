@@ -70,4 +70,15 @@ an_term samples_misread_argument(an_env *env) {
   return an_void(env);
 }
 
+an_term samples_misread_nested_argument(an_env *env) {
+  const float good[1] = {1.0f};
+  an_term bad[1], rows[2], argv[1];
+  bad[0] = an_int(env, 2);
+  rows[0] = an_float32s(env, good, 1);
+  rows[1] = an_list(env, bad, 1);
+  argv[0] = an_list(env, rows, 2);
+  (void)samples_native_reversed(env, 1, argv);
+  return an_void(env);
+}
+
 SAMPLES_NATIVE_MODULE(NULL)

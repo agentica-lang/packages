@@ -102,7 +102,7 @@ end
 
 # An error when one of the canonical `types` of `name` is or holds a List[Float32], which the crate has no wrapper for.
 def refuse_float32(name: String, types: List[String]) -> Result[Void]
-  if types.any? do |type: String| type.include?("Float32") end
+  if types.any? do |type: String| type.include?("List[Float32]") end
     return error("[NATIVE-GEN-UNKNOWN] #{name} has a List[Float32], which --lang rust does not write yet")
   end
 

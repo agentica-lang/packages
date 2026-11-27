@@ -40,6 +40,17 @@ Feature: The C header of an extern module block
       [NATIVE-GEN-UNKNOWN] energy has a List[Float32], which --lang rust does not write yet
       """
 
+  Scenario: --lang rust writes a struct whose name starts with Float32
+    Given the program argument "fixtures/window/window.agc"
+    And the program argument "--lang"
+    And the program argument "rust"
+    And the Agentica program "../cli.agc"
+    Then the program exits with code 0 within 25000 milliseconds
+    And stdout includes:
+      """
+      pub struct Float32Window
+      """
+
   Scenario: --lang rust writes the Rust file, whose trait is named after --prefix
     Given the program argument "fixtures/stats/stats.agc"
     And the program argument "--lang"
@@ -312,18 +323,23 @@ Feature: The C header of an extern module block
       | C11      |
       | C++      |
 
-  Scenario: A List[Float32] argument that is not one fails the call with its index
+  Scenario Outline: A List[Float32] argument that is not one fails the call with its index and its argument
     Given a fresh package cache
     And the C compiler builds as "C11"
     And a copy of the package of "fixtures/samples/samples.agc" with its header
-    And the program argument "misread_argument"
+    And the program argument "<call>"
     And the Agentica program "samples.agc" in the fresh folder
     Then the program exits with code 1 within 25000 milliseconds
     And stderr includes:
       """
       [RUNTIME-NATIVE-ERROR]
-      misread_argument: argument 1: List[Float32].0: expected Float32
+      <call>: argument 1: List[Float32].0: expected Float32
       """
+
+    Examples:
+      | call                    |
+      | misread_argument        |
+      | misread_nested_argument |
 
   Scenario Outline: Optional and Result come in as structs and go out through constructors, built as <language>
     Given a fresh package cache
