@@ -69,3 +69,18 @@ def test_a_peer_ends_with_the_members_of_the_node_after_many_changes() -> Result
 
   Test.eq(Task.pending_count(), before)
 end
+
+def kind_of[T](result: Result[T]) -> String
+  case result
+    ok(_) -> ""
+    error(e) -> e.kind
+  end
+end
+
+def test_a_message_to_a_group_needs_a_valid_name_and_a_time() -> Result[Void]
+  alpha = node("alpha")
+  try Test.eq(kind_of(Cluster.group_send(alpha, "", "x".bytes)), Cluster.ARGUMENT)
+  try Test.eq(kind_of(Cluster.group_send(alpha, "workers", "x".bytes, 0)), Cluster.ARGUMENT)
+  try Test.eq(Cluster.group_send(alpha, "workers", "x".bytes), ok(0))
+  Cluster.stop(alpha, 1000)
+end

@@ -145,6 +145,15 @@ struct Expected
   within_ms: Int
 end
 
+## A message to a group: how many members it must reach, or the kind of the error that it must fail with.
+struct GroupPost
+  from: String
+  group: String
+  payload: Payload
+  reached: Int = 0
+  kind: String = ""
+end
+
 enum Request
   Start(Spec)
   StartFails(Spec, String)
@@ -172,4 +181,5 @@ enum Request
   JoinFails(Joining, String)
   Leave(Joining)
   Members(Expected)
+  GroupPost(GroupPost)
 end

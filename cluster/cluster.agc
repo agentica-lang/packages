@@ -131,6 +131,38 @@ def group_members(node: Types.Node, group: String) -> Result[List[Types.Member]]
   ask(node, ->(reply: Channel[List[Types.Member]]) { Types.Msg.Members(group, reply) })
 end
 
+## Sends `body` (the bytes of `Term.encode(value)`, as for `send`) to the mailbox of each member of the group `group`:
+## this node's own members get it at once, and the peers' are written to their links, all at the same time, each
+## within `timeout_ms`. It gives the number of members that it reached: for this node's, the message went into the
+## queue of the node (it is still dropped, and counted, if the mailbox cannot take it); for a peer's, the bytes are in
+## the socket. A member whose peer is not connected, or whose write failed or was too slow, is not counted, and the
+## call goes on with the rest, so it is `0` for a group with no members. The memberships are the ones that this node
+## has now, so a peer that joined a moment ago may not get it. Delivery is at most once, as for `send`, and the
+## messages of one task to one mailbox arrive in order. It fails with `cluster.argument` (a name that is not valid, or
+## `timeout_ms` is less than 1), `cluster.too_large` (the frame is over `max_frame_bytes`: then nothing is sent) or
+## `cluster.closed` (the node is stopped).
+def group_send(node: Types.Node, group: String, body: Bytes, timeout_ms: Int = ASK_MS) -> Result[Int]
+  return error("cluster: timeout_ms is at least 1", kind: Types.ARGUMENT) if timeout_ms < 1
+
+  try named_group(group, group)
+  members = try group_members(node, group)
+  frames = try framed(node, members, body)
+  jobs = frames.select { |sending| sending.member.node != node.name }
+    .map { |sending| spawn_send(node, sending, timeout_ms) }
+
+  reached = (
+    frames.select { |sending| sending.member.node == node.name }
+      .select { |sending| deliver_here(node, sending, body) }
+      .size
+  )
+
+  for job in jobs
+    reached += counted(Task.await(job))
+  end
+
+  ok(reached)
+end
+
 ## Tells `address` when a peer comes or goes: `Event.NodeUp(name)` when the first link to a peer is kept, and
 ## `Event.NodeDown(name)` when its link ends (it said bye, the socket closed, or it was silent for 3 heartbeats).
 ## `wrap` makes the message of that address from the event, and it runs in the actor of the node, so it must be pure
@@ -164,6 +196,20 @@ struct Plan
   discovery: Optional[Types.Endpoint]
 end
 
+# A member and the frame that goes to its mailbox.
+struct Sending
+  member: Types.Member
+  frame: Bytes
+end
+
+# What the task that writes to one peer needs. The node is only its address: a task takes data, not the node.
+struct Job
+  actor: Address[Types.Msg]
+  peer: String
+  frame: Bytes
+  timeout_ms: Int
+end
+
 def ask[R](node: Types.Node, make: Fn[Channel[R], Types.Msg]) -> Result[R]
   case Actor.call(node.actor.address, ASK_MS, make)
     ok(answer) -> ok(answer)
@@ -175,6 +221,43 @@ def named_group(group: String, mailbox: String) -> Result[Void]
   return ok() if Names.mailbox_name?(group) and Names.mailbox_name?(mailbox)
 
   error("cluster: a group and a mailbox name have 1 to #{Types.MAX_MAILBOX_BYTES} bytes", kind: Types.ARGUMENT)
+end
+
+# All the frames are made before any is sent, so a body that is too big sends to nobody.
+def framed(node: Types.Node, members: List[Types.Member], body: Bytes) -> Result[List[Sending]]
+  sendings: List[Sending] = []
+  for member in members
+    frame = try Wire.encode(Types.Message.Mail(member.mailbox, body), node.max_frame_bytes)
+    sendings = sendings.push(Sending(member: member, frame: frame))
+  end
+
+  ok(sendings)
+end
+
+def spawn_send(node: Types.Node, sending: Sending, timeout_ms: Int) -> Task[Result[Bool]]
+  job = Job(actor: node.actor.address, peer: sending.member.node, frame: sending.frame, timeout_ms: timeout_ms)
+  Task.spawn(&write_to_peer, job)
+end
+
+def write_to_peer(job: Job) -> Result[Bool]
+  asked: Result[Optional[TCP.Socket]] = Actor.call(job.actor, ASK_MS, ->(reply) { Types.Msg.Route(job.peer, reply) })
+  case asked
+    ok(some(socket)) -> ok(write(socket, job.frame, job.timeout_ms).ok?)
+    _ -> ok(false)
+  end
+end
+
+# A member of this node goes into the queue of the node, as a message from a peer does, and it counts as reached when
+# the node took it.
+def deliver_here(node: Types.Node, sending: Sending, body: Bytes) -> Bool
+  Actor.cast(node.actor.address, Types.Msg.Deliver(node.name, sending.member.mailbox, body), 0).ok?
+end
+
+def counted(done: Result[Bool]) -> Int
+  case done
+    ok(true) -> 1
+    _ -> 0
+  end
 end
 
 # A write that fails may have sent half a frame, so the link is closed: the reader of the link ends it.

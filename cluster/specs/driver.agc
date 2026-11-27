@@ -6,7 +6,7 @@ import Binary from "std/binary"
 import Cluster from "../cluster"
 import Protocol from "nodes_protocol"
 import {
-  Connect, Drops, Flood, HoleVisit, Mailbox, Payload, Peers, Post, Received, Refusals, Request, Spec,
+  Connect, Drops, Flood, GroupPost, HoleVisit, Mailbox, Payload, Peers, Post, Received, Refusals, Request, Spec,
 } from "nodes_protocol"
 import {Expected, Joining, Stranger, Visit} from "nodes_protocol"
 import Types from "../src/types"
@@ -122,6 +122,7 @@ def act(
     Request.JoinFails(joining, kind) -> failed_or_done(nodes, join_fails(nodes, joining, kind))
     Request.Leave(joining) -> failed_or_done(nodes, left(nodes, joining))
     Request.Members(expected) -> failed_or_done(nodes, expect_members(nodes, expected))
+    Request.GroupPost(post) -> failed_or_done(nodes, group_posted(nodes, post))
     Request.ReplacedEmpty(node, mailbox) -> failed_or_done(nodes, expect_replaced_empty(received, node, mailbox))
   end
 end
@@ -492,6 +493,14 @@ def start_reading(received: ATS[String, List[String]], inbox: Channel[Cluster.De
   end
 
   Protocol.OK
+end
+
+def group_posted(nodes: Map[String, Cluster.Node], post: GroupPost) -> String
+  case Cluster.group_send(nodes[post.from], post.group, payload_bytes(post.payload))
+    ok(reached) if post.kind.empty? and reached == post.reached -> Protocol.OK
+    ok(reached) -> "the message reached #{reached} members, not #{post.reached}"
+    error(e) -> failed_reply(e, post.kind)
+  end
 end
 
 def joined(nodes: Map[String, Cluster.Node], joining: Joining) -> String
