@@ -1,9 +1,10 @@
-## The steps of wire.feature (the ones of handshake.feature are in handshake_steps.agc): the frames are written and read by the codec of `src/wire.agc`. A message is spelled in
-## words (`ping`, `bye done`, `mail jobs hello`) and what a step reads is kept as a JSON line of the context.
+## The steps of wire.feature (the ones of handshake.feature are in handshake_steps.agc): the frames are written and
+## read by the codec of `src/wire.agc`. A message is spelled in words (`ping`, `bye done`, `mail jobs hello`) and what
+## a step reads is kept as a JSON line of the context.
 
 import BDD from "std/bdd"
-import HandshakeSteps from "handshake_steps"
 import Binary from "std/binary"
+import HandshakeSteps from "handshake_steps"
 import Types from "../src/types"
 import Wire from "../src/wire"
 

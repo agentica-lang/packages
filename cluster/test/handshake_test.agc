@@ -1,5 +1,6 @@
 import Handshake from "../src/handshake"
 import Types from "../src/types"
+import Wire from "../src/wire"
 
 private
 
@@ -9,6 +10,8 @@ SERVER_NONCE = "6465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f80818283
 # HMAC-SHA256 of the transcript of each role with COOKIE, worked out once with Python's hmac module.
 SERVER_PROOF = "098d13838e49805392f7e8cc2205cdd7a128ff9a484d52ed06703630c9f7f648"
 CLIENT_PROOF = "7cfd4793fba3a3380878d326cfcec934954c42143fc63840c2caa604da7674a5"
+
+def name_of(length: Int) -> String = (1..length).map { |_| "a" }.join("")
 
 def bytes_of(text: String) -> Bytes = OpenSSL.Digest.hexdecode(text).unwrap!
 
@@ -21,7 +24,7 @@ def kind_of[T](result: Result[T]) -> String
   end
 end
 
-def session() -> Types.Session
+def session() -> Handshake.Session
   Handshake.session("alpha", "beta", bytes_of(CLIENT_NONCE), bytes_of(SERVER_NONCE)).unwrap!
 end
 
@@ -103,14 +106,55 @@ def test_a_cookie_has_at_least_16_bytes() -> Result[Void]
   Test.ok?(Handshake.cookie("1234567890123456"))
 end
 
-def test_a_session_needs_two_names_and_two_nonces() -> Result[Void]
+def test_a_session_needs_two_names_and_two_different_nonces() -> Result[Void]
+  one = bytes_of(CLIENT_NONCE)
+  other = bytes_of(SERVER_NONCE)
+  try Test.ok?(Handshake.session("a", "b", one, other))
+  try Test.eq(kind_of(Handshake.session("a", "a", one, other)), Types.REFUSED)
+  try Test.eq(kind_of(Handshake.session("A", "b", one, other)), Types.PROTOCOL)
+  try Test.eq(kind_of(Handshake.session("a", "", one, other)), Types.PROTOCOL)
+  try Test.eq(kind_of(Handshake.session("a", "b", one.take(31), other)), Types.PROTOCOL)
+  try Test.eq(kind_of(Handshake.session("a", "b", one, other + other)), Types.PROTOCOL)
+  Test.eq(kind_of(Handshake.session("a", "b", one, one)), Types.PROTOCOL)
+end
+
+def test_an_error_does_not_repeat_what_the_peer_wrote() -> Result[Void]
   nonce = bytes_of(CLIENT_NONCE)
-  try Test.ok?(Handshake.session("a", "b", nonce, nonce))
-  try Test.eq(kind_of(Handshake.session("a", "a", nonce, nonce)), Types.REFUSED)
-  try Test.eq(kind_of(Handshake.session("A", "b", nonce, nonce)), Types.PROTOCOL)
-  try Test.eq(kind_of(Handshake.session("a", "", nonce, nonce)), Types.PROTOCOL)
-  try Test.eq(kind_of(Handshake.session("a", "b", nonce.take(31), nonce)), Types.PROTOCOL)
-  Test.eq(kind_of(Handshake.session("a", "b", nonce, nonce + nonce)), Types.PROTOCOL)
+  other = bytes_of(SERVER_NONCE)
+  case Handshake.session("Peer-controlled-name", "b", nonce, other)
+    ok(_) -> Test.assert(false, "a name with upper case letters is refused")
+    error(e) -> Test.assert(not e.message.include?("Peer-controlled-name"), "the message repeats the name")
+  end
+end
+
+def test_a_node_that_answers_under_another_name_fails_the_proof() -> Result[Void]
+  # The client dialed "beta"; the node that answers calls itself "gamma" and signs a transcript with that name.
+  answering = try Handshake.session("alpha", "gamma", bytes_of(CLIENT_NONCE), bytes_of(SERVER_NONCE))
+  proof = case Handshake.challenge(cookie(), answering)
+    Types.Message.Challenge(_, _, p) -> p
+    _ -> "".bytes
+  end
+
+  Test.eq(kind_of(Handshake.answer(cookie(), session(), proof)), Types.REFUSED)
+end
+
+def test_every_frame_of_the_handshake_fits_before_the_welcome() -> Result[Void]
+  name = name_of(63)
+  nonce = bytes_of(CLIENT_NONCE)
+  proof = bytes_of(SERVER_PROOF)
+  messages = [
+    Types.Message.Hello(name, nonce),
+    Types.Message.Challenge(name, bytes_of(SERVER_NONCE), proof),
+    Types.Message.Proof(proof),
+    Types.Message.Welcome,
+  ]
+
+  for message in messages
+    frame = try Wire.encode(message, Types.PRE_AUTH_MAX_FRAME_BYTES)
+    try Test.assert(frame.size - 4 <= Types.PRE_AUTH_MAX_FRAME_BYTES, "a frame of the handshake is too big")
+  end
+
+  ok()
 end
 
 def test_a_nonce_has_32_bytes_and_is_new_each_time() -> Result[Void]

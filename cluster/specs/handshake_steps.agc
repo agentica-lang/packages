@@ -1,6 +1,6 @@
 ## The steps of handshake.feature. A node is a name and a cookie, and a connection runs the pure functions of
-## `src/handshake.agc` from both sides in one step, as a socket would carry the messages. What each node decided is kept
-## in the context: `accepted:A:B` or `refused:A:B` is what the node A decided about the node B.
+## `src/handshake.agc` from both sides in one step, as a socket would carry the messages. What each node decided is
+## kept in the context: `accepted:A:B` or `refused:A:B` is what the node A decided about the node B.
 
 import BDD from "std/bdd"
 import Handshake from "../src/handshake"
@@ -12,6 +12,7 @@ def steps() -> List[BDD.Step]
     BDD.step("the node {string} has the cookie {string}", &node_has_cookie),
     BDD.step("{string} connects to {string}", &connects),
     BDD.step("{string} connected to {string} earlier", &connected_earlier),
+    BDD.step("{string} dials {string} and {string} answers", &answers_as_another),
     BDD.step("{string} answers {string} without checking its proof", &answers_unchecked),
     BDD.step("a stranger connects to {string} and sends the answer of that earlier connection", &replays),
     BDD.step("a stranger connects to {string} and sends back the proof that {string} made", &reflects),
@@ -61,12 +62,12 @@ def decided?(ctx: BDD.Context, verdict: String, by: String, whom: String) -> Boo
   BDD.get(ctx, "#{verdict}:#{by}:#{whom}").ok?
 end
 
-def new_session(client: String, server: String) -> Types.Session
+def new_session(client: String, server: String) -> Handshake.Session
   Handshake.session(client, server, Handshake.fresh_nonce(), Handshake.fresh_nonce()).unwrap!
 end
 
 # The proof of the challenge that the server writes.
-def server_proof(server_cookie: Bytes, session: Types.Session) -> Bytes
+def server_proof(server_cookie: Bytes, session: Handshake.Session) -> Bytes
   case Handshake.challenge(server_cookie, session)
     Types.Message.Challenge(_, _, proof) -> proof
     _ -> "".bytes
@@ -111,7 +112,23 @@ def answers_unchecked(ctx: BDD.Context, args: List[String]) -> BDD.Context
   decide(ctx, args[1], args[0], welcomed.ok?)
 end
 
-def stranger_sends(ctx: BDD.Context, server: String, as_name: String, send: Fn[Types.Session, Bytes]) -> BDD.Context
+# The client dialed `expected` and builds its session with that name; the node that answers signs with its own.
+def answers_as_another(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  client_nonce = Handshake.fresh_nonce()
+  server_nonce = Handshake.fresh_nonce()
+  answering = Handshake.session(args[0], args[2], client_nonce, server_nonce).unwrap!
+  expected = Handshake.session(args[0], args[1], client_nonce, server_nonce).unwrap!
+  proof = server_proof(cookie_of(ctx, args[2]), answering)
+  answer = Handshake.answer(cookie_of(ctx, args[0]), expected, proof)
+  decide(ctx, args[0], args[1], answer.ok?)
+end
+
+def stranger_sends(
+  ctx: BDD.Context,
+  server: String,
+  as_name: String,
+  send: Fn[Handshake.Session, Bytes],
+) -> BDD.Context
   session = new_session(as_name, server)
   welcomed = Handshake.accept(cookie_of(ctx, server), session, send.call(session))
   decide(ctx, server, STRANGER, welcomed.ok?)

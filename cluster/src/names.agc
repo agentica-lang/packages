@@ -12,6 +12,9 @@ def node_name?(name: String) -> Bool
   bytes.to_a.all? { |b| LETTERS.include?(b) or DIGITS.include?(b) or b == UNDERSCORE or b == HYPHEN }
 end
 
+## What a hello and a challenge carry: a valid node name and a nonce of the right size.
+def peer?(name: String, nonce: Bytes) -> Bool = node_name?(name) and nonce.size == Types.NONCE_BYTES
+
 ## A mailbox name has 1 to 255 bytes.
 def mailbox_name?(name: String) -> Bool = not name.bytes.empty? and name.bytes.size <= Types.MAX_MAILBOX_BYTES
 

@@ -26,6 +26,12 @@ Feature: Two nodes that share a cookie shake hands
     When a stranger connects to "beta" and sends the answer of that earlier connection
     Then "beta" refuses the stranger
 
+  Scenario: A node that answers under another name is refused
+    Given the node "alpha" and the node "beta" have the cookie "the-cookie-of-the-cluster"
+    And the node "gamma" has the cookie "the-cookie-of-the-cluster"
+    When "alpha" dials "beta" and "gamma" answers
+    Then "alpha" refuses "beta"
+
   Scenario: The proof of a node cannot be sent back to it
     Given the node "alpha" and the node "beta" have the cookie "the-cookie-of-the-cluster"
     When a stranger connects to "beta" and sends back the proof that "beta" made
@@ -41,10 +47,10 @@ Feature: Two nodes that share a cookie shake hands
     Then the cookie is <outcome>
 
     Examples:
-      | cookie                | outcome  |
-      | short                 | refused  |
-      | 123456789012345       | refused  |
-      | 1234567890123456      | accepted |
+      | cookie                            | outcome  |
+      | short                             | refused  |
+      | 123456789012345                   | refused  |
+      | 1234567890123456                  | accepted |
       | a-long-cookie-of-32-bytes-or-more | accepted |
 
   Scenario Outline: A node cannot connect to a node with its own name or with a bad name
