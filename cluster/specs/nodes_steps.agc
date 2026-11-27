@@ -58,6 +58,15 @@ def steps() -> List[BDD.Step]
     ),
     BDD.step("the node {string} starts again on the port of its first run with the cookie {string}", &starts_again),
     BDD.step(
+      "the node {string} starts with the cookie {string} and finds nodes at {string}, port of {string}, each {int} ms",
+      &starts_discovering,
+    ),
+    BDD.step(
+      "the node {string} starts with the cookie {string} and finds the name {string} on a trusted network, each {int} ms",
+      &starts_discovering_a_name,
+    ),
+    BDD.step("starting the node {string} that finds the nodes at {string} fails with {string}", &fails_discover),
+    BDD.step(
       "the node {string} starts again on the port of its first run with the cookie {string} and dials {string}",
       &starts_again_dialing,
     ),
@@ -364,4 +373,19 @@ def starts_retrying_bounded(ctx: BDD.Context, args: List[String]) -> BDD.Context
   )
 
   send(ctx, Request.Start(spec))
+end
+
+def starts_discovering(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  spec = Spec(name: args[0], cookie: args[1], discover: args[2], discover_port_of: args[3], discover_ms: args[4].to_i!)
+  send(ctx, Request.Start(spec))
+end
+
+def starts_discovering_a_name(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  spec = Spec(name: args[0], cookie: args[1], discover: args[2], discover_ms: args[3].to_i!, insecure: true)
+  send(ctx, Request.Start(spec))
+end
+
+def fails_discover(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  spec = Spec(name: args[0], cookie: "the-cookie-of-the-cluster", discover: args[1])
+  send(ctx, Request.StartFails(spec, args[2]))
 end

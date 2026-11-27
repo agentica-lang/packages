@@ -73,13 +73,16 @@ end
 ## What a node needs to start. `cookie` is the shared secret (16 bytes at least). `peers` are the `host:port` of the
 ## nodes to connect to. Plain TCP is only allowed on this machine unless `insecure_plaintext` is true. `connect_ms` is
 ## the time that a connection has to finish its handshake, and `max_pending` how many connections may be in their
-## handshake at once: a new one over that is closed at once.
+## handshake at once: a new one over that is closed at once. `discover` is a `host:port` whose host is a name with the
+## addresses of the nodes (the A and AAAA records), which the node looks up every `discover_ms` and dials.
 struct Options
   name: String
   cookie: String
   host: String = "127.0.0.1"
   port: Int = 0
   peers: List[String] = []
+  discover: String = ""
+  discover_ms: Int = 10_000
   connect_ms: Int = 5000
   heartbeat_ms: Int = 1000
   reconnect_ms: Int = 500
@@ -130,6 +133,8 @@ enum Msg
   Route(String, Channel[Optional[TCP.Socket]])
   Watch(Fn[Event, Bool], Channel[Bool])
   Keep(List[Endpoint])
+  Discover(Endpoint)
+  Found(Endpoint)
   Redial(String)
 end
 
@@ -157,6 +162,8 @@ struct State
   mailboxes: Map[String, Fn[Delivery, Bool]]
   watchers: List[Fn[Event, Bool]]
   kept: Map[String, Endpoint]
+  found: Map[String, Endpoint]
+  finders: List[Task[Void]]
   names: Map[String, String]
   delays: Map[String, Int]
   timers: Map[String, Task[Void]]
@@ -170,6 +177,7 @@ struct Config
   cookie: Bytes
   connect_ms: Int
   heartbeat_ms: Int
+  discover_ms: Int
   reconnect_ms: Int
   reconnect_max_ms: Int
   max_pending: Int

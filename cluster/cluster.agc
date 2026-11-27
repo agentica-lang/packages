@@ -28,6 +28,7 @@ export Types.Event
 ## A bad option is a `cluster.argument` error. Plain TCP is only for this machine unless `insecure_plaintext` is set.
 def start(options: Types.Options) -> Result[Types.Node]
   endpoints = try Check.check(options)
+  discovery = try Check.discovery(options)
   counts: ATS[String, Int] = ATS.new()
   actor = Actor.start(Members.behaviour(options, counts))
   ready: Channel[Result[Int]] = Channel.new(1)
@@ -35,7 +36,7 @@ def start(options: Types.Options) -> Result[Types.Node]
   accept = Listener.Accept(config: config, host: options.host, port: options.port, ready: ready)
   acceptor = Task.spawn(&Listener.run, accept)
   case ready.recv(options.connect_ms)
-    ok(listened) -> up(options, actor, acceptor, counts, listened, endpoints)
+    ok(listened) -> up(options, actor, acceptor, counts, listened, Plan(endpoints: endpoints, discovery: discovery))
     error(_) -> abort(actor, acceptor, error("cluster: the node did not start", kind: Types.ARGUMENT))
   end
 end
@@ -131,6 +132,12 @@ private
 
 ASK_MS = 5000
 
+# What a node dials once it listens: the peers of its list, and the name to look up.
+struct Plan
+  endpoints: List[Types.Endpoint]
+  discovery: Optional[Types.Endpoint]
+end
+
 def ask[R](node: Types.Node, make: Fn[Channel[R], Types.Msg]) -> Result[R]
   case Actor.call(node.actor.address, ASK_MS, make)
     ok(answer) -> ok(answer)
@@ -162,12 +169,17 @@ def up(
   acceptor: Task[Void],
   counts: ATS[String, Int],
   listened: Result[Int],
-  endpoints: List[Types.Endpoint],
+  plan: Plan,
 ) -> Result[Types.Node]
   case listened
     error(e) -> abort(actor, acceptor, error(e.message, kind: e.kind))
     ok(port) ->
-      _ = Actor.cast(actor.address, Types.Msg.Keep(endpoints))
+      _ = Actor.cast(actor.address, Types.Msg.Keep(plan.endpoints))
+      case plan.discovery
+        some(endpoint) -> _ = Actor.cast(actor.address, Types.Msg.Discover(endpoint))
+        none -> nil
+      end
+
       ok(
         Types.Node(
           name: options.name,

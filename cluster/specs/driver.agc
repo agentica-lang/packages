@@ -138,6 +138,9 @@ def options_of(nodes: Map[String, Cluster.Node], spec: Spec) -> Cluster.Options
     reconnect_ms: spec.reconnect_ms,
     reconnect_max_ms: [spec.reconnect_max_ms, 4 * spec.reconnect_ms].max.unwrap!,
     port: port_of(nodes, spec),
+    discover: discover_of(nodes, spec),
+    discover_ms: spec.discover_ms,
+    insecure_plaintext: spec.insecure,
     max_frame_bytes: spec.max_frame_bytes,
   )
 end
@@ -147,6 +150,13 @@ def port_of(nodes: Map[String, Cluster.Node], spec: Spec) -> Int
   return Cluster.port(nodes[spec.name]) if spec.again
 
   0
+end
+
+# The name to look up: `discover` as it is, or its host with the port of a node that runs.
+def discover_of(nodes: Map[String, Cluster.Node], spec: Spec) -> String
+  return spec.discover if spec.discover_port_of.empty?
+
+  "#{spec.discover}:#{Cluster.port(nodes[spec.discover_port_of])}"
 end
 
 def address_of(nodes: Map[String, Cluster.Node], name: String, named: Bool) -> String

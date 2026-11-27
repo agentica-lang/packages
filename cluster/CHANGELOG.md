@@ -2,6 +2,10 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+- Add discovery by DNS: `Options.discover` is a `host:port` whose host is a name with the addresses of the nodes, looked up at start and every `discover_ms` (10 s by default), and each address that the node is not linked with is dialed.
+
 ## [0.1.0] - 2026-11-27
 
 Needs Agentica 0.39.1.

@@ -1,4 +1,5 @@
 import Actor from "std/actor"
+import Cluster from "../cluster"
 import Members from "../src/members"
 import Types from "../src/types"
 
@@ -193,5 +194,101 @@ def test_a_peer_of_the_list_is_dialed_again_with_a_wait_that_doubles_up_to_the_b
 
   try Test.assert(gaps[3] >= 4 * RETRY_MS and gaps[4] >= 4 * RETRY_MS, "the waits were #{gaps}")
   try Test.assert(gaps[3] < 6 * RETRY_MS and gaps[4] < 6 * RETRY_MS, "the wait went over the bound: #{gaps}")
+  finish(fix)
+end
+
+def found(fix: Fixture, host: String = "127.0.0.1") -> Result[Void]
+  Actor.cast(fix.actor.address, Types.Msg.Found(Types.Endpoint(host: host, port: fix.port)))
+end
+
+def accepted(listener: TCP.Listener, wait_ms: Int) -> List[TCP.Socket]
+  case TCP.accept(listener, wait_ms)
+    ok(socket) -> [socket] + accepted(listener, wait_ms)
+    error(_) -> []
+  end
+end
+
+def connections(listener: TCP.Listener, wait_ms: Int) -> Int
+  sockets = accepted(listener, wait_ms)
+  for socket in sockets
+    TCP.close(socket)
+  end
+
+  sockets.size
+end
+
+# The dials of the test are held open, so that their failure does not come before the answers that the test makes up.
+def test_an_address_that_the_name_gave_is_not_dialed_again_once_its_peer_is_linked() -> Result[Void]
+  fix = fixture()
+  address = "127.0.0.1:#{fix.port}"
+  try found(fix)
+  held = accepted(fix.listener, 500)
+  try Test.eq(held.size, 1)
+  # The peer came in on a link of its own, and the dial of the address answered with its name.
+  try Test.eq(try link(fix, "beta", "beta", ""), true)
+  try Actor.cast(fix.actor.address, Types.Msg.Dialed(address, ok("beta")))
+  # The link of this test opened a connection of its own.
+  try Test.eq(connections(fix.listener, 300), 1)
+  try found(fix)
+  try Test.eq(connections(fix.listener, 500), 0)
+  for socket in held
+    TCP.close(socket)
+  end
+
+  finish(fix)
+end
+
+def test_a_dial_that_fails_makes_the_node_forget_the_address() -> Result[Void]
+  fix = fixture()
+  address = "127.0.0.1:#{fix.port}"
+  try found(fix)
+  try Test.eq(connections(fix.listener, 500), 1)
+  try Actor.cast(
+    fix.actor.address,
+    Types.Msg.Dialed(address, error("cluster: no node answers", kind: Types.UNREACHABLE)),
+  )
+
+  # A name that comes late is not kept for an address that nothing asks for.
+  try Actor.cast(fix.actor.address, Types.Msg.Dialed(address, ok("beta")))
+  try Test.eq(try link(fix, "beta", "beta", ""), true)
+  try Test.eq(connections(fix.listener, 300), 1)
+  try found(fix)
+  try Test.eq(connections(fix.listener, 500), 1)
+  finish(fix)
+end
+
+def refused_at_least(fix: Fixture, count: Int) -> Bool
+  deadline = Time.monotonic_ms() + WAIT_MS
+  while Time.monotonic_ms() < deadline
+    refused: Result[Int] = Actor.call(fix.actor.address, WAIT_MS, ->(reply) { Types.Msg.Refusals(reply) })
+    return true if refused.unwrap_or(0) >= count
+
+    Task.sleep(POLL_MS)
+  end
+
+  false
+end
+
+def test_an_address_of_the_list_that_the_name_gives_is_dialed_with_the_name_of_the_list() -> Result[Void]
+  fix = fixture(60_000, 60_000)
+  alpha = try Cluster.start(Cluster.Options(name: "alpha", cookie: "the-cookie-of-the-cluster"))
+  port = Cluster.port(alpha)
+  listed = Types.Endpoint(host: "127.0.0.1", port: port, node: "gamma")
+  try Actor.cast(fix.actor.address, Types.Msg.Keep([listed]))
+  try Test.assert(refused_at_least(fix, 1), "the dial of the list was not refused")
+  try Actor.cast(fix.actor.address, Types.Msg.Found(Types.Endpoint(host: "127.0.0.1", port: port)))
+  try Test.assert(refused_at_least(fix, 2), "the dial of the found address was not refused")
+  try Test.eq(Cluster.nodes(alpha), [])
+  try Cluster.stop(alpha, 1000)
+  finish(fix)
+end
+
+def test_an_ipv6_address_is_dialed() -> Result[Void]
+  fix = fixture()
+  six = try TCP.listen("::1", 0)
+  try Actor.cast(fix.actor.address, Types.Msg.Found(Types.Endpoint(host: "::1", port: TCP.local_port(six))))
+
+  try Test.eq(connections(six, 1000), 1)
+  TCP.close_listener(six)
   finish(fix)
 end
