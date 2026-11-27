@@ -173,10 +173,12 @@ def up(state: Types.State, name: String) -> Types.State = told(state, Types.Even
 
 def down(state: Types.State, name: String) -> Types.State = told(state, Types.Event.NodeDown(name))
 
-# Every watcher hears it, once. A watcher that cannot take it at once misses it: it is the bound of its mailbox.
+# Every watcher hears it, once. A watcher that cannot take it at once misses it, and that is counted as a drop.
 def told(state: Types.State, event: Types.Event) -> Types.State
   for tell in state.watchers
-    _ = tell.call(event)
+    if not tell.call(event)
+      _ = state.config.counts.add(Types.DROPPED, 1)
+    end
   end
 
   state

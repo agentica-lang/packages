@@ -55,6 +55,7 @@ def steps() -> List[BDD.Step]
     BDD.step("starting the node {string} with a heartbeat of {int} ms fails with {string}", &fails_heartbeat),
     BDD.step("{string} watches the peers coming and going", &watches),
     BDD.step("the events of {string} within {int} ms:", &has_events),
+    BDD.step("the last event of {string} is {string} within {int} ms", &has_last_event),
     BDD.step("{string} has the mailbox {string} with room for {int} messages and nobody reads it", &registers_unread),
     BDD.step("the replaced mailbox {string} of {string} has received nothing", &replaced_is_empty),
     BDD.step(
@@ -313,4 +314,9 @@ def watches(ctx: BDD.Context, args: List[String]) -> BDD.Context = send(ctx, Req
 def has_events(ctx: BDD.Context, args: List[String]) -> BDD.Context
   lines = BDD.table(ctx).map { |row| row[0] }
   send(ctx, Request.Received(Received(node: args[0], mailbox: "events", lines: lines, within_ms: args[1].to_i!)))
+end
+
+def has_last_event(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  received = Received(node: args[0], mailbox: "events", lines: [args[1]], within_ms: args[2].to_i!, last_only: true)
+  send(ctx, Request.Received(received))
 end

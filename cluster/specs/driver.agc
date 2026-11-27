@@ -539,13 +539,20 @@ def expect_received(
 ) -> String
   key = current_key(received, expected.node, expected.mailbox)
   deadline = Time.monotonic_ms() + expected.within_ms
-  while lines_of(received, key) != expected.lines and Time.monotonic_ms() < deadline
+  while not matches?(lines_of(received, key), expected) and Time.monotonic_ms() < deadline
     Task.sleep(POLL_MS)
   end
 
-  return "#{key} has #{lines_of(received, key)}" if lines_of(received, key) != expected.lines
+  return "#{key} has #{lines_of(received, key)}" if not matches?(lines_of(received, key), expected)
 
   Protocol.OK
+end
+
+# The lines are all of them, or, with `last_only`, the last one only.
+def matches?(have: List[String], expected: Received) -> Bool
+  return not have.empty? and have.last == expected.lines[0] if expected.last_only
+
+  have == expected.lines
 end
 
 def expect_in_order(

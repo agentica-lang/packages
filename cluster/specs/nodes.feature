@@ -61,11 +61,15 @@ Feature: Nodes that share a cookie connect
   Scenario: Two nodes that connect to each other at the same moment keep one link
     Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"
     And the node "beta" starts with the cookie "the-cookie-of-the-cluster"
+    And "alpha" watches the peers coming and going
+    And "beta" watches the peers coming and going
     When "alpha" and "beta" connect to each other at the same moment
     Then "alpha" has the peers "beta" within 5000 ms
     And "beta" has the peers "alpha" within 5000 ms
     And "alpha" still has the peers "beta" 500 ms later
     And "beta" still has the peers "alpha" 500 ms later
+    And the last event of "alpha" is "node_up beta" within 3000 ms
+    And the last event of "beta" is "node_up alpha" within 3000 ms
 
   Scenario: A peer that stops is forgotten
     Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"

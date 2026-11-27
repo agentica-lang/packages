@@ -107,7 +107,7 @@ cluster/             Agentica nodes that connect with a shared cookie (planned: 
                      only on this machine), src/endpoint.agc `host:port` (pure), src/wire.agc the preamble and the frames (pure),
                      src/handshake.agc the proofs of the cookie handshake (pure), src/names.agc the rules for node and
                      mailbox names, src/types.agc the kinds, the limits and the messages; test/ has the unit tests of the
-                     frames, the proofs, the addresses and the heartbeat (a peer written by hand) (the bytes and the HMAC values written by hand); specs/ has
+                     frames, the proofs, the addresses and the heartbeat (the bytes and the HMAC values written by hand, and a peer written by hand); specs/ has
                      wire.feature and handshake.feature (pure), and nodes.feature, mailboxes.feature and events.feature, whose program under test is
                      specs/driver.agc (the nodes of a scenario in one program on 127.0.0.1, port 0, driven by JSON lines
                      from specs/nodes_steps.agc); docs/protocol.md is the format for another program

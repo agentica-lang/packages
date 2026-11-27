@@ -113,6 +113,7 @@ struct Received
   mailbox: String
   lines: List[String]
   within_ms: Int
+  last_only: Bool = false
 end
 
 ## How many messages a node must have dropped within `within_ms`.

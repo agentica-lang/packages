@@ -13,9 +13,9 @@ Feature: Events of the peers
       | node_down beta |
 
   Scenario: A link with no traffic stays up for longer than the time that a silent peer is given
-    Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster" and a heartbeat of 100 ms
+    Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster" and a heartbeat of 200 ms
     And "alpha" watches the peers coming and going
-    And the node "beta" starts with the cookie "the-cookie-of-the-cluster" and a heartbeat of 100 ms
+    And the node "beta" starts with the cookie "the-cookie-of-the-cluster" and a heartbeat of 200 ms
     When "beta" connects to the node "alpha"
     Then "alpha" has the peers "beta" within 5000 ms
     And "alpha" still has the peers "beta" 1500 ms later

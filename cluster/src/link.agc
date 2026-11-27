@@ -130,24 +130,19 @@ end
 # After the welcome a link is read: a bye ends it, a mail goes to the node, a ping is answered with a pong and
 # any other
 # frame is ignored. A task beside the reader (`watch_link`) pings a quiet link and closes a silent one, which ends the
-# read. Any frame is a sign of life, so a link that carries mail needs no ping.
+# read. Every chunk that arrives is a sign of life, so a link that carries mail needs no ping, and a big frame that
+# comes slowly is not silence.
 def keep_reading(config: Types.Config, socket: TCP.Socket, peer: Types.Peer) -> Void
   seen: ATS[String, Int] = ATS.new()
   seen.put(SEEN, Time.monotonic_ms())
   watcher = Task.spawn(&watch_link, Watch(config: config, socket: socket, seen: seen))
   reading = true
   while reading
-    case read_message(socket, config.max_frame_bytes, 0)
+    case read_message(socket, config.max_frame_bytes, 0, some(seen))
       ok(Types.Message.Bye(_)) -> reading = false
-      ok(Types.Message.Mail(mailbox, body)) ->
-        seen.put(SEEN, Time.monotonic_ms())
-        deliver(config, peer, mailbox, body)
-
-      ok(Types.Message.Ping) ->
-        seen.put(SEEN, Time.monotonic_ms())
-        reading = beat(socket, config, Types.Message.Pong)
-
-      ok(_) -> seen.put(SEEN, Time.monotonic_ms())
+      ok(Types.Message.Mail(mailbox, body)) -> deliver(config, peer, mailbox, body)
+      ok(Types.Message.Ping) -> pong(socket, config)
+      ok(_) -> nil
       error(_) -> reading = false
     end
   end
@@ -158,27 +153,34 @@ def keep_reading(config: Types.Config, socket: TCP.Socket, peer: Types.Peer) -> 
 end
 
 # Every heartbeat: a link that was quiet for half of one gets a ping, and one that was silent for 3 closes. A read that
-# times out would close the socket as well, so the reader waits with no limit and this task does the timing.
+# times out would close the socket as well, so the reader waits with no limit and this task does the timing. A ping
+# that cannot be written (a big send holds the socket, or the peer does not read) ends the link as well, so that no
+# link is left with nobody to watch it.
 def watch_link(watch: Watch) -> Void
   config = watch.config
   alive = true
   while alive
     Task.sleep(config.heartbeat_ms)
     silent = Time.monotonic_ms() - watch.seen.get(SEEN).unwrap_or(0)
-    if silent > SILENT_HEARTBEATS * config.heartbeat_ms
+    if silent > SILENT_HEARTBEATS * config.heartbeat_ms or (silent * 2 >= config.heartbeat_ms and not ping(watch))
       TCP.close(watch.socket)
       alive = false
-    elsif silent * 2 >= config.heartbeat_ms
-      alive = beat(watch.socket, config, Types.Message.Ping)
     end
   end
 end
 
-# Writes a ping or a pong. The write is of the link alone: it never waits for the actor of the node.
-def beat(socket: TCP.Socket, config: Types.Config, message: Types.Message) -> Bool
-  case Wire.encode(message)
-    ok(frame) -> TCP.send_bytes(socket, frame, config.heartbeat_ms).ok?
+def ping(watch: Watch) -> Bool
+  case Wire.encode(Types.Message.Ping)
+    ok(frame) -> TCP.send_bytes(watch.socket, frame, SILENT_HEARTBEATS * watch.config.heartbeat_ms).ok?
     error(_) -> false
+  end
+end
+
+# A pong that cannot be written is not the end of the link (a big send may hold the socket): the watcher decides.
+def pong(socket: TCP.Socket, config: Types.Config) -> Void
+  case Wire.encode(Types.Message.Pong)
+    ok(frame) -> _ = TCP.send_bytes(socket, frame, SILENT_HEARTBEATS * config.heartbeat_ms)
+    error(_) -> nil
   end
 end
 
@@ -202,8 +204,8 @@ def client_handshake(
   nonce = Handshake.fresh_nonce()
   hello = try Wire.encode(Types.Message.Hello(config.name, nonce))
   try send(socket, Wire.preamble() + hello, deadline)
-  try Wire.check_preamble(try read_exact(socket, PREAMBLE_BYTES, deadline))
-  case try read_message(socket, Types.PRE_AUTH_MAX_FRAME_BYTES, deadline)
+  try Wire.check_preamble(try read_exact(socket, PREAMBLE_BYTES, deadline, none))
+  case try read_message(socket, Types.PRE_AUTH_MAX_FRAME_BYTES, deadline, none)
     Types.Message.Challenge(server, server_nonce, server_proof) ->
       name = endpoint.node
       if name.empty?
@@ -229,12 +231,12 @@ end
 
 def server_handshake(config: Types.Config, socket: TCP.Socket, deadline: Int) -> Result[Types.Peer]
   try send(socket, Wire.preamble(), deadline)
-  try Wire.check_preamble(try read_exact(socket, PREAMBLE_BYTES, deadline))
-  case try read_message(socket, Types.PRE_AUTH_MAX_FRAME_BYTES, deadline)
+  try Wire.check_preamble(try read_exact(socket, PREAMBLE_BYTES, deadline, none))
+  case try read_message(socket, Types.PRE_AUTH_MAX_FRAME_BYTES, deadline, none)
     Types.Message.Hello(client, client_nonce) ->
       session = try Handshake.session(client, config.name, client_nonce, Handshake.fresh_nonce())
       try send(socket, try Wire.encode(Handshake.challenge(config.cookie, session)), deadline)
-      case try read_message(socket, Types.PRE_AUTH_MAX_FRAME_BYTES, deadline)
+      case try read_message(socket, Types.PRE_AUTH_MAX_FRAME_BYTES, deadline, none)
         Types.Message.Proof(proof) ->
           welcome = try Handshake.accept(config.cookie, session, proof)
           try send(socket, try Wire.encode(welcome), deadline)
@@ -247,7 +249,7 @@ def server_handshake(config: Types.Config, socket: TCP.Socket, deadline: Int) ->
 end
 
 def expect_welcome(socket: TCP.Socket, deadline: Int) -> Result[Void]
-  case try read_message(socket, Types.PRE_AUTH_MAX_FRAME_BYTES, deadline)
+  case try read_message(socket, Types.PRE_AUTH_MAX_FRAME_BYTES, deadline, none)
     Types.Message.Welcome -> ok()
     _ -> out_of_order()
   end
@@ -274,19 +276,29 @@ def send(socket: TCP.Socket, bytes: Bytes, deadline: Int) -> Result[Void]
   end
 end
 
-# `count` bytes, from as many reads as it takes. A deadline of 0 waits with no limit (a link that is up).
-def read_exact(socket: TCP.Socket, count: Int, deadline: Int) -> Result[Bytes]
+# `count` bytes, from as many reads as it takes. A deadline of 0 waits with no limit (a link that is up), and `seen`,
+# when there is one, gets the time of each chunk.
+def read_exact(socket: TCP.Socket, count: Int, deadline: Int, seen: Optional[ATS[String, Int]]) -> Result[Bytes]
   parts: List[Bytes] = []
   have = 0
   while have < count
     got = try read_some(socket, count - have, deadline)
     return closed("the connection ended") if got.empty?
 
+    touch(seen)
+
     parts = parts.push(got)
     have += got.size
   end
 
   ok(Bytes.concat(parts))
+end
+
+def touch(seen: Optional[ATS[String, Int]]) -> Void
+  case seen
+    some(table) -> table.put(SEEN, Time.monotonic_ms())
+    none -> nil
+  end
 end
 
 def read_some(socket: TCP.Socket, count: Int, deadline: Int) -> Result[Bytes]
@@ -303,8 +315,13 @@ def wrap(read: Result[Bytes]) -> Result[Bytes]
 end
 
 # One frame: its length is checked against `limit` before the body is read.
-def read_message(socket: TCP.Socket, limit: Int, deadline: Int) -> Result[Types.Message]
-  header = try read_exact(socket, HEADER_BYTES, deadline)
+def read_message(
+  socket: TCP.Socket,
+  limit: Int,
+  deadline: Int,
+  seen: Optional[ATS[String, Int]],
+) -> Result[Types.Message]
+  header = try read_exact(socket, HEADER_BYTES, deadline, seen)
   length = try Wire.frame_length(header, limit)
-  Wire.decode(try read_exact(socket, length, deadline))
+  Wire.decode(try read_exact(socket, length, deadline, seen))
 end
