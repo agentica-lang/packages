@@ -57,6 +57,14 @@ def steps() -> List[BDD.Step]
       &starts_retrying,
     ),
     BDD.step("the node {string} starts again on the port of its first run with the cookie {string}", &starts_again),
+    BDD.step(
+      "the node {string} starts again on the port of its first run with the cookie {string} and dials {string}",
+      &starts_again_dialing,
+    ),
+    BDD.step(
+      "the node {string} starts with the cookie {string}, dials {string} and retries every {int} ms, at most {int} ms",
+      &starts_retrying_bounded,
+    ),
     BDD.step("starting the node {string} with a heartbeat of {int} ms fails with {string}", &fails_heartbeat),
     BDD.step("starting the node {string} that retries every {int} ms fails with {string}", &fails_retry),
     BDD.step("{string} watches the peers coming and going", &watches),
@@ -339,4 +347,21 @@ end
 def fails_retry(ctx: BDD.Context, args: List[String]) -> BDD.Context
   spec = Spec(name: args[0], cookie: "the-cookie-of-the-cluster", reconnect_ms: args[1].to_i!)
   send(ctx, Request.StartFails(spec, args[2]))
+end
+
+def starts_again_dialing(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  spec = Spec(name: args[0], cookie: args[1], again: true, dials: list_of(args[2]))
+  send(ctx, Request.Start(spec))
+end
+
+def starts_retrying_bounded(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  spec = Spec(
+    name: args[0],
+    cookie: args[1],
+    dials: list_of(args[2]),
+    reconnect_ms: args[3].to_i!,
+    reconnect_max_ms: args[4].to_i!,
+  )
+
+  send(ctx, Request.Start(spec))
 end

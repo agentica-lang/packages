@@ -147,9 +147,9 @@ struct Dialing
 end
 
 ## The state of the actor of a node: the peers by name, the addresses being dialed, and how many handshakes it refused.
-## `kept` are the peers of the list, which the node dials again when a dial fails or their link ends: `delays` is the
-## last wait for each one (it grows until `reconnect_max_ms`, and starts over when a link is kept) and `timers` are the
-## waits that are running.
+## `kept` are the peers of the list (`names` has the name that answers at each address, once it is known), which the
+## node dials again when a dial fails or a link of the peer ends: `delays` is the last wait for each one (it grows
+## until `reconnect_max_ms`, and starts over when a link is kept) and `timers` are the waits that are running.
 struct State
   config: Config
   peers: Map[String, Peer]
@@ -157,6 +157,7 @@ struct State
   mailboxes: Map[String, Fn[Delivery, Bool]]
   watchers: List[Fn[Event, Bool]]
   kept: Map[String, Endpoint]
+  names: Map[String, String]
   delays: Map[String, Int]
   timers: Map[String, Task[Void]]
   refused: Int

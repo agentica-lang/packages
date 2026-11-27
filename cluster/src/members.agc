@@ -48,6 +48,7 @@ def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
     mailboxes: {},
     watchers: [],
     kept: {},
+    names: {},
     delays: {},
     timers: {},
     refused: 0,
@@ -152,7 +153,8 @@ end
 # name may replace it, and that cancels the task before it tells.
 def keep(state: Types.State, peer: Types.Peer, reply: Channel[Bool]) -> Types.State
   _ = Actor.reply(reply, true)
-  kept = state.with(peers: state.peers.put(peer.name, peer), delays: state.delays.delete(peer.endpoint))
+  linked = named(state.with(peers: state.peers.put(peer.name, peer)), peer.endpoint, peer.name)
+  kept = settled(linked, peer.name)
   return kept if peer.endpoint.empty?
 
   stop_other_dial(kept, peer)
@@ -178,7 +180,7 @@ end
 def forget(state: Types.State, peer: Types.Peer, id: Int) -> Types.State
   return state if peer.link.id != id
 
-  down(retry(state.with(peers: state.peers.delete(peer.name)), peer.endpoint), peer.name)
+  down(retry_all(state.with(peers: state.peers.delete(peer.name)), peer.name), peer.name)
 end
 
 def up(state: Types.State, name: String) -> Types.State = told(state, Types.Event.NodeUp(name))
@@ -258,22 +260,60 @@ end
 def keep_all(state: Types.State, endpoints: List[Types.Endpoint]) -> Types.State
   current = state
   for endpoint in endpoints
-    listed = current.with(kept: current.kept.put(Endpoint.key(endpoint), endpoint))
-    current = dial(listed, endpoint, quiet_reply())
+    key = Endpoint.key(endpoint)
+    listed = current.with(kept: current.kept.put(key, endpoint))
+    current = dial(named(listed, key, endpoint.node), endpoint, quiet_reply())
   end
 
   current
 end
 
+# The name that answers at an address, once it is known: it is how a link that came in is matched to the list.
+def named(state: Types.State, key: String, name: String) -> Types.State
+  return state if name.empty? or not state.kept.has_key?(key)
+
+  state.with(names: state.names.put(key, name))
+end
+
 def retried(state: Types.State, key: String, result: Result[String]) -> Types.State
   case result
-    ok(_) -> state
+    ok(name) -> named(state, key, name)
     error(_) -> retry(state, key)
   end
 end
 
+# The links of a peer ended: each address of the list that answers under its name is dialed again.
+def retry_all(state: Types.State, name: String) -> Types.State
+  current = state
+  for key in addresses_of(state, name)
+    current = retry(current, key)
+  end
+
+  current
+end
+
+def addresses_of(state: Types.State, name: String) -> List[String]
+  state.names.keys.select { |key| state.names[key] == name }
+end
+
+# A peer that is linked needs no wait: the ones that run for its addresses are cancelled and the waits start over.
+def settled(state: Types.State, name: String) -> Types.State
+  current = state
+  for key in addresses_of(state, name)
+    case current.timers.get(key)
+      some(timer) -> Task.cancel(timer)
+      none -> nil
+    end
+
+    current = current.with(timers: current.timers.delete(key), delays: current.delays.delete(key))
+  end
+
+  current
+end
+
 # The wait before the next dial of a peer of the list: `reconnect_ms` at first, and twice the last one after each
-# failure, up to `reconnect_max_ms`. A peer that is not of the list is not dialed again.
+# failure, up to `reconnect_max_ms`, with up to a fifth more so that peers that failed together do not come back
+# together. A peer that is not of the list is not dialed again.
 def retry(state: Types.State, key: String) -> Types.State
   case state.kept.get(key)
     some(_) if not state.timers.has_key?(key) -> wait(state, key)
@@ -285,15 +325,18 @@ def wait(state: Types.State, key: String) -> Types.State
   config = state.config
   last = state.delays.get(key)
   delay = [last.map { |ms| ms * 2 }.unwrap_or(config.reconnect_ms), config.reconnect_max_ms].min.unwrap!
-  timer = Task.spawn(&Link.redial, Link.Redial(node: config.node, key: key, wait_ms: delay))
+  wait_ms = delay + Random.int(0, delay / 5)
+  timer = Task.spawn(&Link.redial, Link.Redial(node: config.node, key: key, wait_ms: wait_ms))
   state.with(delays: state.delays.put(key, delay), timers: state.timers.put(key, timer))
 end
 
+# The dial is skipped when the peer is linked by now.
 def redial(state: Types.State, key: String) -> Types.State
   waited = state.with(timers: state.timers.delete(key))
   case state.kept.get(key)
-    some(endpoint) -> dial(waited, endpoint, quiet_reply())
-    none -> waited
+    some(endpoint) if not state.peers.has_key?(state.names.get(key).unwrap_or("")) ->
+      dial(waited, endpoint, quiet_reply())
+    _ -> waited
   end
 end
 
