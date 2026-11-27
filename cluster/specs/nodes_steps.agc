@@ -39,6 +39,7 @@ def steps() -> List[BDD.Step]
     BDD.step("{string} still has the peers {string} {int} ms later", &still_has_peers),
     BDD.step("{string} has refused {int} handshakes", &refused),
     BDD.step("the node {string} stops", &stops),
+    BDD.step("the node {string} leaves", &departs),
     BDD.step("a stranger writes {string} to {string} and is disconnected within {int} ms", &stranger_text),
     BDD.step(
       "a stranger sends {string} a frame of {int} bytes before the handshake and is disconnected",
@@ -204,6 +205,8 @@ def refused(ctx: BDD.Context, args: List[String]) -> BDD.Context
 end
 
 def stops(ctx: BDD.Context, args: List[String]) -> BDD.Context = send(ctx, Request.Stop(args[0]))
+
+def departs(ctx: BDD.Context, args: List[String]) -> BDD.Context = send(ctx, Request.Depart(args[0]))
 
 def stranger_text(ctx: BDD.Context, args: List[String]) -> BDD.Context
   text = args[0].replace("\\r", "\r").replace("\\n", "\n")

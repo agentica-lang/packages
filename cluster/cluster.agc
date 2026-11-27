@@ -168,8 +168,9 @@ def group_send(node: Types.Node, group: String, body: Bytes, timeout_ms: Int = A
   ok(reached + written.map { |count| count.unwrap_or(0) }.sum)
 end
 
-## Tells `address` when a peer comes or goes: `Event.NodeUp(name)` when the first link to a peer is kept, and
-## `Event.NodeDown(name)` when its link ends (it said bye, the socket closed, or it was silent for 3 heartbeats).
+## Tells `address` when a peer comes or goes: `Event.NodeUp(name)` when the first link to a peer is kept,
+## `Event.NodeDown(name)` when its link ends (the socket closed, or it was silent for 3 heartbeats), and
+## `Event.NodeLeft(name)` when the peer said that it leaves (`leave`).
 ## `wrap` makes the message of that address from the event, and it runs in the actor of the node, so it must be pure
 ## and cheap. As with a mailbox, a watcher that cannot take an event at once misses it, so the capacity of its channel
 ## is its bound. A link that replaces another one of the same peer is not an event. Events start from the call: a peer
@@ -184,6 +185,27 @@ end
 ## node was too busy to look at them.
 def dropped(node: Types.Node) -> Int = node.counts.get(Types.DROPPED).unwrap_or(0)
 
+## Leaves the cluster on purpose and stops the node: it tells each peer, which then drops it with `Event.NodeLeft`
+## and not `Event.NodeDown`, and does not dial it again (a peer that left is not chased: it comes back by dialing).
+## The node does not dial anyone while it leaves, and its own watchers hear nothing. It waits at most `timeout_ms` for
+## each peer to be told and for the links to end, and then stops, as `stop` does. A peer that cannot be told sees the
+## links end as a `stop` would (`node_down`). It fails with `cluster.argument` (`timeout_ms` is less than 1).
+def leave(node: Types.Node, timeout_ms: Int = ASK_MS) -> Result[Void]
+  return error("cluster: timeout_ms is at least 1", kind: Types.ARGUMENT) if timeout_ms < 1
+
+  _ = try ask(node, ->(reply: Channel[Bool]) { Types.Msg.Depart(reply) })
+  frame = try Wire.encode(Types.Message.Bye(Types.LEAVE))
+  peers = nodes(node)
+  jobs = peers.map { |peer| Goodbye(actor: node.actor.address, peer: peer, frame: frame, timeout_ms: timeout_ms) }
+  _ = Task.map(jobs, [jobs.size, 1].max.unwrap!.clamp(1, MAX_PEERS_AT_ONCE), timeout_ms + ASK_MS, &say_goodbye)
+  deadline = Time.monotonic_ms() + timeout_ms
+  while not nodes(node).empty? and Time.monotonic_ms() < deadline
+    Task.sleep(POLL_MS)
+  end
+
+  stop(node, timeout_ms)
+end
+
 ## Stops the node: the listener, the links, the connections that are being dialed and the actor. It waits at most
 ## `timeout_ms` for the actor to end, and gives the error of `std/actor` if it does not.
 def stop(node: Types.Node, timeout_ms: Int) -> Result[Void]
@@ -195,11 +217,20 @@ private
 
 ASK_MS = 5000
 MAX_PEERS_AT_ONCE = 64
+POLL_MS = 10
 
 # What a node dials once it listens: the peers of its list, and the name to look up.
 struct Plan
   endpoints: List[Types.Endpoint]
   discovery: Optional[Types.Endpoint]
+end
+
+# What the task that tells one peer that the node leaves needs.
+struct Goodbye
+  actor: Address[Types.Msg]
+  peer: String
+  frame: Bytes
+  timeout_ms: Int
 end
 
 # What the task that writes to one peer needs: its mailboxes, in order. The node is only its address, since a task
@@ -242,6 +273,19 @@ def peer_jobs(node: Types.Node, members: List[Types.Member], body: Bytes, timeou
   remote.map { |member| member.node }.uniq.map do |peer|
     mailboxes = remote.select { |member| member.node == peer }.map { |member| member.mailbox }
     Job(actor: node.actor.address, peer: peer, mailboxes: mailboxes, body: body, max_frame_bytes: node.max_frame_bytes, timeout_ms: timeout_ms)
+  end
+end
+
+def say_goodbye(job: Goodbye) -> Result[Bool]
+  asked: Result[Optional[TCP.Socket]] = Actor.call(
+    job.actor,
+    [job.timeout_ms, ASK_MS].min.unwrap!,
+    ->(reply) { Types.Msg.Route(job.peer, reply) },
+  )
+
+  case asked
+    ok(some(socket)) -> ok(write(socket, job.frame, job.timeout_ms).ok?)
+    _ -> ok(false)
   end
 end
 

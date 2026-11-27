@@ -197,10 +197,13 @@ def keep_reading(config: Types.Config, socket: TCP.Socket, peer: Types.Peer) -> 
   seen.put(SEEN, Time.monotonic_ms())
   watcher = Task.spawn(&watch_link, Watch(config: config, socket: socket, seen: seen))
   reading = true
+  left = false
   owed: Optional[Types.Msg] = none
   while reading
     case read_message(socket, config.max_frame_bytes, 0, some(seen))
-      ok(Types.Message.Bye(_)) -> reading = false
+      ok(Types.Message.Bye(reason)) ->
+        reading = false
+        left = reason == Types.LEAVE
       ok(Types.Message.Mail(mailbox, body)) -> deliver(config, peer, mailbox, body)
       ok(Types.Message.Groups(version, memberships)) -> owed = some(Types.Msg.Groups(peer.name, version, memberships))
       ok(Types.Message.Ping) -> pong(socket, config)
@@ -213,7 +216,14 @@ def keep_reading(config: Types.Config, socket: TCP.Socket, peer: Types.Peer) -> 
 
   Task.cancel(watcher)
   TCP.close(socket)
-  _ = Actor.cast(config.node, Types.Msg.Closed(peer.name, peer.link.id))
+  _ = Actor.cast(config.node, ended(peer, left))
+end
+
+# A link that ended with a `bye` of the reason `leave` is a peer that left on purpose.
+def ended(peer: Types.Peer, left: Bool) -> Types.Msg
+  return Types.Msg.Left(peer.name, peer.link.id) if left
+
+  Types.Msg.Closed(peer.name, peer.link.id)
 end
 
 # Every heartbeat: a link that was quiet for half of one gets a ping, and one that was silent for 3 closes. A read that

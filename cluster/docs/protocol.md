@@ -28,7 +28,7 @@ The format evolves by the major byte of the preamble and by new kinds from 64 to
 | 5 | mail | `{mailbox: text, body: bytes}`: `body` is the `Term.encode` of the value, which the mailbox of the receiving node decodes |
 | 6 | ping | `{}` |
 | 7 | pong | `{}` |
-| 8 | bye | `{reason: text}`: the node leaves on purpose |
+| 8 | bye | `{reason: text}`: the node ends the link on purpose. The reason `leave` says that the node leaves the cluster: the reader drops it as left, and does not dial it again |
 | 64 | groups | `{version: int, groups: [{group: text, mailbox: text}]}`: all the memberships of the sender, and the number of its last change |
 
 A kind from 65 to 127 is ignored, so a later version can add a message that an older one skips. Any other kind that is not in the table is `cluster.protocol`.
@@ -59,7 +59,7 @@ Rules for a node that reads these frames:
 ## After the welcome
 
 - Each frame is written with one `TCP.send_bytes` (a frame is at most 1,048,572 bytes, under the 1 MiB that one write takes), which holds the writer lock of the socket for the whole call, so frames that several tasks write to one link (a `ping`, a `pong`, a `mail` from `Cluster.send` or `Cluster.group_send` and a `groups`) never interleave. A write that fails or times out may have sent half a frame, so the node closes the link.
-- A `mail` goes to the mailbox that it names; a frame of an ignored kind is skipped; a `bye` ends the link.
+- A `mail` goes to the mailbox that it names; a frame of an ignored kind is skipped; a `bye` ends the link (as left, when its reason is `leave`; the other reasons end it as a closed link).
 - A node that has memberships writes `groups` to each peer when a link is kept, and again after each change. It always says all of them, with a number that grows by one at each change, so a frame that is lost or comes twice is harmless: a reader keeps the one with the highest number, and forgets what a peer said when its link ends (a new link starts from nothing). A `groups` that comes from a node that is not linked is not kept, and one that is not a valid body (a version under 1, a name that is not valid, or the same pair twice) is `cluster.protocol`. A node has one writer for each link, which sends the newest `groups` it has, so a change that a later one replaced before it was written is not sent. Every node of a cluster should have the same `max_frame_bytes`, since a frame over the limit of a reader ends the link there.
 - Every heartbeat, a node that has heard nothing on a link for half of one writes a `ping`, and every `ping` is answered with a `pong`. Any bytes that arrive are a sign of life, so a link with traffic needs no ping. A link that is silent for 3 heartbeats is closed, and so is one where a `ping` cannot be written in 3 heartbeats. The heartbeat is a choice of each node (`heartbeat_ms`): a peer with a longer one is still answered, but it will take the link for silent if it pings less than every 3 heartbeats of the other.
 

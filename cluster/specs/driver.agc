@@ -103,6 +103,7 @@ def act(
     Request.Peers(peers) -> failed_or_done(nodes, expect_peers(nodes, peers))
     Request.Refusals(refusals) -> failed_or_done(nodes, expect_refusals(nodes, refusals))
     Request.Stop(name) -> stop(nodes, name)
+    Request.Depart(name) -> depart(nodes, name)
     Request.Visit(visit) -> failed_or_done(nodes, visited(nodes, visit))
     Request.Hole(name) -> failed_or_done(nodes, open_hole(holes, name))
     Request.ConnectHole(visit) -> failed_or_done(nodes, connect_hole(nodes, holes, visit))
@@ -187,6 +188,13 @@ def start_fails(nodes: Map[String, Cluster.Node], spec: Spec, kind: String) -> H
       else
         failed(nodes, "the start failed with #{e.kind} and not #{kind}")
       end
+  end
+end
+
+def depart(nodes: Map[String, Cluster.Node], name: String) -> Handled
+  case Cluster.leave(nodes[name], STOP_MS)
+    ok(_) -> done(nodes)
+    error(e) -> failed(nodes, "the node did not leave: #{e.message}")
   end
 end
 
@@ -697,5 +705,6 @@ def event_line(event: Cluster.Event) -> String
   case event
     Cluster.Event.NodeUp(name) -> "node_up #{name}"
     Cluster.Event.NodeDown(name) -> "node_down #{name}"
+    Cluster.Event.NodeLeft(name) -> "node_left #{name}"
   end
 end

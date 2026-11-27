@@ -60,6 +60,7 @@ def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
     version: 0,
     remote: {},
     senders: {},
+    leaving: false,
     delays: {},
     timers: {},
     refused: 0,
@@ -69,7 +70,9 @@ end
 def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
   case message
     Types.Msg.Linked(peer, reply) -> Actor.continue(link(state, peer, reply))
-    Types.Msg.Closed(name, id) -> Actor.continue(unlink(state, name, id))
+    Types.Msg.Closed(name, id) -> Actor.continue(unlink(state, name, id, false))
+    Types.Msg.Left(name, id) -> Actor.continue(unlink(state, name, id, true))
+    Types.Msg.Depart(reply) -> answer(state.with(leaving: true), reply, true)
     Types.Msg.Dial(endpoint, reply) -> Actor.continue(dial(state, endpoint, reply))
     Types.Msg.Dialed(key, result) -> Actor.continue(retried(dialed(state, key, result), key, result))
     Types.Msg.Keep(endpoints) -> Actor.continue(keep_all(state, endpoints))
@@ -200,25 +203,30 @@ def stop_other_dial(state: Types.State, peer: Types.Peer) -> Void
 end
 
 # A link that ended is forgotten, unless another link took its place.
-def unlink(state: Types.State, name: String, id: Int) -> Types.State
+def unlink(state: Types.State, name: String, id: Int, left: Bool) -> Types.State
   case state.peers.get(name)
-    some(peer) -> forget(state, peer, id)
+    some(peer) -> forget(state, peer, id, left)
     none -> state
   end
 end
 
-def forget(state: Types.State, peer: Types.Peer, id: Int) -> Types.State
+def forget(state: Types.State, peer: Types.Peer, id: Int, left: Bool) -> Types.State
   return state if peer.link.id != id
 
-  gone = retry_all(
-    without_sender(
-      state.with(peers: state.peers.delete(peer.name), remote: state.remote.delete(peer.name)),
-      peer.name,
-    ),
+  gone = without_sender(
+    state.with(peers: state.peers.delete(peer.name), remote: state.remote.delete(peer.name)),
     peer.name,
   )
 
-  down(unfound_all(gone, peer.name), peer.name)
+  parted(gone, peer.name, left)
+end
+
+# A peer that went is dialed again if it is of the list. One that said that it leaves is not: its waits end, and it
+# is told as left, not as down.
+def parted(state: Types.State, name: String, left: Bool) -> Types.State
+  return told(unfound_all(settled(state, name), name), Types.Event.NodeLeft(name)) if left
+
+  down(unfound_all(retry_all(state, name), name), name)
 end
 
 # The addresses of a peer that the name gave are forgotten when its last link ends.
@@ -237,6 +245,8 @@ def down(state: Types.State, name: String) -> Types.State = told(state, Types.Ev
 
 # Every watcher hears it, once. A watcher that cannot take it at once misses it, and that is counted as a drop.
 def told(state: Types.State, event: Types.Event) -> Types.State
+  return state if state.leaving
+
   for tell in state.watchers
     if not tell.call(event)
       _ = state.config.counts.add(Types.DROPPED, 1)
@@ -364,7 +374,7 @@ end
 # together. A peer that is not of the list is not dialed again.
 def retry(state: Types.State, key: String) -> Types.State
   case state.kept.get(key)
-    some(_) if not state.timers.has_key?(key) -> wait(state, key)
+    some(_) if not state.timers.has_key?(key) and not state.leaving -> wait(state, key)
     _ -> state
   end
 end
@@ -520,7 +530,7 @@ end
 
 def found_one(state: Types.State, endpoint: Types.Endpoint) -> Types.State
   key = Endpoint.key(endpoint)
-  return state if own?(state, key)
+  return state if own?(state, key) or state.leaving
 
   listed = state.with(found: state.found.put(key, endpoint))
   return listed if state.peers.has_key?(state.names.get(key).unwrap_or(""))

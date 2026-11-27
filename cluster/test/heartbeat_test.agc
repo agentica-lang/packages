@@ -84,6 +84,7 @@ def next_event(events: Channel[Cluster.Event], wait_ms: Int = READ_MS) -> String
   case events.recv(wait_ms)
     ok(Cluster.Event.NodeUp(name)) -> "up #{name}"
     ok(Cluster.Event.NodeDown(name)) -> "down #{name}"
+    ok(Cluster.Event.NodeLeft(name)) -> "left #{name}"
     error(_) -> "none"
   end
 end

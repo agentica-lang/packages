@@ -21,6 +21,7 @@ CLOSED = "cluster.closed"
 
 ## The key of the table that counts the connections in their handshake.
 PENDING = "pending"
+LEAVE = "leave"
 DIALS = "dials"
 
 ## The key of the table that counts the messages that the node dropped.
@@ -125,6 +126,7 @@ end
 enum Event
   NodeUp(String)
   NodeDown(String)
+  NodeLeft(String)
 end
 
 ## A node that connected and proved the cookie: the link of its connection, `dialer` is the side that opened it.
@@ -152,6 +154,8 @@ end
 enum Msg
   Linked(Peer, Channel[Bool])
   Closed(String, Int)
+  Left(String, Int)
+  Depart(Channel[Bool])
   Dial(Endpoint, Channel[Result[String]])
   Dialed(String, Result[String])
   Refused
@@ -207,6 +211,7 @@ struct State
   version: Int
   remote: Map[String, Remote]
   senders: Map[String, Sender]
+  leaving: Bool
   delays: Map[String, Int]
   timers: Map[String, Task[Void]]
   refused: Int
