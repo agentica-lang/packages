@@ -2,6 +2,16 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking:** needs Agentica 0.40.0 (was 0.35.0), for `List[Float32]` in `extern module` blocks (Native API 1.6). CI runs 0.40.0-beta.2 until the release.
+
+### Added
+
+- A `List[Float32]` parameter is a cursor with `PREFIX_list_Float32_run`, which gives the next run of C floats inside the list (`an_float32_run`), and a `List[Float32]` result is made from C floats with `PREFIX_list_Float32_make` (`an_float32s`), with no term per item. The header needs Native API 1.6. `--lang rust` answers `[NATIVE-GEN-UNKNOWN]` for a block that has one.
+
 ## [0.5.0] - 2026-11-23
 
 Needs Agentica 0.35.0; CI runs it on Agentica 0.35.0.

@@ -1,0 +1,8 @@
+# List[Float32] through the runs of the header, built from native/samples.c.
+name = "native-gen-samples"
+
+[style]
+blank_line_after_end = true
+
+[native.samples]
+build = { sources = ["native/samples.c"] }
