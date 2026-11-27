@@ -58,7 +58,7 @@ def main() -> Void
   cookie = "a-random-secret-of-16-bytes-or-more"
   alpha = Cluster.start(Cluster.Options(name: "alpha", cookie: cookie)).unwrap!
   beta = Cluster.start(Cluster.Options(name: "beta", cookie: cookie)).unwrap!
-  inbox: Channel[Cluster.Delivery] = Channel.new()
+  inbox: Channel[Cluster.Delivery] = Channel.new(64)
   Cluster.register(beta, "jobs", inbox.address, ->(delivery) { delivery }).unwrap!
   _ = Cluster.connect(alpha, "127.0.0.1:#{Cluster.port(beta)}").unwrap!
 
@@ -79,7 +79,7 @@ alpha sent job 7 compile
 
 `send` takes `Bytes` and not a value of any type because `Term.encode` and `Term.decode` need the concrete type at the call (a generic function cannot pass its `T` to them: `CHECK-NOT-ENCODABLE`). So the sender calls `Term.encode` on its value, and the receiver calls `Term.decode` with its type. Put a `version` field in a message that will change, as the page of `Term` says: adding a field breaks old data.
 
-Delivery is at most once: `send` returns once the bytes are in the socket, with no reply and no retry, and a message for a mailbox that does not exist, or that cannot take it at once, is dropped and counted (`dropped`). The messages that one task sends to one peer arrive in the order they were sent, while the link stays up.
+Delivery is at most once: `send` returns once the bytes are in the socket, with no reply and no retry, and a message for a mailbox that does not exist, or that cannot take it at once, is dropped and counted (`dropped`). The capacity of the channel (64 above) is the bound of the mailbox: when it is full the node drops, so a slow reader loses messages and does not slow the link. An unbounded channel (`Channel.new()`) never drops and can fill the memory. The messages that one task sends to one peer arrive in the order they were sent, while the link stays up.
 
 ## API
 
@@ -105,15 +105,15 @@ How many handshakes the node refused: a peer that did not know the cookie, or th
 
 ### Cluster.register(node: Cluster.Node, name: String, address: Address[M], wrap: Fn[Cluster.Delivery, M]) -> Result[Void]
 
-Registers the mailbox `name` (1 to 255 bytes). What a peer sends to it comes to `address` as the `M` that `wrap` makes of a `Delivery` (`from`, `mailbox` and `body`): `->(delivery) { delivery }` for a channel of deliveries, or a variant of the message type of an actor. The node never waits for the address: a message that it cannot put in at once is dropped. Registering a name again replaces the mailbox.
+Registers the mailbox `name` (1 to 255 bytes). What a peer sends to it comes to `address` as the `M` that `wrap` makes of a `Delivery` (`from`, `mailbox` and `body`): `->(delivery) { delivery }` for a channel of deliveries, or a variant of the message type of an actor. The node never waits for the address: a message that it cannot put in at once is dropped, so the capacity of the channel is the bound of the mailbox (an unbounded channel never drops and can fill the memory). `wrap` runs in the actor of the node, so it must be pure and cheap. Registering a name again replaces the mailbox. A node that is stopped gives `cluster.closed`.
 
 ### Cluster.send(node: Cluster.Node, peer: String, mailbox: String, body: Bytes, timeout_ms: Int = 5000) -> Result[Void]
 
-Sends `body`, the `Term.encode` of a value, to a mailbox of a connected peer. It fails with `cluster.not_connected`, `cluster.too_large` (the frame is over `max_frame_bytes`) or `cluster.closed` (the link broke, or the write took more than `timeout_ms`). Ok says that the bytes are in the socket, not that the mailbox took them.
+Sends `body`, the `Term.encode` of a value, to a mailbox of a connected peer. It fails with `cluster.argument` (`timeout_ms` is less than 1), `cluster.not_connected`, `cluster.too_large` (the frame is over `max_frame_bytes`) or `cluster.closed` (the node is stopped, the link broke, or the write took more than `timeout_ms`). A write that times out closes the link, and the peer is down (there is no reconnect yet). A frame over the limit of the receiver ends the whole link there, not only that message: keep `max_frame_bytes` the same on all the nodes. Ok says that the bytes are in the socket, not that the mailbox took them.
 
 ### Cluster.dropped(node: Cluster.Node) -> Int
 
-How many messages the node dropped.
+How many messages the node dropped: for a mailbox that does not exist, one that was full, or because the node was too busy to look at them.
 
 ### Cluster.stop(node: Cluster.Node, timeout_ms: Int) -> Result[Void]
 

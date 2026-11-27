@@ -51,6 +51,13 @@ def steps() -> List[BDD.Step]
     ),
     BDD.step("{string} has the mailbox {string}", &registers),
     BDD.step("{string} has the mailbox {string} again", &registers),
+    BDD.step("{string} has the mailbox {string} with room for {int} messages and nobody reads it", &registers_unread),
+    BDD.step("the replaced mailbox {string} of {string} has received nothing", &replaced_is_empty),
+    BDD.step(
+      "{string} sends {string} the job {int} named {string} in {string} with {int} ms and it fails with {string}",
+      &send_fails_in_time,
+    ),
+    BDD.step("starting the node {string} with a frame limit of {int} bytes fails with {string}", &fails_frame_limit),
     BDD.step("{string} cannot have the mailbox {string} and it fails with {string}", &register_fails),
     BDD.step("{string} sends {string} the job {int} named {string} in the mailbox {string}", &sends_job),
     BDD.step("{string} sends {string} {int} jobs in the mailbox {string}", &sends_jobs),
@@ -258,4 +265,32 @@ end
 
 def has_dropped(ctx: BDD.Context, args: List[String]) -> BDD.Context
   send(ctx, Request.Drops(Drops(node: args[0], count: args[1].to_i!, within_ms: args[2].to_i!)))
+end
+
+def registers_unread(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  mailbox = Mailbox(node: args[0], name: args[1], capacity: args[2].to_i!, reading: false)
+  send(ctx, Request.Register(mailbox))
+end
+
+def replaced_is_empty(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.ReplacedEmpty(args[1], args[0]))
+end
+
+def send_fails_in_time(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  payload = Payload.Job(args[2].to_i!, args[3])
+  request = Post(
+    from: args[0],
+    to: args[1],
+    mailbox: args[4],
+    payload: payload,
+    kind: args[6],
+    timeout_ms: args[5].to_i!,
+  )
+
+  send(ctx, Request.Post(request))
+end
+
+def fails_frame_limit(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  spec = Spec(name: args[0], cookie: "the-cookie-of-the-cluster", max_frame_bytes: args[1].to_i!)
+  send(ctx, Request.StartFails(spec, args[2]))
 end

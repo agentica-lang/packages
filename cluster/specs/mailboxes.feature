@@ -51,6 +51,26 @@ Feature: Messages to the mailboxes of other nodes
     When "alpha" sends "beta" the job 3 named "again" in the mailbox "jobs"
     Then the mailbox "jobs" of "beta" has received within 3000 ms:
       | job 3 again from alpha |
+    And the replaced mailbox "jobs" of "beta" has received nothing
+
+  Scenario: A mailbox that nobody reads holds what its capacity allows and the node drops the rest
+    Given "beta" has the mailbox "full" with room for 1 messages and nobody reads it
+    When "alpha" sends "beta" 3 jobs in the mailbox "full"
+    Then "beta" has dropped 2 messages within 3000 ms
+    And "alpha" has the peers "beta" within 500 ms
+
+  Scenario: A message that nearly fills the limit of the frame goes through
+    Given "beta" has the mailbox "jobs"
+    When "alpha" sends "beta" a message of 1040000 bytes in the mailbox "jobs" and it fails with ""
+    Then "alpha" has the peers "beta" within 500 ms
+
+  Scenario: A node that stopped cannot send
+    When the node "alpha" stops
+    Then "alpha" sends "beta" the job 1 named "late" in the mailbox "jobs" and it fails with "cluster.closed"
+
+  Scenario: A send needs a time to write
+    Given "beta" has the mailbox "jobs"
+    Then "alpha" sends "beta" the job 1 named "now" in "jobs" with 0 ms and it fails with "cluster.argument"
 
   Scenario: A message to a node that is not a peer fails
     When "alpha" sends "gamma" the job 1 named "nowhere" in the mailbox "jobs" and it fails with "cluster.not_connected"

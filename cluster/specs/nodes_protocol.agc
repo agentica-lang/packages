@@ -17,6 +17,7 @@ struct Spec
   host: String = "127.0.0.1"
   connect_ms: Int = 5000
   max_pending: Int = 128
+  max_frame_bytes: Int = 1_048_572
 end
 
 ## One node connects to another and the answer must be `ok` (`kind` is `""`) or an error of that kind. `as_name` is a
@@ -94,12 +95,15 @@ struct Post
   mailbox: String
   payload: Payload
   kind: String = ""
+  timeout_ms: Int = 5000
 end
 
 ## A node registers a mailbox, and the driver decodes what comes into it as a job and keeps one line for each message.
 struct Mailbox
   node: String
   name: String
+  capacity: Int = 64
+  reading: Bool = true
 end
 
 ## What the mailbox must have received within `within_ms`, in order (`lines`, in the text of `Collected`).
@@ -138,4 +142,5 @@ enum Request
   InOrder(String, String, Int, Int)
   Drops(Drops)
   RegisterFails(Mailbox, String)
+  ReplacedEmpty(String, String)
 end

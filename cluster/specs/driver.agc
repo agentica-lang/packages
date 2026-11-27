@@ -109,6 +109,7 @@ def act(
     Request.InOrder(node, mailbox, count, within_ms) ->
       failed_or_done(nodes, expect_in_order(received, node, mailbox, count, within_ms))
     Request.Drops(drops) -> failed_or_done(nodes, expect_drops(nodes, drops))
+    Request.ReplacedEmpty(node, mailbox) -> failed_or_done(nodes, expect_replaced_empty(received, node, mailbox))
   end
 end
 
@@ -124,6 +125,7 @@ def options_of(nodes: Map[String, Cluster.Node], spec: Spec) -> Cluster.Options
     peers: spec.dials.map { |name| address_of(nodes, name, spec.named) } + spec.addresses,
     connect_ms: spec.connect_ms,
     max_pending: spec.max_pending,
+    max_frame_bytes: spec.max_frame_bytes,
   )
 end
 
@@ -155,7 +157,7 @@ end
 
 def stop(nodes: Map[String, Cluster.Node], name: String) -> Handled
   _ = Cluster.stop(nodes[name], STOP_MS)
-  done(nodes.delete(name))
+  done(nodes)
 end
 
 def connect_once(nodes: Map[String, Cluster.Node], connect: Connect) -> String
@@ -412,6 +414,15 @@ end
 
 def key_of(node: String, mailbox: String) -> String = "#{node}/#{mailbox}"
 
+# Each registration of a mailbox has a key of its own, so that a mailbox that was replaced can be checked apart.
+def generation(received: ATS[String, List[String]], node: String, mailbox: String) -> Int
+  lines_of(received, "registered/#{key_of(node, mailbox)}").size
+end
+
+def current_key(received: ATS[String, List[String]], node: String, mailbox: String) -> String
+  "#{key_of(node, mailbox)}##{generation(received, node, mailbox)}"
+end
+
 # One line for each message of the mailbox, in the order they arrive: the job decoded into the type of the receiver,
 # or `unreadable` for bytes that do not fit it.
 def collect(args: Collect) -> Void
@@ -431,14 +442,22 @@ def line_of(delivery: Cluster.Delivery) -> String
 end
 
 def register(nodes: Map[String, Cluster.Node], received: ATS[String, List[String]], mailbox: Mailbox) -> String
-  inbox: Channel[Cluster.Delivery] = Channel.new()
+  inbox: Channel[Cluster.Delivery] = Channel.new(mailbox.capacity)
   case Cluster.register(nodes[mailbox.node], mailbox.name, inbox.address, ->(delivery) { delivery })
     error(e) -> "the mailbox was not registered: #{e.message}"
-    ok(_) ->
-      received.put(key_of(mailbox.node, mailbox.name), [])
-      _ = Task.spawn(&collect, Collect(inbox: inbox, table: received, key: key_of(mailbox.node, mailbox.name)))
-      Protocol.OK
+    ok(_) -> start_reading(received, inbox, mailbox)
   end
+end
+
+def start_reading(received: ATS[String, List[String]], inbox: Channel[Cluster.Delivery], mailbox: Mailbox) -> String
+  _ = received.push("registered/#{key_of(mailbox.node, mailbox.name)}", "registered")
+  key = current_key(received, mailbox.node, mailbox.name)
+  received.put(key, [])
+  if mailbox.reading
+    _ = Task.spawn(&collect, Collect(inbox: inbox, table: received, key: key))
+  end
+
+  Protocol.OK
 end
 
 def register_fails(
@@ -447,7 +466,7 @@ def register_fails(
   mailbox: Mailbox,
   kind: String,
 ) -> String
-  inbox: Channel[Cluster.Delivery] = Channel.new()
+  inbox: Channel[Cluster.Delivery] = Channel.new(mailbox.capacity)
   case Cluster.register(nodes[mailbox.node], mailbox.name, inbox.address, ->(delivery) { delivery })
     ok(_) -> "the mailbox was registered and it should not have been"
     error(e) -> failed_reply(e, kind)
@@ -479,7 +498,7 @@ def posted(nodes: Map[String, Cluster.Node], post: Post) -> String
 end
 
 def post_one(node: Cluster.Node, post: Post, body: Bytes) -> String
-  case Cluster.send(node, post.to, post.mailbox, body)
+  case Cluster.send(node, post.to, post.mailbox, body, post.timeout_ms)
     ok(_) -> sent_reply(post.kind)
     error(e) -> failed_reply(e, post.kind)
   end
@@ -508,7 +527,7 @@ def expect_received(
   received: ATS[String, List[String]],
   expected: Received,
 ) -> String
-  key = key_of(expected.node, expected.mailbox)
+  key = current_key(received, expected.node, expected.mailbox)
   deadline = Time.monotonic_ms() + expected.within_ms
   while lines_of(received, key) != expected.lines and Time.monotonic_ms() < deadline
     Task.sleep(POLL_MS)
@@ -526,7 +545,7 @@ def expect_in_order(
   count: Int,
   within_ms: Int,
 ) -> String
-  key = key_of(node, mailbox)
+  key = current_key(received, node, mailbox)
   wanted = (1..count).map { |id| "job #{id} n#{id} from alpha" }
   deadline = Time.monotonic_ms() + within_ms
   while lines_of(received, key) != wanted and Time.monotonic_ms() < deadline
@@ -550,6 +569,13 @@ def expect_drops(nodes: Map[String, Cluster.Node], drops: Drops) -> String
   end
 
   return "#{drops.node} dropped #{Cluster.dropped(node)}" if Cluster.dropped(node) != drops.count
+
+  Protocol.OK
+end
+
+def expect_replaced_empty(received: ATS[String, List[String]], node: String, mailbox: String) -> String
+  old = "#{key_of(node, mailbox)}##{generation(received, node, mailbox) - 1}"
+  return "the replaced mailbox has #{lines_of(received, old)}" if not lines_of(received, old).empty?
 
   Protocol.OK
 end

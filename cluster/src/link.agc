@@ -40,7 +40,7 @@ def serve(served: Served) -> Void
   config = served.config
   socket = served.socket
   result = server_handshake(config, socket, Time.monotonic_ms() + config.connect_ms)
-  _ = config.pending.add(Types.PENDING, -1)
+  _ = config.counts.add(Types.PENDING, -1)
   case result
     error(e) -> refuse(config, socket, e)
     ok(peer) -> run_link(config, socket, peer)
@@ -134,13 +134,17 @@ def keep_reading(config: Types.Config, socket: TCP.Socket, peer: Types.Peer) -> 
   _ = Actor.cast(config.node, Types.Msg.Closed(peer.name, peer.link.id))
 end
 
-# The client dialed a node, maybe by its name (`expected`): with a name, the transcript uses it and never the name in
-# the challenge, so a node that answers under another name fails the proof.
-# The reader never waits for the node: a node that cannot take the message in no time drops it (at most once).
+# The reader never waits for the node: a mail goes to the node at once or is dropped and counted (at most once). Only
+# mails go through the node; the frames of the heartbeat are for the link alone.
 def deliver(config: Types.Config, peer: Types.Peer, mailbox: String, body: Bytes) -> Void
-  _ = Actor.cast(config.node, Types.Msg.Deliver(peer.name, mailbox, body), 0)
+  case Actor.cast(config.node, Types.Msg.Deliver(peer.name, mailbox, body), 0)
+    ok(_) -> nil
+    error(_) -> _ = config.counts.add(Types.DROPPED, 1)
+  end
 end
 
+# The client dialed a node, maybe by its name (`expected`): with a name, the transcript uses it and never the name in
+# the challenge, so a node that answers under another name fails the proof.
 def client_handshake(
   config: Types.Config,
   socket: TCP.Socket,

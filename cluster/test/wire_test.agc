@@ -3,6 +3,9 @@ import Wire from "../src/wire"
 
 private
 
+PROBE_BYTES = 100_000
+FILLER_CHUNK = 1000
+
 def bytes_of(text: String) -> Bytes = OpenSSL.Digest.hexdecode(text).unwrap!
 
 def hex(data: Bytes) -> String = OpenSSL.Digest.hexencode(data)
@@ -69,6 +72,23 @@ def test_a_frame_over_the_limit_is_not_written() -> Result[Void]
   big = Types.Message.Mail("jobs", Bytes.from_list([1, 2, 3]).unwrap!)
   try Test.eq(kind_of(Wire.encode(big, 10)), Types.TOO_LARGE)
   Test.ok?(Wire.encode(big, 100))
+end
+
+def test_a_frame_of_exactly_the_limit_is_written_and_one_byte_more_is_not() -> Result[Void]
+  small = try Wire.encode(Types.Message.Mail("jobs", Bytes.from_list([1, 2, 3]).unwrap!))
+  size = small.size - 4
+  try Test.ok?(Wire.encode(Types.Message.Mail("jobs", Bytes.from_list([1, 2, 3]).unwrap!), size))
+  try Test.eq(
+    kind_of(Wire.encode(Types.Message.Mail("jobs", Bytes.from_list([1, 2, 3]).unwrap!), size - 1)),
+    Types.TOO_LARGE,
+  )
+
+  # The same at the biggest limit: the frame header of a body this long is one size, so the overhead is the same.
+  probe = try Wire.encode(Types.Message.Mail("jobs", filler(PROBE_BYTES)))
+  overhead = probe.size - 4 - PROBE_BYTES
+  at_limit = Types.MAX_FRAME_BYTES - overhead
+  try Test.eq((try Wire.encode(Types.Message.Mail("jobs", filler(at_limit)))).size, Types.MAX_FRAME_BYTES + 4)
+  Test.eq(kind_of(Wire.encode(Types.Message.Mail("jobs", filler(at_limit + 1)))), Types.TOO_LARGE)
 end
 
 def test_a_mailbox_has_one_to_255_bytes() -> Result[Void]
@@ -188,4 +208,11 @@ def test_a_handshake_frame_with_a_bad_name_nonce_or_proof_is_refused() -> Result
   bad_proof = "03" + "a1" + "6570726f6f66" + "450000000000"
   try Test.eq(kind_of(Wire.decode(bytes_of(bad_name))), Types.PROTOCOL)
   Test.eq(kind_of(Wire.decode(bytes_of(bad_proof))), Types.PROTOCOL)
+end
+
+# `size` bytes of one value.
+def filler(size: Int) -> Bytes
+  chunk = Bytes.from_list((1..FILLER_CHUNK).map { |_| 7 }).unwrap!
+  rest = Bytes.from_list((1..(size % FILLER_CHUNK)).map { |_| 7 }).unwrap!
+  Bytes.concat((1..(size / FILLER_CHUNK)).map { |_| chunk } + [rest])
 end

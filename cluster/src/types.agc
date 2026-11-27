@@ -22,6 +22,9 @@ CLOSED = "cluster.closed"
 ## The key of the table that counts the connections in their handshake.
 PENDING = "pending"
 
+## The key of the table that counts the messages that the node dropped.
+DROPPED = "dropped"
+
 ## The peer is not connected now: it never was, or its link ended.
 NOT_CONNECTED = "cluster.not_connected"
 
@@ -115,7 +118,6 @@ enum Msg
   Deliver(String, String, Bytes)
   Register(String, Fn[Delivery, Bool], Channel[Bool])
   Route(String, Channel[Optional[TCP.Socket]])
-  Dropped(Channel[Int])
 end
 
 ## A caller of `connect` that waits for a dial: where the answer goes, and the name that the address must answer under
@@ -138,17 +140,16 @@ struct State
   dialing: Map[String, Dialing]
   mailboxes: Map[String, Fn[Delivery, Bool]]
   refused: Int
-  dropped: Int
 end
 
-## What the tasks of a node share: its name, the cookie, the limits, and the table that counts the connections in their
-## handshake (`pending`).
+## What the tasks of a node share: its name, the cookie, the limits, and `counts`, the table that the tasks of the node
+## add to: the connections in their handshake (`PENDING`) and the messages dropped (`DROPPED`).
 struct Config
   name: String
   cookie: Bytes
   connect_ms: Int
   max_pending: Int
-  pending: ATS[String, Int]
+  counts: ATS[String, Int]
   max_frame_bytes: Int
   node: Address[Msg]
 end
@@ -160,6 +161,7 @@ struct Node
   connect_ms: Int
   max_frame_bytes: Int
   insecure_plaintext: Bool
+  counts: ATS[String, Int]
   actor: Actor.Ref[State, Msg]
   acceptor: Task[Void]
 end
