@@ -77,6 +77,14 @@ struct Member
   mailbox: String
 end
 
+## The writer of a link for the groups of this node: its task, the signal that tells it that `slot` has a newer frame,
+## and the slot, which has the newest frame only.
+struct Sender
+  task: Task[Void]
+  signal: Channel[Int]
+  slot: ATS[String, Bytes]
+end
+
 ## What a peer said of its groups: the number of its last change, and all its memberships.
 struct Remote
   version: Int
@@ -183,7 +191,7 @@ end
 ## until `reconnect_max_ms`, and starts over when a link is kept) and `timers` are the waits that are running. `own`
 ## are the addresses where a dial reached this very node, with the time (`Time.monotonic_ms`) until which they are left
 ## alone. `groups` are the memberships of this node and `version` counts their changes; `remote` has what each peer
-## said of its own, until its link ends.
+## said of its own, until its link ends, and `senders` the writer of each link.
 struct State
   config: Config
   peers: Map[String, Peer]
@@ -198,6 +206,7 @@ struct State
   groups: List[Membership]
   version: Int
   remote: Map[String, Remote]
+  senders: Map[String, Sender]
   delays: Map[String, Int]
   timers: Map[String, Task[Void]]
   refused: Int

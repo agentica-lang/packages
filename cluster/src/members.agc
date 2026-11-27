@@ -41,7 +41,6 @@ end
 private
 
 GONE_MS = 1000
-SILENT_HEARTBEATS = 3
 OWN_PERIODS = 10
 
 def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
@@ -60,6 +59,7 @@ def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
     groups: [],
     version: 0,
     remote: {},
+    senders: {},
     delays: {},
     timers: {},
     refused: 0,
@@ -127,12 +127,17 @@ end
 # Every link and every dial in flight ends with the node, and the callers that wait for a dial hear that. The actor
 # waits (a short while) for the tasks to be gone, so that `stop` leaves none behind.
 def terminate(state: Types.State) -> Void
-  count = state.peers.size + state.dialing.size + state.timers.size + state.finders.size
+  count = state.peers.size + state.senders.size + state.dialing.size + state.timers.size + state.finders.size
   # A channel that holds one notice for each task, so that no monitor is left waiting.
   gone: Channel[Int] = Channel.new([count, 1].max.unwrap!)
   for peer in state.peers.values
     Task.cancel(peer.link)
     Task.monitor(peer.link, gone, ->(down) { down.task_id })
+  end
+
+  for sender in state.senders.values
+    Task.cancel(sender.task)
+    Task.monitor(sender.task, gone, ->(down) { down.task_id })
   end
 
   for dialing in state.dialing.values
@@ -177,7 +182,8 @@ end
 def keep(state: Types.State, peer: Types.Peer, reply: Channel[Bool]) -> Types.State
   _ = Actor.reply(reply, true)
   fresh = state.with(peers: state.peers.put(peer.name, peer), remote: state.remote.delete(peer.name))
-  linked = named(told_groups(fresh, [peer]), peer.endpoint, peer.name)
+  written = with_sender(fresh, peer)
+  linked = named(told_groups(written, [written.senders[peer.name]]), peer.endpoint, peer.name)
   kept = settled(linked, peer.name)
   return kept if peer.endpoint.empty?
 
@@ -204,7 +210,14 @@ end
 def forget(state: Types.State, peer: Types.Peer, id: Int) -> Types.State
   return state if peer.link.id != id
 
-  gone = retry_all(state.with(peers: state.peers.delete(peer.name), remote: state.remote.delete(peer.name)), peer.name)
+  gone = retry_all(
+    without_sender(
+      state.with(peers: state.peers.delete(peer.name), remote: state.remote.delete(peer.name)),
+      peer.name,
+    ),
+    peer.name,
+  )
+
   down(unfound_all(gone, peer.name), peer.name)
 end
 
@@ -436,7 +449,7 @@ def join(state: Types.State, entry: Types.Membership, reply: Channel[Result[Void
 
   changed = state.with(groups: state.groups.push(entry), version: state.version + 1)
   case Wire.encode(Types.Message.Groups(changed.version, changed.groups), state.config.max_frame_bytes)
-    ok(frame) -> answer(sent(changed, frame, changed.peers.values), reply, ok())
+    ok(frame) -> answer(published(changed, frame, changed.senders.values), reply, ok())
     error(e) -> answer(state, reply, error(e.message, kind: e.kind))
   end
 end
@@ -445,25 +458,41 @@ def leave(state: Types.State, entry: Types.Membership, reply: Channel[Bool]) -> 
   return answer(state, reply, true) if not state.groups.include?(entry)
 
   changed = state.with(groups: state.groups.select { |held| held != entry }, version: state.version + 1)
-  answer(told_groups(changed, changed.peers.values), reply, true)
+  answer(told_groups(changed, changed.senders.values), reply, true)
 end
 
-def told_groups(state: Types.State, peers: List[Types.Peer]) -> Types.State
-  return state if state.version == 0 or peers.empty?
+# The writers of the links get all the memberships. A frame that cannot be made (it is over the limit, since another
+# change made it too big for a peer's frame) is counted as dropped.
+def told_groups(state: Types.State, senders: List[Types.Sender]) -> Types.State
+  return state if state.version == 0 or senders.empty?
 
   case Wire.encode(Types.Message.Groups(state.version, state.groups), state.config.max_frame_bytes)
-    ok(frame) -> sent(state, frame, peers)
-    error(_) -> state
+    ok(frame) -> published(state, frame, senders)
+    error(_) -> dropped(state)
   end
 end
 
-def sent(state: Types.State, frame: Bytes, peers: List[Types.Peer]) -> Types.State
-  wait_ms = SILENT_HEARTBEATS * state.config.heartbeat_ms
-  for peer in peers
-    _ = Task.spawn(&Link.announce, Link.Announce(frame: frame, socket: peer.socket, wait_ms: wait_ms))
+def published(state: Types.State, frame: Bytes, senders: List[Types.Sender]) -> Types.State
+  for sender in senders
+    Link.publish(sender, frame)
   end
 
   state
+end
+
+# One writer for each link: a new link of a peer replaces the one of the link that ended.
+def with_sender(state: Types.State, peer: Types.Peer) -> Types.State
+  stopped = without_sender(state, peer.name)
+  stopped.with(senders: stopped.senders.put(peer.name, Link.sender(state.config, peer)))
+end
+
+def without_sender(state: Types.State, name: String) -> Types.State
+  case state.senders.get(name)
+    some(sender) ->
+      Task.cancel(sender.task)
+      state.with(senders: state.senders.delete(name))
+    none -> state
+  end
 end
 
 def heard(state: Types.State, name: String, version: Int, memberships: List[Types.Membership]) -> Types.State

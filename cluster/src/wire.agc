@@ -181,9 +181,14 @@ end
 def check_groups(version: Int, groups: List[Types.Membership]) -> Result[Void]
   return protocol("the version of groups is 1 or more") if version < 1
 
+  seen: Map[String, Bool] = {}
   for entry in groups
     try check_mailbox(entry.group)
     try check_mailbox(entry.mailbox)
+    key = "#{entry.group.bytes.size}:#{entry.group}#{entry.mailbox}"
+    return protocol("a group has the same mailbox twice") if seen.has_key?(key)
+
+    seen = seen.put(key, true)
   end
 
   ok()

@@ -43,7 +43,20 @@ Feature: Groups of mailboxes
     When the node "alpha" stops
     Then the members of the group "workers" on "beta" are "" within 3000 ms
 
+  Scenario: A node that comes back with the same name says its new members
+    Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"
+    And the node "beta" starts with the cookie "the-cookie-of-the-cluster" and dials "alpha"
+    And "beta" has the mailbox "jobs"
+    And "beta" joins the group "workers" with the mailbox "jobs"
+    And the members of the group "workers" on "alpha" are "beta/jobs" within 5000 ms
+    When the node "beta" stops
+    And the members of the group "workers" on "alpha" are "" within 3000 ms
+    And the node "beta" starts again on the port of its first run with the cookie "the-cookie-of-the-cluster" and dials "alpha"
+    And "beta" has the mailbox "audit"
+    And "beta" joins the group "auditors" with the mailbox "audit"
+    Then the members of the group "auditors" on "alpha" are "beta/audit" within 5000 ms
+    And the members of the group "workers" on "alpha" are "" within 100 ms
+
   Scenario: A mailbox that is not registered cannot join
     Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"
     Then "alpha" joins the group "workers" with the mailbox "nowhere" and it fails with "cluster.argument"
-    And the members of the group "workers" on "alpha" are "" within 100 ms

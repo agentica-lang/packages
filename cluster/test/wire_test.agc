@@ -240,3 +240,20 @@ def test_groups_with_a_version_or_a_name_that_is_not_valid_are_not_written_or_re
 
   Test.eq(kind_of(Wire.decode(bytes_of("40a0"))), Types.PROTOCOL)
 end
+
+def test_a_group_with_the_same_mailbox_twice_is_not_written_or_read() -> Result[Void]
+  entry = Types.Membership(group: "workers", mailbox: "jobs")
+  other = Types.Membership(group: "workers", mailbox: "audit")
+  try Test.eq(kind_of(Wire.encode(Types.Message.Groups(1, [entry, other, entry]))), Types.PROTOCOL)
+  try Test.ok?(Wire.encode(Types.Message.Groups(1, [entry, other])))
+  # The same text in another group is not the same membership, and nor are two names that join to the same text.
+  try Test.ok?(Wire.encode(Types.Message.Groups(1, [entry, Types.Membership(group: "other", mailbox: "jobs")])))
+  Test.ok?(
+    Wire.encode(
+      Types.Message.Groups(
+        1,
+        [Types.Membership(group: "ab", mailbox: "c"), Types.Membership(group: "a", mailbox: "bc")],
+      ),
+    ),
+  )
+end
