@@ -1,4 +1,6 @@
-## The records of the package: what a node says to another one on a connection.
+## The records of the package: what a node says to another one on a connection, and what a node is.
+
+import Actor from "std/actor"
 
 ## The kinds of the errors of the package, for `e.is_a?("cluster.protocol")`. Bytes that break the wire format: a bad
 ## preamble, a length of zero, an unknown kind or a body that does not fit its kind.
@@ -10,6 +12,12 @@ REFUSED = "cluster.refused"
 
 ## A bad option, such as a cookie that is too short.
 ARGUMENT = "cluster.argument"
+
+## The peer cannot be reached: nothing listens at its address, or the connection did not open in time.
+UNREACHABLE = "cluster.unreachable"
+
+## The connection ended or went quiet before the handshake did.
+CLOSED = "cluster.closed"
 
 ## A frame is longer than the limit of the connection.
 TOO_LARGE = "cluster.too_large"
@@ -43,4 +51,60 @@ enum Message
   Bye(String)
   Mail(String, Bytes)
   Ignored(Int)
+end
+
+## What a node needs to start. `cookie` is the shared secret (16 bytes at least). `peers` are the `host:port` of the
+## nodes to connect to. Plain TCP is only allowed on this machine unless `insecure_plaintext` is true. `connect_ms` is
+## the time that a connection has to finish its handshake.
+struct Options
+  name: String
+  cookie: String
+  host: String = "127.0.0.1"
+  port: Int = 0
+  peers: List[String] = []
+  connect_ms: Int = 5000
+  max_frame_bytes: Int = 1_048_576
+  insecure_plaintext: Bool = false
+end
+
+## A node that connected and proved the cookie: the link of its connection, `dialer` is the side that opened it.
+struct Peer
+  name: String
+  dialer: String
+  link: TaskRef
+end
+
+## What the actor of a node hears. `Linked` is a connection that passed the handshake, and its channel gets whether the
+## node keeps it. `Dial` opens a connection in a task of the node and answers on its channel with the name of the peer.
+enum Msg
+  Linked(Peer, Channel[Bool])
+  Closed(String, Int)
+  Dial(String, Int, Channel[Result[String]])
+  Refused
+  Names(Channel[List[String]])
+  Refusals(Channel[Int])
+end
+
+## The state of the actor of a node: the peers by name, and how many handshakes it refused.
+struct State
+  config: Config
+  peers: Map[String, Peer]
+  refused: Int
+end
+
+## What the tasks of a node share: its name, the cookie and the limits.
+struct Config
+  name: String
+  cookie: Bytes
+  connect_ms: Int
+  max_frame_bytes: Int
+  node: Address[Msg]
+end
+
+## A running node. `Cluster.start` makes it.
+struct Node
+  name: String
+  port: Int
+  actor: Actor.Ref[State, Msg]
+  acceptor: Task[Void]
 end
