@@ -4,7 +4,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- Add `Cluster.group_send`: a message to each member of a group, with the number of members that it reached.
+- Add `Cluster.group_send`: a message to each member of a group, with the number of members whose message was written to the link (not a proof that the mailbox took it).
 - Add process groups: `Cluster.group_join`, `group_leave` and `group_members` (a member is a node and a mailbox). The nodes tell each other their memberships with a new frame kind (`groups`, 64), which a node of 0.1.0 skips; the memberships of a peer end with its link.
 - A node that finds its own address by discovery leaves it alone for 10 lookups, and `Cluster.refused` no longer counts a node that dials itself.
 - Add `examples/docker-compose.discover.yml`: replicas that find each other by the name of their service.
