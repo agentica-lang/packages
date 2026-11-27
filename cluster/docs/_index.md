@@ -96,7 +96,7 @@ Delivery is at most once: `send` returns once the bytes are in the socket, with 
 
 ## Groups
 
-A mailbox of a node can join a group, a name for the mailboxes that do one kind of work. Each node sees the members of a group: its own and the ones of the peers that are connected. A member is a node and a mailbox, so a program can send to each of them (`group_send`, planned, will do it for all).
+A mailbox of a node can join a group, a name for the mailboxes that do one kind of work. Each node sees the members of a group: its own and the ones of the peers that are connected. A member is a node and a mailbox, and `group_send` sends a message to all of them.
 
 ```agentica
 import Cluster from "pkg/cluster/cluster"
@@ -119,6 +119,10 @@ def main() -> Void
     puts("#{member.node} #{member.mailbox}")
   end
 
+  reached = Cluster.group_send(beta, "workers", "hello".bytes).unwrap!
+  delivery = inbox.recv(2000).unwrap!
+  puts("reached #{reached}, #{delivery.from} said #{String.from_bytes(delivery.body).unwrap!}")
+
   _ = Cluster.stop(beta, 1000)
   _ = Cluster.stop(alpha, 1000)
 end
@@ -126,6 +130,7 @@ end
 
 ```output
 alpha jobs
+reached 1, beta said hello
 ```
 
 A node tells its peers all its memberships when a link is kept and after each change, with a number that grows, so what is lost or comes twice does no harm. The memberships of a peer end with its link (`node_down`) and come back when it connects again and says them. The peers learn of a change a moment after the call returns: a read right after a join on another node may not have it yet. A membership stays until `group_leave` or until the node stops, even if the mailbox is registered again. Every node of a cluster should have the same `max_frame_bytes`: all the memberships of a node go in one frame.
@@ -196,6 +201,10 @@ Takes the mailbox out of the group and tells the peers. A mailbox that is not in
 ### Cluster.group_members(node: Cluster.Node, group: String) -> Result[List[Cluster.Member]]
 
 The members of the group, this node's and the connected peers', ordered by node and mailbox. A `Member` has `node` and `mailbox`. A group that nobody joined gives an empty list.
+
+### Cluster.group_send(node: Cluster.Node, group: String, body: Bytes, timeout_ms: Int = 5000) -> Result[Int]
+
+Sends `body` (the bytes of `Term.encode`, as for `send`) to the mailbox of each member of the group, and gives how many it reached. A member counts when its message is written to the link of its peer (or taken by the queue of this node): that does not say that the mailbox took it, since the mailbox may be full or not registered there, or the peer may die after the write. The members of this node go through the queue of the node, and are not counted if it is full. The members of a peer are written to its link one after the other, in the order of `group_members`, and the peers at the same time (at most 64). `timeout_ms` is for all the frames of one peer: a peer that takes more has its link closed and its remaining members are not counted, and the other peers are not held. A peer that is not connected is not counted, and a group with no members gives `0`. It uses the memberships that this node has now, so a peer that joined a moment ago may not get it. Delivery is at most once, as for `send`. It fails with `cluster.argument` (a name that is not valid, or `timeout_ms` is less than 1), `cluster.too_large` (a frame is over `max_frame_bytes`: nothing is sent) or `cluster.closed` (the node is stopped).
 
 ### Cluster.watch(node: Cluster.Node, address: Address[M], wrap: Fn[Cluster.Event, M]) -> Result[Void]
 

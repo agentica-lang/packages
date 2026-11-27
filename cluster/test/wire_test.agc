@@ -257,3 +257,12 @@ def test_a_group_with_the_same_mailbox_twice_is_not_written_or_read() -> Result[
     ),
   )
 end
+
+# Another program wrote the same pair twice.
+def test_a_groups_frame_with_a_pair_twice_is_refused_when_read() -> Result[Void]
+  entry = "a2" + "6567726f7570" + "67776f726b657273" + "676d61696c626f78" + "646a6f6273"
+  once = "40a2" + "6776657273696f6e" + "01" + "6667726f757073" + "81" + entry
+  twice = "40a2" + "6776657273696f6e" + "01" + "6667726f757073" + "82" + entry + entry
+  try Test.ok?(Wire.decode(bytes_of(once)))
+  Test.eq(kind_of(Wire.decode(bytes_of(twice))), Types.PROTOCOL)
+end

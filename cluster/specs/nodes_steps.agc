@@ -4,7 +4,7 @@
 import BDD from "std/bdd"
 import Protocol from "nodes_protocol"
 import {
-  Connect, Drops, Flood, HoleVisit, Mailbox, Payload, Peers, Post, Received, Refusals, Request, Spec,
+  Connect, Drops, Flood, GroupPost, HoleVisit, Mailbox, Payload, Peers, Post, Received, Refusals, Request, Spec,
 } from "nodes_protocol"
 import {Expected, Joining, Stranger, Visit} from "nodes_protocol"
 
@@ -52,6 +52,11 @@ def steps() -> List[BDD.Step]
     BDD.step("{string} has the mailbox {string}", &registers),
     BDD.step("{string} joins the group {string} with the mailbox {string}", &joins),
     BDD.step("{string} joins the group {string} with the mailbox {string} and it fails with {string}", &join_fails),
+    BDD.step(
+      "{string} sends the group {string} the job {int} named {string} and it reaches {int} members",
+      &sends_to_group,
+    ),
+    BDD.step("{string} sends the group {string} a message of {int} bytes and it fails with {string}", &group_big),
     BDD.step("{string} leaves the group {string} with the mailbox {string}", &leaves),
     BDD.step("the members of the group {string} on {string} are {string} within {int} ms", &has_members),
     BDD.step("{string} has the mailbox {string} again", &registers),
@@ -254,6 +259,16 @@ end
 
 def join_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
   send(ctx, Request.JoinFails(Joining(node: args[0], group: args[1], mailbox: args[2]), args[3]))
+end
+
+def sends_to_group(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  post = GroupPost(from: args[0], group: args[1], payload: Payload.Job(args[2].to_i!, args[3]), reached: args[4].to_i!)
+  send(ctx, Request.GroupPost(post))
+end
+
+def group_big(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  post = GroupPost(from: args[0], group: args[1], payload: Payload.Big(args[2].to_i!), kind: args[3])
+  send(ctx, Request.GroupPost(post))
 end
 
 def leaves(ctx: BDD.Context, args: List[String]) -> BDD.Context

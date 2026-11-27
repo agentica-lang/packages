@@ -418,6 +418,7 @@ end
 
 # A new link of a peer starts from nothing: the numbers of the old one say nothing about the new one.
 def test_a_peer_that_is_linked_again_is_heard_from_its_first_number() -> Result[Void]
+  before = Task.pending_count()
   fix = fixture()
   try Test.eq(try link(fix, "beta", "zeta", fix.address), true)
   workers = [Types.Membership(group: "workers", mailbox: "jobs")]
@@ -428,7 +429,8 @@ def test_a_peer_that_is_linked_again_is_heard_from_its_first_number() -> Result[
   try Actor.cast(fix.actor.address, Types.Msg.Groups("beta", 1, [Types.Membership(group: "other", mailbox: "audit")]))
   try Test.eq(try members_of(fix, "workers"), [])
   try Test.eq(try members_of(fix, "other"), [Types.Member(node: "beta", mailbox: "audit")])
-  finish(fix)
+  try finish(fix)
+  Test.eq(Task.pending_count(), before)
 end
 
 def test_the_members_of_a_peer_end_with_its_link() -> Result[Void]
