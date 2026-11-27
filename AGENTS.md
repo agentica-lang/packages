@@ -100,7 +100,7 @@ native-gen/          the C header of an `extern module` block: cli.agc is the co
                      as the goldens, a step makes the others: kinds, shapes, lists, options, resources), the files
                      that fail (errors/) and cxx.sh, a CC that builds a module as C++; bench/wide the codecs of a
                      struct of 26 fields; the features need cc and c++
-cluster/             Agentica nodes that connect with a shared cookie (not released yet): cluster.agc is the API
+cluster/             Agentica nodes that connect with a shared cookie (cluster-0.1.0): cluster.agc is the API
                      (start, connect, nodes, port, refused, register, send, watch, dropped, stop, the error kinds), src/members.agc the actor of a node
                      (its peers, mailboxes, dials in flight and reconnects, which of two links stays), src/listener.agc the accept loop (with the cap of handshakes), src/link.agc one connection
                      (the handshake as client or server, then the reading and its heartbeat), src/check.agc the checks of the options (plain TCP

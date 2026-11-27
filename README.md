@@ -36,7 +36,7 @@ prop = { git = "https://github.com/agentica-lang/packages", tag = "prop-0.4.2", 
 | `smtp` (`smtp-0.2.0`) | An SMTP client in Agentica: plain, STARTTLS and implicit TLS connections, AUTH PLAIN and LOGIN, and the message (RFC 5322 headers, encoded words, text and HTML bodies), with the reply code in the error (`smtp/smtp`). [Docs](https://www.agentica-lang.com/packages/smtp/) |
 | `password` (`password-0.1.0`) | Password hashing with scrypt: a digest that carries its cost, a constant-time check, the limits of a new password, and the same work for a user that does not exist (`password/password`). [Docs](https://www.agentica-lang.com/packages/password/) |
 | `release` (`release-0.2.0`) | Builds an app into a folder that runs on another machine, as `mix release` does: the `agentica` binary, the compiled program, a launcher and a manifest with the sha256 of every file; `tar` packs it and `inspect` checks it (`release/cli.agc`). [Docs](https://www.agentica-lang.com/packages/release/) |
-| `cluster` (planned) | Connect Agentica nodes with a shared cookie: messages to named mailboxes, and `node_up` and `node_down` from heartbeats. Not released yet. [Docs](https://www.agentica-lang.com/packages/cluster/) |
+| `cluster` (`cluster-0.1.0`) | Connect Agentica nodes with a shared cookie (a static list, reconnect with backoff): messages to named mailboxes, heartbeats, and `node_up` and `node_down` events. [Docs](https://www.agentica-lang.com/packages/cluster/) |
 | `cache` (planned) | Cache strategies (CLOCK, sampled LRU, TinyLFU) behind the `Cache` facade of `std/cache` |
 
 ## Tags
