@@ -17,6 +17,7 @@ struct Spec
   host: String = "127.0.0.1"
   connect_ms: Int = 5000
   max_pending: Int = 128
+  max_frame_bytes: Int = 1_048_572
 end
 
 ## One node connects to another and the answer must be `ok` (`kind` is `""`) or an error of that kind. `as_name` is a
@@ -78,6 +79,48 @@ struct Flood
   closed: Int
 end
 
+## What a step sends to a mailbox: the `Term.encode` of a job (an `id` and a `name`), 100 jobs one after the other,
+## bytes that are not CBOR, the CBOR of a type that is not a job, or `size` bytes of CBOR.
+enum Payload
+  Job(Int, String)
+  Jobs(Int)
+  Garbage(String)
+  Other
+  Big(Int)
+end
+
+struct Post
+  from: String
+  to: String
+  mailbox: String
+  payload: Payload
+  kind: String = ""
+  timeout_ms: Int = 5000
+end
+
+## A node registers a mailbox, and the driver decodes what comes into it as a job and keeps one line for each message.
+struct Mailbox
+  node: String
+  name: String
+  capacity: Int = 64
+  reading: Bool = true
+end
+
+## What the mailbox must have received within `within_ms`, in order (`lines`, in the text of `Collected`).
+struct Received
+  node: String
+  mailbox: String
+  lines: List[String]
+  within_ms: Int
+end
+
+## How many messages a node must have dropped within `within_ms`.
+struct Drops
+  node: String
+  count: Int
+  within_ms: Int
+end
+
 enum Request
   Start(Spec)
   StartFails(Spec, String)
@@ -93,4 +136,11 @@ enum Request
   ConnectTwice(String, String)
   StopWithin(String, Int)
   Flood(Flood)
+  Register(Mailbox)
+  Post(Post)
+  Received(Received)
+  InOrder(String, String, Int, Int)
+  Drops(Drops)
+  RegisterFails(Mailbox, String)
+  ReplacedEmpty(String, String)
 end

@@ -29,8 +29,8 @@ PAUSE_MS = 10
 
 # A connection over the cap of handshakes in progress is closed at once, before it costs a task.
 def admit(config: Types.Config, socket: TCP.Socket) -> Void
-  if config.pending.add(Types.PENDING, 1) > config.max_pending
-    _ = config.pending.add(Types.PENDING, -1)
+  if config.counts.add(Types.PENDING, 1) > config.max_pending
+    _ = config.counts.add(Types.PENDING, -1)
     TCP.close(socket)
   else
     _ = Task.spawn_owning(&Link.serve, Link.Served(config: config, socket: socket))

@@ -3,7 +3,10 @@
 
 import BDD from "std/bdd"
 import Protocol from "nodes_protocol"
-import {Connect, Flood, HoleVisit, Peers, Refusals, Request, Spec, Stranger, Visit} from "nodes_protocol"
+import {
+  Connect, Drops, Flood, HoleVisit, Mailbox, Payload, Peers, Post, Received, Refusals, Request, Spec,
+} from "nodes_protocol"
+import {Stranger, Visit} from "nodes_protocol"
 
 def steps() -> List[BDD.Step]
   [
@@ -46,6 +49,34 @@ def steps() -> List[BDD.Step]
       "a stranger answers {string} with a proof that it made up and is disconnected, with nothing said",
       &stranger_wrong,
     ),
+    BDD.step("{string} has the mailbox {string}", &registers),
+    BDD.step("{string} has the mailbox {string} again", &registers),
+    BDD.step("{string} has the mailbox {string} with room for {int} messages and nobody reads it", &registers_unread),
+    BDD.step("the replaced mailbox {string} of {string} has received nothing", &replaced_is_empty),
+    BDD.step(
+      "{string} sends {string} the job {int} named {string} in {string} with {int} ms and it fails with {string}",
+      &send_fails_in_time,
+    ),
+    BDD.step("starting the node {string} with a frame limit of {int} bytes fails with {string}", &fails_frame_limit),
+    BDD.step("{string} cannot have the mailbox {string} and it fails with {string}", &register_fails),
+    BDD.step("{string} sends {string} the job {int} named {string} in the mailbox {string}", &sends_job),
+    BDD.step("{string} sends {string} {int} jobs in the mailbox {string}", &sends_jobs),
+    BDD.step("{string} sends {string} the bytes {string} in the mailbox {string}", &sends_garbage),
+    BDD.step("{string} sends {string} a message of another type in the mailbox {string}", &sends_other),
+    BDD.step(
+      "{string} sends {string} a message of {int} bytes in the mailbox {string} and it fails with {string}",
+      &sends_big,
+    ),
+    BDD.step(
+      "{string} sends {string} the job {int} named {string} in the mailbox {string} and it fails with {string}",
+      &send_fails,
+    ),
+    BDD.step("the mailbox {string} of {string} has received within {int} ms:", &has_received),
+    BDD.step(
+      "the mailbox {string} of {string} has received {int} jobs in order within {int} ms",
+      &has_received_in_order,
+    ),
+    BDD.step("{string} has dropped {int} messages within {int} ms", &has_dropped),
     BDD.step("a stranger says nothing to {string} and is disconnected within {int} ms", &stranger_silent),
   ]
 end
@@ -183,4 +214,83 @@ end
 
 def flood(ctx: BDD.Context, args: List[String]) -> BDD.Context
   send(ctx, Request.Flood(Flood(node: args[1], count: args[0].to_i!, closed: args[2].to_i!)))
+end
+
+def registers(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.Register(Mailbox(node: args[0], name: args[1])))
+end
+
+def register_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.RegisterFails(Mailbox(node: args[0], name: args[1]), args[2]))
+end
+
+def post(ctx: BDD.Context, from: String, to: String, mailbox: String, payload: Payload) -> BDD.Context
+  send(ctx, Request.Post(Post(from: from, to: to, mailbox: mailbox, payload: payload)))
+end
+
+def sends_job(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  post(ctx, args[0], args[1], args[4], Payload.Job(args[2].to_i!, args[3]))
+end
+
+def sends_jobs(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  post(ctx, args[0], args[1], args[3], Payload.Jobs(args[2].to_i!))
+end
+
+def sends_garbage(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  post(ctx, args[0], args[1], args[3], Payload.Garbage(args[2]))
+end
+
+def sends_other(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  post(ctx, args[0], args[1], args[2], Payload.Other)
+end
+
+def sends_big(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  request = Post(from: args[0], to: args[1], mailbox: args[3], payload: Payload.Big(args[2].to_i!), kind: args[4])
+  send(ctx, Request.Post(request))
+end
+
+def send_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  payload = Payload.Job(args[2].to_i!, args[3])
+  send(ctx, Request.Post(Post(from: args[0], to: args[1], mailbox: args[4], payload: payload, kind: args[5])))
+end
+
+def has_received(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  lines = BDD.table(ctx).map { |row| row[0] }
+  send(ctx, Request.Received(Received(node: args[1], mailbox: args[0], lines: lines, within_ms: args[2].to_i!)))
+end
+
+def has_received_in_order(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.InOrder(args[1], args[0], args[2].to_i!, args[3].to_i!))
+end
+
+def has_dropped(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.Drops(Drops(node: args[0], count: args[1].to_i!, within_ms: args[2].to_i!)))
+end
+
+def registers_unread(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  mailbox = Mailbox(node: args[0], name: args[1], capacity: args[2].to_i!, reading: false)
+  send(ctx, Request.Register(mailbox))
+end
+
+def replaced_is_empty(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.ReplacedEmpty(args[1], args[0]))
+end
+
+def send_fails_in_time(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  payload = Payload.Job(args[2].to_i!, args[3])
+  request = Post(
+    from: args[0],
+    to: args[1],
+    mailbox: args[4],
+    payload: payload,
+    kind: args[6],
+    timeout_ms: args[5].to_i!,
+  )
+
+  send(ctx, Request.Post(request))
+end
+
+def fails_frame_limit(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  spec = Spec(name: args[0], cookie: "the-cookie-of-the-cluster", max_frame_bytes: args[1].to_i!)
+  send(ctx, Request.StartFails(spec, args[2]))
 end

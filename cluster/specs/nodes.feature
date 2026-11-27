@@ -99,6 +99,9 @@ Feature: Nodes that share a cookie connect
     Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster" and at most 2 handshakes at once
     Then 5 strangers connect to "alpha" and say nothing, and 3 of them are closed at once
 
+  Scenario: A frame limit over what one write takes is refused
+    Then starting the node "gamma" with a frame limit of 1048573 bytes fails with "cluster.argument"
+
   Scenario: A node does not listen on a public address with plain TCP
     Then starting the node "alpha" on the host "0.0.0.0" with the cookie "the-cookie-of-the-cluster" fails with "cluster.argument"
 

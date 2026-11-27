@@ -7,19 +7,19 @@ import Link from "link"
 import Types from "types"
 
 ## The behaviour of the actor of a node with these options.
-def behaviour(options: Types.Options, pending: ATS[String, Int]) -> Actor.Behaviour[Types.State, Types.Msg]
-  Actor.Behaviour(init: -> { start_state(options, pending) }, handle: &handle, terminate: some(&terminate))
+def behaviour(options: Types.Options, counts: ATS[String, Int]) -> Actor.Behaviour[Types.State, Types.Msg]
+  Actor.Behaviour(init: -> { start_state(options, counts) }, handle: &handle, terminate: some(&terminate))
 end
 
-## What the tasks of a node share, once the address of its actor is known. `pending` counts the connections that are in
-## their handshake, for all the tasks of the node.
-def config(options: Types.Options, node: Address[Types.Msg], pending: ATS[String, Int]) -> Types.Config
+## What the tasks of a node share, once the address of its actor is known. `counts` is the table that all the tasks of
+## the node add to.
+def config(options: Types.Options, node: Address[Types.Msg], counts: ATS[String, Int]) -> Types.Config
   Types.Config(
     name: options.name,
     cookie: options.cookie.bytes,
     connect_ms: options.connect_ms,
     max_pending: options.max_pending,
-    pending: pending,
+    counts: counts,
     max_frame_bytes: options.max_frame_bytes,
     node: node,
   )
@@ -34,9 +34,11 @@ end
 
 private
 
-def start_state(options: Types.Options, pending: ATS[String, Int]) -> Types.State
+GONE_MS = 1000
+
+def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
   inbox: Channel[Types.Msg] = Actor.inbox
-  Types.State(config: config(options, inbox.address, pending), peers: {}, dialing: {}, refused: 0)
+  Types.State(config: config(options, inbox.address, counts), peers: {}, dialing: {}, mailboxes: {}, refused: 0)
 end
 
 def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
@@ -48,6 +50,11 @@ def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
     Types.Msg.Refused -> Actor.continue(state.with(refused: state.refused + 1))
     Types.Msg.Names(reply) -> answer(state, reply, state.peers.keys.sort)
     Types.Msg.Refusals(reply) -> answer(state, reply, state.refused)
+    Types.Msg.Deliver(from, mailbox, body) ->
+      Actor.continue(deliver(state, Types.Delivery(from: from, mailbox: mailbox, body: body)))
+    Types.Msg.Register(name, take, reply) ->
+      answer(state.with(mailboxes: state.mailboxes.put(name, take)), reply, true)
+    Types.Msg.Route(name, reply) -> answer(state, reply, socket_of(state, name))
   end
 end
 
@@ -56,15 +63,53 @@ def answer[T](state: Types.State, reply: Channel[T], value: T) -> Actor.Step[Typ
   Actor.continue(state)
 end
 
-# Every link and every dial in flight ends with the node, and the callers that wait for a dial hear that.
+# A message for a mailbox that does not exist, or that cannot take it at once, is dropped and counted.
+def deliver(state: Types.State, delivery: Types.Delivery) -> Types.State
+  case state.mailboxes.get(delivery.mailbox)
+    some(take) -> counted(state, take.call(delivery))
+    none -> dropped(state)
+  end
+end
+
+def counted(state: Types.State, taken: Bool) -> Types.State
+  return state if taken
+
+  dropped(state)
+end
+
+def dropped(state: Types.State) -> Types.State
+  _ = state.config.counts.add(Types.DROPPED, 1)
+  state
+end
+
+def socket_of(state: Types.State, name: String) -> Optional[TCP.Socket]
+  case state.peers.get(name)
+    some(peer) -> some(peer.socket)
+    none -> none
+  end
+end
+
+# Every link and every dial in flight ends with the node, and the callers that wait for a dial hear that. The actor
+# waits (a short while) for the tasks to be gone, so that `stop` leaves none behind.
 def terminate(state: Types.State) -> Void
+  gone: Channel[Int] = Channel.new(1)
+  count = 0
   for peer in state.peers.values
     Task.cancel(peer.link)
+    Task.monitor(peer.link, gone, ->(down) { down.task_id })
+    count += 1
   end
 
   for dialing in state.dialing.values
     answer_waiters(dialing.waiters, error("cluster: the node stopped", kind: Types.CLOSED))
     Task.cancel(dialing.task)
+    Task.monitor(dialing.task, gone, ->(down) { down.task_id })
+    count += 1
+  end
+
+  deadline = Time.monotonic_ms() + GONE_MS
+  for _ in 1..count
+    _ = gone.recv((deadline - Time.monotonic_ms()).clamp(0, GONE_MS))
   end
 end
 

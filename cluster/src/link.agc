@@ -40,7 +40,7 @@ def serve(served: Served) -> Void
   config = served.config
   socket = served.socket
   result = server_handshake(config, socket, Time.monotonic_ms() + config.connect_ms)
-  _ = config.pending.add(Types.PENDING, -1)
+  _ = config.counts.add(Types.PENDING, -1)
   case result
     error(e) -> refuse(config, socket, e)
     ok(peer) -> run_link(config, socket, peer)
@@ -118,12 +118,13 @@ def register(config: Types.Config, peer: Types.Peer) -> Bool
   end
 end
 
-# After the welcome a link is only read: a bye ends it and any other frame is ignored, until the frames have a use.
+# After the welcome a link is read: a bye ends it, a mail goes to the node, and any other frame is ignored.
 def keep_reading(config: Types.Config, socket: TCP.Socket, peer: Types.Peer) -> Void
   reading = true
   while reading
     case read_message(socket, config.max_frame_bytes, 0)
       ok(Types.Message.Bye(_)) -> reading = false
+      ok(Types.Message.Mail(mailbox, body)) -> deliver(config, peer, mailbox, body)
       ok(_) -> nil
       error(_) -> reading = false
     end
@@ -131,6 +132,15 @@ def keep_reading(config: Types.Config, socket: TCP.Socket, peer: Types.Peer) -> 
 
   TCP.close(socket)
   _ = Actor.cast(config.node, Types.Msg.Closed(peer.name, peer.link.id))
+end
+
+# The reader never waits for the node: a mail goes to the node at once or is dropped and counted (at most once). Only
+# mails go through the node; the frames of the heartbeat are for the link alone.
+def deliver(config: Types.Config, peer: Types.Peer, mailbox: String, body: Bytes) -> Void
+  case Actor.cast(config.node, Types.Msg.Deliver(peer.name, mailbox, body), 0)
+    ok(_) -> nil
+    error(_) -> _ = config.counts.add(Types.DROPPED, 1)
+  end
 end
 
 # The client dialed a node, maybe by its name (`expected`): with a name, the transcript uses it and never the name in
@@ -156,7 +166,15 @@ def client_handshake(
       proof = try Handshake.answer(config.cookie, session, server_proof)
       try send(socket, try Wire.encode(proof), deadline)
       try expect_welcome(socket, deadline)
-      ok(Types.Peer(name: name, dialer: config.name, endpoint: Endpoint.key(endpoint), link: Task.current()))
+      ok(
+        Types.Peer(
+          name: name,
+          dialer: config.name,
+          endpoint: Endpoint.key(endpoint),
+          link: Task.current(),
+          socket: socket,
+        ),
+      )
     _ -> out_of_order()
   end
 end
@@ -172,7 +190,7 @@ def server_handshake(config: Types.Config, socket: TCP.Socket, deadline: Int) ->
         Types.Message.Proof(proof) ->
           welcome = try Handshake.accept(config.cookie, session, proof)
           try send(socket, try Wire.encode(welcome), deadline)
-          ok(Types.Peer(name: client, dialer: client, endpoint: "", link: Task.current()))
+          ok(Types.Peer(name: client, dialer: client, endpoint: "", link: Task.current(), socket: socket))
         _ -> out_of_order()
       end
 

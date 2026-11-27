@@ -17,7 +17,7 @@ The design is decided in [agentica#1834](https://github.com/agentica-lang/agenti
 
 ## Status
 
-Not released yet. The package grows one piece at a time, and `cluster-0.1.0` comes when a node can send to a mailbox and report `node_down`. Today a node can start, connect to the nodes of its list, prove the cookie and know its [peers](protocol.md). It does not retry yet: a peer that is down when the node starts is not dialed again, and a link that is lost is not dialed again (reconnecting comes with the heartbeats).
+Not released yet. The package grows one piece at a time, and `cluster-0.1.0` comes when a node can report `node_down` too. Today a node can start, connect to the nodes of its list, prove the cookie, know its [peers](protocol.md) and send bytes to the mailboxes of its peers. It does not retry yet: a peer that is down when the node starts is not dialed again, and a link that is lost is not dialed again (reconnecting comes with the heartbeats).
 
 ## Example
 
@@ -42,11 +42,50 @@ alpha
 ["alpha"]
 ```
 
+## Messages
+
+A node registers a mailbox by name, and a peer sends bytes to that name. The bytes are what `Term.encode` wrote for a value, and the receiver turns them into its own type with `Term.decode`, so the type is checked where the message arrives: bytes that do not fit are an error for that message, and the link and the node go on.
+
+```agentica
+import Cluster from "pkg/cluster/cluster"
+
+struct Job
+  id: Int
+  name: String
+end
+
+def main() -> Void
+  cookie = "a-random-secret-of-16-bytes-or-more"
+  alpha = Cluster.start(Cluster.Options(name: "alpha", cookie: cookie)).unwrap!
+  beta = Cluster.start(Cluster.Options(name: "beta", cookie: cookie)).unwrap!
+  inbox: Channel[Cluster.Delivery] = Channel.new(64)
+  Cluster.register(beta, "jobs", inbox.address, ->(delivery) { delivery }).unwrap!
+  _ = Cluster.connect(alpha, "127.0.0.1:#{Cluster.port(beta)}").unwrap!
+
+  body = Term.encode(Job(id: 7, name: "compile")).unwrap!
+  Cluster.send(alpha, "beta", "jobs", body).unwrap!
+
+  delivery = inbox.recv(2000).unwrap!
+  job = Term.decode(delivery.body, Job).unwrap!
+  puts("#{delivery.from} sent job #{job.id} #{job.name}")
+  _ = Cluster.stop(alpha, 1000)
+  _ = Cluster.stop(beta, 1000)
+end
+```
+
+```output
+alpha sent job 7 compile
+```
+
+`send` takes `Bytes` and not a value of any type because `Term.encode` and `Term.decode` need the concrete type at the call (a generic function cannot pass its `T` to them: `CHECK-NOT-ENCODABLE`). So the sender calls `Term.encode` on its value, and the receiver calls `Term.decode` with its type. Put a `version` field in a message that will change, as the page of `Term` says: adding a field breaks old data.
+
+Delivery is at most once: `send` returns once the bytes are in the socket, with no reply and no retry, and a message for a mailbox that does not exist, or that cannot take it at once, is dropped and counted (`dropped`). The capacity of the channel (64 above) is the bound of the mailbox: when it is full the node drops, so a slow reader loses messages and does not slow the link. An unbounded channel (`Channel.new()`) never drops and can fill the memory. The messages that one task sends to one peer arrive in the order they were sent, while the link stays up.
+
 ## API
 
 ### Cluster.start(options: Cluster.Options) -> Result[Cluster.Node]
 
-Starts a node: it listens on `host` and `port` and dials each of `peers` in the background. `Options` has `name` (a lowercase letter, then up to 62 lowercase letters, digits, `_` or `-`), `cookie` (16 bytes or more), `host` (`127.0.0.1`), `port` (0: the system picks one), `peers` (a list of `host:port` or `name@host:port`), `connect_ms` (5000, at most 600000: the time that a dial has to connect and shake hands, and that a connection that comes in has for its handshake), `max_pending` (128: how many connections may be in their handshake at once; a new one over that is closed at once), `max_frame_bytes` (1 MiB) and `insecure_plaintext` (false). Plain TCP is only for this machine: a `host` or a peer that is not on it is `cluster.argument` unless `insecure_plaintext` is true, and then the network must be one that you trust (the frames have no encryption). A peer written `name@host:port` must answer under that name. A peer listed twice is dialed once. `localhost` is loopback because the hosts file of the machine says so: a name that the hosts file changes is as trusted as the file.
+Starts a node: it listens on `host` and `port` and dials each of `peers` in the background. `Options` has `name` (a lowercase letter, then up to 62 lowercase letters, digits, `_` or `-`), `cookie` (16 bytes or more), `host` (`127.0.0.1`), `port` (0: the system picks one), `peers` (a list of `host:port` or `name@host:port`), `connect_ms` (5000, at most 600000: the time that a dial has to connect and shake hands, and that a connection that comes in has for its handshake), `max_pending` (128: how many connections may be in their handshake at once; a new one over that is closed at once), `max_frame_bytes` (1,048,572 bytes, which is also the most: a frame and its length go out in one write of 1 MiB) and `insecure_plaintext` (false). Plain TCP is only for this machine: a `host` or a peer that is not on it is `cluster.argument` unless `insecure_plaintext` is true, and then the network must be one that you trust (the frames have no encryption). A peer written `name@host:port` must answer under that name. A peer listed twice is dialed once. `localhost` is loopback because the hosts file of the machine says so: a name that the hosts file changes is as trusted as the file.
 
 ### Cluster.connect(node: Cluster.Node, address: String) -> Result[String]
 
@@ -63,6 +102,18 @@ The port that the node listens on.
 ### Cluster.refused(node: Cluster.Node) -> Int
 
 How many handshakes the node refused: a peer that did not know the cookie, or that used the name of this node. A stranger that did not speak the protocol is disconnected and not counted.
+
+### Cluster.register(node: Cluster.Node, name: String, address: Address[M], wrap: Fn[Cluster.Delivery, M]) -> Result[Void]
+
+Registers the mailbox `name` (1 to 255 bytes). What a peer sends to it comes to `address` as the `M` that `wrap` makes of a `Delivery` (`from`, `mailbox` and `body`): `->(delivery) { delivery }` for a channel of deliveries, or a variant of the message type of an actor. The node never waits for the address: a message that it cannot put in at once is dropped, so the capacity of the channel is the bound of the mailbox (an unbounded channel never drops and can fill the memory). `wrap` runs in the actor of the node, so it must be pure and cheap. Registering a name again replaces the mailbox. A node that is stopped gives `cluster.closed`.
+
+### Cluster.send(node: Cluster.Node, peer: String, mailbox: String, body: Bytes, timeout_ms: Int = 5000) -> Result[Void]
+
+Sends `body`, the `Term.encode` of a value, to a mailbox of a connected peer. It fails with `cluster.argument` (`timeout_ms` is less than 1), `cluster.not_connected`, `cluster.too_large` (the frame is over `max_frame_bytes`) or `cluster.closed` (the node is stopped, the link broke, or the write took more than `timeout_ms`). A write that times out closes the link, and the peer is down (there is no reconnect yet). A frame over the limit of the receiver ends the whole link there, not only that message: keep `max_frame_bytes` the same on all the nodes. Ok says that the bytes are in the socket, not that the mailbox took them.
+
+### Cluster.dropped(node: Cluster.Node) -> Int
+
+How many messages the node dropped: for a mailbox that does not exist, one that was full, or because the node was too busy to look at them.
 
 ### Cluster.stop(node: Cluster.Node, timeout_ms: Int) -> Result[Void]
 
@@ -81,9 +132,10 @@ An error has a kind that a program tests, never the text.
 | `cluster.protocol` | the bytes break the wire format: a bad preamble, a frame with no kind, an unknown kind, a body that does not fit its kind, an empty or long mailbox name |
 | `cluster.refused` | a node did not prove the cookie, has the name of this node, or answered under another name than the one dialed |
 | `cluster.argument` | a bad option, such as a cookie of less than 16 bytes |
+| `cluster.not_connected` | `send` to a peer that is not connected now |
 | `cluster.unreachable` | nothing answers at the address, or not in time |
 | `cluster.closed` | the other side closed the connection or went quiet during the handshake, as a node does to one that fails it |
-| `cluster.too_large` | a frame is longer than the limit of the connection (1 MiB by default, 256 bytes before the handshake ends) |
+| `cluster.too_large` | a frame is longer than the limit of the connection (1,048,572 bytes by default, 256 bytes before the handshake ends) |
 
 ```agentica
 import Cluster from "pkg/cluster/cluster"

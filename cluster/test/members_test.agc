@@ -4,6 +4,9 @@ import Types from "../src/types"
 
 private
 
+WAIT_MS = 1000
+POLL_MS = 10
+
 # A node, and a listener that accepts and never answers, so that a dial of it waits. The node is called zeta, so that a
 # link dialed by beta replaces one that zeta dialed.
 struct Fixture
@@ -13,30 +16,58 @@ struct Fixture
   port: Int
 end
 
+# A link of a peer: a task that owns a connection and sleeps until the node cancels it.
+struct Link
+  name: String
+  dialer: String
+  endpoint: String
+  port: Int
+  back: Channel[Types.Peer]
+end
+
 def fixture() -> Fixture
   options = Types.Options(name: "zeta", cookie: "the-cookie-of-the-cluster", connect_ms: 5000)
-  pending: ATS[String, Int] = ATS.new()
-  actor = Actor.start(Members.behaviour(options, pending))
+  counts: ATS[String, Int] = ATS.new()
+  actor = Actor.start(Members.behaviour(options, counts))
   listener = TCP.listen("127.0.0.1", 0).unwrap!
   port = TCP.local_port(listener)
   Fixture(actor: actor, listener: listener, address: "127.0.0.1:#{port}", port: port)
 end
 
-# Stopping the node cancels its links and its dials, so no task outlives the test.
+# Stopping the node waits for its links and its dials to end, so no task outlives the test.
 def finish(fix: Fixture) -> Result[Void]
   TCP.close_listener(fix.listener)
-  Actor.stop(fix.actor, 2000)
+  stopped = Actor.stop(fix.actor, 2000)
+  wait_for_tasks()
+  stopped
 end
 
-def idle(back: Channel[TaskRef]) -> Void
-  _ = back.send(Task.current(), 1000)
+# The links and dials that the node replaced were cancelled before the stop: they end on their next turn.
+def wait_for_tasks() -> Void
+  deadline = Time.monotonic_ms() + WAIT_MS
+  while Task.pending_count() > 0 and Time.monotonic_ms() < deadline
+    Task.sleep(POLL_MS)
+  end
+end
+
+def idle(link: Link) -> Void
+  socket = TCP.connect("127.0.0.1", link.port, 1000).unwrap!
+  peer = Types.Peer(
+    name: link.name,
+    dialer: link.dialer,
+    endpoint: link.endpoint,
+    link: Task.current(),
+    socket: socket,
+  )
+
+  _ = link.back.send(peer, 1000)
   Task.sleep(60_000)
 end
 
-def peer(name: String, dialer: String, endpoint: String) -> Result[Types.Peer]
-  back: Channel[TaskRef] = Channel.new(1)
-  _ = Task.spawn(&idle, back)
-  ok(Types.Peer(name: name, dialer: dialer, endpoint: endpoint, link: try back.recv(1000)))
+def peer(fix: Fixture, name: String, dialer: String, endpoint: String) -> Result[Types.Peer]
+  back: Channel[Types.Peer] = Channel.new(1)
+  _ = Task.spawn(&idle, Link(name: name, dialer: dialer, endpoint: endpoint, port: fix.port, back: back))
+  back.recv(1000)
 end
 
 def dial(fix: Fixture, node: String) -> Channel[Result[String]]
@@ -47,7 +78,7 @@ def dial(fix: Fixture, node: String) -> Channel[Result[String]]
 end
 
 def link(fix: Fixture, name: String, dialer: String, endpoint: String) -> Result[Bool]
-  linked = try peer(name, dialer, endpoint)
+  linked = try peer(fix, name, dialer, endpoint)
   Actor.call(fix.actor.address, 1000, ->(reply) { Types.Msg.Linked(linked, reply) })
 end
 
@@ -111,4 +142,15 @@ def kind_of(result: Result[String]) -> String
     ok(_) -> ""
     error(e) -> e.kind
   end
+end
+
+def test_stopping_the_node_ends_its_links() -> Result[Void]
+  fix = fixture()
+  linked = try peer(fix, "beta", "beta", "")
+  try Test.eq(try Actor.call(fix.actor.address, 1000, ->(reply) { Types.Msg.Linked(linked, reply) }), true)
+  gone: Channel[Int] = Channel.new(1)
+  Task.monitor(linked.link, gone, ->(down) { down.task_id })
+  try Actor.stop(fix.actor, 2000)
+  try Test.eq(try gone.recv(WAIT_MS), linked.link.id)
+  finish(fix)
 end

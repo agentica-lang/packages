@@ -13,7 +13,10 @@ def check(options: Types.Options) -> Result[List[Types.Endpoint]]
   try Handshake.cookie(options.cookie)
   return refuse("connect_ms is 1 to #{MAX_MS}") if options.connect_ms < 1 or options.connect_ms > MAX_MS
   return refuse("max_pending is 1 to #{MAX_PENDING}") if options.max_pending < 1 or options.max_pending > MAX_PENDING
-  return refuse("max_frame_bytes is #{Types.PRE_AUTH_MAX_FRAME_BYTES} to #{MAX_FRAME}") if frame_limit_bad?(options)
+  if frame_limit_bad?(options)
+    return refuse("max_frame_bytes is #{Types.PRE_AUTH_MAX_FRAME_BYTES} to #{Types.MAX_FRAME_BYTES}")
+  end
+
   return refuse("the port is 0 to 65535") if options.port < 0 or options.port > MAX_PORT
   try plain_allowed(options.host, options.insecure_plaintext)
   endpoints: List[Types.Endpoint] = []
@@ -42,12 +45,11 @@ private
 MAX_MS = 600_000
 MAX_PENDING = 100_000
 MAX_PORT = 65_535
-MAX_FRAME = 16_777_216
 
 def refuse[T](message: String) -> Result[T] = error("cluster: #{message}", kind: Types.ARGUMENT)
 
 def frame_limit_bad?(options: Types.Options) -> Bool
-  options.max_frame_bytes < Types.PRE_AUTH_MAX_FRAME_BYTES or options.max_frame_bytes > MAX_FRAME
+  options.max_frame_bytes < Types.PRE_AUTH_MAX_FRAME_BYTES or options.max_frame_bytes > Types.MAX_FRAME_BYTES
 end
 
 # Without TLS, the frames after the handshake have no secrecy or integrity: plain TCP stays on this machine unless the

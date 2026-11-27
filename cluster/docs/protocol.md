@@ -11,7 +11,7 @@ preamble   "AGCN" 0x00 0x01     the magic, and the major version of the protocol
 frame      u32 length | u8 kind | body
 ```
 
-The length is big-endian, and it counts the kind and the body, not itself. It is never 0. A reader checks the length against its limit before it reads the body: 1 MiB by default, and a frame over it is `cluster.too_large`. A preamble that is not these 6 bytes, such as an HTTP request or another major version, is `cluster.protocol`, and the socket is closed at once.
+The length is big-endian, and it counts the kind and the body, not itself. It is never 0. A reader checks the length against its limit before it reads the body: 1,048,572 bytes by default (and at most, so that a frame and its length go out in one write of 1 MiB), and a frame over it is `cluster.too_large`. A preamble that is not these 6 bytes, such as an HTTP request or another major version, is `cluster.protocol`, and the socket is closed at once.
 
 The body is the [CBOR](https://www.rfc-editor.org/rfc/rfc8949) of a struct, as `Term.encode` writes it: a map from the name of the field to its value, with the shortest head of each item. A key that the reader does not know is ignored, and a field that is missing is an error, so a field is only ever added with a new kind.
 
