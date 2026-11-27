@@ -1,0 +1,27 @@
+# Three nodes that find each other through one name, with no list of peers. From the folder of the package:
+#
+#   docker compose -f examples/docker-compose.discover.yml up --build
+#   docker compose -f examples/docker-compose.discover.yml up --scale node=5   # two more join within DISCOVER_MS
+#
+# The name `node` is the service: Docker's DNS answers it with the address of each replica, and each replica looks it
+# up every `DISCOVER_MS` and dials the addresses that it is not linked with. The answer has its own address too, which
+# the node finds out when it dials it and then leaves alone. Without TLS (it is planned) the frames are not encrypted,
+# so `INSECURE` only for a network that you trust, such as this one. Change the cookie: it is an example value. This
+# file was written without running Docker. `endpoint_mode: dnsrr` makes the name answer with each replica: with the
+# default (a virtual IP) it would answer with one address that is shared, which a node cannot tell apart from itself.
+services:
+  node:
+    build:
+      context: ..
+      dockerfile: examples/Dockerfile
+    deploy:
+      replicas: 3
+      endpoint_mode: dnsrr
+    environment:
+      NODE_HOST: 0.0.0.0
+      NODE_PORT: "7000"
+      NAME_FROM_HOSTNAME: "1"
+      DISCOVER: node:7000
+      DISCOVER_MS: "2000"
+      INSECURE: "1"
+      CLUSTER_COOKIE: ${CLUSTER_COOKIE:-an-example-cookie-of-16-bytes-or-more}

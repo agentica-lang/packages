@@ -21,6 +21,7 @@ CLOSED = "cluster.closed"
 
 ## The key of the table that counts the connections in their handshake.
 PENDING = "pending"
+DIALS = "dials"
 
 ## The key of the table that counts the messages that the node dropped.
 DROPPED = "dropped"
@@ -116,10 +117,11 @@ struct Delivery
   body: Bytes
 end
 
-## What the actor of a node hears. `Linked` is a connection that passed the handshake, and its channel gets whether the
-## node keeps it. `Dial` opens a connection in a task of the node and answers on its channel with the name of the peer:
-## a second `Dial` of an address that is linked or being dialed waits for the same answer. `Dialed` is that answer,
-## from the task that dialed, for the address that it dialed.
+## What the actor of a node hears. `Linked` is a connection that passed the handshake, and its channel gets whether
+## the node keeps it. `Dial` opens a connection in a task of the node and answers on its channel with the name of the
+## peer: a second `Dial` of an address that is linked or being dialed waits for the same answer. `Dialed` is that
+## answer, from the task that dialed, for the address that it dialed. `Found` is the whole answer of a lookup of the
+## name, and `Own` the address of a dial that reached the node itself.
 enum Msg
   Linked(Peer, Channel[Bool])
   Closed(String, Int)
@@ -134,7 +136,8 @@ enum Msg
   Watch(Fn[Event, Bool], Channel[Bool])
   Keep(List[Endpoint])
   Discover(Endpoint)
-  Found(Endpoint)
+  Found(List[Endpoint])
+  Own(String)
   Redial(String)
 end
 
@@ -154,7 +157,9 @@ end
 ## The state of the actor of a node: the peers by name, the addresses being dialed, and how many handshakes it refused.
 ## `kept` are the peers of the list (`names` has the name that answers at each address, once it is known), which the
 ## node dials again when a dial fails or a link of the peer ends: `delays` is the last wait for each one (it grows
-## until `reconnect_max_ms`, and starts over when a link is kept) and `timers` are the waits that are running.
+## until `reconnect_max_ms`, and starts over when a link is kept) and `timers` are the waits that are running. `own`
+## are the addresses where a dial reached this very node, with the time (`Time.monotonic_ms`) until which they are left
+## alone.
 struct State
   config: Config
   peers: Map[String, Peer]
@@ -165,6 +170,7 @@ struct State
   found: Map[String, Endpoint]
   finders: List[Task[Void]]
   names: Map[String, String]
+  own: Map[String, Int]
   delays: Map[String, Int]
   timers: Map[String, Task[Void]]
   refused: Int

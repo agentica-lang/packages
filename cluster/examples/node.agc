@@ -1,8 +1,10 @@
 ## One node of a small cluster, to try the package by hand. It is set by environment variables (the default of each is
 ## in `settings`): `NODE_NAME`, `CLUSTER_COOKIE`, `NODE_HOST`, `NODE_PORT`, `PEERS` (a list of `name@host:port` or
 ## `host:port` separated by commas), `INSECURE` (`1` for a host that is not this machine: no TLS yet, so a network that
-## you trust) and `RUN_SECONDS` (0: until it is stopped). It prints when a peer comes and goes, and greets each peer
-## once every `GREET_MS`.
+## you trust), `DISCOVER` (a `host:port` whose host is a name with the addresses of the nodes, looked up every
+## `DISCOVER_MS`, 10000 by default), `NAME_FROM_HOSTNAME` (`1`: the node is called `node-` and the host name, so that
+## the replicas of a service have a name each) and `RUN_SECONDS` (0: until it is stopped). It prints when a peer comes
+## and goes, and greets each peer once every `GREET_MS`.
 ##
 ##   NODE_NAME=alpha NODE_PORT=7001 PEERS=beta@127.0.0.1:7002 agentica examples/node.agc
 ##   NODE_NAME=beta NODE_PORT=7002 PEERS=alpha@127.0.0.1:7001 agentica examples/node.agc
@@ -23,6 +25,8 @@ struct Settings
   port: Int
   peers: List[String]
   insecure: Bool
+  discover: String
+  discover_ms: Int
   run_ms: Int
 end
 
@@ -49,6 +53,8 @@ def main() -> Void
     reconnect_ms: RECONNECT_MS,
     reconnect_max_ms: 5000,
     heartbeat_ms: HEARTBEAT_MS,
+    discover: settings.discover,
+    discover_ms: settings.discover_ms,
   )
 
   case Cluster.start(options)
@@ -66,15 +72,23 @@ TICK_MS = 500
 
 def env(name: String, default: String) -> String = System.env(name).unwrap_or(default)
 
+def node_name() -> String
+  return "node-#{env("HOSTNAME", "alpha").downcase}" if env("NAME_FROM_HOSTNAME", "") == "1"
+
+  env("NODE_NAME", "alpha")
+end
+
 def read_settings() -> Settings
   peers = env("PEERS", "").split(",").map { |peer| peer.strip }.select { |peer| not peer.empty? }
   Settings(
-    name: env("NODE_NAME", "alpha"),
+    name: node_name(),
     cookie: env("CLUSTER_COOKIE", "an-example-cookie-of-16-bytes-or-more"),
     host: env("NODE_HOST", "127.0.0.1"),
     port: env("NODE_PORT", "0").to_i.unwrap_or(0),
     peers: peers,
     insecure: env("INSECURE", "") == "1",
+    discover: env("DISCOVER", ""),
+    discover_ms: env("DISCOVER_MS", "10000").to_i.unwrap_or(10_000),
     run_ms: env("RUN_SECONDS", "0").to_i.unwrap_or(0) * 1000,
   )
 end
