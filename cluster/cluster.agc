@@ -134,8 +134,10 @@ end
 ## Sends `body` (the bytes of `Term.encode(value)`, as for `send`) to the mailbox of each member of the group `group`.
 ## This node's own members get it through the queue of the node. The members of a peer are written to its link one
 ## after the other, in the order of `group_members`, and the peers are written at the same time (at most 64 at once).
-## `timeout_ms` is for all the frames of one peer: a peer that takes more has the link closed, and the rest of its
-## members are left out, while the other peers are not held. It gives how many members it reached, which says that the
+## `timeout_ms` is for all the frames of one peer: a write that fails or times out closes the link, and the members
+## not yet written are not counted, while the other peers are not held. When the time passes between two frames, the
+## link stays open and the rest are not counted. With more than 64 peers the call can take `ceil(peers / 64)` times
+## `timeout_ms`. It gives how many members it reached, which says that the
 ## bytes are in the socket of the link (or in the queue of this node), not that the mailbox took them: the mailbox may
 ## be full, not registered there, or the peer may die after the write. A member of this node is not counted if the
 ## queue of the node is full. A peer that is not connected is not counted, and the call goes on, so it is `0` for a
@@ -200,9 +202,8 @@ struct Plan
   discovery: Optional[Types.Endpoint]
 end
 
-# What the task that writes to one peer needs: its mailboxes, in order. The node is only its address, since a
-# task takes
-# data and not the node.
+# What the task that writes to one peer needs: its mailboxes, in order. The node is only its address, since a task
+# takes data and not the node.
 struct Job
   actor: Address[Types.Msg]
   peer: String
@@ -225,9 +226,8 @@ def named_group(group: String, mailbox: String) -> Result[Void]
   error("cluster: a group and a mailbox name have 1 to #{Types.MAX_MAILBOX_BYTES} bytes", kind: Types.ARGUMENT)
 end
 
-# The biggest frame of the call is the one for the longest mailbox name: if that one fits, all do, and a body that
-# is too
-# big sends to nobody. No frame is kept: each one is made when its peer is written.
+# The biggest frame of the call is the one for the longest mailbox name: if that one fits, all do, and a body that is
+# too big sends to nobody. No frame is kept: each one is made when its peer is written.
 def fits(node: Types.Node, members: List[Types.Member], body: Bytes) -> Result[Void]
   return ok() if members.empty?
 
