@@ -195,3 +195,32 @@ def test_a_peer_of_the_list_is_dialed_again_with_a_wait_that_doubles_up_to_the_b
   try Test.assert(gaps[3] < 6 * RETRY_MS and gaps[4] < 6 * RETRY_MS, "the wait went over the bound: #{gaps}")
   finish(fix)
 end
+
+def found(fix: Fixture) -> Result[Void]
+  Actor.cast(fix.actor.address, Types.Msg.Found(Types.Endpoint(host: "127.0.0.1", port: fix.port)))
+end
+
+def connections(fix: Fixture, wait_ms: Int) -> Int
+  case TCP.accept(fix.listener, wait_ms)
+    ok(socket) ->
+      TCP.close(socket)
+      1 + connections(fix, wait_ms)
+
+    error(_) -> 0
+  end
+end
+
+def test_an_address_that_the_name_gave_is_not_dialed_again_once_its_peer_is_linked() -> Result[Void]
+  fix = fixture()
+  address = "127.0.0.1:#{fix.port}"
+  try found(fix)
+  try Test.eq(connections(fix, 500), 1)
+  # The peer came in on a link of its own, and the dial of the address answered with its name.
+  try Test.eq(try link(fix, "beta", "beta", ""), true)
+  try Actor.cast(fix.actor.address, Types.Msg.Dialed(address, ok("beta")))
+  # The link of this test opened a connection of its own.
+  try Test.eq(connections(fix, 300), 1)
+  try found(fix)
+  try Test.eq(connections(fix, 500), 0)
+  finish(fix)
+end

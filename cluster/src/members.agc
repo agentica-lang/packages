@@ -3,6 +3,7 @@
 
 import Actor from "std/actor"
 import Endpoint from "endpoint"
+import Discover from "discover"
 import Link from "link"
 import Types from "types"
 
@@ -19,6 +20,7 @@ def config(options: Types.Options, node: Address[Types.Msg], counts: ATS[String,
     cookie: options.cookie.bytes,
     connect_ms: options.connect_ms,
     heartbeat_ms: options.heartbeat_ms,
+    discover_ms: options.discover_ms,
     reconnect_ms: options.reconnect_ms,
     reconnect_max_ms: options.reconnect_max_ms,
     max_pending: options.max_pending,
@@ -48,6 +50,8 @@ def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
     mailboxes: {},
     watchers: [],
     kept: {},
+    found: {},
+    finders: [],
     names: {},
     delays: {},
     timers: {},
@@ -63,6 +67,8 @@ def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
     Types.Msg.Dialed(key, result) -> Actor.continue(retried(dialed(state, key, result), key, result))
     Types.Msg.Keep(endpoints) -> Actor.continue(keep_all(state, endpoints))
     Types.Msg.Redial(key) -> Actor.continue(redial(state, key))
+    Types.Msg.Discover(endpoint) -> Actor.continue(discover(state, endpoint))
+    Types.Msg.Found(endpoint) -> Actor.continue(found(state, endpoint))
     Types.Msg.Refused -> Actor.continue(state.with(refused: state.refused + 1))
     Types.Msg.Names(reply) -> answer(state, reply, state.peers.keys.sort)
     Types.Msg.Refusals(reply) -> answer(state, reply, state.refused)
@@ -109,7 +115,7 @@ end
 # Every link and every dial in flight ends with the node, and the callers that wait for a dial hear that. The actor
 # waits (a short while) for the tasks to be gone, so that `stop` leaves none behind.
 def terminate(state: Types.State) -> Void
-  count = state.peers.size + state.dialing.size + state.timers.size
+  count = state.peers.size + state.dialing.size + state.timers.size + state.finders.size
   # A channel that holds one notice for each task, so that no monitor is left waiting.
   gone: Channel[Int] = Channel.new([count, 1].max.unwrap!)
   for peer in state.peers.values
@@ -126,6 +132,11 @@ def terminate(state: Types.State) -> Void
   for timer in state.timers.values
     Task.cancel(timer)
     Task.monitor(timer, gone, ->(down) { down.task_id })
+  end
+
+  for finder in state.finders
+    Task.cancel(finder)
+    Task.monitor(finder, gone, ->(down) { down.task_id })
   end
 
   deadline = Time.monotonic_ms() + GONE_MS
@@ -270,7 +281,7 @@ end
 
 # The name that answers at an address, once it is known: it is how a link that came in is matched to the list.
 def named(state: Types.State, key: String, name: String) -> Types.State
-  return state if name.empty? or not state.kept.has_key?(key)
+  return state if name.empty? or not (state.kept.has_key?(key) or state.found.has_key?(key))
 
   state.with(names: state.names.put(key, name))
 end
@@ -342,3 +353,27 @@ end
 
 # Nobody waits for the answer of a dial that the node makes by itself.
 def quiet_reply() -> Channel[Result[String]] = Channel.new(1)
+
+# The name of the cluster is looked up from now on. The lookup of a name that is not an address of this machine is
+# bounded by the time that a dial has.
+def discover(state: Types.State, endpoint: Types.Endpoint) -> Types.State
+  config = state.config
+  find = Discover.Find(
+    node: config.node,
+    endpoint: endpoint,
+    every_ms: config.discover_ms,
+    lookup_ms: config.connect_ms,
+  )
+
+  state.with(finders: state.finders.push(Task.spawn(&Discover.find, find)))
+end
+
+# An address that the name gave. It is dialed unless its peer is known and linked, or it is being dialed: a dial of an
+# address that answers makes the peer known, so a linked peer costs no new connection each time.
+def found(state: Types.State, endpoint: Types.Endpoint) -> Types.State
+  key = Endpoint.key(endpoint)
+  listed = state.with(found: state.found.put(key, endpoint))
+  return listed if state.peers.has_key?(state.names.get(key).unwrap_or(""))
+
+  dial(listed, endpoint, quiet_reply())
+end

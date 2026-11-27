@@ -40,6 +40,18 @@ def check(options: Types.Options) -> Result[List[Types.Endpoint]]
   ok(endpoints)
 end
 
+## The `host:port` to look up for the nodes of the cluster, when there is one. Its host is a name, and plain TCP has to
+## be allowed to reach it.
+def discovery(options: Types.Options) -> Result[Optional[Types.Endpoint]]
+  return ok(none) if options.discover.empty?
+
+  if options.discover_ms < MIN_DISCOVER_MS or options.discover_ms > MAX_MS
+    return refuse("discover_ms is #{MIN_DISCOVER_MS} to #{MAX_MS}")
+  end
+
+  ok(some(try endpoint(options.discover, options.insecure_plaintext)))
+end
+
 ## Reads an address of a peer, and checks that plain TCP may reach it.
 def endpoint(text: String, insecure_plaintext: Bool) -> Result[Types.Endpoint]
   parsed = try Endpoint.parse(text)
@@ -53,6 +65,7 @@ private
 MAX_MS = 600_000
 MAX_PENDING = 100_000
 MIN_HEARTBEAT_MS = 10
+MIN_DISCOVER_MS = 50
 MAX_PORT = 65_535
 
 def refuse[T](message: String) -> Result[T] = error("cluster: #{message}", kind: Types.ARGUMENT)
