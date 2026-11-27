@@ -3,8 +3,8 @@
 ## `host:port` separated by commas), `INSECURE` (`1` for a host that is not this machine: no TLS yet, so a network that
 ## you trust), `DISCOVER` (a `host:port` whose host is a name with the addresses of the nodes, looked up every
 ## `DISCOVER_MS`, 10000 by default), `NAME_FROM_HOSTNAME` (`1`: the node is called `node-` and the host name, so that
-## the replicas of a service have a name each) and `RUN_SECONDS` (0: until it is stopped). It prints when a peer comes and goes, and greets each peer
-## once every `GREET_MS`.
+## the replicas of a service have a name each) and `RUN_SECONDS` (0: until it is stopped). It prints when a peer comes
+## and goes, and greets each peer once every `GREET_MS`.
 ##
 ##   NODE_NAME=alpha NODE_PORT=7001 PEERS=beta@127.0.0.1:7002 agentica examples/node.agc
 ##   NODE_NAME=beta NODE_PORT=7002 PEERS=alpha@127.0.0.1:7001 agentica examples/node.agc

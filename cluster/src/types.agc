@@ -116,8 +116,8 @@ struct Delivery
   body: Bytes
 end
 
-## What the actor of a node hears. `Own` is the address of a dial that reached the node itself. `Linked` is a connection that passed the handshake, and its channel gets whether the
-## node keeps it. `Dial` opens a connection in a task of the node and answers on its channel with the name of the peer:
+## What the actor of a node hears. `Own` is the address of a dial that reached the node itself. `Linked` is a
+## connection that passed the handshake, and its channel gets whether the node keeps it. `Dial` opens a connection in a task of the node and answers on its channel with the name of the peer:
 ## a second `Dial` of an address that is linked or being dialed waits for the same answer. `Dialed` is that answer,
 ## from the task that dialed, for the address that it dialed.
 enum Msg
