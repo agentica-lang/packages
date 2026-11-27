@@ -58,6 +58,7 @@ def steps() -> List[BDD.Step]
     ),
     BDD.step("the node {string} starts again on the port of its first run with the cookie {string}", &starts_again),
     BDD.step("starting the node {string} with a heartbeat of {int} ms fails with {string}", &fails_heartbeat),
+    BDD.step("starting the node {string} that retries every {int} ms fails with {string}", &fails_retry),
     BDD.step("{string} watches the peers coming and going", &watches),
     BDD.step("the events of {string} within {int} ms:", &has_events),
     BDD.step("the last event of {string} is {string} within {int} ms", &has_last_event),
@@ -333,4 +334,9 @@ end
 
 def starts_again(ctx: BDD.Context, args: List[String]) -> BDD.Context
   send(ctx, Request.Start(Spec(name: args[0], cookie: args[1], again: true)))
+end
+
+def fails_retry(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  spec = Spec(name: args[0], cookie: "the-cookie-of-the-cluster", reconnect_ms: args[1].to_i!)
+  send(ctx, Request.StartFails(spec, args[2]))
 end

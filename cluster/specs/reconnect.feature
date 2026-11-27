@@ -15,8 +15,8 @@ Feature: Peers of the list that go away and come back
   Scenario: A peer that is killed and started again is told as down and then up
     Given the node "beta" starts with the cookie "the-cookie-of-the-cluster"
     And the node "alpha" starts with the cookie "the-cookie-of-the-cluster", dials "beta" and retries every 100 ms
-    And "alpha" watches the peers coming and going
     And "alpha" has the peers "beta" within 5000 ms
+    And "alpha" watches the peers coming and going
     When the node "beta" stops
     And the node "beta" starts again on the port of its first run with the cookie "the-cookie-of-the-cluster"
     Then "alpha" has the peers "beta" within 5000 ms
@@ -24,5 +24,5 @@ Feature: Peers of the list that go away and come back
       | node_down beta |
       | node_up beta   |
 
-  Scenario: A wait has a bound
-    Then starting the node "alpha" with a heartbeat of 5 ms fails with "cluster.argument"
+  Scenario: A wait before a new dial needs a time
+    Then starting the node "alpha" that retries every 0 ms fails with "cluster.argument"
