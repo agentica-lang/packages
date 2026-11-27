@@ -12,13 +12,13 @@ keywords: [columnar, snappy]
 Needs Agentica 0.40.0-beta.2. Add it with the prefixed tag of the release, in a project with an `agentica.toml`:
 
 ```sh
-agentica add parquet https://github.com/agentica-lang/packages --tag parquet-0.1.1 --subdir parquet
+agentica add parquet https://github.com/agentica-lang/packages --tag parquet-0.2.0 --subdir parquet
 ```
 
 The dependency entry is:
 
 ```toml
-parquet = { git = "https://github.com/agentica-lang/packages", tag = "parquet-0.1.1", subdir = "parquet" }
+parquet = { git = "https://github.com/agentica-lang/packages", tag = "parquet-0.2.0", subdir = "parquet" }
 ```
 
 The releases and their notes are in the [changelog](https://github.com/agentica-lang/packages/blob/main/parquet/CHANGELOG.md).
