@@ -18,6 +18,8 @@ struct Spec
   connect_ms: Int = 5000
   max_pending: Int = 128
   heartbeat_ms: Int = 1000
+  reconnect_ms: Int = 500
+  again: Bool = false
   max_frame_bytes: Int = 1_048_572
 end
 

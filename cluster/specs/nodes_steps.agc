@@ -52,6 +52,11 @@ def steps() -> List[BDD.Step]
     BDD.step("{string} has the mailbox {string}", &registers),
     BDD.step("{string} has the mailbox {string} again", &registers),
     BDD.step("the node {string} starts with the cookie {string} and a heartbeat of {int} ms", &starts_beating),
+    BDD.step(
+      "the node {string} starts with the cookie {string}, dials {string} and retries every {int} ms",
+      &starts_retrying,
+    ),
+    BDD.step("the node {string} starts again on the port of its first run with the cookie {string}", &starts_again),
     BDD.step("starting the node {string} with a heartbeat of {int} ms fails with {string}", &fails_heartbeat),
     BDD.step("{string} watches the peers coming and going", &watches),
     BDD.step("the events of {string} within {int} ms:", &has_events),
@@ -319,4 +324,13 @@ end
 def has_last_event(ctx: BDD.Context, args: List[String]) -> BDD.Context
   received = Received(node: args[0], mailbox: "events", lines: [args[1]], within_ms: args[2].to_i!, last_only: true)
   send(ctx, Request.Received(received))
+end
+
+def starts_retrying(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  spec = Spec(name: args[0], cookie: args[1], dials: list_of(args[2]), reconnect_ms: args[3].to_i!)
+  send(ctx, Request.Start(spec))
+end
+
+def starts_again(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.Start(Spec(name: args[0], cookie: args[1], again: true)))
 end

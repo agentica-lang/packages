@@ -19,6 +19,8 @@ def config(options: Types.Options, node: Address[Types.Msg], counts: ATS[String,
     cookie: options.cookie.bytes,
     connect_ms: options.connect_ms,
     heartbeat_ms: options.heartbeat_ms,
+    reconnect_ms: options.reconnect_ms,
+    reconnect_max_ms: options.reconnect_max_ms,
     max_pending: options.max_pending,
     counts: counts,
     max_frame_bytes: options.max_frame_bytes,
@@ -45,6 +47,9 @@ def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
     dialing: {},
     mailboxes: {},
     watchers: [],
+    kept: {},
+    delays: {},
+    timers: {},
     refused: 0,
   )
 end
@@ -54,7 +59,9 @@ def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
     Types.Msg.Linked(peer, reply) -> Actor.continue(link(state, peer, reply))
     Types.Msg.Closed(name, id) -> Actor.continue(unlink(state, name, id))
     Types.Msg.Dial(endpoint, reply) -> Actor.continue(dial(state, endpoint, reply))
-    Types.Msg.Dialed(key, result) -> Actor.continue(dialed(state, key, result))
+    Types.Msg.Dialed(key, result) -> Actor.continue(retried(dialed(state, key, result), key, result))
+    Types.Msg.Keep(endpoints) -> Actor.continue(keep_all(state, endpoints))
+    Types.Msg.Redial(key) -> Actor.continue(redial(state, key))
     Types.Msg.Refused -> Actor.continue(state.with(refused: state.refused + 1))
     Types.Msg.Names(reply) -> answer(state, reply, state.peers.keys.sort)
     Types.Msg.Refusals(reply) -> answer(state, reply, state.refused)
@@ -101,7 +108,7 @@ end
 # Every link and every dial in flight ends with the node, and the callers that wait for a dial hear that. The actor
 # waits (a short while) for the tasks to be gone, so that `stop` leaves none behind.
 def terminate(state: Types.State) -> Void
-  count = state.peers.size + state.dialing.size
+  count = state.peers.size + state.dialing.size + state.timers.size
   # A channel that holds one notice for each task, so that no monitor is left waiting.
   gone: Channel[Int] = Channel.new([count, 1].max.unwrap!)
   for peer in state.peers.values
@@ -113,6 +120,11 @@ def terminate(state: Types.State) -> Void
     answer_waiters(dialing.waiters, error("cluster: the node stopped", kind: Types.CLOSED))
     Task.cancel(dialing.task)
     Task.monitor(dialing.task, gone, ->(down) { down.task_id })
+  end
+
+  for timer in state.timers.values
+    Task.cancel(timer)
+    Task.monitor(timer, gone, ->(down) { down.task_id })
   end
 
   deadline = Time.monotonic_ms() + GONE_MS
@@ -140,7 +152,7 @@ end
 # name may replace it, and that cancels the task before it tells.
 def keep(state: Types.State, peer: Types.Peer, reply: Channel[Bool]) -> Types.State
   _ = Actor.reply(reply, true)
-  kept = state.with(peers: state.peers.put(peer.name, peer))
+  kept = state.with(peers: state.peers.put(peer.name, peer), delays: state.delays.delete(peer.endpoint))
   return kept if peer.endpoint.empty?
 
   stop_other_dial(kept, peer)
@@ -166,7 +178,7 @@ end
 def forget(state: Types.State, peer: Types.Peer, id: Int) -> Types.State
   return state if peer.link.id != id
 
-  down(state.with(peers: state.peers.delete(peer.name)), peer.name)
+  down(retry(state.with(peers: state.peers.delete(peer.name)), peer.endpoint), peer.name)
 end
 
 def up(state: Types.State, name: String) -> Types.State = told(state, Types.Event.NodeUp(name))
@@ -241,3 +253,49 @@ def answer_waiters(waiters: List[Types.Waiter], result: Result[String]) -> Void
     _ = waiter.reply.send(verdict(result, waiter.name), 0)
   end
 end
+
+# The peers of the list are dialed now, and again when a dial fails or their link ends.
+def keep_all(state: Types.State, endpoints: List[Types.Endpoint]) -> Types.State
+  current = state
+  for endpoint in endpoints
+    listed = current.with(kept: current.kept.put(Endpoint.key(endpoint), endpoint))
+    current = dial(listed, endpoint, quiet_reply())
+  end
+
+  current
+end
+
+def retried(state: Types.State, key: String, result: Result[String]) -> Types.State
+  case result
+    ok(_) -> state
+    error(_) -> retry(state, key)
+  end
+end
+
+# The wait before the next dial of a peer of the list: `reconnect_ms` at first, and twice the last one after each
+# failure, up to `reconnect_max_ms`. A peer that is not of the list is not dialed again.
+def retry(state: Types.State, key: String) -> Types.State
+  case state.kept.get(key)
+    some(_) if not state.timers.has_key?(key) -> wait(state, key)
+    _ -> state
+  end
+end
+
+def wait(state: Types.State, key: String) -> Types.State
+  config = state.config
+  last = state.delays.get(key)
+  delay = [last.map { |ms| ms * 2 }.unwrap_or(config.reconnect_ms), config.reconnect_max_ms].min.unwrap!
+  timer = Task.spawn(&Link.redial, Link.Redial(node: config.node, key: key, wait_ms: delay))
+  state.with(delays: state.delays.put(key, delay), timers: state.timers.put(key, timer))
+end
+
+def redial(state: Types.State, key: String) -> Types.State
+  waited = state.with(timers: state.timers.delete(key))
+  case state.kept.get(key)
+    some(endpoint) -> dial(waited, endpoint, quiet_reply())
+    none -> waited
+  end
+end
+
+# Nobody waits for the answer of a dial that the node makes by itself.
+def quiet_reply() -> Channel[Result[String]] = Channel.new(1)

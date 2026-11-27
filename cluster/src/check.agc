@@ -16,6 +16,10 @@ def check(options: Types.Options) -> Result[List[Types.Endpoint]]
     return refuse("heartbeat_ms is #{MIN_HEARTBEAT_MS} to #{MAX_MS}")
   end
 
+  if options.reconnect_ms < 1 or options.reconnect_max_ms < options.reconnect_ms or options.reconnect_max_ms > MAX_MS
+    return refuse("reconnect_ms is 1 or more, and reconnect_max_ms is reconnect_ms to #{MAX_MS}")
+  end
+
   return refuse("max_pending is 1 to #{MAX_PENDING}") if options.max_pending < 1 or options.max_pending > MAX_PENDING
   if frame_limit_bad?(options)
     return refuse("max_frame_bytes is #{Types.PRE_AUTH_MAX_FRAME_BYTES} to #{Types.MAX_FRAME_BYTES}")
