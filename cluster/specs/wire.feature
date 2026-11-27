@@ -82,7 +82,7 @@ Feature: The frames that nodes write and read
 
     Examples:
       | kind | outcome                       |
-      | 64   | ignored                       |
+      | 65   | ignored                       |
       | 127  | ignored                       |
       | 63   | refused as "cluster.protocol" |
       | 128  | refused as "cluster.protocol" |

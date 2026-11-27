@@ -399,3 +399,47 @@ def test_a_node_that_finds_its_own_address_dials_it_once_and_counts_no_refusal()
   try Test.eq(Cluster.nodes(alpha), [])
   Cluster.stop(alpha, 1000)
 end
+
+def members_of(fix: Fixture, group: String) -> Result[List[Types.Member]]
+  Actor.call(fix.actor.address, 1000, ->(reply) { Types.Msg.Members(group, reply) })
+end
+
+# What a peer says of its groups is the one with the highest number, and only a peer that is linked says it.
+def test_a_peer_that_is_linked_gives_its_highest_snapshot_and_a_stranger_gives_none() -> Result[Void]
+  fix = fixture()
+  try Test.eq(try link(fix, "beta", "beta", ""), true)
+  workers = [Types.Membership(group: "workers", mailbox: "jobs")]
+  try Actor.cast(fix.actor.address, Types.Msg.Groups("beta", 2, workers))
+  try Actor.cast(fix.actor.address, Types.Msg.Groups("beta", 1, []))
+  try Actor.cast(fix.actor.address, Types.Msg.Groups("gamma", 5, workers))
+  try Test.eq(try members_of(fix, "workers"), [Types.Member(node: "beta", mailbox: "jobs")])
+  finish(fix)
+end
+
+# A new link of a peer starts from nothing: the numbers of the old one say nothing about the new one.
+def test_a_peer_that_is_linked_again_is_heard_from_its_first_number() -> Result[Void]
+  fix = fixture()
+  try Test.eq(try link(fix, "beta", "zeta", fix.address), true)
+  workers = [Types.Membership(group: "workers", mailbox: "jobs")]
+  try Actor.cast(fix.actor.address, Types.Msg.Groups("beta", 5, workers))
+  try Test.eq(try members_of(fix, "workers"), [Types.Member(node: "beta", mailbox: "jobs")])
+  try Test.eq(try link(fix, "beta", "beta", ""), true)
+  try Test.eq(try members_of(fix, "workers"), [])
+  try Actor.cast(fix.actor.address, Types.Msg.Groups("beta", 1, [Types.Membership(group: "other", mailbox: "audit")]))
+  try Test.eq(try members_of(fix, "workers"), [])
+  try Test.eq(try members_of(fix, "other"), [Types.Member(node: "beta", mailbox: "audit")])
+  finish(fix)
+end
+
+def test_the_members_of_a_peer_end_with_its_link() -> Result[Void]
+  fix = fixture()
+  linked = try peer(fix, "beta", "beta", "")
+  try Test.eq(try Actor.call(fix.actor.address, 1000, ->(reply) { Types.Msg.Linked(linked, reply) }), true)
+  workers = [Types.Membership(group: "workers", mailbox: "jobs")]
+  try Actor.cast(fix.actor.address, Types.Msg.Groups("beta", 2, workers))
+  try Test.eq(try members_of(fix, "workers"), [Types.Member(node: "beta", mailbox: "jobs")])
+  Task.cancel(linked.link)
+  try Actor.cast(fix.actor.address, Types.Msg.Closed("beta", linked.link.id))
+  try Test.eq(try members_of(fix, "workers"), [])
+  finish(fix)
+end

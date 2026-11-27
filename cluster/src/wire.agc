@@ -45,7 +45,7 @@ def decode(payload: Bytes) -> Result[Types.Message]
 
   kind = payload[0]
   body = payload.drop(1)
-  return ok(Types.Message.Ignored(kind)) if IGNORABLE.include?(kind)
+  return ok(Types.Message.Ignored(kind)) if IGNORABLE.include?(kind) and kind != KIND_GROUPS
 
   case kind
     _ if kind == KIND_HELLO -> hello(body)
@@ -56,6 +56,7 @@ def decode(payload: Bytes) -> Result[Types.Message]
     _ if kind == KIND_PONG -> empty(body, Types.Message.Pong)
     _ if kind == KIND_BYE -> bye(body)
     _ if kind == KIND_MAIL -> mail(body)
+    _ if kind == KIND_GROUPS -> groups(body)
     _ -> protocol("unknown frame kind #{kind}")
   end
 end
@@ -83,6 +84,7 @@ KIND_MAIL = 5
 KIND_PING = 6
 KIND_PONG = 7
 KIND_BYE = 8
+KIND_GROUPS = 64
 IGNORABLE = 64..127
 
 struct Empty
@@ -107,6 +109,11 @@ struct ByeBody
   reason: String
 end
 
+struct GroupsBody
+  version: Int
+  groups: List[Types.Membership]
+end
+
 struct MailBody
   mailbox: String
   body: Bytes
@@ -128,6 +135,7 @@ def payload_of(message: Types.Message) -> Result[Bytes]
     Types.Message.Pong -> with_kind(KIND_PONG, Term.encode(Empty()))
     Types.Message.Bye(reason) -> with_kind(KIND_BYE, Term.encode(ByeBody(reason: reason)))
     Types.Message.Mail(mailbox, body) -> mail_payload(mailbox, body)
+    Types.Message.Groups(version, groups) -> groups_payload(version, groups)
     Types.Message.Ignored(_) -> protocol("a frame of an ignored kind is never written")
   end
 end
@@ -163,6 +171,39 @@ end
 def mail_payload(mailbox: String, body: Bytes) -> Result[Bytes]
   try check_mailbox(mailbox)
   with_kind(KIND_MAIL, Term.encode(MailBody(mailbox: mailbox, body: body)))
+end
+
+def groups_payload(version: Int, groups: List[Types.Membership]) -> Result[Bytes]
+  try check_groups(version, groups)
+  with_kind(KIND_GROUPS, Term.encode(GroupsBody(version: version, groups: groups)))
+end
+
+def check_groups(version: Int, groups: List[Types.Membership]) -> Result[Void]
+  return protocol("the version of groups is 1 or more") if version < 1
+
+  seen: Map[String, Bool] = {}
+  for entry in groups
+    try check_mailbox(entry.group)
+    try check_mailbox(entry.mailbox)
+    key = "#{entry.group.bytes.size}:#{entry.group}#{entry.mailbox}"
+    return protocol("a group has the same mailbox twice") if seen.has_key?(key)
+
+    seen = seen.put(key, true)
+  end
+
+  ok()
+end
+
+def groups(body: Bytes) -> Result[Types.Message]
+  case Term.decode(body, GroupsBody)
+    ok(g) -> groups_of(g)
+    error(e) -> protocol("a groups with a bad body: #{e.message}")
+  end
+end
+
+def groups_of(g: GroupsBody) -> Result[Types.Message]
+  try check_groups(g.version, g.groups)
+  ok(Types.Message.Groups(g.version, g.groups))
 end
 
 def with_kind(kind: Int, body: Result[Bytes]) -> Result[Bytes]

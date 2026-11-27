@@ -67,6 +67,7 @@ def spelled(message: Types.Message) -> String
     Types.Message.Proof(_) -> "proof"
     Types.Message.Bye(reason) -> "bye #{reason}".strip
     Types.Message.Mail(mailbox, body) -> "mail #{mailbox} #{String.from_bytes(body).unwrap!}".strip
+    Types.Message.Groups(version, memberships) -> "groups #{version} #{memberships.size}"
     Types.Message.Ignored(kind) -> "ignored #{kind}"
   end
 end

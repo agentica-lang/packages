@@ -61,7 +61,34 @@ enum Message
   Pong
   Bye(String)
   Mail(String, Bytes)
+  Groups(Int, List[Membership])
   Ignored(Int)
+end
+
+## A mailbox of a node that joined a group.
+struct Membership
+  group: String
+  mailbox: String
+end
+
+## A member of a group: the mailbox `mailbox` of the node `node`.
+struct Member
+  node: String
+  mailbox: String
+end
+
+## The writer of a link for the groups of this node: its task, the signal that tells it that `slot` has a newer frame,
+## and the slot, which has the newest frame only.
+struct Sender
+  task: Task[Void]
+  signal: Channel[Int]
+  slot: ATS[String, Bytes]
+end
+
+## What a peer said of its groups: the number of its last change, and all its memberships.
+struct Remote
+  version: Int
+  memberships: List[Membership]
 end
 
 ## A peer read apart: `host:port`, or `name@host:port` when the name of the node is known (src/endpoint.agc).
@@ -137,6 +164,10 @@ enum Msg
   Keep(List[Endpoint])
   Discover(Endpoint)
   Found(List[Endpoint])
+  Join(String, String, Channel[Result[Void]])
+  Leave(String, String, Channel[Bool])
+  Members(String, Channel[List[Member]])
+  Groups(String, Int, List[Membership])
   Own(String)
   Redial(String)
 end
@@ -159,7 +190,8 @@ end
 ## node dials again when a dial fails or a link of the peer ends: `delays` is the last wait for each one (it grows
 ## until `reconnect_max_ms`, and starts over when a link is kept) and `timers` are the waits that are running. `own`
 ## are the addresses where a dial reached this very node, with the time (`Time.monotonic_ms`) until which they are left
-## alone.
+## alone. `groups` are the memberships of this node and `version` counts their changes; `remote` has what each peer
+## said of its own, until its link ends, and `senders` the writer of each link.
 struct State
   config: Config
   peers: Map[String, Peer]
@@ -171,6 +203,10 @@ struct State
   finders: List[Task[Void]]
   names: Map[String, String]
   own: Map[String, Int]
+  groups: List[Membership]
+  version: Int
+  remote: Map[String, Remote]
+  senders: Map[String, Sender]
   delays: Map[String, Int]
   timers: Map[String, Task[Void]]
   refused: Int

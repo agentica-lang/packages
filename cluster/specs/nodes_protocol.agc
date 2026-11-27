@@ -130,6 +130,21 @@ struct Drops
   within_ms: Int
 end
 
+## A mailbox of a node that joins or leaves a group.
+struct Joining
+  node: String
+  group: String
+  mailbox: String
+end
+
+## The members that a node must see in a group within `within_ms`, each as `node/mailbox`.
+struct Expected
+  node: String
+  group: String
+  members: List[String]
+  within_ms: Int
+end
+
 enum Request
   Start(Spec)
   StartFails(Spec, String)
@@ -153,4 +168,8 @@ enum Request
   RegisterFails(Mailbox, String)
   ReplacedEmpty(String, String)
   Watch(String)
+  Join(Joining)
+  JoinFails(Joining, String)
+  Leave(Joining)
+  Members(Expected)
 end

@@ -23,6 +23,16 @@ struct Served
   socket: TCP.Socket
 end
 
+## What the task that writes the groups of this node to a peer needs: its socket, the signal that there is a newer
+## frame, and the slot that has it. A write that fails may have sent half a frame, so the link is closed, as
+## `Cluster.send` does.
+struct Writer
+  socket: TCP.Socket
+  signal: Channel[Int]
+  slot: ATS[String, Bytes]
+  wait_ms: Int
+end
+
 ## What a task that waits to dial a peer of the list again needs.
 struct Redial
   node: Address[Types.Msg]
@@ -65,8 +75,27 @@ end
 ## node leaves the address alone for a while at most (docs/_index.md).
 def mark(nonce: Bytes) -> String = "#{DIAL}#{OpenSSL.Digest.hexencode(nonce)}"
 
+## The writer of a link: one task that sends the newest frame of groups whenever there is one, so what a peer is told
+## costs the node one task and one frame for each link, whatever the number of changes. A frame that a later one
+## replaced before it was written is not sent.
+def sender(config: Types.Config, peer: Types.Peer) -> Types.Sender
+  signal: Channel[Int] = Channel.new(1)
+  slot: ATS[String, Bytes] = ATS.new()
+  wait_ms = SILENT_HEARTBEATS * config.heartbeat_ms
+  task = Task.spawn(&write_groups, Writer(socket: peer.socket, signal: signal, slot: slot, wait_ms: wait_ms))
+  Types.Sender(task: task, signal: signal, slot: slot)
+end
+
+## Gives the writer a frame that replaces the one that it has not sent yet.
+def publish(sender: Types.Sender, frame: Bytes) -> Void
+  sender.slot.put(FRAME, frame)
+  _ = sender.signal.send(1, 0)
+end
+
 private
 
+FRAME = "frame"
+IDLE_MS = 1000
 REGISTER_MS = 5000
 SILENT_HEARTBEATS = 3
 SEEN = "seen"
@@ -168,14 +197,18 @@ def keep_reading(config: Types.Config, socket: TCP.Socket, peer: Types.Peer) -> 
   seen.put(SEEN, Time.monotonic_ms())
   watcher = Task.spawn(&watch_link, Watch(config: config, socket: socket, seen: seen))
   reading = true
+  owed: Optional[Types.Msg] = none
   while reading
     case read_message(socket, config.max_frame_bytes, 0, some(seen))
       ok(Types.Message.Bye(_)) -> reading = false
       ok(Types.Message.Mail(mailbox, body)) -> deliver(config, peer, mailbox, body)
+      ok(Types.Message.Groups(version, memberships)) -> owed = some(Types.Msg.Groups(peer.name, version, memberships))
       ok(Types.Message.Ping) -> pong(socket, config)
       ok(_) -> nil
       error(_) -> reading = false
     end
+
+    owed = handed(config, owed)
   end
 
   Task.cancel(watcher)
@@ -212,6 +245,49 @@ def pong(socket: TCP.Socket, config: Types.Config) -> Void
   case Wire.encode(Types.Message.Pong)
     ok(frame) -> _ = TCP.send_bytes(socket, frame, SILENT_HEARTBEATS * config.heartbeat_ms)
     error(_) -> nil
+  end
+end
+
+def write_groups(args: Writer) -> Void
+  alive = true
+  while alive
+    case args.signal.recv(IDLE_MS)
+      ok(_) -> alive = write_latest(args)
+      error(_) -> nil
+    end
+  end
+end
+
+def write_latest(args: Writer) -> Bool
+  case args.slot.get(FRAME)
+    ok(frame) -> written(args, TCP.send_bytes(args.socket, frame, args.wait_ms))
+    error(_) -> true
+  end
+end
+
+def written(args: Writer, result: Result[Void]) -> Bool
+  case result
+    ok(_) -> true
+    error(_) ->
+      TCP.close(args.socket)
+      false
+  end
+end
+
+# What a peer says of its groups waits in the reader until the node takes it: the reader never waits for the node, and
+# each frame says everything, so a newer one replaces one that is still owed. Every frame that arrives (a ping too)
+# tries again.
+def handed(config: Types.Config, owed: Optional[Types.Msg]) -> Optional[Types.Msg]
+  case owed
+    some(message) -> kept_if_refused(message, Actor.cast(config.node, message, 0))
+    none -> none
+  end
+end
+
+def kept_if_refused(message: Types.Msg, cast: Result[Void]) -> Optional[Types.Msg]
+  case cast
+    ok(_) -> none
+    error(_) -> some(message)
   end
 end
 
