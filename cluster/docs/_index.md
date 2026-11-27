@@ -1,6 +1,6 @@
 ---
 title: cluster
-description: Connect Agentica nodes on one host or on several, with a shared cookie, and send messages to named mailboxes (in progress).
+description: Connect Agentica nodes on one host or on several, with a shared cookie, and send messages to named mailboxes.
 category: Networking
 keywords: [cluster, node, distributed, cookie, cbor]
 ---
@@ -15,9 +15,22 @@ The design is decided in [agentica#1834](https://github.com/agentica-lang/agenti
 - **Failure:** heartbeats on each connection. Every heartbeat, a link that has been quiet for half of one gets a ping, and one that is silent for 3 heartbeats is closed. A closed link, for any reason, is `node_down`, and a link that is up is `node_up`; a [watcher](#clusterwatch) hears both.
 - **Delivery:** at most once. The package never retries.
 
-## Status
+## Install
 
-Not released yet. The package grows one piece at a time, and `cluster-0.1.0` comes with the example. Today a node can start, connect to the nodes of its list, prove the cookie, know its [peers](protocol.md), send bytes to the mailboxes of its peers, tell a watcher when a peer comes and goes, and connect again to a peer of its list that went down.
+Needs Agentica 0.39.1 or later. Add it in a project with an `agentica.toml`:
+
+```sh
+agentica add cluster https://github.com/agentica-lang/packages --tag cluster-0.1.0 --subdir cluster
+```
+
+That writes this line of `agentica.toml`, and the entry of `agentica.lock`:
+
+```toml
+[dependencies]
+cluster = { git = "https://github.com/agentica-lang/packages", tag = "cluster-0.1.0", subdir = "cluster" }
+```
+
+This release has a static list of nodes, with no TLS yet: keep the nodes on a network that you trust.
 
 ## Example
 
