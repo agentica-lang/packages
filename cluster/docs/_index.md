@@ -81,6 +81,20 @@ alpha sent job 7 compile
 
 Delivery is at most once: `send` returns once the bytes are in the socket, with no reply and no retry, and a message for a mailbox that does not exist, or that cannot take it at once, is dropped and counted (`dropped`). The capacity of the channel (64 above) is the bound of the mailbox: when it is full the node drops, so a slow reader loses messages and does not slow the link. An unbounded channel (`Channel.new()`) never drops and can fill the memory. The messages that one task sends to one peer arrive in the order they were sent, while the link stays up.
 
+## Try it by hand
+
+`examples/node.agc` is one node of a small cluster, set by environment variables (`NODE_NAME`, `NODE_PORT`, `PEERS`, `CLUSTER_COOKIE`, `INSECURE`; the header of the file lists them). It prints `node_up` and `node_down` as its peers come and go, and greets each peer every 2 seconds. Three terminals, from the folder of the package:
+
+```sh
+NODE_NAME=node1 NODE_PORT=7101 PEERS=node2@127.0.0.1:7102,node3@127.0.0.1:7103 agentica examples/node.agc
+NODE_NAME=node2 NODE_PORT=7102 PEERS=node1@127.0.0.1:7101,node3@127.0.0.1:7103 agentica examples/node.agc
+NODE_NAME=node3 NODE_PORT=7103 PEERS=node1@127.0.0.1:7101,node2@127.0.0.1:7102 agentica examples/node.agc
+```
+
+Stop `node2` with Ctrl-C: the other two print `node_down node2`. Start it again with the same line: they print `node_up node2`, because each node dials the peers of its list again until they answer. A fourth node with another `CLUSTER_COOKIE` is refused by the nodes that it dials, and prints how many handshakes were refused.
+
+`examples/docker-compose.yml` starts the same three nodes on one network, and a `stranger` with another cookie (`docker compose -f examples/docker-compose.yml up --build`; then `stop node2` and `start node2` to see the events). The compose file and its `examples/Dockerfile` are for people trying the package; the tests do not use them, and they were written without running Docker. The cookie in the compose file (`CLUSTER_COOKIE`, with a default) is an example in plain text: set your own, a random secret such as `openssl rand -hex 32`, before you use it for anything else. The image runs as a user that is not root, and checks the archive of Agentica against its sha256.
+
 ## API
 
 ### Cluster.start(options: Cluster.Options) -> Result[Cluster.Node]
