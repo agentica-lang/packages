@@ -55,6 +55,11 @@ Rules for a node that reads these frames:
 - A cookie has 16 bytes at least. That is a floor, not a measure of strength: make the cookie a random secret, such as `openssl rand -hex 32`.
 - A message about a peer never repeats a name or a text that the peer wrote.
 
+## After the welcome
+
+- A `mail` goes to the mailbox that it names; a frame of an ignored kind is skipped; a `bye` ends the link.
+- Every heartbeat, a node that has heard nothing on a link for half of one writes a `ping`, and every `ping` is answered with a `pong`. Any bytes that arrive are a sign of life, so a link with traffic needs no ping. A link that is silent for 3 heartbeats is closed, and so is one where a `ping` cannot be written in 3 heartbeats. The heartbeat is a choice of each node (`heartbeat_ms`): a peer with a longer one is still answered, but it will take the link for silent if it pings less than every 3 heartbeats of the other.
+
 ## What the cookie does not give
 
 The handshake proves that both ends know the cookie when the link opens. It does not make a session key and it does not bind the proofs to the connection, so:

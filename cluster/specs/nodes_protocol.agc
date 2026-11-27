@@ -17,6 +17,7 @@ struct Spec
   host: String = "127.0.0.1"
   connect_ms: Int = 5000
   max_pending: Int = 128
+  heartbeat_ms: Int = 1000
   max_frame_bytes: Int = 1_048_572
 end
 
@@ -102,7 +103,7 @@ end
 struct Mailbox
   node: String
   name: String
-  capacity: Int = 64
+  capacity: Int = 1000
   reading: Bool = true
 end
 
@@ -112,6 +113,7 @@ struct Received
   mailbox: String
   lines: List[String]
   within_ms: Int
+  last_only: Bool = false
 end
 
 ## How many messages a node must have dropped within `within_ms`.
@@ -143,4 +145,5 @@ enum Request
   Drops(Drops)
   RegisterFails(Mailbox, String)
   ReplacedEmpty(String, String)
+  Watch(String)
 end

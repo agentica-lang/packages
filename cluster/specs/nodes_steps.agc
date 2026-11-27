@@ -51,6 +51,11 @@ def steps() -> List[BDD.Step]
     ),
     BDD.step("{string} has the mailbox {string}", &registers),
     BDD.step("{string} has the mailbox {string} again", &registers),
+    BDD.step("the node {string} starts with the cookie {string} and a heartbeat of {int} ms", &starts_beating),
+    BDD.step("starting the node {string} with a heartbeat of {int} ms fails with {string}", &fails_heartbeat),
+    BDD.step("{string} watches the peers coming and going", &watches),
+    BDD.step("the events of {string} within {int} ms:", &has_events),
+    BDD.step("the last event of {string} is {string} within {int} ms", &has_last_event),
     BDD.step("{string} has the mailbox {string} with room for {int} messages and nobody reads it", &registers_unread),
     BDD.step("the replaced mailbox {string} of {string} has received nothing", &replaced_is_empty),
     BDD.step(
@@ -293,4 +298,25 @@ end
 def fails_frame_limit(ctx: BDD.Context, args: List[String]) -> BDD.Context
   spec = Spec(name: args[0], cookie: "the-cookie-of-the-cluster", max_frame_bytes: args[1].to_i!)
   send(ctx, Request.StartFails(spec, args[2]))
+end
+
+def starts_beating(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.Start(Spec(name: args[0], cookie: args[1], heartbeat_ms: args[2].to_i!)))
+end
+
+def fails_heartbeat(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  spec = Spec(name: args[0], cookie: "the-cookie-of-the-cluster", heartbeat_ms: args[1].to_i!)
+  send(ctx, Request.StartFails(spec, args[2]))
+end
+
+def watches(ctx: BDD.Context, args: List[String]) -> BDD.Context = send(ctx, Request.Watch(args[0]))
+
+def has_events(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  lines = BDD.table(ctx).map { |row| row[0] }
+  send(ctx, Request.Received(Received(node: args[0], mailbox: "events", lines: lines, within_ms: args[1].to_i!)))
+end
+
+def has_last_event(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  received = Received(node: args[0], mailbox: "events", lines: [args[1]], within_ms: args[2].to_i!, last_only: true)
+  send(ctx, Request.Received(received))
 end

@@ -22,6 +22,7 @@ export Types.MAX_FRAME_BYTES
 export Types.Options
 export Types.Node
 export Types.Delivery
+export Types.Event
 
 ## Starts a node: it listens on `host` and `port` (0 picks a free port) and dials each of `peers` in the background.
 ## A bad option is a `cluster.argument` error. Plain TCP is only for this machine unless `insecure_plaintext` is set.
@@ -101,6 +102,18 @@ def send(node: Types.Node, peer: String, mailbox: String, body: Bytes, timeout_m
     some(socket) -> write(socket, frame, timeout_ms)
     none -> error("cluster: that peer is not connected", kind: Types.NOT_CONNECTED)
   end
+end
+
+## Tells `address` when a peer comes or goes: `Event.NodeUp(name)` when the first link to a peer is kept, and
+## `Event.NodeDown(name)` when its link ends (it said bye, the socket closed, or it was silent for 3 heartbeats).
+## `wrap` makes the message of that address from the event, and it runs in the actor of the node, so it must be pure
+## and cheap. As with a mailbox, a watcher that cannot take an event at once misses it, so the capacity of its channel
+## is its bound. A link that replaces another one of the same peer is not an event. Events start from the call: a peer
+## that is already connected is not told.
+def watch[M](node: Types.Node, address: Address[M], wrap: Fn[Types.Event, M]) -> Result[Void]
+  tell = ->(event: Types.Event) { address.send(wrap.call(event), 0).ok? }
+  _ = try ask(node, ->(reply: Channel[Bool]) { Types.Msg.Watch(tell, reply) })
+  ok()
 end
 
 ## How many messages the node dropped: for a mailbox that does not exist, one that could not take them, or because the
