@@ -100,8 +100,8 @@ def test_a_mailbox_has_one_to_255_bytes() -> Result[Void]
   Test.eq(kind_of(Wire.decode(bytes_of(empty_mailbox))), Types.PROTOCOL)
 end
 
-def test_a_kind_from_64_to_127_is_ignored_and_any_other_unknown_kind_is_refused() -> Result[Void]
-  try Test.eq(try Wire.decode(bytes_of("40a0")), Types.Message.Ignored(64))
+def test_a_kind_from_65_to_127_is_ignored_and_any_other_unknown_kind_is_refused() -> Result[Void]
+  try Test.eq(try Wire.decode(bytes_of("41a0")), Types.Message.Ignored(65))
   try Test.eq(try Wire.decode(bytes_of("7f")), Types.Message.Ignored(127))
   try Test.eq(kind_of(Wire.decode(bytes_of("00a0"))), Types.PROTOCOL)
   try Test.eq(kind_of(Wire.decode(bytes_of("3fa0"))), Types.PROTOCOL)
@@ -215,4 +215,28 @@ def filler(size: Int) -> Bytes
   chunk = Bytes.from_list((1..FILLER_CHUNK).map { |_| 7 }).unwrap!
   rest = Bytes.from_list((1..(size % FILLER_CHUNK)).map { |_| 7 }).unwrap!
   Bytes.concat((1..(size / FILLER_CHUNK)).map { |_| chunk } + [rest])
+end
+
+def test_groups_read_back_as_they_were_written() -> Result[Void]
+  said = Types.Message.Groups(3, [Types.Membership(group: "workers", mailbox: "jobs")])
+  try Test.eq(try Wire.read(try Wire.encode(said), Types.MAX_FRAME_BYTES), said)
+  empty = Types.Message.Groups(4, [])
+  Test.eq(try Wire.read(try Wire.encode(empty), Types.MAX_FRAME_BYTES), empty)
+end
+
+def test_groups_with_a_version_or_a_name_that_is_not_valid_are_not_written_or_read() -> Result[Void]
+  entry = Types.Membership(group: "workers", mailbox: "jobs")
+  try Test.eq(kind_of(Wire.encode(Types.Message.Groups(0, [entry]))), Types.PROTOCOL)
+  try Test.eq(
+    kind_of(Wire.encode(Types.Message.Groups(1, [Types.Membership(group: "", mailbox: "jobs")]))),
+    Types.PROTOCOL,
+  )
+
+  # Another program wrote the version 0, and a group with no name.
+  try Test.eq(
+    kind_of(Wire.decode(bytes_of("40a2" + "6776657273696f6e" + "00" + "6667726f757073" + "80"))),
+    Types.PROTOCOL,
+  )
+
+  Test.eq(kind_of(Wire.decode(bytes_of("40a0"))), Types.PROTOCOL)
 end

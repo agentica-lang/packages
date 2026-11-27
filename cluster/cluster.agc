@@ -23,6 +23,7 @@ export Types.Options
 export Types.Node
 export Types.Delivery
 export Types.Event
+export Types.Member
 
 ## Starts a node: it listens on `host` and `port` (0 picks a free port) and dials each of `peers` in the background.
 ## A bad option is a `cluster.argument` error. Plain TCP is only for this machine unless `insecure_plaintext` is set.
@@ -105,6 +106,31 @@ def send(node: Types.Node, peer: String, mailbox: String, body: Bytes, timeout_m
   end
 end
 
+## Puts the registered mailbox `mailbox` of this node in the group `group` (a name of 1 to 255 bytes, as a mailbox
+## has), and tells the connected peers; the ones that connect later hear it when they connect. Joining twice is one
+## membership. It fails with `cluster.argument` (a name that is not valid, or a mailbox that is not registered here) or
+## `cluster.too_large` (the groups of the node do not fit in a frame). The membership stays until `group_leave`, even
+## if the mailbox is registered again; a message for a mailbox that is gone is dropped and counted.
+def group_join(node: Types.Node, group: String, mailbox: String) -> Result[Void]
+  try named_group(group, mailbox)
+  joined = try ask(node, ->(reply: Channel[Result[Void]]) { Types.Msg.Join(group, mailbox, reply) })
+  joined
+end
+
+## Takes the mailbox `mailbox` of this node out of the group `group`, and tells the peers. A mailbox that is not in the
+## group is not an error.
+def group_leave(node: Types.Node, group: String, mailbox: String) -> Result[Void]
+  try named_group(group, mailbox)
+  _ = try ask(node, ->(reply: Channel[Bool]) { Types.Msg.Leave(group, mailbox, reply) })
+  ok()
+end
+
+## The members of the group `group`, this node's and the peers' that are connected now, ordered by node and mailbox. A
+## peer that is down is not there: its memberships end with its link, and come back when it connects again.
+def group_members(node: Types.Node, group: String) -> Result[List[Types.Member]]
+  ask(node, ->(reply: Channel[List[Types.Member]]) { Types.Msg.Members(group, reply) })
+end
+
 ## Tells `address` when a peer comes or goes: `Event.NodeUp(name)` when the first link to a peer is kept, and
 ## `Event.NodeDown(name)` when its link ends (it said bye, the socket closed, or it was silent for 3 heartbeats).
 ## `wrap` makes the message of that address from the event, and it runs in the actor of the node, so it must be pure
@@ -143,6 +169,12 @@ def ask[R](node: Types.Node, make: Fn[Channel[R], Types.Msg]) -> Result[R]
     ok(answer) -> ok(answer)
     error(_) -> error("cluster: the node is stopped or too busy", kind: Types.CLOSED)
   end
+end
+
+def named_group(group: String, mailbox: String) -> Result[Void]
+  return ok() if Names.mailbox_name?(group) and Names.mailbox_name?(mailbox)
+
+  error("cluster: a group and a mailbox name have 1 to #{Types.MAX_MAILBOX_BYTES} bytes", kind: Types.ARGUMENT)
 end
 
 # A write that fails may have sent half a frame, so the link is closed: the reader of the link ends it.

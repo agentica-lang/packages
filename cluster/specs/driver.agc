@@ -8,7 +8,7 @@ import Protocol from "nodes_protocol"
 import {
   Connect, Drops, Flood, HoleVisit, Mailbox, Payload, Peers, Post, Received, Refusals, Request, Spec,
 } from "nodes_protocol"
-import {Stranger, Visit} from "nodes_protocol"
+import {Expected, Joining, Stranger, Visit} from "nodes_protocol"
 import Types from "../src/types"
 import Wire from "../src/wire"
 
@@ -118,6 +118,10 @@ def act(
       failed_or_done(nodes, expect_in_order(received, node, mailbox, count, within_ms))
     Request.Drops(drops) -> failed_or_done(nodes, expect_drops(nodes, drops))
     Request.Watch(node) -> failed_or_done(nodes, watch(nodes, received, node))
+    Request.Join(joining) -> failed_or_done(nodes, joined(nodes, joining))
+    Request.JoinFails(joining, kind) -> failed_or_done(nodes, join_fails(nodes, joining, kind))
+    Request.Leave(joining) -> failed_or_done(nodes, left(nodes, joining))
+    Request.Members(expected) -> failed_or_done(nodes, expect_members(nodes, expected))
     Request.ReplacedEmpty(node, mailbox) -> failed_or_done(nodes, expect_replaced_empty(received, node, mailbox))
   end
 end
@@ -488,6 +492,46 @@ def start_reading(received: ATS[String, List[String]], inbox: Channel[Cluster.De
   end
 
   Protocol.OK
+end
+
+def joined(nodes: Map[String, Cluster.Node], joining: Joining) -> String
+  case Cluster.group_join(nodes[joining.node], joining.group, joining.mailbox)
+    ok(_) -> Protocol.OK
+    error(e) -> "the group was not joined: #{e.message}"
+  end
+end
+
+def join_fails(nodes: Map[String, Cluster.Node], joining: Joining, kind: String) -> String
+  case Cluster.group_join(nodes[joining.node], joining.group, joining.mailbox)
+    ok(_) -> "the group was joined and it should not have been"
+    error(e) -> failed_reply(e, kind)
+  end
+end
+
+def left(nodes: Map[String, Cluster.Node], joining: Joining) -> String
+  case Cluster.group_leave(nodes[joining.node], joining.group, joining.mailbox)
+    ok(_) -> Protocol.OK
+    error(e) -> "the group was not left: #{e.message}"
+  end
+end
+
+def members_of(node: Cluster.Node, group: String) -> List[String]
+  nobody: List[Cluster.Member] = []
+  found = Cluster.group_members(node, group).unwrap_or(nobody)
+  found.map { |member| "#{member.node}/#{member.mailbox}" }
+end
+
+def expect_members(nodes: Map[String, Cluster.Node], expected: Expected) -> String
+  node = nodes[expected.node]
+  deadline = Time.monotonic_ms() + expected.within_ms
+  while members_of(node, expected.group) != expected.members and Time.monotonic_ms() < deadline
+    Task.sleep(POLL_MS)
+  end
+
+  found = members_of(node, expected.group)
+  return Protocol.OK if found == expected.members
+
+  "#{expected.node} sees #{found} in #{expected.group}"
 end
 
 def register_fails(

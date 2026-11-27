@@ -6,6 +6,7 @@ import Endpoint from "endpoint"
 import Discover from "discover"
 import Link from "link"
 import Types from "types"
+import Wire from "wire"
 
 ## The behaviour of the actor of a node with these options.
 def behaviour(options: Types.Options, counts: ATS[String, Int]) -> Actor.Behaviour[Types.State, Types.Msg]
@@ -40,6 +41,7 @@ end
 private
 
 GONE_MS = 1000
+SILENT_HEARTBEATS = 3
 OWN_PERIODS = 10
 
 def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
@@ -55,6 +57,9 @@ def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
     finders: [],
     names: {},
     own: {},
+    groups: [],
+    version: 0,
+    remote: {},
     delays: {},
     timers: {},
     refused: 0,
@@ -72,6 +77,10 @@ def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
     Types.Msg.Discover(endpoint) -> Actor.continue(discover(state, endpoint))
     Types.Msg.Found(endpoints) -> Actor.continue(found(state, endpoints))
     Types.Msg.Own(key) -> Actor.continue(owned(state, key))
+    Types.Msg.Join(group, mailbox, reply) -> join(state, Types.Membership(group: group, mailbox: mailbox), reply)
+    Types.Msg.Leave(group, mailbox, reply) -> leave(state, Types.Membership(group: group, mailbox: mailbox), reply)
+    Types.Msg.Members(group, reply) -> answer(state, reply, members(state, group))
+    Types.Msg.Groups(name, version, memberships) -> Actor.continue(heard(state, name, version, memberships))
     Types.Msg.Refused -> Actor.continue(state.with(refused: state.refused + 1))
     Types.Msg.Names(reply) -> answer(state, reply, state.peers.keys.sort)
     Types.Msg.Refusals(reply) -> answer(state, reply, state.refused)
@@ -167,7 +176,8 @@ end
 # name may replace it, and that cancels the task before it tells.
 def keep(state: Types.State, peer: Types.Peer, reply: Channel[Bool]) -> Types.State
   _ = Actor.reply(reply, true)
-  linked = named(state.with(peers: state.peers.put(peer.name, peer)), peer.endpoint, peer.name)
+  fresh = state.with(peers: state.peers.put(peer.name, peer), remote: state.remote.delete(peer.name))
+  linked = named(told_groups(fresh, [peer]), peer.endpoint, peer.name)
   kept = settled(linked, peer.name)
   return kept if peer.endpoint.empty?
 
@@ -194,7 +204,7 @@ end
 def forget(state: Types.State, peer: Types.Peer, id: Int) -> Types.State
   return state if peer.link.id != id
 
-  gone = retry_all(state.with(peers: state.peers.delete(peer.name)), peer.name)
+  gone = retry_all(state.with(peers: state.peers.delete(peer.name), remote: state.remote.delete(peer.name)), peer.name)
   down(unfound_all(gone, peer.name), peer.name)
 end
 
@@ -414,6 +424,66 @@ def owned(state: Types.State, key: String) -> Types.State
   deadline = Time.monotonic_ms() + OWN_PERIODS * state.config.discover_ms
   state.with(own: state.own.put(key, deadline))
 end
+
+# A node says all its memberships, with the number of the change: a frame that arrives late or twice is harmless, since
+# the peer keeps the highest number.
+def join(state: Types.State, entry: Types.Membership, reply: Channel[Result[Void]]) -> Actor.Step[Types.State]
+  if not state.mailboxes.has_key?(entry.mailbox)
+    return answer(state, reply, error("cluster: the mailbox is not registered", kind: Types.ARGUMENT))
+  end
+
+  return answer(state, reply, ok()) if state.groups.include?(entry)
+
+  changed = state.with(groups: state.groups.push(entry), version: state.version + 1)
+  case Wire.encode(Types.Message.Groups(changed.version, changed.groups), state.config.max_frame_bytes)
+    ok(frame) -> answer(sent(changed, frame, changed.peers.values), reply, ok())
+    error(e) -> answer(state, reply, error(e.message, kind: e.kind))
+  end
+end
+
+def leave(state: Types.State, entry: Types.Membership, reply: Channel[Bool]) -> Actor.Step[Types.State]
+  return answer(state, reply, true) if not state.groups.include?(entry)
+
+  changed = state.with(groups: state.groups.select { |held| held != entry }, version: state.version + 1)
+  answer(told_groups(changed, changed.peers.values), reply, true)
+end
+
+def told_groups(state: Types.State, peers: List[Types.Peer]) -> Types.State
+  return state if state.version == 0 or peers.empty?
+
+  case Wire.encode(Types.Message.Groups(state.version, state.groups), state.config.max_frame_bytes)
+    ok(frame) -> sent(state, frame, peers)
+    error(_) -> state
+  end
+end
+
+def sent(state: Types.State, frame: Bytes, peers: List[Types.Peer]) -> Types.State
+  wait_ms = SILENT_HEARTBEATS * state.config.heartbeat_ms
+  for peer in peers
+    _ = Task.spawn(&Link.announce, Link.Announce(frame: frame, socket: peer.socket, wait_ms: wait_ms))
+  end
+
+  state
+end
+
+def heard(state: Types.State, name: String, version: Int, memberships: List[Types.Membership]) -> Types.State
+  return state if not state.peers.has_key?(name)
+  return state if state.remote.get(name).map { |held| held.version >= version }.unwrap_or(false)
+
+  state.with(remote: state.remote.put(name, Types.Remote(version: version, memberships: memberships)))
+end
+
+def members(state: Types.State, group: String) -> List[Types.Member]
+  mine = state.groups.select { |entry| entry.group == group }.map { |entry| member(state.config.name, entry) }
+  theirs = state.remote.keys.flat_map { |name| members_of(name, state.remote[name], group) }
+  (mine + theirs).sort_by { |found| "#{found.node}/#{found.mailbox}" }
+end
+
+def members_of(name: String, remote: Types.Remote, group: String) -> List[Types.Member]
+  remote.memberships.select { |entry| entry.group == group }.map { |entry| member(name, entry) }
+end
+
+def member(node: String, entry: Types.Membership) -> Types.Member = Types.Member(node: node, mailbox: entry.mailbox)
 
 def own?(state: Types.State, key: String) -> Bool
   state.own.get(key).map { |deadline| deadline > Time.monotonic_ms() }.unwrap_or(false)

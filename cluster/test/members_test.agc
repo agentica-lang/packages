@@ -399,3 +399,19 @@ def test_a_node_that_finds_its_own_address_dials_it_once_and_counts_no_refusal()
   try Test.eq(Cluster.nodes(alpha), [])
   Cluster.stop(alpha, 1000)
 end
+
+def members_of(fix: Fixture, group: String) -> Result[List[Types.Member]]
+  Actor.call(fix.actor.address, 1000, ->(reply) { Types.Msg.Members(group, reply) })
+end
+
+# What a peer says of its groups is the one with the highest number, and only a peer that is linked says it.
+def test_a_peer_that_is_linked_gives_its_highest_snapshot_and_a_stranger_gives_none() -> Result[Void]
+  fix = fixture()
+  try Test.eq(try link(fix, "beta", "beta", ""), true)
+  workers = [Types.Membership(group: "workers", mailbox: "jobs")]
+  try Actor.cast(fix.actor.address, Types.Msg.Groups("beta", 2, workers))
+  try Actor.cast(fix.actor.address, Types.Msg.Groups("beta", 1, []))
+  try Actor.cast(fix.actor.address, Types.Msg.Groups("gamma", 5, workers))
+  try Test.eq(try members_of(fix, "workers"), [Types.Member(node: "beta", mailbox: "jobs")])
+  finish(fix)
+end

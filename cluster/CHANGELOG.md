@@ -4,6 +4,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Add process groups: `Cluster.group_join`, `group_leave` and `group_members` (a member is a node and a mailbox). The nodes tell each other their memberships with a new frame kind (`groups`, 64), which a node of 0.1.0 skips; the memberships of a peer end with its link.
 - A node that finds its own address by discovery leaves it alone for 10 lookups, and `Cluster.refused` no longer counts a node that dials itself.
 - Add `examples/docker-compose.discover.yml`: replicas that find each other by the name of their service.
 - Add discovery by DNS: `Options.discover` is a `host:port` whose host is a name with the addresses of the nodes, looked up at start and every `discover_ms` (10 s by default), and each address that the node is not linked with is dialed.

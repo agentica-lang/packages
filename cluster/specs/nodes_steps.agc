@@ -6,7 +6,7 @@ import Protocol from "nodes_protocol"
 import {
   Connect, Drops, Flood, HoleVisit, Mailbox, Payload, Peers, Post, Received, Refusals, Request, Spec,
 } from "nodes_protocol"
-import {Stranger, Visit} from "nodes_protocol"
+import {Expected, Joining, Stranger, Visit} from "nodes_protocol"
 
 def steps() -> List[BDD.Step]
   [
@@ -50,6 +50,10 @@ def steps() -> List[BDD.Step]
       &stranger_wrong,
     ),
     BDD.step("{string} has the mailbox {string}", &registers),
+    BDD.step("{string} joins the group {string} with the mailbox {string}", &joins),
+    BDD.step("{string} joins the group {string} with the mailbox {string} and it fails with {string}", &join_fails),
+    BDD.step("{string} leaves the group {string} with the mailbox {string}", &leaves),
+    BDD.step("the members of the group {string} on {string} are {string} within {int} ms", &has_members),
     BDD.step("{string} has the mailbox {string} again", &registers),
     BDD.step("the node {string} starts with the cookie {string} and a heartbeat of {int} ms", &starts_beating),
     BDD.step(
@@ -242,6 +246,23 @@ end
 
 def flood(ctx: BDD.Context, args: List[String]) -> BDD.Context
   send(ctx, Request.Flood(Flood(node: args[1], count: args[0].to_i!, closed: args[2].to_i!)))
+end
+
+def joins(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.Join(Joining(node: args[0], group: args[1], mailbox: args[2])))
+end
+
+def join_fails(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.JoinFails(Joining(node: args[0], group: args[1], mailbox: args[2]), args[3]))
+end
+
+def leaves(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  send(ctx, Request.Leave(Joining(node: args[0], group: args[1], mailbox: args[2])))
+end
+
+def has_members(ctx: BDD.Context, args: List[String]) -> BDD.Context
+  expected = Expected(node: args[1], group: args[0], members: list_of(args[2]), within_ms: args[3].to_i!)
+  send(ctx, Request.Members(expected))
 end
 
 def registers(ctx: BDD.Context, args: List[String]) -> BDD.Context

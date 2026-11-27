@@ -23,6 +23,14 @@ struct Served
   socket: TCP.Socket
 end
 
+## What a task that writes a frame to a peer needs: the frame and the socket. A write that fails may have sent half a
+## frame, so the link is closed, as `Cluster.send` does.
+struct Announce
+  frame: Bytes
+  socket: TCP.Socket
+  wait_ms: Int
+end
+
 ## What a task that waits to dial a peer of the list again needs.
 struct Redial
   node: Address[Types.Msg]
@@ -64,6 +72,14 @@ end
 ## dialed turned out to be this one. The nonce travels in clear, so a peer that sees it can make the dial think so; the
 ## node leaves the address alone for a while at most (docs/_index.md).
 def mark(nonce: Bytes) -> String = "#{DIAL}#{OpenSSL.Digest.hexencode(nonce)}"
+
+## Writes the frame to the socket of a peer, in a task of its own so that a slow peer holds nobody else.
+def announce(args: Announce) -> Void
+  case TCP.send_bytes(args.socket, args.frame, args.wait_ms)
+    ok(_) -> nil
+    error(_) -> TCP.close(args.socket)
+  end
+end
 
 private
 
@@ -172,6 +188,7 @@ def keep_reading(config: Types.Config, socket: TCP.Socket, peer: Types.Peer) -> 
     case read_message(socket, config.max_frame_bytes, 0, some(seen))
       ok(Types.Message.Bye(_)) -> reading = false
       ok(Types.Message.Mail(mailbox, body)) -> deliver(config, peer, mailbox, body)
+      ok(Types.Message.Groups(version, memberships)) -> said_groups(config, peer, version, memberships)
       ok(Types.Message.Ping) -> pong(socket, config)
       ok(_) -> nil
       error(_) -> reading = false
@@ -213,6 +230,13 @@ def pong(socket: TCP.Socket, config: Types.Config) -> Void
     ok(frame) -> _ = TCP.send_bytes(socket, frame, SILENT_HEARTBEATS * config.heartbeat_ms)
     error(_) -> nil
   end
+end
+
+# What a peer says of its groups goes to the node, which waits for the room: a later frame replaces it, but the
+# last one
+# must not be lost.
+def said_groups(config: Types.Config, peer: Types.Peer, version: Int, memberships: List[Types.Membership]) -> Void
+  _ = Actor.cast(config.node, Types.Msg.Groups(peer.name, version, memberships), REGISTER_MS)
 end
 
 # The reader never waits for the node: a mail goes to the node at once or is dropped and counted (at most once). Only

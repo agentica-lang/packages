@@ -94,6 +94,42 @@ alpha sent job 7 compile
 
 Delivery is at most once: `send` returns once the bytes are in the socket, with no reply and no retry, and a message for a mailbox that does not exist, or that cannot take it at once, is dropped and counted (`dropped`). The capacity of the channel (64 above) is the bound of the mailbox: when it is full the node drops, so a slow reader loses messages and does not slow the link. An unbounded channel (`Channel.new()`) never drops and can fill the memory. The messages that one task sends to one peer arrive in the order they were sent, while the link stays up.
 
+## Groups
+
+A mailbox of a node can join a group, a name for the mailboxes that do one kind of work. Each node sees the members of a group: its own and the ones of the peers that are connected. A member is a node and a mailbox, so a program can send to each of them (`group_send`, planned, will do it for all).
+
+```agentica
+import Cluster from "pkg/cluster/cluster"
+
+def main() -> Void
+  cookie = "a-random-secret-of-16-bytes-or-more"
+  alpha = Cluster.start(Cluster.Options(name: "alpha", cookie: cookie)).unwrap!
+  beta = Cluster.start(Cluster.Options(name: "beta", cookie: cookie)).unwrap!
+  inbox: Channel[Cluster.Delivery] = Channel.new(64)
+  Cluster.register(alpha, "jobs", inbox.address, ->(delivery) { delivery }).unwrap!
+  Cluster.group_join(alpha, "workers", "jobs").unwrap!
+  _ = Cluster.connect(beta, "127.0.0.1:#{Cluster.port(alpha)}").unwrap!
+
+  deadline = Time.monotonic_ms() + 2000
+  while Cluster.group_members(beta, "workers").unwrap!.empty? and Time.monotonic_ms() < deadline
+    Task.sleep(10)
+  end
+
+  for member in Cluster.group_members(beta, "workers").unwrap!
+    puts("#{member.node} #{member.mailbox}")
+  end
+
+  _ = Cluster.stop(beta, 1000)
+  _ = Cluster.stop(alpha, 1000)
+end
+```
+
+```output
+alpha jobs
+```
+
+A node tells its peers all its memberships when a link is kept and after each change, with a number that grows, so what is lost or comes twice does no harm. The memberships of a peer end with its link (`node_down`) and come back when it connects again and says them. The peers learn of a change a moment after the call returns: a read right after a join on another node may not have it yet. A membership stays until `group_leave` or until the node stops, even if the mailbox is registered again. Every node of a cluster should have the same `max_frame_bytes`: all the memberships of a node go in one frame.
+
 ## Try it by hand
 
 `examples/node.agc` is one node of a small cluster, set by environment variables (`NODE_NAME`, `NODE_PORT`, `PEERS`, `CLUSTER_COOKIE`, `INSECURE`; the header of the file lists them). It prints `node_up` and `node_down` as its peers come and go, and greets each peer every 2 seconds. Three terminals, from the folder of the package:
@@ -148,6 +184,18 @@ Registers the mailbox `name` (1 to 255 bytes). What a peer sends to it comes to 
 ### Cluster.send(node: Cluster.Node, peer: String, mailbox: String, body: Bytes, timeout_ms: Int = 5000) -> Result[Void]
 
 Sends `body`, the `Term.encode` of a value, to a mailbox of a connected peer. It fails with `cluster.argument` (`timeout_ms` is less than 1), `cluster.not_connected`, `cluster.too_large` (the frame is over `max_frame_bytes`) or `cluster.closed` (the node is stopped, the link broke, or the write took more than `timeout_ms`). A write that times out closes the link, and the peer is down (there is no reconnect yet). A frame over the limit of the receiver ends the whole link there, not only that message: keep `max_frame_bytes` the same on all the nodes. Ok says that the bytes are in the socket, not that the mailbox took them.
+
+### Cluster.group_join(node: Cluster.Node, group: String, mailbox: String) -> Result[Void]
+
+Puts the registered mailbox `mailbox` of this node in the group `group` (1 to 255 bytes, like a mailbox name), and tells the connected peers. Joining twice is one membership. It fails with `cluster.argument` (a name that is not valid, or a mailbox that is not registered on this node), `cluster.too_large` (the memberships of the node do not fit in a frame) or `cluster.closed` (the node is stopped).
+
+### Cluster.group_leave(node: Cluster.Node, group: String, mailbox: String) -> Result[Void]
+
+Takes the mailbox out of the group and tells the peers. A mailbox that is not in the group is not an error.
+
+### Cluster.group_members(node: Cluster.Node, group: String) -> Result[List[Cluster.Member]]
+
+The members of the group, this node's and the connected peers', ordered by node and mailbox. A `Member` has `node` and `mailbox`. A group that nobody joined gives an empty list.
 
 ### Cluster.watch(node: Cluster.Node, address: Address[M], wrap: Fn[Cluster.Event, M]) -> Result[Void]
 
