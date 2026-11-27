@@ -4,7 +4,9 @@
 ## is made with a builder: `_begin`, `_push` (`_put` for a Map) and `_end`. An Optional or Result that is read is a C
 ## struct (`some` or `ok`, the value, and the error message of a Result); one that is made has a constructor, `_some`
 ## or `_ok`. An item is a C value as in the codecs, one of these four that is read is its cursor or struct, and
-## anything else is a term.
+## anything else is a term. A `List[Float32]` is read by `_run`, which gives the next run of C floats inside the list
+## (1 for a run, 0 at the end, -1 for a bad list), and made by `_make` from C floats, as `an_float32_run` and
+## `an_float32s` do: there is no term per item.
 
 import Analysis from "std/analysis"
 import Codecs from "codecs"
@@ -66,7 +68,12 @@ def global_names(shelf: Shelf) -> List[Names.Named]
       Names.Named(c: reader(shelf, type), source: "the decoder of #{source}"),
     ])
 
-    if collection?(type)
+    if float32_list?(type)
+      named = named.concat([
+        Names.Named(c: "#{c}_open", source: "the open of #{source}"),
+        Names.Named(c: "#{c}_run", source: "the run of #{source}"),
+      ])
+    elsif collection?(type)
       named = named.concat([
         Names.Named(c: "#{c}_open", source: "the open of #{source}"),
         Names.Named(c: "#{c}_next", source: "the next of #{source}"),
@@ -84,7 +91,7 @@ def global_names(shelf: Shelf) -> List[Names.Named]
   for type in shelf.made
     c = name(shelf, type)
     source = Types.text(type)
-    if !collection?(type)
+    if !collection?(type) or float32_list?(type)
       named = named.push(Names.Named(c: "#{c}_#{maker(type)}", source: "the #{maker(type)} of #{source}"))
       next
     end
@@ -117,6 +124,13 @@ def declarations(shelf: Shelf) -> List[String]
     "   others). */",
   ]
 
+  if (
+    shelf.read.any? do |type: Types.Type| float32_list?(type) end or
+    shelf.made.any? do |type: Types.Type| float32_list?(type) end
+  )
+    lines = lines.concat(float32_note())
+  end
+
   for type in shelf.read
     if collection?(type)
       lines = joined([lines, [""], cursor_declaration(shelf, type)])
@@ -126,7 +140,9 @@ def declarations(shelf: Shelf) -> List[String]
   end
 
   for type in shelf.made
-    if collection?(type)
+    if float32_list?(type)
+      lines = lines.concat(["", "#{float32_make_head(shelf, type)};"])
+    elsif collection?(type)
       lines = joined([lines, [""], builder_declaration(shelf, type)])
     else
       lines = lines.concat(["", "#{maker_head(shelf, type)};"])
@@ -149,7 +165,9 @@ def definitions(shelf: Shelf) -> List[String]
       end
     end
 
-    if collection?(type)
+    if float32_list?(type)
+      lines = joined([lines, [""], float32_cursor_definition(shelf, type)])
+    elsif collection?(type)
       lines = joined([lines, [""], cursor_definition(shelf, type)])
     else
       lines = joined([lines, [""], struct_definition(shelf, type)])
@@ -157,7 +175,9 @@ def definitions(shelf: Shelf) -> List[String]
   end
 
   for type in shelf.made
-    if collection?(type)
+    if float32_list?(type)
+      lines = joined([lines, [""], ["#{float32_make_head(shelf, type)} { return an_float32s(env, data, n); }"]])
+    elsif collection?(type)
       lines = joined([lines, [""], builder_definition(shelf, type)])
     else
       lines = joined([lines, [""], maker_definition(shelf, type)])
@@ -218,6 +238,23 @@ def collection?(type: Types.Type) -> Bool
   end
 end
 
+# Whether `type` is `List[Float32]`, the one List that is read in runs of C floats and made from them.
+def float32_list?(type: Types.Type) -> Bool = Types.text(type) == "List[Float32]"
+
+def float32_note() -> List[String]
+  [
+    "",
+    "/* A List[Float32] is read with _run: it gives 1 for a run of the items, 0 at the end and -1 for a list that is",
+    "   not a List[Float32] (the call has then failed, as for _next). *DATA points at the *N next items, inside the",
+    "   list: in order, read-only, and valid until the function returns. A list is a chain of runs, so one run is not",
+    "   always the whole list. One that is made is _make, which copies the N floats at DATA (NULL when N is 0). */",
+  ]
+end
+
+def float32_make_head(shelf: Shelf, type: Types.Type) -> String
+  "an_term #{name(shelf, type)}_make(an_env *env, const float *data, size_t n)"
+end
+
 def name(shelf: Shelf, type: Types.Type) -> String = "#{shelf.codecs.lower}_#{Types.mangled(type)}"
 
 # The static function that opens a List or Map, or decodes an Optional or Result, with the path of a failure.
@@ -266,6 +303,8 @@ end
 
 # The item types of a List, the key and value types of a Map, or the value type of an Optional or Result.
 def items(type: Types.Type) -> List[Types.Type]
+  return [] if float32_list?(type)
+
   case type
     Types.Type.ListOf(item) -> [item]
     Types.Type.MapOf(key, value) -> [key, value]
@@ -293,6 +332,21 @@ end
 
 def cursor_declaration(shelf: Shelf, type: Types.Type) -> List[String]
   c = name(shelf, type)
+  if float32_list?(type)
+    return [
+      "typedef struct {",
+      "  an_term term;",
+      "  an_list_cursor cursor;",
+      "  size_t len;",
+      "  size_t at;",
+      "  bool failed;",
+      "  int argument; /* 1 + the index of the argument of the call it was opened for, or 0 (_open) */",
+      "} #{c};",
+      "bool #{c}_open(an_env *env, an_term t, #{c} *out);",
+      "int #{c}_run(an_env *env, #{c} *list, const float **data, size_t *n);",
+    ]
+  end
+
   kind = "list"
   outs = "#{item_type(shelf, items(type)[0])} *out"
   if map?(type)
@@ -376,6 +430,39 @@ def cursor_paths(type: Types.Type) -> List[String]
   end
 
   cursor_paths(items(type)[0]).map do |path| ".value#{path}" end
+end
+
+# The cursor of a List[Float32]: `_run` is `an_float32_run`, and a bad list fails the call at the item it stopped at.
+def float32_cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]
+  p = shelf.codecs.lower
+  c = name(shelf, type)
+  m = Types.mangled(type)
+  [
+    "static bool #{p}_native_open_#{m}(an_env *env, an_term t, #{c} *out, ng_fail *fail) {",
+    "  memset(out, 0, sizeof *out);",
+    "  out->term = t;",
+    "  if (an_list_cursor_begin(env, t, &out->cursor, &out->len)) return true;",
+    "  out->failed = true;",
+    "  return ng_expected(fail, \"List[Float32]\");",
+    "}",
+    "",
+    "bool #{c}_open(an_env *env, an_term t, #{c} *out) {",
+    "  ng_fail fail;",
+    "  return #{p}_native_open_#{m}(env, t, out, &fail) || ng_raise(env, \"\", \"List[Float32]\", &fail);",
+    "}",
+    "",
+    "int #{c}_run(an_env *env, #{c} *list, const float **data, size_t *n) {",
+    "  ng_fail fail;",
+    "  int got;",
+    "  if (list->failed) return -1;",
+    "  got = an_float32_run(env, &list->cursor, data, n);",
+    "  if (got > 0) list->at += *n;",
+    "  if (got >= 0) return got;",
+    "  list->failed = true;",
+    "  ng_expected(&fail, \"Float32\");",
+    "  return ng_fail_cursor_item(env, &fail, \"List[Float32]\", list->argument, list->at, NULL);",
+    "}",
+  ]
 end
 
 def cursor_definition(shelf: Shelf, type: Types.Type) -> List[String]

@@ -36,6 +36,15 @@ def render(block: Analysis.NativeBlock, trait_name: String, source: String) -> R
     end
   end
 
+  for function in block.functions
+    params = function.parameters.map do |param: Analysis.NativeParameter| param.type end
+    try refuse_float32(function.name, params.push(function.result))
+  end
+
+  for type in block.types
+    try refuse_float32(type.name, type.members.flat_map do |member: Analysis.NativeMember| member.types end)
+  end
+
   for type in block.types
     # `Self` is a keyword of Rust that no type or variant can be named.
     variants = type.members.select do |member: Analysis.NativeMember| type.kind == "enum" and member.name == "Self" end
@@ -89,6 +98,15 @@ struct Plan
   resources: Set[String]
   edges: Map[String, List[String]]
   borrowing: Set[String]
+end
+
+# An error when one of the canonical `types` of `name` is or holds a List[Float32], which the crate has no wrapper for.
+def refuse_float32(name: String, types: List[String]) -> Result[Void]
+  if types.any? do |type: String| type.include?("List[Float32]") end
+    return error("[NATIVE-GEN-UNKNOWN] #{name} has a List[Float32], which --lang rust does not write yet")
+  end
+
+  ok()
 end
 
 # A name of the block as a Rust name: `empty?` is `empty_p`, and a keyword or `env` gets a trailing `_`.
