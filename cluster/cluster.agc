@@ -160,7 +160,7 @@ def group_send(node: Types.Node, group: String, body: Bytes, timeout_ms: Int = A
 
   written: List[Result[Int]] = Task.map(
     jobs,
-    [jobs.size, 1].max.unwrap!.clamp(1, MAX_PEERS_AT_ONCE),
+    jobs.size.clamp(1, MAX_PEERS_AT_ONCE),
     timeout_ms + ASK_MS,
     &write_to_peer,
   )
@@ -193,17 +193,10 @@ def dropped(node: Types.Node) -> Int = node.counts.get(Types.DROPPED).unwrap_or(
 def leave(node: Types.Node, timeout_ms: Int = ASK_MS) -> Result[Void]
   return error("cluster: timeout_ms is at least 1", kind: Types.ARGUMENT) if timeout_ms < 1
 
-  _ = try ask(node, ->(reply: Channel[Bool]) { Types.Msg.Depart(reply) })
-  frame = try Wire.encode(Types.Message.Bye(Types.LEAVE))
-  peers = nodes(node)
-  jobs = peers.map { |peer| Goodbye(actor: node.actor.address, peer: peer, frame: frame, timeout_ms: timeout_ms) }
-  _ = Task.map(jobs, [jobs.size, 1].max.unwrap!.clamp(1, MAX_PEERS_AT_ONCE), timeout_ms + ASK_MS, &say_goodbye)
   deadline = Time.monotonic_ms() + timeout_ms
-  while not nodes(node).empty? and Time.monotonic_ms() < deadline
-    Task.sleep(POLL_MS)
-  end
-
-  stop(node, timeout_ms)
+  _ = ask(node, ->(reply: Channel[Bool]) { Types.Msg.Depart(reply) })
+  say_goodbye_to_all(node, deadline)
+  stop(node, [deadline - Time.monotonic_ms(), MIN_STOP_MS].max.unwrap!)
 end
 
 ## Stops the node: the listener, the links, the connections that are being dialed and the actor. It waits at most
@@ -217,6 +210,7 @@ private
 
 ASK_MS = 5000
 MAX_PEERS_AT_ONCE = 64
+MIN_STOP_MS = 100
 POLL_MS = 10
 
 # What a node dials once it listens: the peers of its list, and the name to look up.
@@ -275,6 +269,22 @@ def peer_jobs(node: Types.Node, members: List[Types.Member], body: Bytes, timeou
     Job(actor: node.actor.address, peer: peer, mailboxes: mailboxes, body: body, max_frame_bytes: node.max_frame_bytes, timeout_ms: timeout_ms)
   end
 end
+
+# Tells each peer, and waits for the links to end, until the deadline. A node that cannot be asked, because it is
+# stopped, has no peers to tell.
+def say_goodbye_to_all(node: Types.Node, deadline: Int) -> Void
+  frame = Wire.encode(Types.Message.Bye(Types.LEAVE)).unwrap!
+  jobs = nodes(node).map do |peer|
+    Goodbye(actor: node.actor.address, peer: peer, frame: frame, timeout_ms: left_until(deadline))
+  end
+
+  _ = Task.map(jobs, jobs.size.clamp(1, MAX_PEERS_AT_ONCE), left_until(deadline), &say_goodbye)
+  while not nodes(node).empty? and Time.monotonic_ms() < deadline
+    Task.sleep(POLL_MS)
+  end
+end
+
+def left_until(deadline: Int) -> Int = [deadline - Time.monotonic_ms(), 1].max.unwrap!
 
 def say_goodbye(job: Goodbye) -> Result[Bool]
   asked: Result[Optional[TCP.Socket]] = Actor.call(

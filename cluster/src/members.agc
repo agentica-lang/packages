@@ -22,6 +22,7 @@ def config(options: Types.Options, node: Address[Types.Msg], counts: ATS[String,
     connect_ms: options.connect_ms,
     heartbeat_ms: options.heartbeat_ms,
     discover_ms: options.discover_ms,
+    left_ms: options.left_ms,
     reconnect_ms: options.reconnect_ms,
     reconnect_max_ms: options.reconnect_max_ms,
     max_pending: options.max_pending,
@@ -61,6 +62,7 @@ def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
     remote: {},
     senders: {},
     leaving: false,
+    left: {},
     delays: {},
     timers: {},
     refused: 0,
@@ -72,7 +74,7 @@ def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
     Types.Msg.Linked(peer, reply) -> Actor.continue(link(state, peer, reply))
     Types.Msg.Closed(name, id) -> Actor.continue(unlink(state, name, id, false))
     Types.Msg.Left(name, id) -> Actor.continue(unlink(state, name, id, true))
-    Types.Msg.Depart(reply) -> answer(state.with(leaving: true), reply, true)
+    Types.Msg.Depart(reply) -> answer(departing(state), reply, true)
     Types.Msg.Dial(endpoint, reply) -> Actor.continue(dial(state, endpoint, reply))
     Types.Msg.Dialed(key, result) -> Actor.continue(retried(dialed(state, key, result), key, result))
     Types.Msg.Keep(endpoints) -> Actor.continue(keep_all(state, endpoints))
@@ -166,6 +168,11 @@ def terminate(state: Types.State) -> Void
 end
 
 def link(state: Types.State, peer: Types.Peer, reply: Channel[Bool]) -> Types.State
+  if state.leaving
+    _ = Actor.reply(reply, false)
+    return state
+  end
+
   current = state.peers.get(peer.name)
   case current
     none -> up(keep(state, peer, reply), peer.name)
@@ -221,12 +228,41 @@ def forget(state: Types.State, peer: Types.Peer, id: Int, left: Bool) -> Types.S
   parted(gone, peer.name, left)
 end
 
-# A peer that went is dialed again if it is of the list. One that said that it leaves is not: its waits end, and it
-# is told as left, not as down.
+# A peer that went is dialed again if it is of the list. One that said that it leaves is told as left, not as down, and
+# it is let alone for `left_ms`: the peers of the list are dialed after that, and discovery skips its addresses until
+# then. A node that says that it leaves is as good as its cookie, so the time bounds what a forged one can do.
 def parted(state: Types.State, name: String, left: Bool) -> Types.State
-  return told(unfound_all(settled(state, name), name), Types.Event.NodeLeft(name)) if left
+  return down(unfound_all(retry_all(state, name), name), name) if not left
 
-  down(unfound_all(retry_all(state, name), name), name)
+  keys = addresses_of(state, name)
+  deadline = Time.monotonic_ms() + state.config.left_ms
+  current = settled(state, name)
+  for key in keys
+    current = current.with(left: current.left.put(key, deadline))
+    if current.kept.has_key?(key)
+      current = wait_for(current, key, state.config.left_ms)
+    end
+  end
+
+  told(unfound_all(current, name), Types.Event.NodeLeft(name))
+end
+
+# A node that leaves dials nobody: the dials and the waits end, and links that come in are refused.
+def departing(state: Types.State) -> Types.State
+  for timer in state.timers.values
+    Task.cancel(timer)
+  end
+
+  for dialing in state.dialing.values
+    answer_waiters(dialing.waiters, error("cluster: the node leaves", kind: Types.CLOSED))
+    Task.cancel(dialing.task)
+  end
+
+  state.with(leaving: true, timers: {}, delays: {}, dialing: {})
+end
+
+def left?(state: Types.State, key: String) -> Bool
+  state.left.get(key).map { |deadline| deadline > Time.monotonic_ms() }.unwrap_or(false)
 end
 
 # The addresses of a peer that the name gave are forgotten when its last link ends.
@@ -259,6 +295,11 @@ end
 # An address that is linked, or a name that is linked (even if the peer dialed this node), answers at once; one that is
 # being dialed adds the caller to those that wait; any other starts a task that dials.
 def dial(state: Types.State, endpoint: Types.Endpoint, reply: Channel[Result[String]]) -> Types.State
+  if state.leaving
+    _ = reply.send(error("cluster: the node leaves", kind: Types.CLOSED), 0)
+    return state
+  end
+
   key = Endpoint.key(endpoint)
   case linked(state, key, endpoint.node)
     ok(peer) -> answered(state, reply, peer, endpoint.node)
@@ -316,6 +357,8 @@ end
 
 # The peers of the list are dialed now, and again when a dial fails or their link ends.
 def keep_all(state: Types.State, endpoints: List[Types.Endpoint]) -> Types.State
+  return state if state.leaving
+
   current = state
   for endpoint in endpoints
     key = Endpoint.key(endpoint)
@@ -383,15 +426,22 @@ def wait(state: Types.State, key: String) -> Types.State
   config = state.config
   last = state.delays.get(key)
   delay = [last.map { |ms| ms * 2 }.unwrap_or(config.reconnect_ms), config.reconnect_max_ms].min.unwrap!
-  wait_ms = delay + Random.int(0, delay / 5)
+  waiting = wait_for(state, key, delay + Random.int(0, delay / 5))
+  waiting.with(delays: waiting.delays.put(key, delay))
+end
+
+# The dial of `key` in `wait_ms`.
+def wait_for(state: Types.State, key: String, wait_ms: Int) -> Types.State
+  config = state.config
   timer = Task.spawn(&Link.redial, Link.Redial(node: config.node, key: key, wait_ms: wait_ms))
-  state.with(delays: state.delays.put(key, delay), timers: state.timers.put(key, timer))
+  state.with(timers: state.timers.put(key, timer))
 end
 
 # The dial is skipped when the peer is linked by now.
 def redial(state: Types.State, key: String) -> Types.State
   waited = state.with(timers: state.timers.delete(key))
   case state.kept.get(key)
+    some(_) if state.leaving -> waited
     some(_) if own?(state, key) -> retry(waited, key)
     some(endpoint) if not state.peers.has_key?(state.names.get(key).unwrap_or("")) ->
       dial(waited, endpoint, quiet_reply())
@@ -420,9 +470,21 @@ end
 # address that answers makes the peer known, so a linked peer costs no new connection each time. An address of the
 # list is dialed as it is written there, with the name that it must answer under.
 def found(state: Types.State, endpoints: List[Types.Endpoint]) -> Types.State
-  current = left(state, endpoints)
+  current = left(forgotten(state), endpoints)
   for endpoint in endpoints
     current = found_one(current, endpoint)
+  end
+
+  current
+end
+
+# The addresses of peers that left are forgotten when their time is over.
+def forgotten(state: Types.State) -> Types.State
+  current = state
+  for key in state.left.keys
+    if not left?(state, key)
+      current = current.with(left: current.left.delete(key))
+    end
   end
 
   current
@@ -530,7 +592,7 @@ end
 
 def found_one(state: Types.State, endpoint: Types.Endpoint) -> Types.State
   key = Endpoint.key(endpoint)
-  return state if own?(state, key) or state.leaving
+  return state if own?(state, key) or state.leaving or left?(state, key)
 
   listed = state.with(found: state.found.put(key, endpoint))
   return listed if state.peers.has_key?(state.names.get(key).unwrap_or(""))
