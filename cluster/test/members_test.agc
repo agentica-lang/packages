@@ -27,13 +27,14 @@ struct Link
   back: Channel[Types.Peer]
 end
 
-def fixture(retry_ms: Int = 500, retry_max_ms: Int = 30_000) -> Fixture
+def fixture(retry_ms: Int = 500, retry_max_ms: Int = 30_000, discover_ms: Int = 10_000) -> Fixture
   options = Types.Options(
     name: "zeta",
     cookie: "the-cookie-of-the-cluster",
     connect_ms: 5000,
     reconnect_ms: retry_ms,
     reconnect_max_ms: retry_max_ms,
+    discover_ms: discover_ms,
   )
 
   counts: ATS[String, Int] = ATS.new()
@@ -198,7 +199,7 @@ def test_a_peer_of_the_list_is_dialed_again_with_a_wait_that_doubles_up_to_the_b
 end
 
 def found(fix: Fixture, host: String = "127.0.0.1") -> Result[Void]
-  Actor.cast(fix.actor.address, Types.Msg.Found(Types.Endpoint(host: host, port: fix.port)))
+  Actor.cast(fix.actor.address, Types.Msg.Found([Types.Endpoint(host: host, port: fix.port)]))
 end
 
 def accepted(listener: TCP.Listener, wait_ms: Int) -> List[TCP.Socket]
@@ -277,7 +278,7 @@ def test_an_address_of_the_list_that_the_name_gives_is_dialed_with_the_name_of_t
   listed = Types.Endpoint(host: "127.0.0.1", port: port, node: "gamma")
   try Actor.cast(fix.actor.address, Types.Msg.Keep([listed]))
   try Test.assert(refused_at_least(fix, 1), "the dial of the list was not refused")
-  try Actor.cast(fix.actor.address, Types.Msg.Found(Types.Endpoint(host: "127.0.0.1", port: port)))
+  try Actor.cast(fix.actor.address, Types.Msg.Found([Types.Endpoint(host: "127.0.0.1", port: port)]))
   try Test.assert(refused_at_least(fix, 2), "the dial of the found address was not refused")
   try Test.eq(Cluster.nodes(alpha), [])
   try Cluster.stop(alpha, 1000)
@@ -287,30 +288,113 @@ end
 def test_an_ipv6_address_is_dialed() -> Result[Void]
   fix = fixture()
   six = try TCP.listen("::1", 0)
-  try Actor.cast(fix.actor.address, Types.Msg.Found(Types.Endpoint(host: "::1", port: TCP.local_port(six))))
+  try Actor.cast(fix.actor.address, Types.Msg.Found([Types.Endpoint(host: "::1", port: TCP.local_port(six))]))
 
   try Test.eq(connections(six, 1000), 1)
   TCP.close_listener(six)
   finish(fix)
 end
 
-# The dials of the address of this very node are not made again, neither by the list nor by the name.
-def test_an_address_that_reached_this_node_is_not_dialed_again() -> Result[Void]
+# How many connections the listener takes in `wait_ms`, each one closed at once, so that each dial fails.
+def connections_within(listener: TCP.Listener, wait_ms: Int) -> Int
+  deadline = Time.monotonic_ms() + wait_ms
+  count = 0
+  while Time.monotonic_ms() < deadline
+    case TCP.accept(listener, deadline - Time.monotonic_ms())
+      ok(socket) ->
+        TCP.close(socket)
+        count += 1
+
+      error(_) -> nil
+    end
+  end
+
+  count
+end
+
+def own(fix: Fixture) -> Result[Void] = Actor.cast(fix.actor.address, Types.Msg.Own("127.0.0.1:#{fix.port}"))
+
+# An address of the list that is the node itself is dialed once, and not again when its wait ends: the control, with no
+# `Own`, dials at every wait.
+def dials_of_the_list(itself: Bool) -> Result[Int]
   fix = fixture(RETRY_MS, RETRY_MS)
-  key = "127.0.0.1:#{fix.port}"
-  try Actor.cast(fix.actor.address, Types.Msg.Own(key))
+  if itself
+    try own(fix)
+  end
+
   try Actor.cast(fix.actor.address, Types.Msg.Keep([Types.Endpoint(host: "127.0.0.1", port: fix.port)]))
+  count = connections_within(fix.listener, 6 * RETRY_MS)
+  try finish(fix)
+  ok(count)
+end
+
+def test_an_address_of_the_list_that_is_this_node_is_not_dialed_again_when_its_wait_ends() -> Result[Void]
+  try Test.assert(try dials_of_the_list(false) >= 3, "the control did not dial again")
+  Test.eq(try dials_of_the_list(true), 1)
+end
+
+# An address that the name gives, sent again and again (each one finds the earlier dial over): the control dials each
+# time.
+def dials_of_the_name(itself: Bool) -> Result[Int]
+  fix = fixture(60_000, 60_000)
+  if itself
+    try own(fix)
+  end
+
+  count = 0
+  for _ in 1..4
+    try found(fix)
+    count += connections_within(fix.listener, 2 * RETRY_MS)
+  end
+
+  try finish(fix)
+  ok(count)
+end
+
+def test_an_address_that_the_name_gives_and_is_this_node_is_not_dialed() -> Result[Void]
+  try Test.assert(try dials_of_the_name(false) >= 3, "the control did not dial each time")
+  Test.eq(try dials_of_the_name(true), 0)
+end
+
+def test_an_address_is_dialed_again_when_the_time_that_it_was_left_alone_ends() -> Result[Void]
+  fix = fixture(60_000, 60_000, 50)
+  try own(fix)
   try found(fix)
-  try Test.eq(connections(fix.listener, 600), 1)
+  try Test.eq(connections_within(fix.listener, 2 * RETRY_MS), 0)
+  # The time is 10 lookups of 50 ms.
+  Task.sleep(500)
+  try found(fix)
+  try Test.eq(connections_within(fix.listener, 2 * RETRY_MS), 1)
   finish(fix)
 end
 
-# A node that finds its own address by the name dials it once, hears from itself and goes on, with nothing refused.
-def test_a_node_that_finds_its_own_address_does_not_count_a_refusal() -> Result[Void]
-  alpha = try Cluster.start(Cluster.Options(name: "alpha", cookie: "the-cookie-of-the-cluster", discover_ms: 100))
-  own = Types.Endpoint(host: "127.0.0.1", port: Cluster.port(alpha))
-  try Actor.cast(alpha.actor.address, Types.Msg.Discover(own))
-  Task.sleep(600)
+def test_an_address_that_leaves_the_answer_is_not_this_nodes_any_more() -> Result[Void]
+  fix = fixture(60_000, 60_000)
+  try own(fix)
+  try Actor.cast(fix.actor.address, Types.Msg.Found([]))
+  try found(fix)
+  try Test.eq(connections_within(fix.listener, 2 * RETRY_MS), 1)
+  finish(fix)
+end
+
+def dialed_by(alpha: Cluster.Node) -> Int = alpha.counts.get(Types.DIALS).unwrap_or(0)
+
+# Whether a dial is in its handshake: it has a mark in the table that the tasks of the node share.
+def dialing?(alpha: Cluster.Node) -> Bool = alpha.counts.keys.any? { |key| key.start_with?("dial:") }
+
+# A node that finds its own address by the name dials it once, hears from itself and leaves it alone, with nothing
+# refused. The dials are counted, and they stay one over four lookups.
+def test_a_node_that_finds_its_own_address_dials_it_once_and_counts_no_refusal() -> Result[Void]
+  options = Cluster.Options(name: "alpha", cookie: "the-cookie-of-the-cluster", discover_ms: 200)
+  alpha = try Cluster.start(options)
+  try Actor.cast(alpha.actor.address, Types.Msg.Discover(Types.Endpoint(host: "127.0.0.1", port: Cluster.port(alpha))))
+  deadline = Time.monotonic_ms() + 2000
+  while (dialed_by(alpha) < 1 or dialing?(alpha)) and Time.monotonic_ms() < deadline
+    Task.sleep(POLL_MS)
+  end
+
+  Task.sleep(800)
+  try Test.eq(dialed_by(alpha), 1)
   try Test.eq(Cluster.refused(alpha), 0)
   try Test.eq(Cluster.nodes(alpha), [])
   Cluster.stop(alpha, 1000)

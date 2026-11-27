@@ -4,7 +4,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- A node that finds its own address by discovery leaves it alone, and `Cluster.refused` no longer counts a node that dials itself.
+- A node that finds its own address by discovery leaves it alone for 10 lookups, and `Cluster.refused` no longer counts a node that dials itself.
 - Add `examples/docker-compose.discover.yml`: replicas that find each other by the name of their service.
 - Add discovery by DNS: `Options.discover` is a `host:port` whose host is a name with the addresses of the nodes, looked up at start and every `discover_ms` (10 s by default), and each address that the node is not linked with is dialed.
 

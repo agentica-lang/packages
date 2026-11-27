@@ -60,6 +60,11 @@ def serve(served: Served) -> Void
   end
 end
 
+## The key in `counts` of a dial that is in its handshake, by its nonce: 0 while it runs, 1 when the node that was
+## dialed turned out to be this one. The nonce travels in clear, so a peer that sees it can make the dial think so; the
+## node leaves the address alone for a while at most (docs/_index.md).
+def mark(nonce: Bytes) -> String = "#{DIAL}#{OpenSSL.Digest.hexencode(nonce)}"
+
 private
 
 REGISTER_MS = 5000
@@ -94,7 +99,8 @@ end
 def run_client(args: Dial, socket: TCP.Socket, deadline: Int) -> Void
   config = args.config
   nonce = Handshake.fresh_nonce()
-  mark = "#{DIAL}#{OpenSSL.Digest.hexencode(nonce)}"
+  mark = mark(nonce)
+  _ = config.counts.add(Types.DIALS, 1)
   config.counts.put(mark, 0)
   handshake = client_handshake(config, socket, args.endpoint, deadline, nonce)
   itself = config.counts.get(mark).unwrap_or(0) == ITSELF
@@ -274,11 +280,10 @@ def server_handshake(config: Types.Config, socket: TCP.Socket, deadline: Int) ->
   end
 end
 
-# A hello of the name of this node with the nonce of a dial of this node is the node dialing itself: the dial is
-# told, and
-# nothing is counted as refused. A hello of that name with another nonce is another node that took the name.
+# A hello of the name of this node with the nonce of a dial of this node is the node dialing itself: the dial is told,
+# and nothing is counted as refused. A hello of that name with another nonce is another node that took the name.
 def not_itself(config: Types.Config, client: String, client_nonce: Bytes) -> Result[Void]
-  mark = "#{DIAL}#{OpenSSL.Digest.hexencode(client_nonce)}"
+  mark = mark(client_nonce)
   return ok() if client != config.name or not config.counts.has_key?(mark)
 
   config.counts.put(mark, ITSELF)

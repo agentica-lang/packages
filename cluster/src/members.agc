@@ -40,6 +40,7 @@ end
 private
 
 GONE_MS = 1000
+OWN_PERIODS = 10
 
 def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
   inbox: Channel[Types.Msg] = Actor.inbox
@@ -69,8 +70,8 @@ def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
     Types.Msg.Keep(endpoints) -> Actor.continue(keep_all(state, endpoints))
     Types.Msg.Redial(key) -> Actor.continue(redial(state, key))
     Types.Msg.Discover(endpoint) -> Actor.continue(discover(state, endpoint))
-    Types.Msg.Found(endpoint) -> Actor.continue(found(state, endpoint))
-    Types.Msg.Own(key) -> Actor.continue(state.with(own: state.own.put(key, true)))
+    Types.Msg.Found(endpoints) -> Actor.continue(found(state, endpoints))
+    Types.Msg.Own(key) -> Actor.continue(owned(state, key))
     Types.Msg.Refused -> Actor.continue(state.with(refused: state.refused + 1))
     Types.Msg.Names(reply) -> answer(state, reply, state.peers.keys.sort)
     Types.Msg.Refusals(reply) -> answer(state, reply, state.refused)
@@ -337,10 +338,10 @@ end
 
 # The wait before the next dial of a peer of the list: `reconnect_ms` at first, and twice the last one after each
 # failure, up to `reconnect_max_ms`, with up to a fifth more so that peers that failed together do not come back
-# together. A peer that is not of the list is not dialed again, and neither is an address that is this node.
+# together. A peer that is not of the list is not dialed again.
 def retry(state: Types.State, key: String) -> Types.State
   case state.kept.get(key)
-    some(_) if not state.timers.has_key?(key) and not state.own.has_key?(key) -> wait(state, key)
+    some(_) if not state.timers.has_key?(key) -> wait(state, key)
     _ -> state
   end
 end
@@ -358,6 +359,7 @@ end
 def redial(state: Types.State, key: String) -> Types.State
   waited = state.with(timers: state.timers.delete(key))
   case state.kept.get(key)
+    some(_) if own?(state, key) -> retry(waited, key)
     some(endpoint) if not state.peers.has_key?(state.names.get(key).unwrap_or("")) ->
       dial(waited, endpoint, quiet_reply())
     _ -> waited
@@ -384,9 +386,42 @@ end
 # An address that the name gave. It is dialed unless its peer is known and linked, or it is being dialed: a dial of an
 # address that answers makes the peer known, so a linked peer costs no new connection each time. An address of the
 # list is dialed as it is written there, with the name that it must answer under.
-def found(state: Types.State, endpoint: Types.Endpoint) -> Types.State
+def found(state: Types.State, endpoints: List[Types.Endpoint]) -> Types.State
+  current = left(state, endpoints)
+  for endpoint in endpoints
+    current = found_one(current, endpoint)
+  end
+
+  current
+end
+
+# An address that is not in the answer any more is not this node's any more, unless it is in the list.
+def left(state: Types.State, endpoints: List[Types.Endpoint]) -> Types.State
+  answered = endpoints.map { |endpoint| Endpoint.key(endpoint) }
+  current = state
+  for key in state.own.keys
+    if not answered.include?(key) and not state.kept.has_key?(key)
+      current = current.with(own: current.own.delete(key))
+    end
+  end
+
+  current
+end
+
+# The node dialed itself there: the address is left alone for `OWN_PERIODS` lookups, and then it is dialed again, since
+# an address that is shared (a virtual IP, a balancer) may reach this node once and another one the next time.
+def owned(state: Types.State, key: String) -> Types.State
+  deadline = Time.monotonic_ms() + OWN_PERIODS * state.config.discover_ms
+  state.with(own: state.own.put(key, deadline))
+end
+
+def own?(state: Types.State, key: String) -> Bool
+  state.own.get(key).map { |deadline| deadline > Time.monotonic_ms() }.unwrap_or(false)
+end
+
+def found_one(state: Types.State, endpoint: Types.Endpoint) -> Types.State
   key = Endpoint.key(endpoint)
-  return state if state.own.has_key?(key)
+  return state if own?(state, key)
 
   listed = state.with(found: state.found.put(key, endpoint))
   return listed if state.peers.has_key?(state.names.get(key).unwrap_or(""))

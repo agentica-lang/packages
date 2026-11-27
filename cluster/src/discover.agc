@@ -1,5 +1,5 @@
 ## The task that finds the nodes of a cluster by a name: it resolves the name, with all its A and AAAA records, and
-## tells the node each address, again and again, since the records change as nodes come and go.
+## tells the node the addresses, again and again, since the records change as nodes come and go.
 
 import Actor from "std/actor"
 import Types from "types"
@@ -12,7 +12,7 @@ struct Find
   lookup_ms: Int
 end
 
-## Resolves the name every `every_ms`, and tells the node each address it got. A name that does not resolve is tried
+## Resolves the name every `every_ms`, and tells the node the addresses it got. A name that does not resolve is tried
 ## again the next time.
 def find(args: Find) -> Void
   while true
@@ -28,7 +28,6 @@ end
 private
 
 def tell(args: Find, addresses: List[String]) -> Void
-  for address in addresses
-    _ = Actor.cast(args.node, Types.Msg.Found(Types.Endpoint(host: address, port: args.endpoint.port)))
-  end
+  endpoints = addresses.map { |address| Types.Endpoint(host: address, port: args.endpoint.port) }
+  _ = Actor.cast(args.node, Types.Msg.Found(endpoints))
 end
