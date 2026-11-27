@@ -27,13 +27,13 @@ def decode(kind: Kind, data: Bytes, count: Int) -> Result[Values.Values]
   if kind.physical == BOOLEAN
     booleans(data, count)
   elsif kind.physical == INT32 and kind.unsigned
-    integers(data, count, 4, ->(at) { Binary.read_u32_le(data, at) })
+    integers(data, count, 4, ->(at) { ok((try Binary.read_u32_le(data, at)).to_i) })
   elsif kind.physical == INT32
-    integers(data, count, 4, ->(at) { Binary.read_i32_le(data, at) })
+    integers(data, count, 4, ->(at) { ok((try Binary.read_i32_le(data, at)).to_i) })
   elsif kind.physical == INT64
     integers(data, count, 8, ->(at) { Binary.read_i64_le(data, at) })
   elsif kind.physical == FLOAT
-    floats(data, count, 4, ->(at) { Binary.read_f32_le(data, at) })
+    floats(data, count, 4, ->(at) { ok((try Binary.read_f32_le(data, at)).to_f) })
   elsif kind.physical == DOUBLE
     floats(data, count, 8, ->(at) { Binary.read_f64_le(data, at) })
   elsif kind.physical == BYTE_ARRAY
@@ -111,7 +111,7 @@ def byte_arrays(kind: Kind, data: Bytes, count: Int) -> Result[Values.Values]
   for _ in 0...count
     return Errors.malformed("a value with no length at #{at} of #{data.size}") if at > data.size - 4
 
-    length = try Binary.read_u32_le(data, at)
+    length = (try Binary.read_u32_le(data, at)).to_i
     return Errors.malformed("a value of #{length} bytes past the data") if length > data.size - at - 4
 
     value = data.slice(at + 4, length)

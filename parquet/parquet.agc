@@ -44,7 +44,7 @@ def open(data: Bytes) -> Result[Table]
   magic_bad = data.slice(0, 4) != MAGIC or data.slice(data.size - 4, 4) != MAGIC
   return Errors.malformed("no PAR1 magic at the start and the end") if magic_bad
 
-  length = try Binary.read_u32_le(data, data.size - 8)
+  length = (try Binary.read_u32_le(data, data.size - 8)).to_i
   return Errors.malformed("a footer of #{length} bytes in a file of #{data.size}") if length > data.size - MIN_SIZE
 
   meta = try Metadata.read_meta(data.slice(data.size - 8 - length, length))

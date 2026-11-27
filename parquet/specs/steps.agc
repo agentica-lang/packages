@@ -42,7 +42,7 @@ PEER_MS = 60_000
 MAX_FILE = 1048576
 MALFORMED = "parquet.malformed"
 INF = Float.from_bits(9218868437227405312)
-NEG_INF = Float.from_bits(-4503599627370496)
+NEG_INF = -INF
 
 def run_peer(args: List[String]) -> String
   process = Process.spawn_captured("python3", ["-I", PEER] + args, Process.Options(timeout_ms: PEER_MS)).unwrap!
