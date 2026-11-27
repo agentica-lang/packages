@@ -37,6 +37,7 @@ private
 
 POLL_MS = 20
 COLLECT_MS = 1000
+EVENTS = "events"
 FILLER_CHUNK = 1000
 SETTLE_MS = 300
 HOLE_ACCEPT_MS = 1000
@@ -56,6 +57,13 @@ end
 # What the receiving side of a mailbox needs: where it keeps the lines, and the node that it belongs to.
 struct Collect
   inbox: Channel[Cluster.Delivery]
+  table: ATS[String, List[String]]
+  key: String
+end
+
+# What the task that collects the events of a node needs.
+struct Events
+  inbox: Channel[Cluster.Event]
   table: ATS[String, List[String]]
   key: String
 end
@@ -109,6 +117,7 @@ def act(
     Request.InOrder(node, mailbox, count, within_ms) ->
       failed_or_done(nodes, expect_in_order(received, node, mailbox, count, within_ms))
     Request.Drops(drops) -> failed_or_done(nodes, expect_drops(nodes, drops))
+    Request.Watch(node) -> failed_or_done(nodes, watch(nodes, received, node))
     Request.ReplacedEmpty(node, mailbox) -> failed_or_done(nodes, expect_replaced_empty(received, node, mailbox))
   end
 end
@@ -125,6 +134,7 @@ def options_of(nodes: Map[String, Cluster.Node], spec: Spec) -> Cluster.Options
     peers: spec.dials.map { |name| address_of(nodes, name, spec.named) } + spec.addresses,
     connect_ms: spec.connect_ms,
     max_pending: spec.max_pending,
+    heartbeat_ms: spec.heartbeat_ms,
     max_frame_bytes: spec.max_frame_bytes,
   )
 end
@@ -578,4 +588,34 @@ def expect_replaced_empty(received: ATS[String, List[String]], node: String, mai
   return "the replaced mailbox has #{lines_of(received, old)}" if not lines_of(received, old).empty?
 
   Protocol.OK
+end
+
+# The events of a node are kept like the messages of a mailbox called `events`: one line for each, in order.
+def watch(nodes: Map[String, Cluster.Node], received: ATS[String, List[String]], node: String) -> String
+  inbox: Channel[Cluster.Event] = Channel.new(64)
+  case Cluster.watch(nodes[node], inbox.address, ->(event) { event })
+    error(e) -> "the node cannot be watched: #{e.message}"
+    ok(_) ->
+      _ = received.push("registered/#{key_of(node, EVENTS)}", "registered")
+      key = current_key(received, node, EVENTS)
+      received.put(key, [])
+      _ = Task.spawn(&collect_events, Events(inbox: inbox, table: received, key: key))
+      Protocol.OK
+  end
+end
+
+def collect_events(args: Events) -> Void
+  while true
+    case args.inbox.recv(COLLECT_MS)
+      ok(event) -> _ = args.table.push(args.key, event_line(event))
+      error(_) -> nil
+    end
+  end
+end
+
+def event_line(event: Cluster.Event) -> String
+  case event
+    Cluster.Event.NodeUp(name) -> "node_up #{name}"
+    Cluster.Event.NodeDown(name) -> "node_down #{name}"
+  end
 end

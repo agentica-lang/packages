@@ -100,15 +100,15 @@ native-gen/          the C header of an `extern module` block: cli.agc is the co
                      as the goldens, a step makes the others: kinds, shapes, lists, options, resources), the files
                      that fail (errors/) and cxx.sh, a CC that builds a module as C++; bench/wide the codecs of a
                      struct of 26 fields; the features need cc and c++
-cluster/             Agentica nodes that connect with a shared cookie (planned: node_down): cluster.agc is the API
-                     (start, connect, nodes, port, refused, register, send, dropped, stop, the error kinds), src/members.agc the actor of a node
+cluster/             Agentica nodes that connect with a shared cookie (planned: reconnect): cluster.agc is the API
+                     (start, connect, nodes, port, refused, register, send, watch, dropped, stop, the error kinds), src/members.agc the actor of a node
                      (its peers, mailboxes and dials in flight, which of two links stays), src/listener.agc the accept loop (with the cap of handshakes), src/link.agc one connection
-                     (the handshake as client or server, then the reading), src/check.agc the checks of the options (plain TCP
+                     (the handshake as client or server, then the reading and its heartbeat), src/check.agc the checks of the options (plain TCP
                      only on this machine), src/endpoint.agc `host:port` (pure), src/wire.agc the preamble and the frames (pure),
                      src/handshake.agc the proofs of the cookie handshake (pure), src/names.agc the rules for node and
                      mailbox names, src/types.agc the kinds, the limits and the messages; test/ has the unit tests of the
-                     frames, the proofs and the addresses (the bytes and the HMAC values written by hand); specs/ has
-                     wire.feature and handshake.feature (pure), and nodes.feature and mailboxes.feature, whose program under test is
+                     frames, the proofs, the addresses and the heartbeat (a peer written by hand) (the bytes and the HMAC values written by hand); specs/ has
+                     wire.feature and handshake.feature (pure), and nodes.feature, mailboxes.feature and events.feature, whose program under test is
                      specs/driver.agc (the nodes of a scenario in one program on 127.0.0.1, port 0, driven by JSON lines
                      from specs/nodes_steps.agc); docs/protocol.md is the format for another program
 dock/                a TCP server: dock.agc is the API (start, stop, wait, watch, stats, on_close, recv, send,

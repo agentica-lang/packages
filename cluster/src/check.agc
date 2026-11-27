@@ -12,6 +12,10 @@ def check(options: Types.Options) -> Result[List[Types.Endpoint]]
 
   try Handshake.cookie(options.cookie)
   return refuse("connect_ms is 1 to #{MAX_MS}") if options.connect_ms < 1 or options.connect_ms > MAX_MS
+  if options.heartbeat_ms < MIN_HEARTBEAT_MS or options.heartbeat_ms > MAX_MS
+    return refuse("heartbeat_ms is #{MIN_HEARTBEAT_MS} to #{MAX_MS}")
+  end
+
   return refuse("max_pending is 1 to #{MAX_PENDING}") if options.max_pending < 1 or options.max_pending > MAX_PENDING
   if frame_limit_bad?(options)
     return refuse("max_frame_bytes is #{Types.PRE_AUTH_MAX_FRAME_BYTES} to #{Types.MAX_FRAME_BYTES}")
@@ -44,6 +48,7 @@ private
 # So that adding a time to the clock cannot overflow, and a handshake cannot last longer than ten minutes.
 MAX_MS = 600_000
 MAX_PENDING = 100_000
+MIN_HEARTBEAT_MS = 10
 MAX_PORT = 65_535
 
 def refuse[T](message: String) -> Result[T] = error("cluster: #{message}", kind: Types.ARGUMENT)

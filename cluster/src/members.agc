@@ -18,6 +18,7 @@ def config(options: Types.Options, node: Address[Types.Msg], counts: ATS[String,
     name: options.name,
     cookie: options.cookie.bytes,
     connect_ms: options.connect_ms,
+    heartbeat_ms: options.heartbeat_ms,
     max_pending: options.max_pending,
     counts: counts,
     max_frame_bytes: options.max_frame_bytes,
@@ -38,7 +39,14 @@ GONE_MS = 1000
 
 def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
   inbox: Channel[Types.Msg] = Actor.inbox
-  Types.State(config: config(options, inbox.address, counts), peers: {}, dialing: {}, mailboxes: {}, refused: 0)
+  Types.State(
+    config: config(options, inbox.address, counts),
+    peers: {},
+    dialing: {},
+    mailboxes: {},
+    watchers: [],
+    refused: 0,
+  )
 end
 
 def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
@@ -55,6 +63,7 @@ def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
     Types.Msg.Register(name, take, reply) ->
       answer(state.with(mailboxes: state.mailboxes.put(name, take)), reply, true)
     Types.Msg.Route(name, reply) -> answer(state, reply, socket_of(state, name))
+    Types.Msg.Watch(tell, reply) -> answer(state.with(watchers: state.watchers.push(tell)), reply, true)
   end
 end
 
@@ -92,19 +101,18 @@ end
 # Every link and every dial in flight ends with the node, and the callers that wait for a dial hear that. The actor
 # waits (a short while) for the tasks to be gone, so that `stop` leaves none behind.
 def terminate(state: Types.State) -> Void
-  gone: Channel[Int] = Channel.new(1)
-  count = 0
+  count = state.peers.size + state.dialing.size
+  # A channel that holds one notice for each task, so that no monitor is left waiting.
+  gone: Channel[Int] = Channel.new([count, 1].max.unwrap!)
   for peer in state.peers.values
     Task.cancel(peer.link)
     Task.monitor(peer.link, gone, ->(down) { down.task_id })
-    count += 1
   end
 
   for dialing in state.dialing.values
     answer_waiters(dialing.waiters, error("cluster: the node stopped", kind: Types.CLOSED))
     Task.cancel(dialing.task)
     Task.monitor(dialing.task, gone, ->(down) { down.task_id })
-    count += 1
   end
 
   deadline = Time.monotonic_ms() + GONE_MS
@@ -116,7 +124,7 @@ end
 def link(state: Types.State, peer: Types.Peer, reply: Channel[Bool]) -> Types.State
   current = state.peers.get(peer.name)
   case current
-    none -> keep(state, peer, reply)
+    none -> up(keep(state, peer, reply), peer.name)
     some(old) ->
       if replaces?(peer.dialer, old.dialer)
         Task.cancel(old.link)
@@ -158,7 +166,20 @@ end
 def forget(state: Types.State, peer: Types.Peer, id: Int) -> Types.State
   return state if peer.link.id != id
 
-  state.with(peers: state.peers.delete(peer.name))
+  down(state.with(peers: state.peers.delete(peer.name)), peer.name)
+end
+
+def up(state: Types.State, name: String) -> Types.State = told(state, Types.Event.NodeUp(name))
+
+def down(state: Types.State, name: String) -> Types.State = told(state, Types.Event.NodeDown(name))
+
+# Every watcher hears it, once. A watcher that cannot take it at once misses it: it is the bound of its mailbox.
+def told(state: Types.State, event: Types.Event) -> Types.State
+  for tell in state.watchers
+    _ = tell.call(event)
+  end
+
+  state
 end
 
 # An address that is linked, or a name that is linked (even if the peer dialed this node), answers at once; one that is

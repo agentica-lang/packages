@@ -81,9 +81,17 @@ struct Options
   port: Int = 0
   peers: List[String] = []
   connect_ms: Int = 5000
+  heartbeat_ms: Int = 1000
   max_pending: Int = 128
   max_frame_bytes: Int = 1_048_572
   insecure_plaintext: Bool = false
+end
+
+## What a node tells those who watch it: a peer is connected (`NodeUp`), or its link ended, because it said bye, the
+## socket closed or it went silent (`NodeDown`). The name is the one of the peer.
+enum Event
+  NodeUp(String)
+  NodeDown(String)
 end
 
 ## A node that connected and proved the cookie: the link of its connection, `dialer` is the side that opened it.
@@ -118,6 +126,7 @@ enum Msg
   Deliver(String, String, Bytes)
   Register(String, Fn[Delivery, Bool], Channel[Bool])
   Route(String, Channel[Optional[TCP.Socket]])
+  Watch(Fn[Event, Bool], Channel[Bool])
 end
 
 ## A caller of `connect` that waits for a dial: where the answer goes, and the name that the address must answer under
@@ -139,6 +148,7 @@ struct State
   peers: Map[String, Peer]
   dialing: Map[String, Dialing]
   mailboxes: Map[String, Fn[Delivery, Bool]]
+  watchers: List[Fn[Event, Bool]]
   refused: Int
 end
 
@@ -148,6 +158,7 @@ struct Config
   name: String
   cookie: Bytes
   connect_ms: Int
+  heartbeat_ms: Int
   max_pending: Int
   counts: ATS[String, Int]
   max_frame_bytes: Int

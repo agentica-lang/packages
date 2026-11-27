@@ -50,8 +50,17 @@ end
 private
 
 REGISTER_MS = 5000
+SILENT_HEARTBEATS = 3
+SEEN = "seen"
 PREAMBLE_BYTES = 6
 HEADER_BYTES = 4
+
+## What the task that watches a link needs: the socket, and when the reader last heard something (`seen`).
+struct Watch
+  config: Types.Config
+  socket: TCP.Socket
+  seen: ATS[String, Int]
+end
 
 def fail(args: Dial, result: Result[String]) -> Void
   _ = Actor.cast(args.config.node, Types.Msg.Dialed(Endpoint.key(args.endpoint), result))
@@ -118,20 +127,59 @@ def register(config: Types.Config, peer: Types.Peer) -> Bool
   end
 end
 
-# After the welcome a link is read: a bye ends it, a mail goes to the node, and any other frame is ignored.
+# After the welcome a link is read: a bye ends it, a mail goes to the node, a ping is answered with a pong and
+# any other
+# frame is ignored. A task beside the reader (`watch_link`) pings a quiet link and closes a silent one, which ends the
+# read. Any frame is a sign of life, so a link that carries mail needs no ping.
 def keep_reading(config: Types.Config, socket: TCP.Socket, peer: Types.Peer) -> Void
+  seen: ATS[String, Int] = ATS.new()
+  seen.put(SEEN, Time.monotonic_ms())
+  watcher = Task.spawn(&watch_link, Watch(config: config, socket: socket, seen: seen))
   reading = true
   while reading
     case read_message(socket, config.max_frame_bytes, 0)
       ok(Types.Message.Bye(_)) -> reading = false
-      ok(Types.Message.Mail(mailbox, body)) -> deliver(config, peer, mailbox, body)
-      ok(_) -> nil
+      ok(Types.Message.Mail(mailbox, body)) ->
+        seen.put(SEEN, Time.monotonic_ms())
+        deliver(config, peer, mailbox, body)
+
+      ok(Types.Message.Ping) ->
+        seen.put(SEEN, Time.monotonic_ms())
+        reading = beat(socket, config, Types.Message.Pong)
+
+      ok(_) -> seen.put(SEEN, Time.monotonic_ms())
       error(_) -> reading = false
     end
   end
 
+  Task.cancel(watcher)
   TCP.close(socket)
   _ = Actor.cast(config.node, Types.Msg.Closed(peer.name, peer.link.id))
+end
+
+# Every heartbeat: a link that was quiet for half of one gets a ping, and one that was silent for 3 closes. A read that
+# times out would close the socket as well, so the reader waits with no limit and this task does the timing.
+def watch_link(watch: Watch) -> Void
+  config = watch.config
+  alive = true
+  while alive
+    Task.sleep(config.heartbeat_ms)
+    silent = Time.monotonic_ms() - watch.seen.get(SEEN).unwrap_or(0)
+    if silent > SILENT_HEARTBEATS * config.heartbeat_ms
+      TCP.close(watch.socket)
+      alive = false
+    elsif silent * 2 >= config.heartbeat_ms
+      alive = beat(watch.socket, config, Types.Message.Ping)
+    end
+  end
+end
+
+# Writes a ping or a pong. The write is of the link alone: it never waits for the actor of the node.
+def beat(socket: TCP.Socket, config: Types.Config, message: Types.Message) -> Bool
+  case Wire.encode(message)
+    ok(frame) -> TCP.send_bytes(socket, frame, config.heartbeat_ms).ok?
+    error(_) -> false
+  end
 end
 
 # The reader never waits for the node: a mail goes to the node at once or is dropped and counted (at most once). Only

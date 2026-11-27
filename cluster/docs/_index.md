@@ -12,12 +12,12 @@ The design is decided in [agentica#1834](https://github.com/agentica-lang/agenti
 - **Trust:** a shared cookie, for internal networks. The cookie is never sent: each side proves that it knows it with an HMAC of a random value of the other side. Make it a random secret, such as `openssl rand -hex 32`: the least size is 16 bytes, a floor and not a measure of strength. After the handshake the frames are not encrypted (TLS comes later), so keep the nodes on a trusted network. [What the cookie does not give](protocol.md#what-the-cookie-does-not-give).
 - **Membership:** a static list of nodes at first. A node keeps one connection to each peer and connects again when it is lost.
 - **Messages:** a value goes to a named mailbox of another node, as the bytes of `Term.encode`. The receiver decodes them into its own type with `Term.decode`, so the type is checked where the message arrives and a bad message is an error for that message.
-- **Failure:** heartbeats on each connection. A missed deadline or a closed socket is `node_down`, and `node_up` when the node comes back.
+- **Failure:** heartbeats on each connection. A link that is quiet for a heartbeat gets a ping, and one that is silent for 3 heartbeats is closed. A closed link, for any reason, is `node_down`, and a link that is up is `node_up`; a [watcher](#clusterwatch) hears both.
 - **Delivery:** at most once. The package never retries.
 
 ## Status
 
-Not released yet. The package grows one piece at a time, and `cluster-0.1.0` comes when a node can report `node_down` too. Today a node can start, connect to the nodes of its list, prove the cookie, know its [peers](protocol.md) and send bytes to the mailboxes of its peers. It does not retry yet: a peer that is down when the node starts is not dialed again, and a link that is lost is not dialed again (reconnecting comes with the heartbeats).
+Not released yet. The package grows one piece at a time, and `cluster-0.1.0` comes when a node also connects again to a peer that went down. Today a node can start, connect to the nodes of its list, prove the cookie, know its [peers](protocol.md), send bytes to the mailboxes of its peers and tell a watcher when a peer comes and goes. It does not retry yet: a peer that is down when the node starts is not dialed again, and a link that is lost is not dialed again (reconnecting is the next piece).
 
 ## Example
 
@@ -85,7 +85,7 @@ Delivery is at most once: `send` returns once the bytes are in the socket, with 
 
 ### Cluster.start(options: Cluster.Options) -> Result[Cluster.Node]
 
-Starts a node: it listens on `host` and `port` and dials each of `peers` in the background. `Options` has `name` (a lowercase letter, then up to 62 lowercase letters, digits, `_` or `-`), `cookie` (16 bytes or more), `host` (`127.0.0.1`), `port` (0: the system picks one), `peers` (a list of `host:port` or `name@host:port`), `connect_ms` (5000, at most 600000: the time that a dial has to connect and shake hands, and that a connection that comes in has for its handshake), `max_pending` (128: how many connections may be in their handshake at once; a new one over that is closed at once), `max_frame_bytes` (1,048,572 bytes, which is also the most: a frame and its length go out in one write of 1 MiB) and `insecure_plaintext` (false). Plain TCP is only for this machine: a `host` or a peer that is not on it is `cluster.argument` unless `insecure_plaintext` is true, and then the network must be one that you trust (the frames have no encryption). A peer written `name@host:port` must answer under that name. A peer listed twice is dialed once. `localhost` is loopback because the hosts file of the machine says so: a name that the hosts file changes is as trusted as the file.
+Starts a node: it listens on `host` and `port` and dials each of `peers` in the background. `Options` has `name` (a lowercase letter, then up to 62 lowercase letters, digits, `_` or `-`), `cookie` (16 bytes or more), `host` (`127.0.0.1`), `port` (0: the system picks one), `peers` (a list of `host:port` or `name@host:port`), `connect_ms` (5000, at most 600000: the time that a dial has to connect and shake hands, and that a connection that comes in has for its handshake), `heartbeat_ms` (1000, 10 to 600000: a quiet link gets a ping every heartbeat, and one that is silent for 3 heartbeats is closed; a frame that is half written counts as silence too), `max_pending` (128: how many connections may be in their handshake at once; a new one over that is closed at once), `max_frame_bytes` (1,048,572 bytes, which is also the most: a frame and its length go out in one write of 1 MiB) and `insecure_plaintext` (false). Plain TCP is only for this machine: a `host` or a peer that is not on it is `cluster.argument` unless `insecure_plaintext` is true, and then the network must be one that you trust (the frames have no encryption). A peer written `name@host:port` must answer under that name. A peer listed twice is dialed once. `localhost` is loopback because the hosts file of the machine says so: a name that the hosts file changes is as trusted as the file.
 
 ### Cluster.connect(node: Cluster.Node, address: String) -> Result[String]
 
@@ -110,6 +110,10 @@ Registers the mailbox `name` (1 to 255 bytes). What a peer sends to it comes to 
 ### Cluster.send(node: Cluster.Node, peer: String, mailbox: String, body: Bytes, timeout_ms: Int = 5000) -> Result[Void]
 
 Sends `body`, the `Term.encode` of a value, to a mailbox of a connected peer. It fails with `cluster.argument` (`timeout_ms` is less than 1), `cluster.not_connected`, `cluster.too_large` (the frame is over `max_frame_bytes`) or `cluster.closed` (the node is stopped, the link broke, or the write took more than `timeout_ms`). A write that times out closes the link, and the peer is down (there is no reconnect yet). A frame over the limit of the receiver ends the whole link there, not only that message: keep `max_frame_bytes` the same on all the nodes. Ok says that the bytes are in the socket, not that the mailbox took them.
+
+### Cluster.watch(node: Cluster.Node, address: Address[M], wrap: Fn[Cluster.Event, M]) -> Result[Void]
+
+Tells `address` when a peer comes or goes, as the `M` that `wrap` makes of an `Event`: `Event.NodeUp(name)` when the first link to a peer is kept, and `Event.NodeDown(name)` when that link ends (the peer said bye, the socket closed, or it was silent for 3 heartbeats). A link that replaces another link of the same peer is not an event, and a peer that is already connected when the watch starts is not told. As for a mailbox, `wrap` must be pure and cheap, and an event that the address cannot take at once is missed: the capacity of the channel is the bound. A peer that comes back after `NodeDown` is a new `NodeUp`.
 
 ### Cluster.dropped(node: Cluster.Node) -> Int
 
