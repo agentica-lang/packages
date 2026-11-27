@@ -36,7 +36,14 @@ private
 
 def start_state(options: Types.Options, pending: ATS[String, Int]) -> Types.State
   inbox: Channel[Types.Msg] = Actor.inbox
-  Types.State(config: config(options, inbox.address, pending), peers: {}, dialing: {}, refused: 0)
+  Types.State(
+    config: config(options, inbox.address, pending),
+    peers: {},
+    dialing: {},
+    mailboxes: {},
+    refused: 0,
+    dropped: 0,
+  )
 end
 
 def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
@@ -48,12 +55,41 @@ def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
     Types.Msg.Refused -> Actor.continue(state.with(refused: state.refused + 1))
     Types.Msg.Names(reply) -> answer(state, reply, state.peers.keys.sort)
     Types.Msg.Refusals(reply) -> answer(state, reply, state.refused)
+    Types.Msg.Deliver(from, mailbox, body) ->
+      Actor.continue(deliver(state, Types.Delivery(from: from, mailbox: mailbox, body: body)))
+    Types.Msg.Register(name, take, reply) ->
+      answer(state.with(mailboxes: state.mailboxes.put(name, take)), reply, true)
+    Types.Msg.Route(name, reply) -> answer(state, reply, socket_of(state, name))
+    Types.Msg.Dropped(reply) -> answer(state, reply, state.dropped)
   end
 end
 
 def answer[T](state: Types.State, reply: Channel[T], value: T) -> Actor.Step[Types.State]
   _ = Actor.reply(reply, value)
   Actor.continue(state)
+end
+
+# A message for a mailbox that does not exist, or that cannot take it at once, is dropped and counted.
+def deliver(state: Types.State, delivery: Types.Delivery) -> Types.State
+  case state.mailboxes.get(delivery.mailbox)
+    some(take) -> counted(state, take.call(delivery))
+    none -> dropped(state)
+  end
+end
+
+def counted(state: Types.State, taken: Bool) -> Types.State
+  return state if taken
+
+  dropped(state)
+end
+
+def dropped(state: Types.State) -> Types.State = state.with(dropped: state.dropped + 1)
+
+def socket_of(state: Types.State, name: String) -> Optional[TCP.Socket]
+  case state.peers.get(name)
+    some(peer) -> some(peer.socket)
+    none -> none
+  end
 end
 
 # Every link and every dial in flight ends with the node, and the callers that wait for a dial hear that.

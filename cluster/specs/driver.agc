@@ -5,20 +5,24 @@
 import Binary from "std/binary"
 import Cluster from "../cluster"
 import Protocol from "nodes_protocol"
-import {Connect, Flood, HoleVisit, Peers, Refusals, Request, Spec, Stranger, Visit} from "nodes_protocol"
+import {
+  Connect, Drops, Flood, HoleVisit, Mailbox, Payload, Peers, Post, Received, Refusals, Request, Spec,
+} from "nodes_protocol"
+import {Stranger, Visit} from "nodes_protocol"
 import Types from "../src/types"
 import Wire from "../src/wire"
 
 def main() -> Void
   nodes: Map[String, Cluster.Node] = {}
   holes: ATS[String, Int] = ATS.new()
+  received: ATS[String, List[String]] = ATS.new()
   line = IO.gets
   while line.ok?
     reply = Protocol.OK
     case JSON.decode(line.unwrap_or(""), Request)
       error(e) -> reply = "bad request: #{e.message}"
       ok(request) ->
-        handled = act(nodes, holes, request)
+        handled = act(nodes, holes, received, request)
         nodes = handled.nodes
         reply = handled.reply
     end
@@ -32,6 +36,8 @@ end
 private
 
 POLL_MS = 20
+COLLECT_MS = 1000
+FILLER_CHUNK = 1000
 SETTLE_MS = 300
 HOLE_ACCEPT_MS = 1000
 # A read that ends this close to the deadline timed out; one that ends before it was a connection that ended.
@@ -47,6 +53,24 @@ struct Handled
   reply: String
 end
 
+# What the receiving side of a mailbox needs: where it keeps the lines, and the node that it belongs to.
+struct Collect
+  inbox: Channel[Cluster.Delivery]
+  table: ATS[String, List[String]]
+  key: String
+end
+
+# What a mailbox of the specs holds: a job that a node sends to another one.
+struct Job
+  id: Int
+  name: String
+end
+
+# A type that is not a job.
+struct Other
+  size: Int
+end
+
 # What one side of a connection does when both sides connect at the same moment.
 struct Side
   node: Cluster.Node
@@ -57,7 +81,12 @@ def done(nodes: Map[String, Cluster.Node]) -> Handled = Handled(nodes: nodes, re
 
 def failed(nodes: Map[String, Cluster.Node], reply: String) -> Handled = Handled(nodes: nodes, reply: reply)
 
-def act(nodes: Map[String, Cluster.Node], holes: ATS[String, Int], request: Request) -> Handled
+def act(
+  nodes: Map[String, Cluster.Node],
+  holes: ATS[String, Int],
+  received: ATS[String, List[String]],
+  request: Request,
+) -> Handled
   case request
     Request.Start(spec) -> start(nodes, spec)
     Request.StartFails(spec, kind) -> start_fails(nodes, spec, kind)
@@ -73,6 +102,13 @@ def act(nodes: Map[String, Cluster.Node], holes: ATS[String, Int], request: Requ
     Request.ConnectTwice(from, to) -> failed_or_done(nodes, connect_twice(nodes, from, to))
     Request.StopWithin(name, within_ms) -> failed_or_done(nodes, stop_within(nodes, name, within_ms))
     Request.Flood(flood) -> failed_or_done(nodes, flooded(nodes, flood))
+    Request.Register(mailbox) -> failed_or_done(nodes, register(nodes, received, mailbox))
+    Request.RegisterFails(mailbox, kind) -> failed_or_done(nodes, register_fails(nodes, received, mailbox, kind))
+    Request.Post(post) -> failed_or_done(nodes, posted(nodes, post))
+    Request.Received(expected) -> failed_or_done(nodes, expect_received(nodes, received, expected))
+    Request.InOrder(node, mailbox, count, within_ms) ->
+      failed_or_done(nodes, expect_in_order(received, node, mailbox, count, within_ms))
+    Request.Drops(drops) -> failed_or_done(nodes, expect_drops(nodes, drops))
   end
 end
 
@@ -372,4 +408,148 @@ def closed_by_node?(socket: TCP.Socket) -> Bool
     ok(got) -> got.empty?
     error(_) -> false
   end
+end
+
+def key_of(node: String, mailbox: String) -> String = "#{node}/#{mailbox}"
+
+# One line for each message of the mailbox, in the order they arrive: the job decoded into the type of the receiver,
+# or `unreadable` for bytes that do not fit it.
+def collect(args: Collect) -> Void
+  while true
+    case args.inbox.recv(COLLECT_MS)
+      ok(delivery) -> _ = args.table.push(args.key, line_of(delivery))
+      error(_) -> nil
+    end
+  end
+end
+
+def line_of(delivery: Cluster.Delivery) -> String
+  case Term.decode(delivery.body, Job)
+    ok(job) -> "job #{job.id} #{job.name} from #{delivery.from}"
+    error(_) -> "unreadable"
+  end
+end
+
+def register(nodes: Map[String, Cluster.Node], received: ATS[String, List[String]], mailbox: Mailbox) -> String
+  inbox: Channel[Cluster.Delivery] = Channel.new()
+  case Cluster.register(nodes[mailbox.node], mailbox.name, inbox.address, ->(delivery) { delivery })
+    error(e) -> "the mailbox was not registered: #{e.message}"
+    ok(_) ->
+      received.put(key_of(mailbox.node, mailbox.name), [])
+      _ = Task.spawn(&collect, Collect(inbox: inbox, table: received, key: key_of(mailbox.node, mailbox.name)))
+      Protocol.OK
+  end
+end
+
+def register_fails(
+  nodes: Map[String, Cluster.Node],
+  received: ATS[String, List[String]],
+  mailbox: Mailbox,
+  kind: String,
+) -> String
+  inbox: Channel[Cluster.Delivery] = Channel.new()
+  case Cluster.register(nodes[mailbox.node], mailbox.name, inbox.address, ->(delivery) { delivery })
+    ok(_) -> "the mailbox was registered and it should not have been"
+    error(e) -> failed_reply(e, kind)
+  end
+end
+
+def payload_bytes(payload: Payload) -> Bytes
+  case payload
+    Payload.Job(id, name) -> Term.encode(Job(id: id, name: name)).unwrap!
+    Payload.Jobs(_) -> "".bytes
+    Payload.Garbage(text) -> text.bytes
+    Payload.Other -> Term.encode(Other(size: 1)).unwrap!
+    Payload.Big(size) -> Term.encode(filler(size)).unwrap!
+  end
+end
+
+# `size` bytes (a multiple of 1000), made from one chunk.
+def filler(size: Int) -> Bytes
+  chunk = Bytes.from_list((1..FILLER_CHUNK).map { |_| 7 }).unwrap!
+  Bytes.concat((1..(size / FILLER_CHUNK)).map { |_| chunk })
+end
+
+def posted(nodes: Map[String, Cluster.Node], post: Post) -> String
+  node = nodes[post.from]
+  case post.payload
+    Payload.Jobs(count) -> post_jobs(node, post, count)
+    _ -> post_one(node, post, payload_bytes(post.payload))
+  end
+end
+
+def post_one(node: Cluster.Node, post: Post, body: Bytes) -> String
+  case Cluster.send(node, post.to, post.mailbox, body)
+    ok(_) -> sent_reply(post.kind)
+    error(e) -> failed_reply(e, post.kind)
+  end
+end
+
+def sent_reply(kind: String) -> String
+  return Protocol.OK if kind.empty?
+
+  "the message was sent, and it should have failed with #{kind}"
+end
+
+def post_jobs(node: Cluster.Node, post: Post, count: Int) -> String
+  for id in 1..count
+    body = Term.encode(Job(id: id, name: "n#{id}")).unwrap!
+    case Cluster.send(node, post.to, post.mailbox, body)
+      error(e) -> return "job #{id} was not sent: #{e.message}"
+      ok(_) -> nil
+    end
+  end
+
+  Protocol.OK
+end
+
+def expect_received(
+  nodes: Map[String, Cluster.Node],
+  received: ATS[String, List[String]],
+  expected: Received,
+) -> String
+  key = key_of(expected.node, expected.mailbox)
+  deadline = Time.monotonic_ms() + expected.within_ms
+  while lines_of(received, key) != expected.lines and Time.monotonic_ms() < deadline
+    Task.sleep(POLL_MS)
+  end
+
+  return "#{key} has #{lines_of(received, key)}" if lines_of(received, key) != expected.lines
+
+  Protocol.OK
+end
+
+def expect_in_order(
+  received: ATS[String, List[String]],
+  node: String,
+  mailbox: String,
+  count: Int,
+  within_ms: Int,
+) -> String
+  key = key_of(node, mailbox)
+  wanted = (1..count).map { |id| "job #{id} n#{id} from alpha" }
+  deadline = Time.monotonic_ms() + within_ms
+  while lines_of(received, key) != wanted and Time.monotonic_ms() < deadline
+    Task.sleep(POLL_MS)
+  end
+
+  if lines_of(received, key) != wanted
+    return "#{key} has #{lines_of(received, key).size} lines, not the #{count} jobs in order"
+  end
+
+  Protocol.OK
+end
+
+def lines_of(received: ATS[String, List[String]], key: String) -> List[String] = received.get(key).unwrap_or([])
+
+def expect_drops(nodes: Map[String, Cluster.Node], drops: Drops) -> String
+  node = nodes[drops.node]
+  deadline = Time.monotonic_ms() + drops.within_ms
+  while Cluster.dropped(node) != drops.count and Time.monotonic_ms() < deadline
+    Task.sleep(POLL_MS)
+  end
+
+  return "#{drops.node} dropped #{Cluster.dropped(node)}" if Cluster.dropped(node) != drops.count
+
+  Protocol.OK
 end

@@ -33,10 +33,11 @@ def idle(back: Channel[TaskRef]) -> Void
   Task.sleep(60_000)
 end
 
-def peer(name: String, dialer: String, endpoint: String) -> Result[Types.Peer]
+def peer(fix: Fixture, name: String, dialer: String, endpoint: String) -> Result[Types.Peer]
   back: Channel[TaskRef] = Channel.new(1)
   _ = Task.spawn(&idle, back)
-  ok(Types.Peer(name: name, dialer: dialer, endpoint: endpoint, link: try back.recv(1000)))
+  socket = try TCP.connect("127.0.0.1", fix.port, 1000)
+  ok(Types.Peer(name: name, dialer: dialer, endpoint: endpoint, link: try back.recv(1000), socket: socket))
 end
 
 def dial(fix: Fixture, node: String) -> Channel[Result[String]]
@@ -47,7 +48,7 @@ def dial(fix: Fixture, node: String) -> Channel[Result[String]]
 end
 
 def link(fix: Fixture, name: String, dialer: String, endpoint: String) -> Result[Bool]
-  linked = try peer(name, dialer, endpoint)
+  linked = try peer(fix, name, dialer, endpoint)
   Actor.call(fix.actor.address, 1000, ->(reply) { Types.Msg.Linked(linked, reply) })
 end
 

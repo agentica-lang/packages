@@ -118,12 +118,13 @@ def register(config: Types.Config, peer: Types.Peer) -> Bool
   end
 end
 
-# After the welcome a link is only read: a bye ends it and any other frame is ignored, until the frames have a use.
+# After the welcome a link is read: a bye ends it, a mail goes to the node, and any other frame is ignored.
 def keep_reading(config: Types.Config, socket: TCP.Socket, peer: Types.Peer) -> Void
   reading = true
   while reading
     case read_message(socket, config.max_frame_bytes, 0)
       ok(Types.Message.Bye(_)) -> reading = false
+      ok(Types.Message.Mail(mailbox, body)) -> deliver(config, peer, mailbox, body)
       ok(_) -> nil
       error(_) -> reading = false
     end
@@ -135,6 +136,11 @@ end
 
 # The client dialed a node, maybe by its name (`expected`): with a name, the transcript uses it and never the name in
 # the challenge, so a node that answers under another name fails the proof.
+# The reader never waits for the node: a node that cannot take the message in no time drops it (at most once).
+def deliver(config: Types.Config, peer: Types.Peer, mailbox: String, body: Bytes) -> Void
+  _ = Actor.cast(config.node, Types.Msg.Deliver(peer.name, mailbox, body), 0)
+end
+
 def client_handshake(
   config: Types.Config,
   socket: TCP.Socket,
@@ -156,7 +162,15 @@ def client_handshake(
       proof = try Handshake.answer(config.cookie, session, server_proof)
       try send(socket, try Wire.encode(proof), deadline)
       try expect_welcome(socket, deadline)
-      ok(Types.Peer(name: name, dialer: config.name, endpoint: Endpoint.key(endpoint), link: Task.current()))
+      ok(
+        Types.Peer(
+          name: name,
+          dialer: config.name,
+          endpoint: Endpoint.key(endpoint),
+          link: Task.current(),
+          socket: socket,
+        ),
+      )
     _ -> out_of_order()
   end
 end
@@ -172,7 +186,7 @@ def server_handshake(config: Types.Config, socket: TCP.Socket, deadline: Int) ->
         Types.Message.Proof(proof) ->
           welcome = try Handshake.accept(config.cookie, session, proof)
           try send(socket, try Wire.encode(welcome), deadline)
-          ok(Types.Peer(name: client, dialer: client, endpoint: "", link: Task.current()))
+          ok(Types.Peer(name: client, dialer: client, endpoint: "", link: Task.current(), socket: socket))
         _ -> out_of_order()
       end
 

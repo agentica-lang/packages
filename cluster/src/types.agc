@@ -22,11 +22,15 @@ CLOSED = "cluster.closed"
 ## The key of the table that counts the connections in their handshake.
 PENDING = "pending"
 
+## The peer is not connected now: it never was, or its link ended.
+NOT_CONNECTED = "cluster.not_connected"
+
 ## A frame is longer than the limit of the connection.
 TOO_LARGE = "cluster.too_large"
 
-## The most bytes of a frame (its kind and its body), when the options say nothing else.
-MAX_FRAME_BYTES = 1_048_576
+## The most bytes of a frame (its kind and its body), which is also the most that the options may say: the frame and
+## its length of 4 bytes go out in one write of a socket, which takes 1 MiB at most.
+MAX_FRAME_BYTES = 1_048_572
 
 ## The most bytes of the name of a mailbox.
 MAX_MAILBOX_BYTES = 255
@@ -75,7 +79,7 @@ struct Options
   peers: List[String] = []
   connect_ms: Int = 5000
   max_pending: Int = 128
-  max_frame_bytes: Int = 1_048_576
+  max_frame_bytes: Int = 1_048_572
   insecure_plaintext: Bool = false
 end
 
@@ -85,6 +89,15 @@ struct Peer
   dialer: String
   endpoint: String
   link: TaskRef
+  socket: TCP.Socket
+end
+
+## A message that a peer sent to a mailbox of this node: the name of the peer, the mailbox and the bytes that the peer
+## wrote (the `Term.encode` of a value, which the receiver decodes into its own type).
+struct Delivery
+  from: String
+  mailbox: String
+  body: Bytes
 end
 
 ## What the actor of a node hears. `Linked` is a connection that passed the handshake, and its channel gets whether the
@@ -99,6 +112,10 @@ enum Msg
   Refused
   Names(Channel[List[String]])
   Refusals(Channel[Int])
+  Deliver(String, String, Bytes)
+  Register(String, Fn[Delivery, Bool], Channel[Bool])
+  Route(String, Channel[Optional[TCP.Socket]])
+  Dropped(Channel[Int])
 end
 
 ## A caller of `connect` that waits for a dial: where the answer goes, and the name that the address must answer under
@@ -119,7 +136,9 @@ struct State
   config: Config
   peers: Map[String, Peer]
   dialing: Map[String, Dialing]
+  mailboxes: Map[String, Fn[Delivery, Bool]]
   refused: Int
+  dropped: Int
 end
 
 ## What the tasks of a node share: its name, the cookie, the limits, and the table that counts the connections in their
@@ -139,6 +158,7 @@ struct Node
   name: String
   port: Int
   connect_ms: Int
+  max_frame_bytes: Int
   insecure_plaintext: Bool
   actor: Actor.Ref[State, Msg]
   acceptor: Task[Void]
