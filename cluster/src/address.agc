@@ -1,22 +1,18 @@
 ## The address of a peer, `host:port`, and the rule for plain TCP: only on this machine.
 
-## A `host:port` read apart. An IPv6 host is written in brackets, `[::1]:4000`.
-struct Endpoint
-  host: String
-  port: Int
-end
+import Names from "names"
+import Types from "types"
 
-## Reads `host:port`. The port is 1 to 65535.
-def parse(text: String) -> Result[Endpoint]
-  parts = text.split(":")
-  return bad(text) if parts.size < 2
+## Reads `host:port` or `name@host:port`. The port is 1 to 65535, and a name has the form of a node name.
+def parse(text: String) -> Result[Types.Endpoint]
+  at = text.split("@")
+  return bad(text) if at.size > 2
 
-  port_text = parts.last
-  port = port_text.to_i.unwrap_or(0)
-  host = unbracket(text.slice(0, text.length - port_text.length - 1))
-  return bad(text) if host.empty? or port < 1 or port > MAX_PORT or port_text.length > 5
+  return parse_host(text, "") if at.size == 1
 
-  ok(Endpoint(host: host, port: port))
+  return bad(text) if not Names.node_name?(at[0])
+
+  parse_host(at[1], at[0])
 end
 
 ## Whether a host is this machine: `localhost`, `::1` or an IPv4 address of `127.0.0.0/8`. Plain TCP is only allowed
@@ -34,6 +30,18 @@ private
 
 MAX_PORT = 65_535
 MAX_OCTET = 255
+
+def parse_host(text: String, node: String) -> Result[Types.Endpoint]
+  parts = text.split(":")
+  return bad(text) if parts.size < 2
+
+  port_text = parts.last
+  port = port_text.to_i.unwrap_or(0)
+  host = unbracket(text.slice(0, text.length - port_text.length - 1))
+  return bad(text) if host.empty? or port < 1 or port > MAX_PORT or port_text.length > 5
+
+  ok(Types.Endpoint(host: host, port: port, node: node))
+end
 
 def bad[T](text: String) -> Result[T] = error("cluster: #{text} is not host:port", kind: "cluster.argument")
 

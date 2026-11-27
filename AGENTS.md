@@ -100,13 +100,17 @@ native-gen/          the C header of an `extern module` block: cli.agc is the co
                      as the goldens, a step makes the others: kinds, shapes, lists, options, resources), the files
                      that fail (errors/) and cxx.sh, a CC that builds a module as C++; bench/wide the codecs of a
                      struct of 26 fields; the features need cc and c++
-cluster/             Agentica nodes that connect with a shared cookie (planned: nodes, mailboxes, node_down); for now the wire
-                     format: cluster.agc is the API (the error kinds), src/wire.agc the preamble and the frames (pure),
+cluster/             Agentica nodes that connect with a shared cookie (planned: mailboxes, node_down): cluster.agc is the API
+                     (start, connect, nodes, port, refused, stop, the error kinds), src/members.agc the actor of a node
+                     (its peers, which of two links stays), src/listener.agc the accept loop, src/link.agc one connection
+                     (the handshake as client or server, then the reading), src/check.agc the checks of the options (plain TCP
+                     only on this machine), src/address.agc `host:port` (pure), src/wire.agc the preamble and the frames (pure),
                      src/handshake.agc the proofs of the cookie handshake (pure), src/names.agc the rules for node and
                      mailbox names, src/types.agc the kinds, the limits and the messages; test/ has the unit tests of the
-                     frames and the proofs (the bytes and the HMAC values written by hand); specs/ has wire.feature and
-                     handshake.feature (steps.agc, handshake_steps.agc); docs/protocol.md is the format for another
-                     program
+                     frames, the proofs and the addresses (the bytes and the HMAC values written by hand); specs/ has
+                     wire.feature and handshake.feature (pure), and nodes.feature, whose program under test is
+                     specs/driver.agc (the nodes of a scenario in one program on 127.0.0.1, port 0, driven by JSON lines
+                     from specs/nodes_steps.agc); docs/protocol.md is the format for another program
 dock/                a TCP server: dock.agc is the API (start, stop, wait, watch, stats, on_close, recv, send,
                      close); src/server.agc the supervisor task (listener, accept loop, monitors), src/connection.agc
                      the task of one client, src/outbox.agc its queue and writer, src/stats.agc the counters,

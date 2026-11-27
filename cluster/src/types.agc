@@ -53,6 +53,13 @@ enum Message
   Ignored(Int)
 end
 
+## A peer read apart: `host:port`, or `name@host:port` when the name of the node is known (src/address.agc).
+struct Endpoint
+  host: String
+  port: Int
+  node: String = ""
+end
+
 ## What a node needs to start. `cookie` is the shared secret (16 bytes at least). `peers` are the `host:port` of the
 ## nodes to connect to. Plain TCP is only allowed on this machine unless `insecure_plaintext` is true. `connect_ms` is
 ## the time that a connection has to finish its handshake.
@@ -79,7 +86,7 @@ end
 enum Msg
   Linked(Peer, Channel[Bool])
   Closed(String, Int)
-  Dial(String, Int, Channel[Result[String]])
+  Dial(Endpoint, Channel[Result[String]])
   Refused
   Names(Channel[List[String]])
   Refusals(Channel[Int])
@@ -105,6 +112,8 @@ end
 struct Node
   name: String
   port: Int
+  connect_ms: Int
+  insecure_plaintext: Bool
   actor: Actor.Ref[State, Msg]
   acceptor: Task[Void]
 end
