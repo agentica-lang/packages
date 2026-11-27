@@ -1,0 +1,45 @@
+# Three nodes with the same cookie, and a fourth with another one. From the folder of the package:
+#
+#   docker compose -f examples/docker-compose.yml up --build
+#   docker compose -f examples/docker-compose.yml stop node2    # the others print node_down
+#   docker compose -f examples/docker-compose.yml start node2    # and node_up
+#
+# `stranger` lists node1 with a cookie that node1 does not have: both print that they refused a handshake, and it never
+# becomes a peer. Without TLS (it is planned) the frames are not encrypted, so `INSECURE` only for a network that you
+# trust, such as this one. Change the cookie: it is an example value.
+x-node: &node
+  build:
+    context: ..
+    dockerfile: examples/Dockerfile
+  environment: &environment
+    NODE_HOST: 0.0.0.0
+    NODE_PORT: "7000"
+    INSECURE: "1"
+    CLUSTER_COOKIE: ${CLUSTER_COOKIE:-an-example-cookie-of-16-bytes-or-more}
+
+services:
+  node1:
+    <<: *node
+    environment:
+      <<: *environment
+      NODE_NAME: node1
+      PEERS: node2@node2:7000,node3@node3:7000
+  node2:
+    <<: *node
+    environment:
+      <<: *environment
+      NODE_NAME: node2
+      PEERS: node1@node1:7000,node3@node3:7000
+  node3:
+    <<: *node
+    environment:
+      <<: *environment
+      NODE_NAME: node3
+      PEERS: node1@node1:7000,node2@node2:7000
+  stranger:
+    <<: *node
+    environment:
+      <<: *environment
+      NODE_NAME: stranger
+      PEERS: node1@node1:7000
+      CLUSTER_COOKIE: a-different-cookie-of-16-bytes
