@@ -23,6 +23,13 @@ struct Served
   socket: TCP.Socket
 end
 
+## What a task that waits to dial a peer of the list again needs.
+struct Redial
+  node: Address[Types.Msg]
+  key: String
+  wait_ms: Int
+end
+
 ## Dials, shakes hands as the client and, once the node keeps the link, reads it until it ends. The connect and the
 ## handshake share one deadline, `connect_ms` from the start.
 def dial(args: Dial) -> Void
@@ -33,6 +40,12 @@ def dial(args: Dial) -> Void
     error(_) -> fail(args, error("cluster: no node answers at the address", kind: Types.UNREACHABLE))
     ok(socket) -> run_client(args, socket, deadline)
   end
+end
+
+## Waits, and tells the node that it is time to dial the address `key` again.
+def redial(args: Redial) -> Void
+  Task.sleep(args.wait_ms)
+  _ = Actor.cast(args.node, Types.Msg.Redial(args.key))
 end
 
 ## Shakes hands as the server and, once the node keeps the link, reads it until it ends.

@@ -5,6 +5,7 @@ import Types from "../src/types"
 private
 
 WAIT_MS = 1000
+RETRY_MS = 100
 POLL_MS = 10
 
 # A node, and a listener that accepts and never answers, so that a dial of it waits. The node is called zeta, so that a
@@ -25,8 +26,15 @@ struct Link
   back: Channel[Types.Peer]
 end
 
-def fixture() -> Fixture
-  options = Types.Options(name: "zeta", cookie: "the-cookie-of-the-cluster", connect_ms: 5000)
+def fixture(retry_ms: Int = 500, retry_max_ms: Int = 30_000) -> Fixture
+  options = Types.Options(
+    name: "zeta",
+    cookie: "the-cookie-of-the-cluster",
+    connect_ms: 5000,
+    reconnect_ms: retry_ms,
+    reconnect_max_ms: retry_max_ms,
+  )
+
   counts: ATS[String, Int] = ATS.new()
   actor = Actor.start(Members.behaviour(options, counts))
   listener = TCP.listen("127.0.0.1", 0).unwrap!
@@ -152,5 +160,38 @@ def test_stopping_the_node_ends_its_links() -> Result[Void]
   Task.monitor(linked.link, gone, ->(down) { down.task_id })
   try Actor.stop(fix.actor, 2000)
   try Test.eq(try gone.recv(WAIT_MS), linked.link.id)
+  finish(fix)
+end
+
+# A listener that takes a connection and drops it, so that every dial fails in the handshake and the node tries again.
+def attempts(fix: Fixture, wanted: Int) -> List[Int]
+  times: List[Int] = []
+  while times.size < wanted
+    case TCP.accept(fix.listener, 3000)
+      ok(socket) ->
+        times = times.push(Time.monotonic_ms())
+        TCP.close(socket)
+
+      error(_) -> return times
+    end
+  end
+
+  times
+end
+
+def test_a_peer_of_the_list_is_dialed_again_with_a_wait_that_doubles_up_to_the_bound() -> Result[Void]
+  fix = fixture(RETRY_MS, 4 * RETRY_MS)
+  _ = Actor.cast(fix.actor.address, Types.Msg.Keep([Types.Endpoint(host: "127.0.0.1", port: fix.port)]))
+  times = attempts(fix, 6)
+  try Test.eq(times.size, 6)
+  gaps = (1..5).map { |i| times[i] - times[i - 1] }
+  # The waits are 100, 200, 400, 400, 400 ms, and up to a fifth more: never less, and not far over.
+  try Test.assert(
+    gaps[0] >= RETRY_MS and gaps[1] >= 2 * RETRY_MS and gaps[2] >= 4 * RETRY_MS,
+    "the waits were #{gaps}",
+  )
+
+  try Test.assert(gaps[3] >= 4 * RETRY_MS and gaps[4] >= 4 * RETRY_MS, "the waits were #{gaps}")
+  try Test.assert(gaps[3] < 6 * RETRY_MS and gaps[4] < 6 * RETRY_MS, "the wait went over the bound: #{gaps}")
   finish(fix)
 end

@@ -135,8 +135,18 @@ def options_of(nodes: Map[String, Cluster.Node], spec: Spec) -> Cluster.Options
     connect_ms: spec.connect_ms,
     max_pending: spec.max_pending,
     heartbeat_ms: spec.heartbeat_ms,
+    reconnect_ms: spec.reconnect_ms,
+    reconnect_max_ms: [spec.reconnect_max_ms, 4 * spec.reconnect_ms].max.unwrap!,
+    port: port_of(nodes, spec),
     max_frame_bytes: spec.max_frame_bytes,
   )
+end
+
+# A node that starts again takes the port of its first run, so that the peers that listed it find it.
+def port_of(nodes: Map[String, Cluster.Node], spec: Spec) -> Int
+  return Cluster.port(nodes[spec.name]) if spec.again
+
+  0
 end
 
 def address_of(nodes: Map[String, Cluster.Node], name: String, named: Bool) -> String

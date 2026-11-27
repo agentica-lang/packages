@@ -167,11 +167,7 @@ def up(
   case listened
     error(e) -> abort(actor, acceptor, error(e.message, kind: e.kind))
     ok(port) ->
-      for endpoint in endpoints
-        quiet: Channel[Result[String]] = Channel.new(1)
-        _ = Actor.cast(actor.address, Types.Msg.Dial(endpoint, quiet))
-      end
-
+      _ = Actor.cast(actor.address, Types.Msg.Keep(endpoints))
       ok(
         Types.Node(
           name: options.name,
