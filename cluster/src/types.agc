@@ -101,10 +101,17 @@ enum Msg
   Refusals(Channel[Int])
 end
 
+## A caller of `connect` that waits for a dial: where the answer goes, and the name that the address must answer under
+## (empty when the caller did not say one).
+struct Waiter
+  reply: Channel[Result[String]]
+  name: String
+end
+
 ## A connection that is being dialed: its task, and the callers that wait for the answer.
 struct Dialing
   task: Task[Void]
-  waiters: List[Channel[Result[String]]]
+  waiters: List[Waiter]
 end
 
 ## The state of the actor of a node: the peers by name, the addresses being dialed, and how many handshakes it refused.

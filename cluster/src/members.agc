@@ -56,13 +56,14 @@ def answer[T](state: Types.State, reply: Channel[T], value: T) -> Actor.Step[Typ
   Actor.continue(state)
 end
 
-# Every link and every dial in flight ends with the node.
+# Every link and every dial in flight ends with the node, and the callers that wait for a dial hear that.
 def terminate(state: Types.State) -> Void
   for peer in state.peers.values
     Task.cancel(peer.link)
   end
 
   for dialing in state.dialing.values
+    answer_waiters(dialing.waiters, error("cluster: the node stopped", kind: Types.CLOSED))
     Task.cancel(dialing.task)
   end
 end
@@ -82,9 +83,23 @@ def link(state: Types.State, peer: Types.Peer, reply: Channel[Bool]) -> Types.St
   end
 end
 
+# A link that this node dialed answers the callers that wait for it here, not through its task: a link from a smaller
+# name may replace it, and that cancels the task before it tells.
 def keep(state: Types.State, peer: Types.Peer, reply: Channel[Bool]) -> Types.State
   _ = Actor.reply(reply, true)
-  state.with(peers: state.peers.put(peer.name, peer))
+  kept = state.with(peers: state.peers.put(peer.name, peer))
+  return kept if peer.endpoint.empty?
+
+  stop_other_dial(kept, peer)
+  dialed(kept, peer.endpoint, ok(peer.name))
+end
+
+# The task that dialed is the link itself; a dial of another task for that address is of no use now.
+def stop_other_dial(state: Types.State, peer: Types.Peer) -> Void
+  case state.dialing.get(peer.endpoint)
+    some(dialing) if dialing.task.id != peer.link.id -> Task.cancel(dialing.task)
+    _ -> nil
+  end
 end
 
 # A link that ended is forgotten, unless another link took its place.
@@ -101,53 +116,60 @@ def forget(state: Types.State, peer: Types.Peer, id: Int) -> Types.State
   state.with(peers: state.peers.delete(peer.name))
 end
 
-# An address that this node dialed and that is linked answers at once; one that is being dialed adds the caller
-# to those
-# that wait; any other starts a task that dials.
+# An address that is linked, or a name that is linked (even if the peer dialed this node), answers at once; one that is
+# being dialed adds the caller to those that wait; any other starts a task that dials.
 def dial(state: Types.State, endpoint: Types.Endpoint, reply: Channel[Result[String]]) -> Types.State
   key = Endpoint.key(endpoint)
-  case linked_at(state, key)
-    ok(peer) -> answered(state, reply, peer, endpoint)
+  case linked(state, key, endpoint.node)
+    ok(peer) -> answered(state, reply, peer, endpoint.node)
     error(_) -> dial_new(state, key, endpoint, reply)
   end
 end
 
-def linked_at(state: Types.State, key: String) -> Result[Types.Peer]
-  state.peers.values.find { |peer| peer.endpoint == key }
+def linked(state: Types.State, key: String, name: String) -> Result[Types.Peer]
+  by_name = state.peers.get(name)
+  case by_name
+    some(peer) if not name.empty? -> ok(peer)
+    _ -> state.peers.values.find { |peer| peer.endpoint == key }
+  end
 end
 
-def answered(
-  state: Types.State,
-  reply: Channel[Result[String]],
-  peer: Types.Peer,
-  endpoint: Types.Endpoint,
-) -> Types.State
-  if endpoint.node.empty? or endpoint.node == peer.name
-    _ = reply.send(ok(peer.name), 0)
-  else
-    _ = reply.send(error("cluster: that address answers under another name", kind: Types.REFUSED), 0)
-  end
-
+def answered(state: Types.State, reply: Channel[Result[String]], peer: Types.Peer, name: String) -> Types.State
+  _ = reply.send(verdict(ok(peer.name), name), 0)
   state
 end
 
-def dial_new(state: Types.State, key: String, endpoint: Types.Endpoint, reply: Channel[Result[String]]) -> Types.State
-  case state.dialing.get(key)
-    some(dialing) -> state.with(dialing: state.dialing.put(key, dialing.with(waiters: dialing.waiters.push(reply))))
-    none ->
-      task = Task.spawn(&Link.dial, Link.Dial(config: state.config, endpoint: endpoint))
-      state.with(dialing: state.dialing.put(key, Types.Dialing(task: task, waiters: [reply])))
+# The answer for a caller that said the name that the address must have.
+def verdict(result: Result[String], name: String) -> Result[String]
+  case result
+    ok(found) if not name.empty? and found != name ->
+      error("cluster: that address answers under another name", kind: Types.REFUSED)
+    _ -> result
   end
 end
 
+def dial_new(state: Types.State, key: String, endpoint: Types.Endpoint, reply: Channel[Result[String]]) -> Types.State
+  waiter = Types.Waiter(reply: reply, name: endpoint.node)
+  case state.dialing.get(key)
+    some(dialing) -> state.with(dialing: state.dialing.put(key, dialing.with(waiters: dialing.waiters.push(waiter))))
+    none ->
+      task = Task.spawn(&Link.dial, Link.Dial(config: state.config, endpoint: endpoint))
+      state.with(dialing: state.dialing.put(key, Types.Dialing(task: task, waiters: [waiter])))
+  end
+end
+
+# The dial of an address is over: the callers that wait hear the result, each checked against its own name.
 def dialed(state: Types.State, key: String, result: Result[String]) -> Types.State
   case state.dialing.get(key)
     some(dialing) ->
-      for waiter in dialing.waiters
-        _ = waiter.send(result, 0)
-      end
-
+      answer_waiters(dialing.waiters, result)
       state.with(dialing: state.dialing.delete(key))
     none -> state
+  end
+end
+
+def answer_waiters(waiters: List[Types.Waiter], result: Result[String]) -> Void
+  for waiter in waiters
+    _ = waiter.reply.send(verdict(result, waiter.name), 0)
   end
 end
