@@ -10,6 +10,7 @@ Feature: The frames that nodes write and read
       | message             |
       | ping                |
       | pong                |
+      | welcome             |
       | bye done            |
       | bye                 |
       | mail jobs hello     |

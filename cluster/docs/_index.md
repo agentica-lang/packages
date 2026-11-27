@@ -17,7 +17,7 @@ The design is decided in [agentica#1834](https://github.com/agentica-lang/agenti
 
 ## Status
 
-Not released yet. The package grows one piece at a time, and `cluster-0.1.0` comes when a node can connect, send and report `node_down`. Today it has the [wire format](protocol.md): the preamble and the frames of a connection, written and read as pure functions on `Bytes`, and the kinds of the errors that bytes breaking the format give.
+Not released yet. The package grows one piece at a time, and `cluster-0.1.0` comes when a node can connect, send and report `node_down`. Today it has the [wire format](protocol.md): the preamble and the frames of a connection, and the handshake with the cookie, as pure functions on `Bytes` and messages, and the kinds of the errors that bytes breaking the format give.
 
 ## Errors
 

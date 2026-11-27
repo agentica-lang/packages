@@ -3,6 +3,7 @@
 ## pure function on `Bytes`: the length is checked before the body is read, and bytes from the network never halt it.
 
 import Binary from "std/binary"
+import Names from "names"
 import Types from "types"
 
 ## The 6 bytes that each side writes first: the magic `AGCN` and the major version of the protocol.
@@ -47,6 +48,10 @@ def decode(payload: Bytes) -> Result[Types.Message]
   return ok(Types.Message.Ignored(kind)) if IGNORABLE.include?(kind)
 
   case kind
+    _ if kind == KIND_HELLO -> hello(body)
+    _ if kind == KIND_CHALLENGE -> challenge(body)
+    _ if kind == KIND_PROOF -> proof(body)
+    _ if kind == KIND_WELCOME -> empty(body, Types.Message.Welcome)
     _ if kind == KIND_PING -> empty(body, Types.Message.Ping)
     _ if kind == KIND_PONG -> empty(body, Types.Message.Pong)
     _ if kind == KIND_BYE -> bye(body)
@@ -70,6 +75,10 @@ private
 
 VERSION = 1
 HEADER_BYTES = 4
+KIND_HELLO = 1
+KIND_CHALLENGE = 2
+KIND_PROOF = 3
+KIND_WELCOME = 4
 KIND_MAIL = 5
 KIND_PING = 6
 KIND_PONG = 7
@@ -77,6 +86,21 @@ KIND_BYE = 8
 IGNORABLE = 64..127
 
 struct Empty
+end
+
+struct HelloBody
+  node: String
+  nonce: Bytes
+end
+
+struct ChallengeBody
+  node: String
+  nonce: Bytes
+  proof: Bytes
+end
+
+struct ProofBody
+  proof: Bytes
 end
 
 struct ByeBody
@@ -96,12 +120,45 @@ end
 
 def payload_of(message: Types.Message) -> Result[Bytes]
   case message
+    Types.Message.Hello(node, nonce) -> hello_payload(node, nonce)
+    Types.Message.Challenge(node, nonce, proof) -> challenge_payload(node, nonce, proof)
+    Types.Message.Proof(proof) -> proof_payload(proof)
+    Types.Message.Welcome -> with_kind(KIND_WELCOME, Term.encode(Empty()))
     Types.Message.Ping -> with_kind(KIND_PING, Term.encode(Empty()))
     Types.Message.Pong -> with_kind(KIND_PONG, Term.encode(Empty()))
     Types.Message.Bye(reason) -> with_kind(KIND_BYE, Term.encode(ByeBody(reason: reason)))
     Types.Message.Mail(mailbox, body) -> mail_payload(mailbox, body)
     Types.Message.Ignored(_) -> protocol("a frame of an ignored kind is never written")
   end
+end
+
+def hello_payload(node: String, nonce: Bytes) -> Result[Bytes]
+  try check_hello(node, nonce)
+  with_kind(KIND_HELLO, Term.encode(HelloBody(node: node, nonce: nonce)))
+end
+
+def challenge_payload(node: String, nonce: Bytes, proof: Bytes) -> Result[Bytes]
+  try check_hello(node, nonce)
+  try check_proof(proof)
+  with_kind(KIND_CHALLENGE, Term.encode(ChallengeBody(node: node, nonce: nonce, proof: proof)))
+end
+
+def proof_payload(proof: Bytes) -> Result[Bytes]
+  try check_proof(proof)
+  with_kind(KIND_PROOF, Term.encode(ProofBody(proof: proof)))
+end
+
+def check_hello(node: String, nonce: Bytes) -> Result[Void]
+  return protocol("the node name #{node} is not valid") if not Names.node_name?(node)
+  return protocol("a nonce has #{Types.NONCE_BYTES} bytes") if nonce.size != Types.NONCE_BYTES
+
+  ok()
+end
+
+def check_proof(proof: Bytes) -> Result[Void]
+  return protocol("a proof has #{Types.PROOF_BYTES} bytes") if proof.size != Types.PROOF_BYTES
+
+  ok()
 end
 
 def mail_payload(mailbox: String, body: Bytes) -> Result[Bytes]
@@ -117,10 +174,7 @@ def with_kind(kind: Int, body: Result[Bytes]) -> Result[Bytes]
 end
 
 def check_mailbox(mailbox: String) -> Result[Void]
-  return protocol("a mailbox name has 1 to #{Types.MAX_MAILBOX_BYTES} bytes") if mailbox.bytes.empty?
-  if mailbox.bytes.size > Types.MAX_MAILBOX_BYTES
-    return protocol("a mailbox name has 1 to #{Types.MAX_MAILBOX_BYTES} bytes")
-  end
+  return protocol("a mailbox name has 1 to #{Types.MAX_MAILBOX_BYTES} bytes") if not Names.mailbox_name?(mailbox)
 
   ok()
 end
@@ -130,6 +184,43 @@ def empty(body: Bytes, message: Types.Message) -> Result[Types.Message]
     ok(_) -> ok(message)
     error(e) -> protocol("a ping or a pong with a bad body: #{e.message}")
   end
+end
+
+def hello(body: Bytes) -> Result[Types.Message]
+  case Term.decode(body, HelloBody)
+    ok(h) -> hello_of(h)
+    error(e) -> protocol("a hello with a bad body: #{e.message}")
+  end
+end
+
+def hello_of(h: HelloBody) -> Result[Types.Message]
+  try check_hello(h.node, h.nonce)
+  ok(Types.Message.Hello(h.node, h.nonce))
+end
+
+def challenge(body: Bytes) -> Result[Types.Message]
+  case Term.decode(body, ChallengeBody)
+    ok(c) -> challenge_of(c)
+    error(e) -> protocol("a challenge with a bad body: #{e.message}")
+  end
+end
+
+def challenge_of(c: ChallengeBody) -> Result[Types.Message]
+  try check_hello(c.node, c.nonce)
+  try check_proof(c.proof)
+  ok(Types.Message.Challenge(c.node, c.nonce, c.proof))
+end
+
+def proof(body: Bytes) -> Result[Types.Message]
+  case Term.decode(body, ProofBody)
+    ok(p) -> proof_of(p)
+    error(e) -> protocol("a proof with a bad body: #{e.message}")
+  end
+end
+
+def proof_of(p: ProofBody) -> Result[Types.Message]
+  try check_proof(p.proof)
+  ok(Types.Message.Proof(p.proof))
 end
 
 def bye(body: Bytes) -> Result[Types.Message]

@@ -4,6 +4,12 @@
 ## preamble, a length of zero, an unknown kind or a body that does not fit its kind.
 PROTOCOL = "cluster.protocol"
 
+## The peer did not prove that it knows the cookie, or it has the name of this node.
+REFUSED = "cluster.refused"
+
+## A bad option, such as a cookie that is too short.
+ARGUMENT = "cluster.argument"
+
 ## A frame is longer than the limit of the connection.
 TOO_LARGE = "cluster.too_large"
 
@@ -13,9 +19,26 @@ MAX_FRAME_BYTES = 1_048_576
 ## The most bytes of the name of a mailbox.
 MAX_MAILBOX_BYTES = 255
 
-## What a node says. A `Mail` goes to the mailbox of the receiving node, with the Term CBOR bytes of the value. A
+## The bytes of a nonce and of a proof (HMAC-SHA256), and the least bytes of a cookie.
+NONCE_BYTES = 32
+PROOF_BYTES = 32
+MIN_COOKIE_BYTES = 16
+
+## The names and the nonces of one connection, which both proofs bind.
+struct Session
+  client: String
+  server: String
+  client_nonce: Bytes
+  server_nonce: Bytes
+end
+
+## What a node says: the four messages of the handshake (src/handshake.agc), then ping, pong and bye. A `Mail` goes to the mailbox of the receiving node, with the Term CBOR bytes of the value. A
 ## frame of a kind that this version does not know, but that is meant to be skipped, reads as `Ignored`.
 enum Message
+  Hello(String, Bytes)
+  Challenge(String, Bytes, Bytes)
+  Proof(Bytes)
+  Welcome
   Ping
   Pong
   Bye(String)

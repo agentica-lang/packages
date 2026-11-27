@@ -21,14 +21,31 @@ The format evolves by the major byte of the preamble and by new kinds from 64 to
 
 | Kind | Name | Body |
 |---|---|---|
+| 1 | hello | `{node: text, nonce: bytes}`: the client's name and a nonce of 32 bytes |
+| 2 | challenge | `{node: text, nonce: bytes, proof: bytes}`: the server's name, a nonce of 32 bytes and its proof of 32 bytes |
+| 3 | proof | `{proof: bytes}`: the client's proof of 32 bytes |
+| 4 | welcome | `{}` |
 | 5 | mail | `{mailbox: text, body: bytes}`: `body` is the `Term.encode` of the value, which the mailbox of the receiving node decodes |
 | 6 | ping | `{}` |
 | 7 | pong | `{}` |
 | 8 | bye | `{reason: text}`: the node leaves on purpose |
 
-The kinds 1 to 4 are kept for the handshake with the cookie, which comes in a later release. A kind from 64 to 127 is ignored, so a later version can add a message that an older one skips. Any other kind that is not in the table is `cluster.protocol`.
+A kind from 64 to 127 is ignored, so a later version can add a message that an older one skips. Any other kind that is not in the table is `cluster.protocol`.
 
 A mailbox name has 1 to 255 bytes. A body that is not the CBOR of its kind, with bytes after the map, or a frame that has more or fewer bytes than its length says is `cluster.protocol`.
+
+## The handshake
+
+The client opens with `hello`, and the two sides prove that they know the cookie before any other kind is allowed. The cookie is never sent.
+
+1. The client writes `hello` with its name and a new nonce `nc`.
+2. The server writes `challenge` with its name, a new nonce `ns` and its proof.
+3. The client checks that proof, and writes `proof` with its own.
+4. The server checks it, and writes `welcome`. The link is up.
+
+A proof is the HMAC-SHA256, with the cookie as the key, of this transcript: the Term CBOR of a map of the fields `protocol` (the text `agcn1`), `role` (the text `server` for the proof of the server, `client` for the proof of the client), `client` and `server` (the two names), `client_nonce` and `server_nonce` (bytes), in that order. The role keeps a proof of one side from being sent back as the proof of the other. The nonces are new for each connection, so what a stranger saw on an earlier one proves nothing. A proof is compared in constant time, and a proof that does not match is `cluster.refused`.
+
+A node name is a lowercase letter, then up to 62 lowercase letters, digits, `_` or `-`. The client and the server need different names. A cookie has at least 16 bytes.
 
 ## Example
 
