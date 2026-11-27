@@ -1,29 +1,34 @@
-## The steps of wire.feature: the frames are written and read by the codec of `src/wire.agc`. A message is spelled in
-## words (`ping`, `bye done`, `mail jobs hello`) and what a step reads is kept as a JSON line of the context.
+## The steps of wire.feature (the ones of handshake.feature are in handshake_steps.agc): the frames are written and
+## read by the codec of `src/wire.agc`. A message is spelled in words (`ping`, `bye done`, `mail jobs hello`) and what
+## a step reads is kept as a JSON line of the context.
 
 import BDD from "std/bdd"
 import Binary from "std/binary"
+import HandshakeSteps from "handshake_steps"
 import Types from "../src/types"
 import Wire from "../src/wire"
 
 def main() -> Void
-  BDD.run([
-    BDD.step("a node writes the message {string}", &writes_message),
-    BDD.step("another node reads {string}", &reads_message),
-    BDD.step("a node reads the greeting {string}", &reads_greeting),
-    BDD.step("a node reads the greeting that a node writes", &reads_own_greeting),
-    BDD.step("a frame says it has {int} bytes and the limit is {int}", &frame_says),
-    BDD.step("a node writes a mail of {int} bytes for the mailbox {string} with a limit of {int}", &writes_big_mail),
-    BDD.step("a node writes a mail for a mailbox of {int} bytes", &writes_mailbox),
-    BDD.step("the frame loses its last {int} bytes", &loses_bytes),
-    BDD.step("the frame gets {int} more bytes", &gets_bytes),
-    BDD.step("the frame is cut to its first {int} bytes", &is_cut),
-    BDD.step("a node reads a frame of the kind {int}", &reads_kind),
-    BDD.step("another node refuses it as {string}", &frame_refused_as),
-    BDD.step("it is refused as {string}", &refused_as),
-    BDD.step("it is accepted", &accepted),
-    BDD.step("it is ignored", &ignored),
-  ])
+  BDD.run(
+    HandshakeSteps.steps() +
+    [
+      BDD.step("a node writes the message {string}", &writes_message),
+      BDD.step("another node reads {string}", &reads_message),
+      BDD.step("a node reads the greeting {string}", &reads_greeting),
+      BDD.step("a node reads the greeting that a node writes", &reads_own_greeting),
+      BDD.step("a frame says it has {int} bytes and the limit is {int}", &frame_says),
+      BDD.step("a node writes a mail of {int} bytes for the mailbox {string} with a limit of {int}", &writes_big_mail),
+      BDD.step("a node writes a mail for a mailbox of {int} bytes", &writes_mailbox),
+      BDD.step("the frame loses its last {int} bytes", &loses_bytes),
+      BDD.step("the frame gets {int} more bytes", &gets_bytes),
+      BDD.step("the frame is cut to its first {int} bytes", &is_cut),
+      BDD.step("a node reads a frame of the kind {int}", &reads_kind),
+      BDD.step("another node refuses it as {string}", &frame_refused_as),
+      BDD.step("it is refused as {string}", &refused_as),
+      BDD.step("it is accepted", &accepted),
+      BDD.step("it is ignored", &ignored),
+    ],
+  )
 end
 
 private
@@ -44,6 +49,7 @@ def message_of(spelled: String) -> Types.Message
   case words[0]
     "ping" -> Types.Message.Ping
     "pong" -> Types.Message.Pong
+    "welcome" -> Types.Message.Welcome
     "bye" -> Types.Message.Bye(words.drop(1).join(" "))
     _ -> Types.Message.Mail(words[1], words.drop(2).join(" ").bytes)
   end
@@ -53,6 +59,10 @@ def spelled(message: Types.Message) -> String
   case message
     Types.Message.Ping -> "ping"
     Types.Message.Pong -> "pong"
+    Types.Message.Welcome -> "welcome"
+    Types.Message.Hello(node, _) -> "hello #{node}"
+    Types.Message.Challenge(node, _, _) -> "challenge #{node}"
+    Types.Message.Proof(_) -> "proof"
     Types.Message.Bye(reason) -> "bye #{reason}".strip
     Types.Message.Mail(mailbox, body) -> "mail #{mailbox} #{String.from_bytes(body).unwrap!}".strip
     Types.Message.Ignored(kind) -> "ignored #{kind}"

@@ -148,3 +148,44 @@ def test_hostile_cbor_is_a_protocol_error_and_never_halts() -> Result[Void]
 
   ok()
 end
+
+def test_the_handshake_messages_read_back_as_they_were_written() -> Result[Void]
+  nonce = Bytes.from_list((1..32).map { |n| n }).unwrap!
+  proof = Bytes.from_list((1..32).map { |n| 255 - n }).unwrap!
+  messages = [
+    Types.Message.Hello("alpha", nonce),
+    Types.Message.Challenge("beta", nonce, proof),
+    Types.Message.Proof(proof),
+    Types.Message.Welcome,
+  ]
+
+  for message in messages
+    frame = try Wire.encode(message)
+    try Test.eq(try Wire.read(frame, Types.MAX_FRAME_BYTES), message)
+  end
+
+  ok()
+end
+
+def test_a_hello_is_a_name_and_a_nonce_of_32_bytes() -> Result[Void]
+  nonce = "00000000000000000000000000000000".bytes
+  frame = try Wire.encode(Types.Message.Hello("alpha", nonce))
+  # 01 hello; a2 a map of two; "node" "alpha"; "nonce" then a byte string of 32 bytes (5820).
+  body = "a2" + "646e6f6465" + "65616c706861" + "656e6f6e6365" + "5820" + hex(nonce)
+  Test.eq(hex(frame), "00000035" + "01" + body)
+end
+
+def test_a_handshake_frame_with_a_bad_name_nonce_or_proof_is_refused() -> Result[Void]
+  nonce = "00000000000000000000000000000000".bytes
+  short = "0000000000".bytes
+  try Test.eq(kind_of(Wire.encode(Types.Message.Hello("Alpha", nonce))), Types.PROTOCOL)
+  try Test.eq(kind_of(Wire.encode(Types.Message.Hello("", nonce))), Types.PROTOCOL)
+  try Test.eq(kind_of(Wire.encode(Types.Message.Hello("alpha", short))), Types.PROTOCOL)
+  try Test.eq(kind_of(Wire.encode(Types.Message.Challenge("beta", nonce, short))), Types.PROTOCOL)
+  try Test.eq(kind_of(Wire.encode(Types.Message.Proof(short))), Types.PROTOCOL)
+  # The reader applies the same rules: a hello with an upper case name, and a proof of 5 bytes.
+  bad_name = "01" + "a2" + "646e6f6465" + "6141" + "656e6f6e6365" + "5820" + hex(nonce)
+  bad_proof = "03" + "a1" + "6570726f6f66" + "450000000000"
+  try Test.eq(kind_of(Wire.decode(bytes_of(bad_name))), Types.PROTOCOL)
+  Test.eq(kind_of(Wire.decode(bytes_of(bad_proof))), Types.PROTOCOL)
+end

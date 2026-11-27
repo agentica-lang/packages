@@ -4,4 +4,6 @@
 import Types from "src/types"
 
 export Types.PROTOCOL
+export Types.REFUSED
+export Types.ARGUMENT
 export Types.TOO_LARGE
