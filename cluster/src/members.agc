@@ -53,6 +53,7 @@ def start_state(options: Types.Options, counts: ATS[String, Int]) -> Types.State
     found: {},
     finders: [],
     names: {},
+    own: {},
     delays: {},
     timers: {},
     refused: 0,
@@ -69,6 +70,7 @@ def handle(state: Types.State, message: Types.Msg) -> Actor.Step[Types.State]
     Types.Msg.Redial(key) -> Actor.continue(redial(state, key))
     Types.Msg.Discover(endpoint) -> Actor.continue(discover(state, endpoint))
     Types.Msg.Found(endpoint) -> Actor.continue(found(state, endpoint))
+    Types.Msg.Own(key) -> Actor.continue(state.with(own: state.own.put(key, true)))
     Types.Msg.Refused -> Actor.continue(state.with(refused: state.refused + 1))
     Types.Msg.Names(reply) -> answer(state, reply, state.peers.keys.sort)
     Types.Msg.Refusals(reply) -> answer(state, reply, state.refused)
@@ -335,10 +337,10 @@ end
 
 # The wait before the next dial of a peer of the list: `reconnect_ms` at first, and twice the last one after each
 # failure, up to `reconnect_max_ms`, with up to a fifth more so that peers that failed together do not come back
-# together. A peer that is not of the list is not dialed again.
+# together. A peer that is not of the list is not dialed again, and neither is an address that is this node.
 def retry(state: Types.State, key: String) -> Types.State
   case state.kept.get(key)
-    some(_) if not state.timers.has_key?(key) -> wait(state, key)
+    some(_) if not state.timers.has_key?(key) and not state.own.has_key?(key) -> wait(state, key)
     _ -> state
   end
 end
@@ -384,6 +386,8 @@ end
 # list is dialed as it is written there, with the name that it must answer under.
 def found(state: Types.State, endpoint: Types.Endpoint) -> Types.State
   key = Endpoint.key(endpoint)
+  return state if state.own.has_key?(key)
+
   listed = state.with(found: state.found.put(key, endpoint))
   return listed if state.peers.has_key?(state.names.get(key).unwrap_or(""))
 

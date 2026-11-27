@@ -46,7 +46,7 @@ Feature: Nodes that share a cookie connect
     Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"
     When "alpha" connects to the node "alpha" and it fails with "cluster.closed"
     Then "alpha" has the peers "" within 500 ms
-    And "alpha" has refused 1 handshakes
+    And "alpha" has refused 0 handshakes
 
   Scenario: A node dialed by a name that is not its own is refused
     Given the node "alpha" starts with the cookie "the-cookie-of-the-cluster"

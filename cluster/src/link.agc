@@ -65,6 +65,8 @@ private
 REGISTER_MS = 5000
 SILENT_HEARTBEATS = 3
 SEEN = "seen"
+DIAL = "dial:"
+ITSELF = 1
 PREAMBLE_BYTES = 6
 HEADER_BYTES = 4
 
@@ -91,9 +93,19 @@ end
 
 def run_client(args: Dial, socket: TCP.Socket, deadline: Int) -> Void
   config = args.config
-  case client_handshake(config, socket, args.endpoint, deadline)
+  nonce = Handshake.fresh_nonce()
+  mark = "#{DIAL}#{OpenSSL.Digest.hexencode(nonce)}"
+  config.counts.put(mark, 0)
+  handshake = client_handshake(config, socket, args.endpoint, deadline, nonce)
+  itself = config.counts.get(mark).unwrap_or(0) == ITSELF
+  config.counts.delete(mark)
+  case handshake
     error(e) ->
       TCP.close(socket)
+      if itself
+        _ = Actor.cast(config.node, Types.Msg.Own(Endpoint.key(args.endpoint)))
+      end
+
       fail(args, error(e.message, kind: e.kind))
 
     ok(peer) ->
@@ -213,8 +225,8 @@ def client_handshake(
   socket: TCP.Socket,
   endpoint: Types.Endpoint,
   deadline: Int,
+  nonce: Bytes,
 ) -> Result[Types.Peer]
-  nonce = Handshake.fresh_nonce()
   hello = try Wire.encode(Types.Message.Hello(config.name, nonce))
   try send(socket, Wire.preamble() + hello, deadline)
   try Wire.check_preamble(try read_exact(socket, PREAMBLE_BYTES, deadline, none))
@@ -247,6 +259,7 @@ def server_handshake(config: Types.Config, socket: TCP.Socket, deadline: Int) ->
   try Wire.check_preamble(try read_exact(socket, PREAMBLE_BYTES, deadline, none))
   case try read_message(socket, Types.PRE_AUTH_MAX_FRAME_BYTES, deadline, none)
     Types.Message.Hello(client, client_nonce) ->
+      try not_itself(config, client, client_nonce)
       session = try Handshake.session(client, config.name, client_nonce, Handshake.fresh_nonce())
       try send(socket, try Wire.encode(Handshake.challenge(config.cookie, session)), deadline)
       case try read_message(socket, Types.PRE_AUTH_MAX_FRAME_BYTES, deadline, none)
@@ -259,6 +272,17 @@ def server_handshake(config: Types.Config, socket: TCP.Socket, deadline: Int) ->
 
     _ -> out_of_order()
   end
+end
+
+# A hello of the name of this node with the nonce of a dial of this node is the node dialing itself: the dial is
+# told, and
+# nothing is counted as refused. A hello of that name with another nonce is another node that took the name.
+def not_itself(config: Types.Config, client: String, client_nonce: Bytes) -> Result[Void]
+  mark = "#{DIAL}#{OpenSSL.Digest.hexencode(client_nonce)}"
+  return ok() if client != config.name or not config.counts.has_key?(mark)
+
+  config.counts.put(mark, ITSELF)
+  closed("the node dialed itself")
 end
 
 def expect_welcome(socket: TCP.Socket, deadline: Int) -> Result[Void]

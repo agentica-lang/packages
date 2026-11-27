@@ -209,12 +209,13 @@ def accepted(listener: TCP.Listener, wait_ms: Int) -> List[TCP.Socket]
 end
 
 def connections(listener: TCP.Listener, wait_ms: Int) -> Int
-  sockets = accepted(listener, wait_ms)
-  for socket in sockets
-    TCP.close(socket)
-  end
+  case TCP.accept(listener, wait_ms)
+    ok(socket) ->
+      TCP.close(socket)
+      1 + connections(listener, wait_ms)
 
-  sockets.size
+    error(_) -> 0
+  end
 end
 
 # The dials of the test are held open, so that their failure does not come before the answers that the test makes up.
@@ -291,4 +292,26 @@ def test_an_ipv6_address_is_dialed() -> Result[Void]
   try Test.eq(connections(six, 1000), 1)
   TCP.close_listener(six)
   finish(fix)
+end
+
+# The dials of the address of this very node are not made again, neither by the list nor by the name.
+def test_an_address_that_reached_this_node_is_not_dialed_again() -> Result[Void]
+  fix = fixture(RETRY_MS, RETRY_MS)
+  key = "127.0.0.1:#{fix.port}"
+  try Actor.cast(fix.actor.address, Types.Msg.Own(key))
+  try Actor.cast(fix.actor.address, Types.Msg.Keep([Types.Endpoint(host: "127.0.0.1", port: fix.port)]))
+  try found(fix)
+  try Test.eq(connections(fix.listener, 600), 1)
+  finish(fix)
+end
+
+# A node that finds its own address by the name dials it once, hears from itself and goes on, with nothing refused.
+def test_a_node_that_finds_its_own_address_does_not_count_a_refusal() -> Result[Void]
+  alpha = try Cluster.start(Cluster.Options(name: "alpha", cookie: "the-cookie-of-the-cluster", discover_ms: 100))
+  own = Types.Endpoint(host: "127.0.0.1", port: Cluster.port(alpha))
+  try Actor.cast(alpha.actor.address, Types.Msg.Discover(own))
+  Task.sleep(600)
+  try Test.eq(Cluster.refused(alpha), 0)
+  try Test.eq(Cluster.nodes(alpha), [])
+  Cluster.stop(alpha, 1000)
 end
