@@ -36,7 +36,7 @@ def damaged(name: String, change: Prop.Pair[Int, Int], body_only: Bool) -> Bytes
   span = data.size
   start = 0
   if body_only
-    footer = Binary.read_u32_le(data, data.size - 8).unwrap!
+    footer = Binary.read_u32_le(data, data.size - 8).unwrap!.to_i
     start = 4
     span = data.size - 8 - footer - 4
   end

@@ -95,7 +95,7 @@ def level_length(expanded: Bytes) -> Result[Int]
     return Errors.malformed("a page of #{expanded.size} bytes with no level length")
   end
 
-  length = try Binary.read_u32_le(expanded, 0)
+  length = (try Binary.read_u32_le(expanded, 0)).to_i
   if length > expanded.size - LEVEL_LENGTH_BYTES
     return Errors.malformed("#{length} level bytes in a page of #{expanded.size}")
   end
